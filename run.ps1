@@ -41,11 +41,29 @@ param(
 
     [string]$DataDir = (Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'PRism'),
 
+    # Build (frontend + backend), then return WITHOUT launching. Used by
+    # scripts/serve-detached.ps1 to run the build synchronously in the foreground
+    # so npm/dotnet failures surface to the caller before anything detaches.
+    [switch]$BuildOnly,
+
+    # Launch WITHOUT building (assumes a current build). Used by the detached
+    # wrapper, which has already had its build done in the foreground.
+    [switch]$SkipBuild,
+
+    # MUST stay last: ValueFromRemainingArguments only binds trailing app args
+    # (e.g. --no-browser) correctly when it is the final parameter. (Note: a bare
+    # leading `--no-browser` with no explicit -Reset still binds positionally to
+    # $Reset, so callers passing pass-through args must name -Reset -- the detached
+    # wrapper passes `-Reset None` for exactly this reason.)
     [Parameter(ValueFromRemainingArguments = $true)]
     [string[]]$DotnetArgs
 )
 
 $ErrorActionPreference = 'Stop'
+
+if ($BuildOnly -and $SkipBuild) {
+    throw "-BuildOnly and -SkipBuild are mutually exclusive: -BuildOnly builds without launching, -SkipBuild launches without building."
+}
 
 # $DataDir is the data store (default %LocalApplicationData%\PRism). Every -Reset
 # helper and the launch line below operate on it. (PowerShell variable names are
@@ -132,6 +150,13 @@ function Remove-TokenCacheFiles {
     Write-Host "  removing $tokenPath" -ForegroundColor DarkGray
     Remove-Item -LiteralPath $tokenPath -Force -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath $previousPath -Force -ErrorAction SilentlyContinue
+
+    # serve-detached.log is raw, unscrubbed dotnet/Kestrel stdout (it bypasses the
+    # structured FileLoggerProvider's scrubber). Clear it alongside the token cache
+    # so -Reset Token also drops any secret a console line may have printed.
+    $serveLog = Join-Path $DataDir 'serve-detached.log'
+    Write-Host "  removing $serveLog" -ForegroundColor DarkGray
+    Remove-Item -LiteralPath $serveLog -Force -ErrorAction SilentlyContinue
 }
 
 function Set-LastConfiguredGithubHostToSentinel {
@@ -214,16 +239,37 @@ switch ($Reset) {
 
 Push-Location $PSScriptRoot
 try {
-    Push-Location frontend
-    try {
-        # `npm ci` is deterministic (refuses to run if package.json and
-        # package-lock.json drift), unlike `npm install`. Always-run also
-        # avoids leaving a stale node_modules behind a lockfile change.
-        npm ci
-        npm run build
-    } finally {
-        Pop-Location
+    if (-not $SkipBuild) {
+        Push-Location frontend
+        try {
+            # `npm ci` is deterministic (refuses to run if package.json and
+            # package-lock.json drift), unlike `npm install`. Always-run also
+            # avoids leaving a stale node_modules behind a lockfile change.
+            #
+            # Guard EACH native step explicitly. Under $ErrorActionPreference='Stop'
+            # a native command's nonzero exit does NOT throw, and a later step's exit
+            # code OVERWRITES $LASTEXITCODE -- so a caller checking $LASTEXITCODE after
+            # `run.ps1 -BuildOnly` could read 0 even though `npm ci` failed, and detach
+            # against a broken build (the health-gate-timeout serve-detached.ps1 exists
+            # to prevent). The per-step throw makes a mid-sequence failure abort here.
+            npm ci
+            if ($LASTEXITCODE -ne 0) { throw "npm ci failed (exit $LASTEXITCODE) -- resolve package-lock.json drift, or relaunch with -SkipBuild if the build is current." }
+            npm run build
+            if ($LASTEXITCODE -ne 0) { throw "npm run build failed (exit $LASTEXITCODE)." }
+        } finally {
+            Pop-Location
+        }
+        # Build the backend explicitly so C#/NuGet/restore failures on the launch
+        # path surface HERE (foreground, for -BuildOnly callers) instead of inside
+        # dotnet run's implicit build post-detach. Scope: PRism.Web + its project
+        # refs only -- exactly what `dotnet run --project PRism.Web` compiles, so it
+        # is a no-op on the launch that follows. A compile/restore error in a project
+        # PRism.Web does NOT reference (e.g. a test project) surfaces in CI, not here.
+        dotnet build PRism.Web --configuration Debug
+        if ($LASTEXITCODE -ne 0) { throw "dotnet build PRism.Web failed (exit $LASTEXITCODE)." }
     }
+
+    if ($BuildOnly) { return }
 
     # --no-launch-profile neutralizes launchSettings.json so -Port (via --urls)
     # actually takes effect -- otherwise the http profile's applicationUrl

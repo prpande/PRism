@@ -23,6 +23,7 @@
          live GitHub to detect schema drift; the constant is `internal` so it isn't part of
          the public surface. Mirrors the same pattern in PRism.Core.csproj / PRism.Web.csproj. -->
     <InternalsVisibleTo Include="PRism.GitHub.Tests.Integration" />
+    <InternalsVisibleTo Include="PRism.GitHub.Tests" />
   </ItemGroup>
 
 </Project>

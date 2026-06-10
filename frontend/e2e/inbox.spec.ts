@@ -48,15 +48,26 @@ const authedAuthState = {
 // throws. Caught by Playwright on PR #69 (4 inbox tests failed at "Refactor auth
 // flow" never rendering).
 const defaultPreferences = {
-  ui: { theme: 'system', accent: 'indigo', aiMode: 'off' as const, density: 'comfortable' },
+  // aiMode 'off' for these mock-driven tests; contentScale + sectionOrder are always
+  // present on the real GET /api/preferences wire, so keep the fixture in contract.
+  ui: {
+    theme: 'system',
+    accent: 'indigo',
+    aiMode: 'off' as const,
+    density: 'comfortable',
+    contentScale: 'm',
+  },
   inbox: {
     sections: {
       'review-requested': true,
       'awaiting-author': true,
       'authored-by-me': true,
       mentioned: true,
-      'ci-failing': true,
+      'recently-closed': true,
     },
+    defaultSort: 'updated',
+    sectionOrder: 'review-requested,awaiting-author,authored-by-me,mentioned',
+    showActivityRail: false, // #283 rail decoupled from AI, default off
   },
   github: {
     host: 'https://github.com',
@@ -256,7 +267,7 @@ test('URL paste with host mismatch shows inline error', async ({ page }) => {
   await page.getByPlaceholder(/paste a pr url/i).fill('https://ghe.acme.com/foo/bar/pull/1');
   await page.keyboard.press('Enter');
 
-  // PasteUrlInput renders the error in a <span role="alert">.
+  // The merged inbox input (InboxQueryInput) renders the error in a <span role="alert">.
   // The error message is: "This PR is on ghe.acme.com, but PRism is configured for https://github.com."
   await expect(page.getByRole('alert')).toContainText(/configured for https:\/\/github\.com/i);
 
@@ -268,11 +279,15 @@ test('URL paste with host mismatch shows inline error', async ({ page }) => {
 
 // ---------------------------------------------------------------------------
 
-test('AI preview toggle reveals activity rail', async ({ page }) => {
-  // Stateful mock: the POST handler flips aiMode and subsequent GETs reflect it.
-  // usePreferences.set() in the frontend POSTs and immediately calls setPreferences(next)
-  // with the response body, so the component re-renders without a separate GET.
-  let aiMode: 'off' | 'preview' | 'live' = 'off';
+test('activity rail is gated by inbox.showActivityRail, independent of AI preview', async ({
+  page,
+}) => {
+  // #283: the activity rail is a fabricated, non-AI mockup decoupled from the AI-preview
+  // toggle onto inbox.showActivityRail (config-only, default false). This test proves the
+  // decouple: with AI preview ON the whole time, the rail stays hidden while the flag is
+  // false and only appears once the flag is flipped (simulating a config.json edit — there
+  // is deliberately no Settings UI for it).
+  let showActivityRail = false;
 
   await page.route('**/api/auth/state', (route: Route) =>
     route.fulfill({
@@ -282,41 +297,26 @@ test('AI preview toggle reveals activity rail', async ({ page }) => {
     }),
   );
   await page.route('**/api/preferences', async (route: Route) => {
-    if (route.request().method() === 'POST') {
-      // POST body is the single-field flat shape (spec § 2.3): the client sends
-      // `{ "ui.ai.mode": <mode> }`. Only the GET/POST RESPONSE shape is nested.
-      const body = JSON.parse(route.request().postData() ?? '{}') as { 'ui.ai.mode'?: string };
-      if (typeof body['ui.ai.mode'] === 'string') {
-        aiMode = body['ui.ai.mode'] as 'off' | 'preview' | 'live';
-      }
-    }
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
-      // Response shape is nested per S6 PR1 (spec § 2.4) — the aiMode override
-      // belongs under `ui`, not at the top level, or the frontend's
-      // preferences.ui.aiMode consumer never sees the flip.
+      // AI mode stays ON the whole time, to prove the rail's visibility is driven
+      // purely by inbox.showActivityRail, not by AI.
       body: JSON.stringify({
         ...defaultPreferences,
-        ui: { ...defaultPreferences.ui, aiMode },
+        ui: { ...defaultPreferences.ui, aiMode: 'preview' },
+        inbox: { ...defaultPreferences.inbox, showActivityRail },
       }),
     });
   });
-  // Capabilities are coupled to aiMode on the real backend (CapabilitiesEndpoints.cs
-  // returns AllOn xor AllOff from AiPreviewState.IsOn). Task 17 migrated InboxPage to
-  // useAiGate('inboxRanking') which now checks BOTH capabilities.inboxRanking AND
-  // preferences.ui.aiMode. The mock must mirror the coupling or the ActivityRail
-  // gate stays off even when aiMode flips on. useCapabilities also subscribes to
-  // window.focus — the dispatchEvent below triggers both refetches simultaneously.
+  // AI fully on — proves the rail does NOT ride the AI gate.
   await page.route('**/api/capabilities', (route: Route) =>
     route.fulfill({
       status: 200,
       contentType: 'application/json',
-      body: JSON.stringify(
-        aiMode !== 'off'
-          ? { ai: { ...allOffCapabilities.ai, inboxRanking: true, inboxEnrichment: true } }
-          : allOffCapabilities,
-      ),
+      body: JSON.stringify({
+        ai: { ...allOffCapabilities.ai, inboxRanking: true, inboxEnrichment: true },
+      }),
     }),
   );
   await page.route('**/api/events', (route: Route) =>
@@ -329,39 +329,15 @@ test('AI preview toggle reveals activity rail', async ({ page }) => {
       body: JSON.stringify(sampleInbox),
     }),
   );
-  // SettingsPage > AuthSection consumes GET /api/submit/in-flight (via
-  // useSubmitInFlight). Mock it so /settings renders without falling through to
-  // the dev server.
-  await page.route('**/api/submit/in-flight', (route: Route) =>
-    route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify({ inFlight: false, prRef: null }),
-    }),
-  );
 
+  // Flag off (default) + AI on → rail NOT rendered.
   await page.goto('/');
   await expect(page.getByText('Refactor auth flow')).toBeVisible({ timeout: 30_000 });
-
-  // Activity rail is not rendered at all when aiMode is 'off'
-  // (InboxPage renders {showActivityRail && <ActivityRail />}).
   await expect(page.getByRole('complementary', { name: /activity/i })).not.toBeAttached();
 
-  // The navbar quick-toggle was removed; the AI mode control now lives only on
-  // the Settings Appearance pane (an Off | Preview SegmentedControl of radios).
-  // Click the Preview radio there, then re-navigate to "/". A fresh navigation
-  // remounts InboxPage so usePreferences + useCapabilities refetch and see
-  // aiMode='preview' AND inboxRanking=true from the now-mutated mock state —
-  // this replaces the old window.dispatchEvent(new Event('focus')) trick.
-  await page.goto('/settings/appearance');
-  const previewRadio = page.getByRole('radio', { name: 'Preview' });
-  await previewRadio.waitFor({ timeout: 30_000 });
-  const toggleResponse = page.waitForResponse(
-    (r) => r.url().includes('/api/preferences') && r.request().method() === 'POST',
-  );
-  await previewRadio.click();
-  await toggleResponse;
-
+  // Flip the dedicated flag on (config-edit equivalent — no UI control by design) and
+  // remount: the rail now appears, with AI preview unchanged.
+  showActivityRail = true;
   await page.goto('/');
   await expect(page.getByText('Refactor auth flow')).toBeVisible({ timeout: 30_000 });
   await expect(page.getByRole('complementary', { name: /activity/i })).toBeVisible({

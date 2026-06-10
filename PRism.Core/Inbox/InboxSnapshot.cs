@@ -6,7 +6,8 @@ namespace PRism.Core.Inbox;
 public sealed record InboxSnapshot(
     IReadOnlyDictionary<string, IReadOnlyList<PrInboxItem>> Sections,
     IReadOnlyDictionary<string, InboxItemEnrichment> Enrichments,
-    DateTimeOffset LastRefreshedAt)
+    DateTimeOffset LastRefreshedAt,
+    bool CiProbeComplete = true)
 {
     public static InboxSnapshot Empty { get; } = new(
         new Dictionary<string, IReadOnlyList<PrInboxItem>>(),

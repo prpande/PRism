@@ -6,9 +6,10 @@
   border-bottom: 0;
 }
 
-/* Repo header reads as a distinct group band, not another row: filled surface,
-   stronger weight + foreground than the PR rows beneath it, so the grouping is
-   obvious at a glance. */
+/* Repo header reads as a distinct group band, not another row. The band cues —
+   filled surface, top border, repo glyph, count pill, and the mono repo name —
+   carry the grouping; weight stays medium (matching the rows) so the header
+   divides quietly rather than competing with the PR titles beneath it. */
 .header {
   display: flex;
   align-items: center;
@@ -16,7 +17,7 @@
   width: 100%;
   padding: var(--s-2) var(--s-4);
   font-size: var(--text-sm);
-  font-weight: 600;
+  font-weight: 500;
   color: var(--text-1);
   background: var(--surface-2);
   border-top: 1px solid var(--border-1);
@@ -55,9 +56,4 @@
   font-size: var(--text-2xs);
   font-variant-numeric: tabular-nums;
   font-weight: 500;
-}
-
-/* Rows indent under the band so the group reads as nested. */
-.body {
-  padding-left: var(--s-4);
 }

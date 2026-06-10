@@ -79,4 +79,10 @@ describe('RepoGroupAccordion', () => {
     renderAcc(true);
     expect(screen.getAllByText('acme/api')).toHaveLength(1);
   });
+
+  it('renders its nested rows as grouped (data-grouped=true)', () => {
+    const { container } = renderAcc(true);
+    const rows = container.querySelectorAll('button[data-grouped="true"]');
+    expect(rows.length).toBe(2); // the shared `group` const has 2 items
+  });
 });

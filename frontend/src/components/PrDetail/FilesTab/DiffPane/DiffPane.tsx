@@ -328,7 +328,7 @@ export function DiffPane({
   if (isLoading && !file) {
     return (
       <div className={`diff-pane ${styles.diffPane}`} data-testid="diff-pane">
-        <div className={`diff-pane-header ${styles.diffPaneHeader}`}>
+        <div className={`diff-pane-header ${styles.diffPaneHeader}`} data-testid="diff-pane-header">
           <span className={`diff-pane-path ${styles.diffPanePath}`}>{selectedPath}</span>
           <Spinner size="sm" className={styles.diffPaneLoading} />
         </div>
@@ -339,7 +339,7 @@ export function DiffPane({
   if (!file || file.hunks.length === 0) {
     return (
       <div className={`diff-pane ${styles.diffPane}`} data-testid="diff-pane">
-        <div className={`diff-pane-header ${styles.diffPaneHeader}`}>
+        <div className={`diff-pane-header ${styles.diffPaneHeader}`} data-testid="diff-pane-header">
           <span className={`diff-pane-path ${styles.diffPanePath}`}>{selectedPath}</span>
         </div>
         <div className={`diff-pane-body muted ${styles.diffPaneBody}`}>
@@ -557,6 +557,7 @@ export function DiffPane({
             filePath={path}
             syntax={syntax}
             isFilled={line.isFilled}
+            isAnchored={!!threadsByLine.get(line.newLineNum ?? -1)?.length}
             onLineClick={onLineClick}
           />,
         );
@@ -577,6 +578,7 @@ export function DiffPane({
               newText={next.content}
               filePath={path}
               syntax={syntax}
+              isAnchored={!!threadsByLine.get(next.newLineNum ?? -1)?.length}
               onLineClick={onLineClick}
             />,
           );
@@ -606,6 +608,7 @@ export function DiffPane({
             content={line.content}
             filePath={path}
             syntax={syntax}
+            isAnchored={!!threadsByLine.get(line.newLineNum ?? -1)?.length}
             onLineClick={onLineClick}
           />,
         );
@@ -621,7 +624,7 @@ export function DiffPane({
       className={`diff-pane ${modeClass}${wrapClass} ${styles.diffPane}`}
       data-testid="diff-pane"
     >
-      <div className={`diff-pane-header ${styles.diffPaneHeader}`}>
+      <div className={`diff-pane-header ${styles.diffPaneHeader}`} data-testid="diff-pane-header">
         <span className={`diff-pane-path ${styles.diffPanePath}`}>{selectedPath}</span>
         {/* Suppress the header spinner while the whole-file overlay spinner is
             active so only one role=status live region announces at a time. */}
@@ -703,7 +706,8 @@ function DiffLineRow({
   renderComposerForLine,
   replyContext,
 }: DiffLineRowProps) {
-  const rowClass = `diff-line diff-line--${line.type}`;
+  const isAnchored = (threadsAtLine?.length ?? 0) > 0;
+  const rowClass = `diff-line diff-line--${line.type}${isAnchored ? ' diff-line--commented' : ''}`;
 
   const renderContent = () => {
     if (line.type === 'hunk-header') {
@@ -781,7 +785,17 @@ function DiffLineRow({
             (line.newLineNum ?? '')
           )}
         </td>
-        <td className={`diff-content ${styles.diffContent}`}>{renderContent()}</td>
+        {/* The hunk-header row's <td> inherits the scaled font-size from the
+            row, but its visible content is a fixed-size `.diffHunkHeader` span —
+            so a font-size assertion against this cell would pass for the wrong
+            reason. Skip the testid on hunk-header so e2e only measures real
+            code cells (#135 review). */}
+        <td
+          className={`diff-content ${styles.diffContent}`}
+          {...(line.type !== 'hunk-header' ? { 'data-testid': 'diff-code-line' } : {})}
+        >
+          {renderContent()}
+        </td>
       </tr>
       {threadsAtLine && threadsAtLine.length > 0 && (
         <tr className={`diff-comment-row ${styles.diffCommentRow}`}>
@@ -814,6 +828,7 @@ interface SplitDiffLineRowProps {
   filePath: string;
   syntax: SyntaxTokenMaps;
   isFilled?: boolean;
+  isAnchored?: boolean;
   onLineClick?: (anchor: InlineAnchor) => void;
 }
 
@@ -827,6 +842,7 @@ function SplitDiffLineRow({
   filePath,
   syntax,
   isFilled,
+  isAnchored,
   onLineClick,
 }: SplitDiffLineRowProps) {
   if (kind === 'header') {
@@ -857,7 +873,11 @@ function SplitDiffLineRow({
         <td className={`diff-gutter diff-gutter--old ${styles.diffGutter} ${styles.diffGutterOld}`}>
           {oldLineNum ?? ''}
         </td>
-        <td data-side="old" className={`diff-content ${styles.diffContent}`}>
+        <td
+          data-side="old"
+          className={`diff-content ${styles.diffContent}`}
+          data-testid="diff-code-line"
+        >
           <HighlightedLine
             spans={tokensFor(syntax, 'old', oldLineNum)}
             fallback={normalizeEol(content ?? '')}
@@ -877,7 +897,12 @@ function SplitDiffLineRow({
             (newLineNum ?? '')
           )}
         </td>
-        <td data-side="new" className={`diff-content ${styles.diffContent}`}>
+        <td
+          data-side="new"
+          className={`diff-content ${styles.diffContent}`}
+          data-testid="diff-code-line"
+          {...(isAnchored ? { 'data-commented': 'true' } : {})}
+        >
           <HighlightedLine
             spans={tokensFor(syntax, 'new', newLineNum)}
             fallback={normalizeEol(content ?? '')}
@@ -893,7 +918,11 @@ function SplitDiffLineRow({
         <td className={`diff-gutter diff-gutter--old ${styles.diffGutter} ${styles.diffGutterOld}`}>
           {oldLineNum ?? ''}
         </td>
-        <td data-side="old" className={`diff-content ${styles.diffContent}`}>
+        <td
+          data-side="old"
+          className={`diff-content ${styles.diffContent}`}
+          data-testid="diff-code-line"
+        >
           <HighlightedLine
             spans={tokensFor(syntax, 'old', oldLineNum)}
             fallback={normalizeEol(content ?? '')}
@@ -948,7 +977,12 @@ function SplitDiffLineRow({
             (newLineNum ?? '')
           )}
         </td>
-        <td data-side="new" className={`diff-content ${styles.diffContent}`}>
+        <td
+          data-side="new"
+          className={`diff-content ${styles.diffContent}`}
+          data-testid="diff-code-line"
+          {...(isAnchored ? { 'data-commented': 'true' } : {})}
+        >
           <HighlightedLine
             spans={tokensFor(syntax, 'new', newLineNum)}
             fallback={normalizeEol(content ?? '')}
@@ -974,7 +1008,11 @@ function SplitDiffLineRow({
         <td className={`diff-gutter diff-gutter--old ${styles.diffGutter} ${styles.diffGutterOld}`}>
           {oldLineNum ?? ''}
         </td>
-        <td data-side="old" className={`diff-content ${styles.diffContent}`}>
+        <td
+          data-side="old"
+          className={`diff-content ${styles.diffContent}`}
+          data-testid="diff-code-line"
+        >
           <MergedPairedContent
             syntax={syntax}
             side="old"
@@ -997,7 +1035,12 @@ function SplitDiffLineRow({
             (newLineNum ?? '')
           )}
         </td>
-        <td data-side="new" className={`diff-content ${styles.diffContent}`}>
+        <td
+          data-side="new"
+          className={`diff-content ${styles.diffContent}`}
+          data-testid="diff-code-line"
+          {...(isAnchored ? { 'data-commented': 'true' } : {})}
+        >
           <MergedPairedContent
             syntax={syntax}
             side="new"

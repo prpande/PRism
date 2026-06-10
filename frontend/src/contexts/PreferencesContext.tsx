@@ -20,26 +20,46 @@ export type PreferenceKey =
   | 'accent'
   | 'ui.ai.mode'
   | 'density'
+  | 'contentScale'
+  | 'inbox.defaultSort'
+  | 'inbox.sectionOrder'
+  | 'inbox.showActivityRail'
+  | 'inbox.groupByRepo'
   | `inbox.sections.${
       | 'review-requested'
       | 'awaiting-author'
       | 'authored-by-me'
       | 'mentioned'
-      | 'ci-failing'
       | 'recently-closed'}`;
 
-type InboxSectionKey = Exclude<PreferenceKey, 'theme' | 'accent' | 'density' | 'ui.ai.mode'>;
+type InboxSectionKey = Exclude<
+  PreferenceKey,
+  | 'theme'
+  | 'accent'
+  | 'ui.ai.mode'
+  | 'density'
+  | 'contentScale'
+  | 'inbox.defaultSort'
+  | 'inbox.sectionOrder'
+  | 'inbox.showActivityRail'
+  | 'inbox.groupByRepo'
+>;
 
-function readKey(prefs: PreferencesResponse, key: PreferenceKey): unknown {
+export function readKey(prefs: PreferencesResponse, key: PreferenceKey): unknown {
   if (key === 'theme') return prefs.ui.theme;
   if (key === 'accent') return prefs.ui.accent;
   if (key === 'ui.ai.mode') return prefs.ui.aiMode;
   if (key === 'density') return prefs.ui.density;
+  if (key === 'contentScale') return prefs.ui.contentScale;
+  if (key === 'inbox.defaultSort') return prefs.inbox.defaultSort;
+  if (key === 'inbox.sectionOrder') return prefs.inbox.sectionOrder;
+  if (key === 'inbox.showActivityRail') return prefs.inbox.showActivityRail;
+  if (key === 'inbox.groupByRepo') return prefs.inbox.groupByRepo;
   const id = key.slice('inbox.sections.'.length) as keyof PreferencesResponse['inbox']['sections'];
   return prefs.inbox.sections[id];
 }
 
-function writeKey(
+export function writeKey(
   prefs: PreferencesResponse,
   key: PreferenceKey,
   value: unknown,
@@ -54,6 +74,31 @@ function writeKey(
       ...prefs,
       ui: { ...prefs.ui, density: value as PreferencesResponse['ui']['density'] },
     };
+  if (key === 'contentScale')
+    return {
+      ...prefs,
+      ui: { ...prefs.ui, contentScale: value as PreferencesResponse['ui']['contentScale'] },
+    };
+  if (key === 'inbox.defaultSort')
+    return {
+      ...prefs,
+      inbox: {
+        ...prefs.inbox,
+        defaultSort: value as PreferencesResponse['inbox']['defaultSort'],
+      },
+    };
+  if (key === 'inbox.sectionOrder')
+    return {
+      ...prefs,
+      inbox: {
+        ...prefs.inbox,
+        sectionOrder: value as PreferencesResponse['inbox']['sectionOrder'],
+      },
+    };
+  if (key === 'inbox.showActivityRail')
+    return { ...prefs, inbox: { ...prefs.inbox, showActivityRail: value as boolean } };
+  if (key === 'inbox.groupByRepo')
+    return { ...prefs, inbox: { ...prefs.inbox, groupByRepo: value as boolean } };
   const id = (key as InboxSectionKey).slice(
     'inbox.sections.'.length,
   ) as keyof PreferencesResponse['inbox']['sections'];
@@ -139,7 +184,7 @@ function usePreferencesStore(enabled: boolean): PreferencesContextValue {
         if (preferences && priorValue !== undefined) {
           setPreferences((cur) => (cur ? writeKey(cur, key, priorValue) : cur));
         }
-        // Generic copy: the internal dotted-path key (`inbox.sections.ci-failing`,
+        // Generic copy: the internal dotted-path key (`inbox.sections.awaiting-author`,
         // etc.) is a wire-format detail with no value to the end user. If a
         // consumer wants key-specific wording it can catch the rejection and
         // show its own toast.

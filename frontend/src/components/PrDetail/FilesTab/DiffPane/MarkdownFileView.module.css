@@ -30,7 +30,7 @@
 }
 .markdownRaw {
   font-family: var(--font-mono);
-  font-size: var(--text-sm);
+  font-size: calc(var(--text-sm) * var(--content-scale));
   white-space: pre;
   overflow-x: auto;
   padding: var(--s-3);

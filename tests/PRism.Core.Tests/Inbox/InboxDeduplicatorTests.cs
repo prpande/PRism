@@ -49,18 +49,22 @@ public sealed class InboxDeduplicatorTests
     }
 
     [Fact]
-    public void Pr_in_section_3_and_5_appears_only_in_section_5()
+    public void Does_not_reference_ci_failing_pair()
     {
-        var input = new Dictionary<string, IReadOnlyList<PrInboxItem>>
+        // The ci-failing > authored-by-me pair was removed in #262. A legacy snapshot
+        // that still carries a ci-failing key (version-skewed client) must NOT cause
+        // authored-by-me to be demoted — there is no such pair anymore.
+        var pr = new PrInboxItem(new PrReference("acme", "api", 1), "t", "a", "acme/api",
+            DateTimeOffset.UtcNow, DateTimeOffset.UtcNow, 1, 0, 0, 0, "sha", CiStatus.Failing, null, null);
+        var sections = new Dictionary<string, IReadOnlyList<PrInboxItem>>
         {
-            ["authored-by-me"] = new[] { Pr(1) },
-            ["ci-failing"] = new[] { Pr(1) },
+            ["authored-by-me"] = new[] { pr },
+            ["ci-failing"]     = new[] { pr },   // legacy shape; must NOT be collapsed now
         };
 
-        var result = _sut.Deduplicate(input, deduplicate: true);
+        var result = _sut.Deduplicate(sections, deduplicate: true);
 
-        result["authored-by-me"].Should().BeEmpty();
-        result["ci-failing"].Should().ContainSingle(p => p.Reference.Number == 1);
+        result["authored-by-me"].Should().ContainSingle();   // not demoted away by a ci-failing winner
     }
 
     [Fact]
@@ -80,23 +84,22 @@ public sealed class InboxDeduplicatorTests
     }
 
     [Fact]
-    public void Pr_in_all_four_dedupe_groups_resolves_per_pair()
+    public void Pr_in_review_requested_and_mentioned_and_authored_resolves_per_pair()
     {
-        // PR 1 is in 1+4 (resolves to 1) AND in 3+5 (resolves to 5)
+        // PR 1 is in review-requested+mentioned (resolves to review-requested).
+        // authored-by-me is NOT in any pair with review-requested, so it keeps the PR.
         var input = new Dictionary<string, IReadOnlyList<PrInboxItem>>
         {
             ["review-requested"] = new[] { Pr(1) },
             ["authored-by-me"] = new[] { Pr(1) },
             ["mentioned"] = new[] { Pr(1) },
-            ["ci-failing"] = new[] { Pr(1) },
         };
 
         var result = _sut.Deduplicate(input, deduplicate: true);
 
         result["review-requested"].Should().ContainSingle();
         result["mentioned"].Should().BeEmpty();
-        result["authored-by-me"].Should().BeEmpty();
-        result["ci-failing"].Should().ContainSingle();
+        result["authored-by-me"].Should().ContainSingle(); // no pair removes it
     }
 
     [Fact]
@@ -110,19 +113,23 @@ public sealed class InboxDeduplicatorTests
     [Fact]
     public void Section_ordering_preserved()
     {
+        // Pins that input insertion order is preserved through the dedup pass.
+        // This is NOT canonical UI order (which is the endpoint's SectionOrder job).
+        // Do NOT remove the endpoint's OrderBy reasoning that this test makes it safe —
+        // the deduplicator makes no ordering guarantees beyond echoing back what it received.
         var input = new Dictionary<string, IReadOnlyList<PrInboxItem>>
         {
             ["review-requested"] = Array.Empty<PrInboxItem>(),
             ["awaiting-author"] = Array.Empty<PrInboxItem>(),
             ["authored-by-me"] = Array.Empty<PrInboxItem>(),
             ["mentioned"] = Array.Empty<PrInboxItem>(),
-            ["ci-failing"] = Array.Empty<PrInboxItem>(),
+            ["recently-closed"] = Array.Empty<PrInboxItem>(),
         };
 
         var result = _sut.Deduplicate(input, deduplicate: true);
 
         result.Keys.Should().ContainInOrder(
-            "review-requested", "awaiting-author", "authored-by-me", "mentioned", "ci-failing");
+            "review-requested", "awaiting-author", "authored-by-me", "mentioned", "recently-closed");
     }
 
     [Fact]
@@ -158,18 +165,21 @@ public sealed class InboxDeduplicatorTests
     [Fact]
     public void No_pr_appears_in_two_sections_after_dedupe()
     {
+        // review-requested+mentioned share PR 1 → mentioned drops it.
+        // authored-by-me and awaiting-author are not in any pair, so they keep their PRs.
         var input = new Dictionary<string, IReadOnlyList<PrInboxItem>>
         {
             ["review-requested"] = new[] { Pr(1), Pr(2) },
             ["awaiting-author"] = new[] { Pr(3) },
             ["authored-by-me"] = new[] { Pr(4), Pr(5) },
             ["mentioned"] = new[] { Pr(1), Pr(6) },
-            ["ci-failing"] = new[] { Pr(4) },
         };
 
         var result = _sut.Deduplicate(input, deduplicate: true);
 
-        var allRefs = result.Values.SelectMany(v => v).Select(p => p.Reference).ToList();
-        allRefs.Should().OnlyHaveUniqueItems();
+        // PR 1 is in review-requested (winner) and mentioned (loser — dropped).
+        result["review-requested"].Should().Contain(p => p.Reference.Number == 1);
+        result["mentioned"].Should().NotContain(p => p.Reference.Number == 1);
+        result["mentioned"].Should().Contain(p => p.Reference.Number == 6);
     }
 }

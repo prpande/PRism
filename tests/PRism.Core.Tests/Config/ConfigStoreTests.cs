@@ -20,6 +20,7 @@ public class ConfigStoreTests
         store.Current.Ui.Theme.Should().Be("system");
         store.Current.Ui.Accent.Should().Be("indigo");
         store.Current.Ui.Ai.Mode.Should().Be(AiMode.Off);
+        store.Current.Inbox.ShowActivityRail.Should().BeFalse(); // #283 rail decoupled from AI, default OFF
         store.Current.Github.Host.Should().Be("https://github.com");
         File.Exists(Path.Combine(dir.Path, "config.json")).Should().BeTrue();
     }
@@ -167,7 +168,6 @@ public class ConfigStoreTests
         store.Current.Inbox.Sections.AwaitingAuthor.Should().BeTrue();
         store.Current.Inbox.Sections.AuthoredByMe.Should().BeTrue();
         store.Current.Inbox.Sections.Mentioned.Should().BeTrue();
-        store.Current.Inbox.Sections.CiFailing.Should().BeTrue();
     }
 
     [Fact]
@@ -200,7 +200,6 @@ public class ConfigStoreTests
         store.Current.Inbox.Sections.AwaitingAuthor.Should().BeTrue();
         store.Current.Inbox.Sections.AuthoredByMe.Should().BeTrue();
         store.Current.Inbox.Sections.Mentioned.Should().BeTrue();
-        store.Current.Inbox.Sections.CiFailing.Should().BeTrue();
     }
 
     [Fact]
@@ -230,6 +229,47 @@ public class ConfigStoreTests
         store.Current.Inbox.Sections.ReviewRequested.Should().BeTrue();
     }
 
+    // #283 AC #1: an EXISTING config that carries ui.aiPreview = false is preserved on load
+    // (the new default-on does NOT overwrite a value physically present on disk).
+    [Fact]
+    public async Task LoadAsync_preserves_existing_aiPreview_false()
+    {
+        using var dir = new TempDataDir();
+        // Keys are kebab-case to match JsonSerializerOptionsFactory.Storage's
+        // KebabCaseJsonNamingPolicy (PropertyNameCaseInsensitive = false). A camelCase
+        // "aiPreview" key would be unrecognized → AiPreview falls back to default(false) and
+        // the test would pass VACUOUSLY (proving "unknown key → false", not preservation).
+        // Caught by claude[bot] on PR #309.
+        var json = """
+            { "ui": { "theme": "system", "accent": "indigo", "ai-preview": false, "density": "comfortable", "content-scale": "m" } }
+            """;
+        await File.WriteAllTextAsync(Path.Combine(dir.Path, "config.json"), json);
+
+        using var store = new ConfigStore(dir.Path);
+        await store.InitAsync(CancellationToken.None);
+
+        store.Current.Ui.Ai.Mode.Should().Be(AiMode.Off); // saved legacy ai-preview:false migrates to mode off
+    }
+
+    // #283: a config whose `ui` section is present but lacks the `aiPreview` key deserializes
+    // the non-nullable bool to default(false) — it stays OFF, NOT the new default-on. Documents
+    // the precise preservation boundary (key-present vs ui-section-present-but-key-absent).
+    [Fact]
+    public async Task LoadAsync_with_ui_present_but_aiPreview_key_absent_is_off()
+    {
+        using var dir = new TempDataDir();
+        var json = """
+            { "ui": { "theme": "dark", "accent": "amber" } }
+            """;
+        await File.WriteAllTextAsync(Path.Combine(dir.Path, "config.json"), json);
+
+        using var store = new ConfigStore(dir.Path);
+        await store.InitAsync(CancellationToken.None);
+
+        store.Current.Ui.Theme.Should().Be("dark");          // ui section honored
+        store.Current.Ui.Ai.Mode.Should().Be(AiMode.Off);    // ui present but ai absent → backfilled to default Off
+    }
+
     [Fact]
     public void AppConfig_roundtrips_expanded_inbox_config_via_json()
     {
@@ -244,6 +284,6 @@ public class ConfigStoreTests
         parsed.Inbox.Sections.AwaitingAuthor.Should().BeTrue();
         parsed.Inbox.Sections.AuthoredByMe.Should().BeTrue();
         parsed.Inbox.Sections.Mentioned.Should().BeTrue();
-        parsed.Inbox.Sections.CiFailing.Should().BeTrue();
+        parsed.Inbox.ShowActivityRail.Should().BeFalse(); // #283 survives the JSON round-trip, default off
     }
 }

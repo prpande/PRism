@@ -17,6 +17,7 @@ public sealed class ConfigStore : IConfigStore, IDisposable
     // / `density` keys are the legacy S0+S1 wire shape (under `ui.*` in config.json but flat
     // on the wire); preserved for back-compat with the existing POST /api/preferences
     // single-field contract. `density` was added in PR9b alongside the same UiConfig sub-record.
+    // `contentScale` was added in #135 alongside UiConfig.ContentScale, following the same bare-`ui.*`-key pattern.
     // The dotted-path `inbox.sections.*` keys (S6 PR1) map onto InboxSectionsConfig in
     // AppConfig.cs — canonical section set documented in docs/spec/03-poc-features.md § 11.
     //
@@ -37,13 +38,37 @@ public sealed class ConfigStore : IConfigStore, IDisposable
             ["aiPreview"]                        = ConfigFieldType.Bool,    // legacy FE toggle — translated to ui.ai.mode below
             ["ui.ai.mode"]                       = ConfigFieldType.String,  // tri-state (off|preview|live)
             ["density"]                          = ConfigFieldType.String,
+            ["contentScale"]                     = ConfigFieldType.String,
             ["inbox.sections.review-requested"]  = ConfigFieldType.Bool,
             ["inbox.sections.awaiting-author"]   = ConfigFieldType.Bool,
             ["inbox.sections.authored-by-me"]    = ConfigFieldType.Bool,
             ["inbox.sections.mentioned"]         = ConfigFieldType.Bool,
-            ["inbox.sections.ci-failing"]        = ConfigFieldType.Bool,
             ["inbox.sections.recently-closed"]   = ConfigFieldType.Bool,
+            ["inbox.defaultSort"]                = ConfigFieldType.String,
+            ["inbox.sectionOrder"]               = ConfigFieldType.String,
+            // #283 dedicated non-AI flag gating the activity rail (default OFF). #137 wired
+            // the rail to real /api/activity data + a Settings toggle. Apply-switch arm below.
+            ["inbox.showActivityRail"]           = ConfigFieldType.Bool,
+            // #219 toggle: group the Inbox by repo (default) vs flat. Apply-switch arm below.
+            ["inbox.groupByRepo"]                = ConfigFieldType.Bool,
         };
+
+    // #262 PR3: inbox.defaultSort is a string-typed key with a CLOSED value set (unlike
+    // theme/accent/density, which accept any string — Deviation 6). The pre-gate validation
+    // below rejects an out-of-set value with a ConfigPatchException so the endpoint returns
+    // 400 rather than persisting a sort the frontend can't render.
+    private static readonly HashSet<string> _allowedSorts =
+        new(StringComparer.Ordinal) { "updated", "pushed", "diff", "comments" };
+
+    // #275: inbox.sectionOrder is a string-typed key whose value must be a permutation
+    // of exactly these four work-section ids (recently-closed is pinned in the frontend
+    // and never part of the persisted order). Validated BEFORE the gate so a malformed
+    // value returns 400, not a persisted order the frontend can't render coherently.
+    // Keep in sync with the frontend SSOT CANONICAL_WORK_ORDER in
+    // frontend/src/components/Inbox/sectionOrder.ts — if a 5th work section is ever
+    // added it must be added in both places (and the default in AppConfig.SectionOrder).
+    private static readonly string[] _workSectionIds =
+        { "review-requested", "awaiting-author", "authored-by-me", "mentioned" };
 
     public ConfigStore(string dataDir)
     {
@@ -129,6 +154,31 @@ public sealed class ConfigStore : IConfigStore, IDisposable
                     $"field '{key}' expects a bool value (got {DescribeValue(value)})");
         }
 
+        // Closed-set value validation BEFORE the gate (mirrors the per-key type check above).
+        // The switch already guaranteed `value is string` for inbox.defaultSort, so the cast
+        // is safe. Reject an unknown sort with a clear message naming the field. (#262 PR3.)
+        if (key == "inbox.defaultSort" && !_allowedSorts.Contains((string)value!))
+            throw new ConfigPatchException(
+                $"field 'inbox.defaultSort' expects one of updated|pushed|diff|comments (got '{(string)value!}')");
+
+        if (key == "inbox.sectionOrder")
+        {
+            // TrimEntries (tolerate surrounding spaces) but NOT RemoveEmptyEntries:
+            // an empty segment from a trailing/leading/double comma must survive so the
+            // count check rejects it. Dropping empties would silently accept (and persist)
+            // a malformed string like "a,b,c,d," — violating strict-write. (Copilot PR #303.)
+            var ids = ((string)value!).Split(',', StringSplitOptions.TrimEntries);
+            var ordered = new HashSet<string>(ids, StringComparer.Ordinal);
+            if (ids.Length != _workSectionIds.Length
+                || ordered.Count != ids.Length
+                || !_workSectionIds.All(ordered.Contains))
+            {
+                throw new ConfigPatchException(
+                    "field 'inbox.sectionOrder' expects a comma-separated permutation of the four " +
+                    "work-section ids (review-requested, awaiting-author, authored-by-me, mentioned)");
+            }
+        }
+
         await _gate.WaitAsync(ct).ConfigureAwait(false);
         try
         {
@@ -141,6 +191,7 @@ public sealed class ConfigStore : IConfigStore, IDisposable
                 "aiPreview"  => _current with { Ui = ui with { Ai = ui.Ai with { Mode = (bool)value! ? AiMode.Preview : AiMode.Off } } },
                 "ui.ai.mode" => _current with { Ui = ui with { Ai = ui.Ai with { Mode = ParseAiMode((string)value!) } } },
                 "density"   => _current with { Ui = ui with { Density = (string)value! } },
+                "contentScale" => _current with { Ui = ui with { ContentScale = (string)value! } },
                 "inbox.sections.review-requested" =>
                     _current with { Inbox = _current.Inbox with { Sections = sections with { ReviewRequested = (bool)value! } } },
                 "inbox.sections.awaiting-author" =>
@@ -149,10 +200,16 @@ public sealed class ConfigStore : IConfigStore, IDisposable
                     _current with { Inbox = _current.Inbox with { Sections = sections with { AuthoredByMe    = (bool)value! } } },
                 "inbox.sections.mentioned" =>
                     _current with { Inbox = _current.Inbox with { Sections = sections with { Mentioned       = (bool)value! } } },
-                "inbox.sections.ci-failing" =>
-                    _current with { Inbox = _current.Inbox with { Sections = sections with { CiFailing       = (bool)value! } } },
                 "inbox.sections.recently-closed" =>
                     _current with { Inbox = _current.Inbox with { Sections = sections with { RecentlyClosed  = (bool)value! } } },
+                "inbox.defaultSort" =>
+                    _current with { Inbox = _current.Inbox with { DefaultSort = (string)value! } },
+                "inbox.sectionOrder" =>
+                    _current with { Inbox = _current.Inbox with { SectionOrder = (string)value! } },
+                "inbox.showActivityRail" =>
+                    _current with { Inbox = _current.Inbox with { ShowActivityRail = (bool)value! } },
+                "inbox.groupByRepo" =>
+                    _current with { Inbox = _current.Inbox with { GroupByRepo = (bool)value! } },
                 _ => throw new ConfigPatchException($"unknown field: {key}")
             };
             await WriteToDiskAsync(ct).ConfigureAwait(false);

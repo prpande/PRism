@@ -1,0 +1,39 @@
+/* CollapsedComposerAffordance.module.css — mirrors PrRootConversation's
+   .prRootReplyButton input-placeholder treatment. */
+.affordance {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  width: 100%;
+  text-align: left;
+  font-size: var(--text-sm);
+  color: var(--text-3);
+  background: var(--surface-2);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-2);
+  padding: 8px 12px;
+  cursor: text;
+  transition:
+    border-color var(--t-fast),
+    color var(--t-fast);
+}
+.affordance:hover {
+  border-color: var(--border-strong);
+  color: var(--text-2);
+}
+/* Cross-tab readOnly → native `disabled`. Style it explicitly so it keeps the
+   resting muted-placeholder look (no browser-default opacity dimming) while
+   reading as inert: default cursor, no hover brighten. */
+.affordance:disabled {
+  cursor: default;
+  color: var(--text-3);
+  opacity: 1;
+}
+.affordance:disabled:hover {
+  border-color: var(--border-1);
+  color: var(--text-3);
+}
+.label {
+  flex: 1;
+  min-width: 0;
+}

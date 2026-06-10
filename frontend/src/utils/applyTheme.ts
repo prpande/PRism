@@ -1,4 +1,4 @@
-import type { Accent, Density, Theme } from '../api/types';
+import type { Accent, ContentScale, Density, Theme } from '../api/types';
 
 const ACCENT_HUES: Record<Accent, { h: number; c: number }> = {
   indigo: { h: 245, c: 0.085 },
@@ -44,5 +44,21 @@ export function applyDensityToDocument(density: Density): void {
     document.documentElement.setAttribute('data-density', 'compact');
   } else {
     document.documentElement.removeAttribute('data-density');
+  }
+}
+
+// #135 — content font-size scaling. Mirrors applyDensityToDocument's key-scoped
+// DOM-applier pattern: AppearanceSync (boot + change) and AppearancePane (interactive
+// picker) both call this so the visible `data-content-scale` attribute on <html>
+// updates without waiting for a refetch. The multiplier→size mapping lives in CSS
+// (tokens.css), so this only sets the selector. Defensive on any value outside the
+// enum: the wire shape is `string` (validated for type, not membership), and "m"
+// (Default) writes no attribute — both fall through to the :root 1× default.
+export function applyContentScaleToDocument(value: ContentScale): void {
+  if (typeof document === 'undefined') return;
+  if (value === 'xs' || value === 's' || value === 'l' || value === 'xl') {
+    document.documentElement.setAttribute('data-content-scale', value);
+  } else {
+    document.documentElement.removeAttribute('data-content-scale');
   }
 }

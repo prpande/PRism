@@ -67,14 +67,19 @@ internal static class PreferencesEndpoints
 #pragma warning disable CA1308 // lowercase mode names (off|preview|live) are the wire contract surfaced to the renderer. ToLowerInvariant()==kebab holds only while every AiMode member is a single word; in lockstep with ConfigStore.ParseAiMode + KebabCaseJsonNamingPolicy. A future multi-word member (e.g. LiveReadOnly) must move this to the kebab serializer so wire ("live-read-only") and parse stay aligned.
                     AiMode: ui.Ai.Mode.ToString().ToLowerInvariant(),
 #pragma warning restore CA1308
-                    ui.Density),
-            Inbox: new InboxPreferencesDto(new InboxSectionsDto(
-                ReviewRequested: sections.ReviewRequested,
-                AwaitingAuthor:  sections.AwaitingAuthor,
-                AuthoredByMe:    sections.AuthoredByMe,
-                Mentioned:       sections.Mentioned,
-                CiFailing:       sections.CiFailing,
-                RecentlyClosed:  sections.RecentlyClosed)),
+                    ui.Density,
+                    ui.ContentScale),
+            Inbox: new InboxPreferencesDto(
+                new InboxSectionsDto(
+                    ReviewRequested: sections.ReviewRequested,
+                    AwaitingAuthor:  sections.AwaitingAuthor,
+                    AuthoredByMe:    sections.AuthoredByMe,
+                    Mentioned:       sections.Mentioned,
+                    RecentlyClosed:  sections.RecentlyClosed),
+                config.Current.Inbox.DefaultSort,
+                config.Current.Inbox.SectionOrder,
+                config.Current.Inbox.ShowActivityRail,
+                config.Current.Inbox.GroupByRepo),
             Github: new GithubPreferencesDto(
                 Host:       config.Current.Github.Host,
                 ConfigPath: config.ConfigPath,

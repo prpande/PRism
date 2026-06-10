@@ -1,6 +1,11 @@
 import { usePreferences } from '../../../hooks/usePreferences';
-import { applyThemeToDocument, applyDensityToDocument } from '../../../utils/applyTheme';
-import type { Accent, Density, Theme } from '../../../api/types';
+import {
+  applyThemeToDocument,
+  applyDensityToDocument,
+  applyContentScaleToDocument,
+} from '../../../utils/applyTheme';
+import type { Accent, ContentScale, Density, Theme } from '../../../api/types';
+import { FontSizeSlider, SCALE_ORDER } from '../../controls/FontSizeSlider';
 import { SegmentedControl } from '../../controls/SegmentedControl';
 import { AccentSwatches } from '../../controls/AccentSwatches';
 import pane from './Pane.module.css';
@@ -38,6 +43,16 @@ export function AppearancePane() {
     applyDensityToDocument(value);
     void set('density', value).catch(() => applyDensityToDocument(density));
   };
+  const contentScale: ContentScale = (SCALE_ORDER as readonly ContentScale[]).includes(
+    preferences.ui.contentScale,
+  )
+    ? preferences.ui.contentScale
+    : 'm';
+  const onContentScale = (value: ContentScale) => {
+    const prior = contentScale; // captured before the optimistic DOM write
+    applyContentScaleToDocument(value);
+    void set('contentScale', value).catch(() => applyContentScaleToDocument(prior));
+  };
   // A `live` config (not user-selectable in P0) is shown as Preview-selected.
   const aiModeShown: 'off' | 'preview' =
     preferences.ui.aiMode === 'live' ? 'preview' : preferences.ui.aiMode;
@@ -59,7 +74,7 @@ export function AppearancePane() {
           <h2 id="appearance-heading" className={pane.title}>
             Appearance
           </h2>
-          <p className={pane.sub}>Theme, accent color, density, and AI mode</p>
+          <p className={pane.sub}>Theme, accent color, density, content size, and AI mode</p>
         </div>
       </div>
       <div className={pane.row}>
@@ -97,6 +112,15 @@ export function AppearancePane() {
             value={density}
             onChange={onDensity}
           />
+        </div>
+      </div>
+      <div className={pane.row}>
+        <div>
+          <div className={pane.label}>Content size</div>
+          <div className={pane.help}>Font size for PR content — comments, description, diffs</div>
+        </div>
+        <div className={pane.spring}>
+          <FontSizeSlider value={contentScale} onChange={onContentScale} />
         </div>
       </div>
       <div className={pane.row}>

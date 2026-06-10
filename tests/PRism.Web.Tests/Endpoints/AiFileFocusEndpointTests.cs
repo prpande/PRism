@@ -19,6 +19,8 @@ public class AiFileFocusEndpointTests
     public async Task Get_ai_file_focus_returns_204_when_aiPreview_is_off()
     {
         using var factory = new PRismWebApplicationFactory();
+        // Default AiModeState.Mode = Off → Noop seam → 204; set explicitly for clarity.
+        factory.Services.GetRequiredService<AiModeState>().Mode = AiMode.Off;
         var client = factory.CreateClient();
 
         var resp = await client.GetAsync(new Uri("/api/pr/octo/repo/1/ai/file-focus", UriKind.Relative));
