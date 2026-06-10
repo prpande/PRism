@@ -1,0 +1,35 @@
+/* Anchor the transient confirmation without shifting the toolbar row. */
+.group {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+/* "Refreshed" pill, pinned to the LEFT of the button so it never pushes the row.
+   Fades in then is unmounted by the component after ~3s (≥ the click min-interval). */
+.confirm {
+  position: absolute;
+  right: calc(100% + var(--s-2));
+  white-space: nowrap;
+  font-size: var(--text-xs);
+  color: var(--text-3);
+  pointer-events: none;
+  animation: refresh-confirm-in 120ms ease-out;
+}
+
+@keyframes refresh-confirm-in {
+  from {
+    opacity: 0;
+    transform: translateX(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .confirm {
+    animation: none;
+  }
+}
