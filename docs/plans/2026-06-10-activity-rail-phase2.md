@@ -12,7 +12,7 @@
 
 **Worktree:** `D:/src/PRism-137-activity-rail-phase2`, branch `feature/137-activity-rail-phase2` (cut from `main` @ `b1fe5252`, which has Phase 1 merged). This is a **gated (B1 visual + B2 auth/PAT) issue** — do NOT merge without owner B1 visual sign-off (final task).
 
-> **Wire-casing invariant (read before any frontend task):** PRism serializes all enums **kebab-case** via `JsonStringEnumConverter(KebabCaseJsonNamingPolicy)` (see `PRism.Web/.../JsonSerializerOptionsFactory` and the existing `ActivitySource` wire value `"received-event"`). So `ActivityVerb.ReviewRequested` goes on the wire as `"review-requested"`, `ActivityVerb.Mentioned` as `"mentioned"`, `ActivitySource.Notification` as `"notification"`. **Frontend unions, phrase maps, and tests MUST key on the kebab-case wire values, never the C# PascalCase or camelCase.** Task 10 pins this with an explicit wire-value assertion before the frontend mirrors it.
+> **Wire-casing invariant (read before any frontend task):** PRism serializes all enums **kebab-case** via `JsonStringEnumConverter(KebabCaseJsonNamingPolicy)` (see `PRism.Core/Json/JsonSerializerOptionsFactory` + `PRism.Core/Json/KebabCaseJsonNamingPolicy`, and the existing `ActivitySource` wire value `"received-event"`). So `ActivityVerb.ReviewRequested` goes on the wire as `"review-requested"`, `ActivityVerb.Mentioned` as `"mentioned"`, `ActivitySource.Notification` as `"notification"`. **Frontend unions, phrase maps, and tests MUST key on the kebab-case wire values, never the C# PascalCase or camelCase.** Task 10 pins this with an explicit wire-value assertion before the frontend mirrors it.
 
 ---
 
@@ -586,7 +586,7 @@ public static ActivityBuildResult Build(
     IReadOnlyList<RawReceivedEvent> events,
     IReadOnlyList<RawNotification> notifications,
     IReadOnlyList<string> watchedRepos,
-    string host,                 // GitHub host for constructed URLs (Watching, notification rewrite)
+    string host,                 // FULL configured GitHub host URL incl. scheme, e.g. "https://github.com" — NOT a bare hostname. `config.Current.Github.Host` is a full URL (AppConfig default "https://github.com"); pass it `TrimEnd('/')`. Construct URLs as $"{host}/..." — do NOT prepend "https://".
     DateTimeOffset now)
 ```
 
@@ -596,7 +596,7 @@ public static ActivityBuildResult Build(
 
 **Pipeline:**
 1. **Events** — window-filter + map → `ActivityItem` (`Source = ReceivedEvent`), event-`id` dedup (existing P1 logic). Events with null/empty `HtmlUrl`, null `ActorLogin`, or null `PrNumber` are dropped (existing P1 guard — fixtures MUST set these).
-2. **Notifications** — window-filter + normalize → `ActivityItem` (`Source = Notification`, `ActorLogin = null`, `Verb = NotificationReasonMap.ToVerb(reason)`, `Url = $"https://{host}/{repo}/pull/{pr}"`, `Title`, `Timestamp = updated_at`).
+2. **Notifications** — window-filter + normalize → `ActivityItem` (`Source = Notification`, `ActorLogin = null`, `Verb = NotificationReasonMap.ToVerb(reason)`, `Url = $"{host}/{repo}/pull/{pr}"` (host is the full base URL incl. scheme — see signature note), `Title`, `Timestamp = updated_at`).
 3. **Two-stage cross-feed merge** keyed on `(Repo, PrNumber, Verb)`:
    - **Stage A — group** all items by that key.
    - **Stage B — within each group:**
@@ -604,24 +604,28 @@ public static ActivityBuildResult Build(
      - **Notifications within a group are first deduped to the most-recent one** (GitHub re-emits the same `(repo, reason, PR)`; without this, two `comment` notifications on one PR render as two identical actorless rows).
      - The deduped notification: if **you-relevant** (`ReviewRequested`/`Mentioned`) → it stays its **own actorless row**. (By construction this is *always* the case for you-relevant notifications: their verbs have no event counterpart, so they are alone in their group. This is correct and intended — "you were asked to review" is actor-independent and must not be welded onto whichever actor happened to act; see `NotificationReasonMap`.) If **not you-relevant** and the group already has ≥1 event → **drop the notification** (it folds into the most-recent matching event, no new row). If not you-relevant and the group has 0 events → keep it as the (single, deduped) actorless row.
 4. **Sort** merged desc by `Timestamp`.
-5. **Slot-reserved ordering for the VISIBLE cap (`MaxActivityItems` = 12).** The client takes the first `MaxActivityItems` of the server's order (after bot-filter) **without re-sorting** — so the reservation must be baked into the server's ordering, not applied against the 50-item ceiling (reserving against 50 is a no-op: a fresh-notification flood still fills the visible top-12 and starves events). Build the ordered list so the first `MaxActivityItems` positions contain **at least `MinEventSlots` (4) event items when that many exist**: take the top `MaxActivityItems - MinEventSlots` (8) items by timestamp, then ensure the next slots up to 12 include the most-recent events not already chosen (promote events ahead of notifications to fill the reserved 4), then append the remainder by timestamp up to `MaxRawItems`. Document that the client must preserve server order (it already does: `slice(0, MAX_VISIBLE)` with no re-sort).
-6. **Watching.** `Count` = windowed merged items (the full pre-cap merged set) whose `Repo` matches (count is computed BEFORE the cap so a repo above the 12-cap never shows `idle`). Sort `Count` desc then name; `Count>0` first, pad with `idle` watched repos up to `MaxWatchingRows`; `Url = $"https://{host}/{repo}"`.
+5. **Slot-reserved ordering for the VISIBLE cap (`MaxActivityItems` = 12).** The client takes the first `MaxActivityItems` of the server's order (after bot-filter) **without re-sorting** — so the reservation must be baked into the server's ordering, not applied against the 50-item ceiling (reserving against 50 is a no-op: a fresh-notification flood still fills the visible top-12 and starves events). Build the ordered list so the first `MaxActivityItems` positions contain **at least `MinEventSlots` (4) NON-BOT event items when that many exist**: take the top `MaxActivityItems - MinEventSlots` (8) items by timestamp, then ensure the next slots up to 12 include the most-recent non-bot events not already chosen (promote non-bot events ahead of notifications to fill the reserved 4), then append the remainder by timestamp up to `MaxRawItems`. Document that the client must preserve server order (it already does: `slice(0, MAX_VISIBLE)` with no re-sort).
+
+   > **Reserve NON-BOT events, not all events.** The client strips bots *before* slicing — `all.filter((i) => showBots || !i.actorIsBot).slice(0, MAX_VISIBLE)` (ActivityRail.tsx:78). If the reserved 4 slots are filled by bot events (Copilot reviews are frequent in live data), they vanish client-side and notifications shift up to starve human events — the exact failure the reservation prevents. The builder already has an `IsBot` helper; reserve against `Source==ReceivedEvent && !IsBot`. The slot-reservation test below MUST include bot events occupying would-be reserved slots and assert ≥`MinEventSlots` non-bot events survive the client's post-filter visible 12.
+6. **Watching.** `Count` = windowed merged items (the full pre-cap merged set) whose `Repo` matches (count is computed BEFORE the cap so a repo above the 12-cap never shows `idle`). Sort `Count` desc then name; `Count>0` first, pad with `idle` watched repos up to `MaxWatchingRows`; `Url = $"{host}/{repo}"` (host is the full base URL incl. scheme).
 
 - [ ] **Step 1: Write failing tests**
 
 Fixture helpers MUST set the fields the P1 guard requires (`HtmlUrl`, `ActorLogin`, `PrNumber`; `IsPullRequestComment=true` for `IssueCommentEvent`) — mirror the existing `ActivityProviderTests.Review()` helper, which passes a real `HtmlUrl`. Otherwise every event is silently dropped and merge assertions fail against an empty feed (a fixture bug masquerading as a merge bug):
 
 ```csharp
-private const string Host = "github.com";
-// NOTE: HtmlUrl is REQUIRED — builder drops events with null/empty HtmlUrl.
+private const string Host = "https://github.com";  // full URL incl. scheme — matches config.Current.Github.Host shape; URLs build as $"{Host}/..."
+// NOTE: HtmlUrl is REQUIRED — builder drops events with null/empty HtmlUrl. ActorLogin is REQUIRED too.
+// Use NAMED arguments — the real record order is (Id, Type, ActorLogin, ActorAvatarUrl, Repo, Action,
+// PrNumber, Title, HtmlUrl, Merged, IsPullRequestComment, CreatedAt) (verified in RawReceivedEvent.cs).
+// Positional construction silently mis-slots fields (action→ActorLogin) and drops every event; named
+// args make a future reorder a compile error instead of an empty-feed merge "bug".
 private static RawReceivedEvent Ev(string id, string actor, string type, string action,
     string repo, int pr, DateTimeOffset ts, bool merged = false) =>
-    new(/* Id */ id, /* Type */ type, /* Action */ action, /* ActorLogin */ actor,
-        /* ActorAvatarUrl */ $"https://avatars/{actor}", /* Repo */ repo, /* PrNumber */ pr,
-        /* Title */ $"PR #{pr}", /* HtmlUrl */ $"https://github.com/{repo}/pull/{pr}",
-        /* Merged */ merged, /* IsPullRequestComment */ type == "IssueCommentEvent",
-        /* Timestamp */ ts);
-// ^ confirm the exact RawReceivedEvent positional order against the real record before coding.
+    new(Id: id, Type: type, ActorLogin: actor, ActorAvatarUrl: $"https://avatars/{actor}",
+        Repo: repo, Action: action, PrNumber: pr, Title: $"PR #{pr}",
+        HtmlUrl: $"https://github.com/{repo}/pull/{pr}", Merged: merged,
+        IsPullRequestComment: type == "IssueCommentEvent", CreatedAt: ts);
 private static RawNotification Nf(string reason, string repo, int pr, DateTimeOffset ts) =>
     new(repo, reason, pr, $"PR #{pr}", $"https://api.github.com/repos/{repo}/pulls/{pr}", ts);
 
@@ -702,6 +706,26 @@ public void Slot_reservation_keeps_min_event_rows_in_visible_window()
     r.Items.Take(ActivityFeedBuilder.MaxActivityItems)
         .Count(i => i.Source == ActivitySource.ReceivedEvent)
         .Should().BeGreaterThanOrEqualTo(ActivityFeedBuilder.MinEventSlots);  // >=4 events in the visible 12
+}
+
+[Fact] // BOT events must NOT consume reserved slots (client strips bots before slicing)
+public void Slot_reservation_reserves_non_bot_events_under_bot_and_notification_pressure()
+{
+    var now = DateTimeOffset.UnixEpoch.AddHours(48);
+    var humans = Enumerable.Range(1, 5)                                // OLDER human events
+        .Select(i => Ev(i.ToString(), $"u{i}", "PullRequestReviewEvent", "", "acme/api", i, now.AddMinutes(-30 - i)))
+        .ToList();
+    var bots = Enumerable.Range(50, 6)                                 // fresh BOT events (Copilot-style)
+        .Select(i => Ev(i.ToString(), "Copilot", "PullRequestReviewEvent", "", "acme/api", i, now.AddMinutes(-2)))
+        .ToList();
+    var notifs = Enumerable.Range(100, 40)                             // fresh you-relevant flood
+        .Select(i => Nf("review_requested", "acme/api", i, now.AddMinutes(-1)))
+        .ToList();
+    var r = Build([.. humans, .. bots], [.. notifs], [], now);
+    // simulate the client's pre-slice bot filter, then take the visible window
+    r.Items.Where(i => !i.ActorIsBot).Take(ActivityFeedBuilder.MaxActivityItems)
+        .Count(i => i.Source == ActivitySource.ReceivedEvent)
+        .Should().BeGreaterThanOrEqualTo(ActivityFeedBuilder.MinEventSlots);  // >=4 HUMAN events survive client filter
 }
 
 [Fact] public void Watching_count_pre_cap_orders_by_count_then_name_with_idle_padding()
@@ -794,7 +818,7 @@ git commit -m "feat(#137): builder multi-source merge + notif dedup + visible-wi
 
 Inject the three readers + `TimeProvider` (prod registers `TimeProvider.System`). Cache = an instance field `(ActivityResponse Response, DateTimeOffset At)?` guarded by a `SemaphoreSlim` for the *fetch*. **`Reset()` must be non-blocking** (it is called from the auth/replace request thread and must never wait on an in-flight 3-call GitHub fetch): use a generation counter. `Reset()` increments the generation and nulls the cache field **without taking the fetch gate**; `GetActivityAsync` captures the generation before fetching and discards its result (does not cache it) if the generation moved while it was fetching — so a token rotation mid-fetch is never cached.
 
-Host for the builder: read the configured GitHub host the app already uses (search for where `htmlUrl`/host is sourced — e.g. an options/config value; default `"github.com"` if none). Pass it into `ActivityFeedBuilder.Build`.
+Host for the builder: pass `config.Current.Github.Host` (the existing per-account config value — a **full URL incl. scheme**, e.g. `"https://github.com"`; default in `AppConfig` is `"https://github.com"`), `TrimEnd('/')`. The builder constructs `$"{host}/..."` so it must receive the full base URL, NOT a bare hostname (passing a bare hostname or re-prepending `https://` produces `https://https://github.com/...` — see Task 6 signature note). Resolve `IConfigStore` in the DI factory (Task 8) and pass the trimmed host string into the `ActivityProvider` ctor → `ActivityFeedBuilder.Build`.
 
 - [ ] **Step 1: Write failing tests** (seed `FakeTimeProvider` explicitly in **every** test — an unseeded fake starts at an arbitrary epoch and will window-filter real-timestamp fixtures unpredictably):
 
@@ -825,8 +849,19 @@ public async Task Reset_forces_refetch()
 [Fact]
 public async Task Reset_during_inflight_fetch_discards_that_result()
 {
-    // a gated reader that blocks until released; call Reset() while the first GetActivityAsync
-    // is awaiting; assert the next call refetches (the in-flight result was not cached).
+    var clock = new FakeTimeProvider(DateTimeOffset.UnixEpoch.AddYears(56));
+    var release = new TaskCompletionSource();                       // gates the reader mid-fetch
+    var ev = new GatedReceivedEventsReader(release.Task);           // ReadAsync awaits release.Task, counts calls
+    var p = new ActivityProvider(ev, new EmptyNotifReader(), new EmptyWatchReader(), clock, Host(), NullLogger<ActivityProvider>.Instance);
+
+    var inflight = p.GetActivityAsync(default);                     // starts fetch #1, blocks on release
+    await ev.Entered.Task;                                          // ensure fetch #1 is inside ReadAsync
+    p.Reset();                                                      // rotate token mid-fetch (bumps generation)
+    release.SetResult();                                            // let fetch #1 complete
+    await inflight;                                                 // fetch #1 returns its result but must NOT cache it
+
+    await p.GetActivityAsync(default);                             // fetch #2: cache was discarded → refetch
+    ev.Calls.Should().Be(2);                                        // the reset-mid-fetch result was never cached
 }
 
 [Fact]
@@ -838,7 +873,7 @@ public async Task Aggregates_degradation_from_three_sources()
 }
 ```
 
-Also **update the two existing P1 `ActivityProviderTests` constructions** (`new ActivityProvider(reader, NullLogger...)`) to the new 6-arg ctor (pass `EmptyNotifReader`/`EmptyWatchReader`/seeded `FakeTimeProvider`/host). Add the small fake readers (`Counting*`, `Empty*`, `Degraded*`) and `since`-aware notif fakes as nested classes.
+Also **update the two existing P1 `ActivityProviderTests` constructions** (`new ActivityProvider(reader, NullLogger...)`) to the new 6-arg ctor (pass `EmptyNotifReader`/`EmptyWatchReader`/seeded `FakeTimeProvider`/host). Add the small fake readers (`Counting*`, `Empty*`, `Degraded*`, and `GatedReceivedEventsReader` — exposes an `Entered` `TaskCompletionSource` signalled when `ReadAsync` is first entered, awaits the injected `release` task, and increments `Calls`) and `since`-aware notif fakes as nested classes.
 
 - [ ] **Step 2: Run to verify failure** — compile/assert failure.
 
@@ -855,8 +890,10 @@ public sealed partial class ActivityProvider : IActivityProvider, IDisposable
     private readonly string _host;
     private readonly ILogger<ActivityProvider> _log;
     private readonly SemaphoreSlim _gate = new(1, 1);
-    private (ActivityResponse Response, DateTimeOffset At)? _cache;
+    private volatile CacheEntry? _cache;   // volatile reference: atomic publish/clear on every CLR (no torn struct read)
     private int _generation;
+
+    private sealed record CacheEntry(ActivityResponse Response, DateTimeOffset At, int Generation);
 
     public ActivityProvider(IReceivedEventsReader events, INotificationsReader notifs,
         IWatchedReposReader watched, TimeProvider clock, string host, ILogger<ActivityProvider> log)
@@ -865,11 +902,16 @@ public sealed partial class ActivityProvider : IActivityProvider, IDisposable
     public async Task<ActivityResponse> GetActivityAsync(CancellationToken ct)
     {
         var now = _clock.GetUtcNow();
+        var gen = Volatile.Read(ref _generation);
+        // Cache-hit read is generation-checked, not just TTL-checked: a token rotation bumps the
+        // generation, so an entry stamped under the old generation is rejected even within its 60s TTL
+        // (closes the cache-HIT race where a reader captures a pre-reset entry and serves a stale feed).
+        if (_cache is { } hit && hit.Generation == gen && now - hit.At < Ttl) return hit.Response;
         await _gate.WaitAsync(ct).ConfigureAwait(false);
         try
         {
-            if (_cache is { } c && now - c.At < Ttl) return c.Response;
-            var gen = Volatile.Read(ref _generation);
+            gen = Volatile.Read(ref _generation);                      // re-read under the gate
+            if (_cache is { } c && c.Generation == gen && now - c.At < Ttl) return c.Response;
 
             var evT = _events.ReadAsync(ct);
             var nfT = _notifs.ReadAsync(now.AddHours(-24), ct);
@@ -883,7 +925,7 @@ public sealed partial class ActivityProvider : IActivityProvider, IDisposable
             var resp = new ActivityResponse(built.Items, now,
                 new ActivityDegradation(ev.Degraded, nf.Degraded, wt.Degraded), built.Watching);
 
-            if (Volatile.Read(ref _generation) == gen) _cache = (resp, now);  // discard if reset mid-fetch
+            if (Volatile.Read(ref _generation) == gen) _cache = new CacheEntry(resp, now, gen);  // discard if reset mid-fetch
             return resp;
         }
         finally { _gate.Release(); }
@@ -900,7 +942,7 @@ public sealed partial class ActivityProvider : IActivityProvider, IDisposable
 }
 ```
 
-> The `_cache = null` write in `Reset()` races benignly with the gated writer; the generation check makes the race safe (a fetch that started before the reset will not overwrite the cleared cache). A torn read of the nullable tuple is avoided because reference assignment of the boxed nullable is atomic on the CLR; if static analysis objects, make `_cache` a `volatile` reference to a small `CacheEntry` class.
+> **Why `_cache` is a `volatile CacheEntry?` reference (not a `(…)?` value tuple) — unconditional, not gated on "if static analysis objects":** `Reset()` writes `_cache = null` outside the fetch gate, on the auth-request thread. A `Nullable<(ActivityResponse, DateTimeOffset)>` is a multi-word struct whose write is NOT guaranteed atomic — a concurrent reader could see a torn value that passes the `is { }` guard with a zero-initialized `Response`. A `volatile` reference to a `sealed record CacheEntry` makes both the publish (`new CacheEntry(...)`) and the clear (`null`) single atomic reference stores on every CLR. The `Generation` stamp on the entry additionally closes the cache-HIT race: a reader that captured a pre-reset entry within its TTL rejects it because `hit.Generation != gen` after a rotation.
 
 - [ ] **Step 4: Verify pass** — PASS.
 
@@ -917,20 +959,30 @@ git commit -m "feat(#137): ActivityProvider multi-source + 60s TTL cache + non-b
 
 **Files:**
 - Modify: `PRism.GitHub/ServiceCollectionExtensions.cs` — register `INotificationsReader`/`IWatchedReposReader` (mirror the received-events reader registration: same `IHttpClientFactory` + `readToken` Func; drop `readLogin` — these endpoints are self-scoped).
-- Modify: `PRism.Web/Program.cs` — register `builder.Services.AddSingleton(TimeProvider.System)` (not currently registered; the singleton `ActivityProvider` ctor won't resolve without it — the app won't start otherwise) and supply the configured GitHub host to the provider.
+- Modify: `PRism.Web/Program.cs` — register `builder.Services.AddSingleton(TimeProvider.System)` (not currently registered) **and replace the line 73 generic registration** `AddSingleton<IActivityProvider, ActivityProvider>()` with a **factory lambda** — the new `string host` ctor param cannot be resolved by the generic auto-wiring form, so the app throws `Unable to resolve service for type 'System.String'` at startup if left as-is:
+  ```csharp
+  builder.Services.AddSingleton<IActivityProvider>(sp => new ActivityProvider(
+      sp.GetRequiredService<IReceivedEventsReader>(),
+      sp.GetRequiredService<INotificationsReader>(),
+      sp.GetRequiredService<IWatchedReposReader>(),
+      sp.GetRequiredService<TimeProvider>(),
+      sp.GetRequiredService<IConfigStore>().Current.Github.Host.TrimEnd('/'),  // full base URL incl. scheme
+      sp.GetRequiredService<ILogger<ActivityProvider>>()));
+  ```
+  (The Test-env override at Program.cs:106-107 — `RemoveAll<IActivityProvider>()` + `AddSingleton<…, FakeActivityProvider>()` — is unaffected; the Fake has a parameterless ctor.)
 - Modify: `PRism.Web/Endpoints/AuthEndpoints.cs` — inject `IActivityProvider`; call `Reset()` on **every** successful token-commit path.
 - Test: `tests/PRism.Web.Tests/Endpoints/AuthEndpointsTests.cs`.
 
 **Which paths reset, and why every path (not just identityChanged):** the cache holds private-repo feed data gated by the *current* token's scope. Three handlers commit a token and must invalidate it:
 - `/api/auth/replace` — including the **same-login token rotation** case (`identityChanged == false`), which the existing reset block at `AuthEndpoints.cs:364-367` does NOT cover. Place the `Reset()` call **outside** the `if (identityChanged)` block, immediately before the success `return Results.Ok(...)`, so it fires on every successful replace regardless of login change.
-- `/api/auth/connect` (`AuthEndpoints.cs:~88`, after `tokens.CommitAsync`).
+- `/api/auth/connect` (`AuthEndpoints.cs:~88`, **only** after the `tokens.CommitAsync` success branch — NOT on the soft-warning early return at `AuthEndpoints.cs:~81-85`, which stashes a transient login and commits no token; resetting there needlessly evicts a still-valid cache and forces a wasteful 3-call refetch for a no-op).
 - `/api/auth/connect/commit` (`AuthEndpoints.cs:~102`, after `tokens.CommitAsync`).
 
 `/api/auth/connect` is the first-real-session path after a token-clear, so omitting it leaks a prior token's cached feed on the very next session once Task 7's cache lands. (In P1 the provider has no cache, so the call is a harmless no-op until Task 7 makes it load-bearing.)
 
 **Why imperative Reset() and NOT bus-subscribe (spec's deferred decision §566-570):** the `IdentityChanged` bus message is published *only inside the `identityChanged` branch*. Subscribing `ActivityProvider` to it would reproduce exactly the same-login-rotation gap we're closing. An unconditional imperative `Reset()` at each commit site covers all branches; subscription does not. Recorded here per the spec's request to weigh the tradeoff.
 
-- [ ] **Step 1: Write failing test** — drive `/api/auth/replace` with the **same** login + a new token; assert the cache was invalidated (inject a spy `IActivityProvider` counting `Reset()` calls, or assert a fresh fetch occurs). Add an equivalent assertion for `/api/auth/connect/commit`.
+- [ ] **Step 1: Write failing test (MANDATORY — this is the regression guard for the same-login-rotation gap, the core security rationale).** Inject a **spy `IActivityProvider`** that counts `Reset()` calls (chosen over "assert a fresh fetch" — it's a pure unit assertion with no fetch plumbing and pins the exact contract). Drive `/api/auth/replace` with the **same** login + a new token and assert `Reset()` was called exactly once. This test MUST be RED if `Reset()` is placed inside the `if (identityChanged)` block — that is the one-line mistake it exists to catch. Add the equivalent same-provider spy assertion for `/api/auth/connect/commit` and `/api/auth/connect`.
 
 - [ ] **Step 2: Run to verify failure.**
 
@@ -1083,9 +1135,14 @@ git commit -m "feat(#137): frontend types (kebab-case verbs/source, Watching, 3-
 
 - [ ] **Step 1: Write failing tests**
   - Actorless `verb:'review-requested'` → "Review requested on #1842"; `verb:'mentioned'` → "You were mentioned in #…"; an actorless `verb:'other'`/`'opened'` row → the **generic fallback** ("Activity on #…"), never a dangling fragment and never the literal `null` in the accessible name.
+  - **Standalone actorless `verb:'commented'` row** (`actorLogin:null`, `source:'notification'`, no matching event) → "New comment on #N". (Without this test the `commented` phrase-map entry is dead code: every other test path either folds or drops the comment notification, so the entry could be deleted and the suite stays green.)
   - Watching `<section>` renders rows: `repo` + count; muted "idle" at `count:0`; the row link's `aria-label` includes the repo and "opens on GitHub".
-  - Watching section is **absent** when `watching.length === 0` and not degraded; when `watching.length === 0` AND `degraded.watching` is true, the generic degraded note shows and the Watching header is omitted.
-  - The degraded note shows when **any** of the three degraded flags is true.
+  - **Both `<section>` landmarks are named:** `getByRole('region', { name: /activity/i })` and `getByRole('region', { name: /watching/i })` both resolve. (A `<section>` without an accessible name is not a landmark — without `aria-label` neither panel appears in screen-reader landmark navigation, the exact path a user takes to jump to "Watching".)
+  - **Degraded gating is SPLIT, not unioned** (the Activity-list "unavailable" state must NOT fire on a watching-only failure):
+    - `degraded.watching === true` while `degraded.receivedEvents` and `degraded.notifications` are both false AND `items.length > 0` → the Activity list still renders its rows (NOT "Activity unavailable").
+    - `degraded.receivedEvents || degraded.notifications` true → the Activity "unavailable" note shows.
+  - Watching states: **absent** when `watching.length === 0 && !degraded.watching`; when `watching.length === 0 && degraded.watching` → the Watching header is omitted and an inline note shows; **when `watching.length > 0 && degraded.watching`** → the Watching rows render normally PLUS a muted inline "Subscription list may be incomplete" note below them (show what returned, flag the gap — mirrors the Activity "show what you have" approach; never hide partial data).
+  - **Server order is preserved (no client re-sort):** pass `items` intentionally out of timestamp order and assert the rendered DOM row order matches the input array order, not a timestamp sort. (The builder's slot reservation is baked into server order; a future client-side sort before `slice` would silently defeat it.)
   - A notification `url` of non-PR shape renders an external `<a>` (target/rel, "opens on GitHub" aria-label, `aria-hidden` icon); an in-app PR url renders a `<Link>`.
 
 - [ ] **Step 2: Run to verify failure** — `cd frontend && npx vitest run src/components/ActivityRail` → fails.
@@ -1107,9 +1164,17 @@ git commit -m "feat(#137): frontend types (kebab-case verbs/source, Watching, 3-
     ```
   - In `Row`, branch on `item.actorLogin == null`: render the actorless template **and** build the `aria-label` from the actorless phrase (never reference `item.actorLogin` when it is null — the existing `${item.actorLogin} ${VERB_PHRASE...}` label must be guarded so no `null` leaks into the accessible name).
   - **Avatar alignment:** actorless rows render the existing `Avatar` placeholder (`<Avatar src={undefined} login="" size="sm" />`) so the avatar column width matches actor rows and text columns stay aligned. Do not omit the avatar (omitting shifts the text column left).
+  - **Section landmarks are named:** add `aria-label="Watching"` to the new Watching `<section>` and `aria-label="Activity"` to the existing Activity `<section>` (ActivityRail.tsx:89, currently unlabeled) so both register as named region landmarks.
   - **Watching `<section>`** after the Activity section: same `.section` card chrome, but the section title uses a **lighter weight** (`.watchTitle`, font-weight 500 — matching the repo-group-header precedent from #272) so Activity reads as the primary panel. Each row: repo name (owner stripped for display, full name in `title`) + count pill (or muted `.idle` at 0), linking to `w.url` externally with `aria-label` `` `${repo} — ${count} recent ${count === 1 ? 'item' : 'items'}, opens on GitHub` `` (count>0) / `` `${repo} — no recent activity, opens on GitHub` `` (idle); external icon `aria-hidden`.
-  - **Degraded note:** replace the existing `const degraded = data?.degraded.receivedEvents ?? false` (ActivityRail.tsx:82) with `const degraded = data ? (data.degraded.receivedEvents || data.degraded.notifications || data.degraded.watching) : false`. Single generic note unchanged.
-  - Add the `.watchTitle`, `.idle`, and any Watching row classes to the CSS module.
+  - **Watching degraded states** (gated on `watchingDegraded`, independent of the Activity note): when `watching.length === 0 && watchingDegraded` → omit the Watching header, show a single inline note; when `watching.length > 0 && watchingDegraded` → render the rows normally and append a muted inline `.watchIncomplete` note "Subscription list may be incomplete" below them (never hide the partial list); when `watching.length === 0 && !watchingDegraded` → render nothing.
+  - **Degraded gating — SPLIT into two flags (do NOT union all three).** The existing `const degraded = data?.degraded.receivedEvents ?? false` (ActivityRail.tsx:82) feeds `showDegraded` (line 83), which at line 109 replaces the *entire* Activity list with "Activity unavailable". Unioning `watching` into it would blank a perfectly good Activity list whenever only `/user/subscriptions` failed — the most common partial failure producing the most damaging render. Replace with:
+    ```typescript
+    const activityDegraded = data ? (data.degraded.receivedEvents || data.degraded.notifications) : !!error;
+    const watchingDegraded = data?.degraded.watching ?? false;
+    const showDegraded = (!data && error) || activityDegraded;   // gates ONLY the Activity list
+    ```
+    The Activity "unavailable" note fires on `showDegraded`; `watchingDegraded` gates only the Watching section's own inline note (below). The generic note copy is unchanged.
+  - Add the `.watchTitle`, `.idle`, `.watchIncomplete` (muted inline note), and any Watching row classes to the CSS module.
 
 - [ ] **Step 4: Verify pass** — `npx vitest run src/components/ActivityRail` → PASS.
 - [ ] **Step 5: Commit**
@@ -1156,7 +1221,7 @@ git commit -m "feat(#137): inbox skeleton shows Activity + Watching rail panels"
 ## Task 15: PR scopes doc + security verification + final review
 
 - [ ] **Step 1: PAT-scope doc** — classic `repo` covers `/notifications` + `/user/subscriptions` (no new scope); fine-grained adds **Notifications: read** + **Metadata: read** (missing → graceful degrade). Update the relevant PAT-guidance/help copy if Phase 1 added one.
-- [ ] **Step 2: Header-redaction verification (security)** — confirm the `"github"` named `HttpClient` pipeline has no `DelegatingHandler` that logs request headers (the two new readers send the PAT as a Bearer header). Check `Program.cs` / `PRism.GitHub/ServiceCollectionExtensions.cs` for `AddHttpMessageHandler`. Record the result as a named acceptance criterion (no Authorization-header logging).
+- [ ] **Step 2: Header-redaction verification (security) — automated, not manual-only.** The two new readers send the PAT as a Bearer header; a future contributor adding a diagnostic logging `DelegatingHandler` (the pattern already exists via `RealTransportFailureInjector`/`TestFailureInjectionHandler`) could leak it with nothing to catch the regression. (a) Confirm the `"github"` named `HttpClient` pipeline has no header-logging `DelegatingHandler` (grep `AddHttpMessageHandler` in `Program.cs` / `PRism.GitHub/ServiceCollectionExtensions.cs`); AND (b) add a **unit test** that drives a request through the real `"github"` pipeline via a capturing handler and asserts no `Authorization` header value appears in captured log output at Warning-or-below (mirror the existing `GitHubReviewService` auth-header test pattern if present). This promotes "no Authorization-header logging" from a manual note to a CI gate.
 - [ ] **Step 3: Documentation maintenance** — per `.ai/docs/documentation-maintenance.md`, flip the spec's Phase 2 status and update any feature doc/README activity-rail entry to "Implemented (Phase 2)".
 - [ ] **Step 4: Final whole-branch code review** (subagent-driven-development final reviewer).
 - [ ] **Step 5: B1 visual sign-off (GATED).** Post the Phase 2 rail render (Activity two-source + Watching) on the PR for owner B1 review. **Do NOT merge without owner approval** — gated (B1 + B2) issue.
@@ -1179,4 +1244,5 @@ git commit -m "feat(#137): inbox skeleton shows Activity + Watching rail panels"
 - **Out-of-band PAT rotation** (editing the credential store directly, not via any `/api/auth/*` endpoint) is not detectable by the process; the stale-feed window is bounded to the 60s TTL. Accepted for the single-user localhost threat model.
 - **Notification pagination:** `per_page=100` is not paginated. A user with >100 unread in-window PR notifications gets a truncated feed (and a possibly-undercounted Watching count) with no truncation signal. Accepted bound for v1; revisit if it bites in dogfood.
 - **Notification volume (`all=true`):** owner chose read-decoupled `all=true&since=24h`, which is noisier than unread-only (returns all subscribed activity in-window). Bounded by `per_page=100` + the 24h window + the visible-12 cap; the broader organization of that volume is #315's job (group-by-repo + scroll).
-- **GHES host:** owner chose to keep the host configurable. URLs use the configured GitHub host (default `github.com`), so Watching/notification links stay correct on a GHES instance.
+- **GHES host:** owner chose to keep the host configurable. URLs use `config.Current.Github.Host` (a full URL incl. scheme, default `"https://github.com"`) `TrimEnd('/')` and build as `$"{host}/..."`, so Watching/notification links stay correct on a GHES instance. **PAT-egress trust chain:** the same host value also sets the `"github"` `HttpClient` BaseAddress, and the PAT is only committed *after* GitHub at that host accepts it via `/api/auth/connect`'s `ValidateCredentialsAsync` — so the new readers never send the PAT to an unvalidated host. No additional host-validation step is needed; this is the existing posture for every other GitHub adapter.
+- **Cache-read race (closed):** the cache-HIT read path is generation-checked (not just TTL-checked), and `_cache` is a `volatile CacheEntry?` reference — so a concurrent request can never serve a pre-rotation feed after `Reset()`, and there is no torn-struct read. See Task 7.
