@@ -758,7 +758,7 @@ export function FilterBar({
     );
 ```
 
-(Match the file's existing variable names — `secs`/`onState` above are illustrative; use whatever that test already declares. If there are multiple `<FilterBar>` render sites in the file, update each.)
+**Edit in place** — the real render wraps `<FilterBar>` in `<MemoryRouter><OpenTabsProvider>…</OpenTabsProvider></MemoryRouter>`; keep those wrappers, just add the three new prop lines to the existing `<FilterBar>` element. (The file's variable names happen to be `secs`/`onState` as shown, and it already imports `vi`. There is exactly one `<FilterBar>` render site.)
 
 - [ ] **Step 3: Thread the props through InboxToolbar**
 
@@ -811,6 +811,8 @@ export function InboxToolbar({
 
 Run: `cd frontend && npx tsc -b`
 Expected: the ONLY remaining error is `InboxPage.tsx` missing the new `InboxToolbar` props (fixed in Task 7) — assuming Step 2b updated `FilterBar.test.tsx`. FilterBar/InboxToolbar themselves typecheck. If any OTHER file errors, fix it before continuing.
+
+> **Executor note (esp. subagent-driven):** Task 6 deliberately leaves the tree non-building (the InboxPage prop gap above). Do **not** gate the Task 6 commit on a full `npm run build` / full `tsc -b` success and do **not** report this as a failure — it is expected and closes at Task 7 Step 6. The first green full-build gate spanning this boundary is Task 7.
 
 - [ ] **Step 5: Commit**
 
@@ -965,6 +967,7 @@ git commit -m "test(#311): e2e — manual refresh drives loading bar and re-enab
 - [ ] **Frontend:** `cd frontend && npx vitest run` (full), `npm run build`, and `npx prettier --check` via `rtk proxy npx prettier --check "src/**/*.{ts,tsx}" "__tests__/**/*.{ts,tsx}"` (CI runs raw prettier — rtk masks its exit code locally, so verify through `rtk proxy`).
 - [ ] **Lint:** `cd frontend && npm run lint` (eslint).
 - [ ] **B1 visual gate (gated issue):** capture before/after of the inbox toolbar in light + dark themes (idle button, in-flight spinner, transient confirmation) and post for owner sign-off before merge. Do NOT merge without it.
+- [ ] **Regenerate the `inbox.png` Playwright visual baseline.** `frontend/e2e/parity-baselines.spec.ts:125` screenshots `<main>` (which contains the toolbar) as `inbox.png` — the new Refresh button changes it, so the committed Linux + win32 baselines will MISMATCH and CI parity goes red (a mismatched-not-absent baseline is not auto-written). After the B1 look is approved, regenerate: Linux baseline from the CI `e2e-results` artifact (download `actual.png`, verify the diff is only the new button, `cp` over the Linux baseline) per `reference_regen_linux_parity_baseline_via_ci_artifact`; win32 baseline locally. Confirm `inbox-activity-rail.png` (a separate locator, not `<main>`) is unaffected. Capture the idle-button state for the baseline (the in-flight spinner / transient confirmation are transient and must not be in the screenshot).
 
 ## Spec coverage check
 
