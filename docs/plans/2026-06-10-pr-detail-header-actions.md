@@ -15,6 +15,8 @@
 - The menu's "Discard pending review" item is **suppressed while `dialogOpen`** (preserves the `!dialogOpen` mutual-exclusion).
 - Pending main-click fires `onResume` (not `onOpenSubmit`); non-pending fires `setDialogOpen(true)`.
 - While `inSubmitFlow`, **both** the main button and the chevron menu are disabled.
+- **"Discard all drafts" MUST route through `DiscardAllConfirmationModal`** — today `DiscardAllDraftsButton` owns that modal, so removing the button removes the confirmation. The modal is **lifted into `PrHeader`** (Task 6); the menu item opens it, never calls `discardAllDrafts()` directly. A direct call = silent destructive bulk-discard.
+- `onResume` always submits the **last-persisted** `session.draftVerdict` (PrHeader.tsx:245), not a verdict just picked in the open pending menu (that path is an async `patch`+refetch). Co-locating "change verdict" and "Resume" in one menu does not change that.
 - No edits to the submit pipeline, `SubmitDialog`, `useSubmit`, `sendPatch`, or the modals' internals.
 
 ---
@@ -217,11 +219,18 @@ describe('deriveFace — pending / reconfirm / action / disabled', () => {
     expect(f.mainDisabled).toBe(false);
     expect(f.mainAction).toBe('resume');
   });
-  it('non-pending empty session → submit disabled with reason (a)', () => {
+  it('non-pending empty session → submit disabled, reason (a) directs to the ▾ menu', () => {
     const f = deriveFace(inputs());
     expect(f.mainAction).toBe('submit');
     expect(f.mainDisabled).toBe(true);
-    expect(f.mainDisabledReason).toMatch(/pick a verdict/i);
+    // exact directional copy (spec §4.1) — NOT the generic submitDisabledReason string
+    expect(f.mainDisabledReason).toBe('Pick a verdict using the ▾ menu, or add a comment.');
+  });
+  it('pending + needs-reconfirm → resume stays ENABLED (resume is never gated), face signal shown', () => {
+    const f = deriveFace(inputs({ pendingReviewId: 'PR_1', draftVerdict: 'approve', draftVerdictStatus: 'needs-reconfirm' }));
+    expect(f.mainAction).toBe('resume');
+    expect(f.mainDisabled).toBe(false); // corrects the spec §4.1 example: resume is never gated
+    expect(f.needsReconfirm).toBe(true);
   });
   it('needs-reconfirm flagged from draftVerdictStatus', () => {
     const f = deriveFace(inputs({ draftVerdict: 'approve', draftVerdictStatus: 'needs-reconfirm' }));
@@ -258,10 +267,15 @@ import { submitDisabledReason } from '../SubmitButton';
 
   // Resume + discard are never gated (today's SubmitInProgressBadge/pill aren't).
   // Only the fresh-submit path consults submitDisabledReason.
-  const submitReason =
+  const rawReason =
     mainAction === 'submit'
       ? submitDisabledReason(session, i.headShaDrift, i.validatorResults)
       : null;
+  // Spec §4.1: with the inline verdict picker gone, reason (a) must direct the
+  // user to the caret menu. submitDisabledReason returns this exact string for (a).
+  const REASON_A = 'Pick a verdict or add a comment, reply, or summary before submitting.';
+  const submitReason =
+    rawReason === REASON_A ? 'Pick a verdict using the ▾ menu, or add a comment.' : rawReason;
   const frozen = i.inSubmitFlow;
   const mainDisabled = isClosedOrMerged || frozen || submitReason !== null;
 
@@ -327,6 +341,10 @@ describe('deriveMenu', () => {
     const m = deriveMenu({ ...inputs(), prState: 'closed' });
     expect(ids(m)).toEqual([]);
   });
+  it('needs-reconfirm → reconfirm note in the verdict section', () => {
+    const m = deriveMenu(inputs({ draftVerdict: 'approve', draftVerdictStatus: 'needs-reconfirm' }));
+    expect(ids(m)).toContain('reconfirm-note');
+  });
 });
 ```
 
@@ -339,7 +357,7 @@ describe('deriveMenu', () => {
 export interface ReviewActionMenuItem {
   id: string;
   label: string;
-  kind: 'verdict' | 'action' | 'danger';
+  kind: 'verdict' | 'action' | 'danger' | 'note'; // 'note' = non-interactive label row
   verdict?: DraftVerdict;
   checked?: boolean;
 }
@@ -357,11 +375,21 @@ const VERDICT_ITEMS = (current: DraftVerdict | null): ReviewActionMenuItem[] =>
     checked: current === v,
   }));
 
+const RECONFIRM_NOTE: ReviewActionMenuItem = {
+  id: 'reconfirm-note',
+  label: 'Verdict needs re-confirmation',
+  kind: 'note',
+};
+
 export function deriveMenu(i: ReviewActionInputs): ReviewActionMenuSection[] {
   const { session, prState, dialogOpen } = i;
   const isClosedOrMerged = prState !== 'open';
   const pending = session.pendingReviewId !== null;
+  const needsReconfirm = session.draftVerdictStatus === 'needs-reconfirm';
   const hasDrafts = session.draftComments.length > 0 || session.draftReplies.length > 0;
+  // Spec §4.5: needs-reconfirm is surfaced in TWO places — the button face (Task 4)
+  // and a menu note. Re-selecting the verdict re-confirms it (existing patchVerdict).
+  const note: ReviewActionMenuItem[] = needsReconfirm ? [RECONFIRM_NOTE] : [];
 
   if (isClosedOrMerged) {
     return hasDrafts
@@ -372,6 +400,7 @@ export function deriveMenu(i: ReviewActionInputs): ReviewActionMenuSection[] {
   if (pending) {
     const items: ReviewActionMenuItem[] = [
       { id: 'resume', label: 'Resume & submit…', kind: 'action' },
+      ...note,
       ...VERDICT_ITEMS(session.draftVerdict),
     ];
     // Mutual-exclusion invariant: only one discard-pending path live at a time.
@@ -382,7 +411,7 @@ export function deriveMenu(i: ReviewActionInputs): ReviewActionMenuSection[] {
   }
 
   return [
-    { header: 'Verdict', items: VERDICT_ITEMS(session.draftVerdict) },
+    { header: 'Verdict', items: [...note, ...VERDICT_ITEMS(session.draftVerdict)] },
     { items: [{ id: 'submit', label: 'Submit review…', kind: 'action' }] },
   ];
 }
@@ -468,7 +497,7 @@ describe('ReviewActionButton — face', () => {
 
 ```tsx
 // ReviewActionButton.tsx
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import type { DraftVerdict } from '../../../api/types';
 import { deriveFace, deriveMenu, type ReviewActionInputs } from './reviewActionState';
 import { ReviewActionMenu } from './ReviewActionMenu'; // added in Task 5
@@ -494,6 +523,8 @@ function Chevron() {
 export function ReviewActionButton(props: ReviewActionButtonProps) {
   const face = deriveFace(props);
   const [menuOpen, setMenuOpen] = useState(false);
+  const chevronRef = useRef<HTMLButtonElement>(null);
+  const closeMenu = () => { setMenuOpen(false); chevronRef.current?.focus(); };
 
   const onMainClick = () => {
     if (face.mainAction === 'submit') props.onOpenSubmit();
@@ -508,7 +539,9 @@ export function ReviewActionButton(props: ReviewActionButtonProps) {
         data-testid="review-action-main"
         className={`${styles.main} ${styles[`fill-${face.fill}`]}`}
         disabled={face.mainDisabled && face.mainAction !== 'none'}
-        aria-disabled={face.mainDisabled}
+        // closed/merged: mainAction==='none' → button is clickable (opens the menu),
+        // so it must NOT advertise aria-disabled. Match the `disabled` predicate.
+        aria-disabled={face.mainDisabled && face.mainAction !== 'none'}
         title={face.mainDisabledReason ?? face.pendingTooltip ?? undefined}
         onClick={face.mainDisabled && face.mainAction !== 'none' ? undefined : onMainClick}
       >
@@ -521,6 +554,7 @@ export function ReviewActionButton(props: ReviewActionButtonProps) {
         </span>
       </button>
       <button
+        ref={chevronRef}
         type="button"
         data-testid="review-action-chevron"
         className={`${styles.chevron} ${styles[`fill-${face.fill}`]}`}
@@ -535,15 +569,17 @@ export function ReviewActionButton(props: ReviewActionButtonProps) {
       {menuOpen && !face.frozen && (
         <ReviewActionMenu
           sections={deriveMenu(props)}
-          onClose={() => setMenuOpen(false)}
+          onClose={closeMenu}
           onSelect={(id, verdict) => {
             if (id.startsWith('verdict:')) {
+              if (!verdict) return; // mis-route guard — fail loud rather than silently clearing
               // re-select clears (toggle), preserving {draftVerdict:null}
-              props.onPatchVerdict(props.session.draftVerdict === verdict ? null : (verdict ?? null));
+              props.onPatchVerdict(props.session.draftVerdict === verdict ? null : verdict);
             } else if (id === 'submit') props.onOpenSubmit();
             else if (id === 'resume') props.onResume();
             else if (id === 'discard-pending') props.onDiscardPending();
             else if (id === 'discard-all') props.onDiscardAllDrafts();
+            else if (id === 'reconfirm-note') return; // non-interactive label
             setMenuOpen(false);
           }}
         />
@@ -563,9 +599,11 @@ export function ReviewActionButton(props: ReviewActionButtonProps) {
   white-space: nowrap; user-select: none; cursor: pointer; line-height: 1;
 }
 .main {
-  /* min-width sized to the widest label incl. the asterisk ("Request changes*"),
-     in ch units so it tracks density without a hardcoded px. */
-  min-width: 14.5ch;
+  /* min-width must hold the widest label incl. the asterisk ("Request changes*").
+     STARTING VALUE ONLY — verify in Task 11's no-reflow check (both density modes).
+     If verdict-switch reflows, measure the rendered "Request changes*" width in
+     Geist 13px (comfortable + compact) and set this so the content never grows. */
+  min-width: 16ch;
   justify-content: center; padding: 0 var(--s-3);
   border-radius: var(--radius-2) 0 0 var(--radius-2);
 }
@@ -579,6 +617,10 @@ export function ReviewActionButton(props: ReviewActionButtonProps) {
 .fill-secondary { background: var(--surface-1); color: var(--text-1); border-color: var(--border-2); }
 
 .label { display: inline-flex; align-items: baseline; gap: 1px; }
+/* `.asterisk` and `.reconfirm` intentionally set NO color — they inherit the
+   button's on-fill text color (--accent-text, or the hardcoded dark ink on the
+   warning fill). That is the same fg/bg pairing the verdict LABEL uses, which is
+   already AA (issue #123). Verify in Task 12 against every fill, both themes. */
 .asterisk { font-weight: 600; }
 .reconfirm { font-size: 12px; }
 ```
@@ -610,8 +652,10 @@ git commit -m "feat(#291): ReviewActionButton face + chevron"
 ## Task 5: `ReviewActionMenu` — accessible flat menu
 
 **Files:**
-- Modify: `frontend/src/components/PrDetail/ReviewActionButton/ReviewActionMenu.tsx`
+- Create: `frontend/src/components/PrDetail/ReviewActionButton/ReviewActionMenu.tsx` (replaces Task 4's `null` stub)
 - Test: `frontend/src/components/PrDetail/ReviewActionButton/ReviewActionButton.test.tsx`
+
+(Focus-return on Escape is already wired in Task 4: the parent passes `onClose={closeMenu}`, which refocuses `chevronRef`. This task only fleshes out the menu body — do **not** re-add `chevronRef`.)
 
 - [ ] **Step 1: Add failing tests**
 
@@ -640,6 +684,24 @@ describe('ReviewActionButton — menu', () => {
     await userEvent.keyboard('{Escape}');
     expect(screen.queryByRole('menu')).not.toBeInTheDocument();
     expect(chevron).toHaveFocus();
+  });
+  it('ArrowDown moves focus to the next item and wraps last→first', async () => {
+    render(<ReviewActionButton {...props()} />);
+    await userEvent.click(screen.getByTestId('review-action-chevron'));
+    const items = screen.getAllByRole('menuitem');
+    expect(items[0]).toHaveFocus(); // first item focused on open
+    await userEvent.keyboard('{ArrowDown}');
+    expect(items[1]).toHaveFocus();
+    // wrap: ArrowUp from the first item goes to the last
+    items[0].focus();
+    await userEvent.keyboard('{ArrowUp}');
+    expect(items[items.length - 1]).toHaveFocus();
+  });
+  it('Tab closes the menu (does not trap focus)', async () => {
+    render(<ReviewActionButton {...props()} />);
+    await userEvent.click(screen.getByTestId('review-action-chevron'));
+    await userEvent.tab();
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument();
   });
   it('frozen (inSubmitFlow) disables the chevron — no menu', async () => {
     render(<ReviewActionButton {...props({ inSubmitFlow: true, session: session({ draftVerdict: 'approve' }) })} />);
@@ -677,6 +739,9 @@ export function ReviewActionMenu({ sections, onClose, onSelect }: Props) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') { e.preventDefault(); onClose(); }
+      // Tab closes the menu without trapping focus (ARIA APG menu pattern) —
+      // do NOT preventDefault, so focus flows naturally past the control.
+      else if (e.key === 'Tab') onClose();
     };
     const onDocClick = (e: MouseEvent) => {
       if (ref.current && !ref.current.contains(e.target as Node)) onClose();
@@ -689,6 +754,12 @@ export function ReviewActionMenu({ sections, onClose, onSelect }: Props) {
     };
   }, [onClose]);
 
+  // Empty menu (closed/merged with no drafts) → close via effect, NOT during
+  // render (calling a parent state-setter in render is a React anti-pattern).
+  useEffect(() => {
+    if (items.length === 0) onClose();
+  }, [items.length, onClose]);
+
   const moveFocus = (from: HTMLElement, dir: 1 | -1) => {
     const all = Array.from(ref.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]') ?? []);
     const idx = all.indexOf(from as HTMLButtonElement);
@@ -696,30 +767,37 @@ export function ReviewActionMenu({ sections, onClose, onSelect }: Props) {
     next?.focus();
   };
 
-  if (items.length === 0) { onClose(); return null; }
+  if (items.length === 0) return null; // close handled by the effect above
 
   return (
     <div ref={ref} role="menu" className={styles.menu} data-testid="review-action-menu">
       {sections.map((section, si) => (
         <div key={si} className={styles.section}>
           {section.header && <div className={styles.menuHeader}>{section.header}</div>}
-          {section.items.map((it) => (
-            <button
-              key={it.id}
-              type="button"
-              role="menuitem"
-              className={`${styles.menuItem} ${it.kind === 'danger' ? styles.danger : ''}`}
-              onClick={() => onSelect(it.id, it.verdict)}
-              onKeyDown={(e) => {
-                if (e.key === 'ArrowDown') { e.preventDefault(); moveFocus(e.currentTarget, 1); }
-                else if (e.key === 'ArrowUp') { e.preventDefault(); moveFocus(e.currentTarget, -1); }
-              }}
-            >
-              {it.kind === 'verdict' && <span className={`${styles.swatch} ${styles[`sw-${it.verdict}`]}`} />}
-              <span>{it.label}</span>
-              {it.checked && <span className={styles.check} aria-hidden="true">✓</span>}
-            </button>
-          ))}
+          {section.items.map((it) =>
+            it.kind === 'note' ? (
+              // Non-interactive label row (e.g. needs-reconfirm note) — not a menuitem.
+              <div key={it.id} className={styles.note} data-testid="review-action-note">
+                {it.label}
+              </div>
+            ) : (
+              <button
+                key={it.id}
+                type="button"
+                role="menuitem"
+                className={`${styles.menuItem} ${it.kind === 'danger' ? styles.danger : ''}`}
+                onClick={() => onSelect(it.id, it.verdict)}
+                onKeyDown={(e) => {
+                  if (e.key === 'ArrowDown') { e.preventDefault(); moveFocus(e.currentTarget, 1); }
+                  else if (e.key === 'ArrowUp') { e.preventDefault(); moveFocus(e.currentTarget, -1); }
+                }}
+              >
+                {it.kind === 'verdict' && <span className={`${styles.swatch} ${styles[`sw-${it.verdict}`]}`} />}
+                <span>{it.label}</span>
+                {it.checked && <span className={styles.check} aria-hidden="true">✓</span>}
+              </button>
+            ),
+          )}
         </div>
       ))}
     </div>
@@ -727,15 +805,11 @@ export function ReviewActionMenu({ sections, onClose, onSelect }: Props) {
 }
 ```
 
-Add the missing CSS (append to `ReviewActionButton.module.css`). Focus-return on Escape: the parent already owns the chevron; add a `closeAndRefocus` — update the parent's `onClose` to refocus. In `ReviewActionButton.tsx`, change the menu's `onClose` to:
-
-```tsx
-onClose={() => { setMenuOpen(false); chevronRef.current?.focus(); }}
-```
-and add `const chevronRef = useRef<HTMLButtonElement>(null);` with `ref={chevronRef}` on the chevron button.
+Append the menu CSS (focus-return is already wired in Task 4 — nothing to change in `ReviewActionButton.tsx`):
 
 ```css
 /* append to ReviewActionButton.module.css */
+.note { padding: 6px 9px; font-size: var(--text-xs); color: var(--warning-fg); }
 .menu {
   position: absolute; top: calc(100% + 4px); right: 0; z-index: 30;
   min-width: 240px; background: var(--surface-1); border: 1px solid var(--border-2);
@@ -804,13 +878,54 @@ it('renders the unified ReviewActionButton instead of the old picker+submit clus
       onOpenSubmit={() => setDialogOpen(true)}
       onResume={onResume}
       onDiscardPending={() => { setPillDiscardError(null); setPillDiscardModalOpen(true); }}
-      onDiscardAllDrafts={onDiscardAllDrafts}
+      onDiscardAllDrafts={() => setDiscardAllModalOpen(true)}
     />
   </div>
 )}
 ```
 
+**Lift the discard-all confirmation modal into `PrHeader`** (it used to live inside `DiscardAllDraftsButton`, which this task removes — without this, "Discard all drafts" would fire with no confirmation). Add the open state near the other PrHeader state (~line 190):
+
+```tsx
+const [discardAllModalOpen, setDiscardAllModalOpen] = useState(false);
+```
+
+Mount the modal alongside the pill's modal at the bottom of the JSX (after the `DiscardPendingReviewConfirmationModal` at ~line 578). It computes its counts from `session` exactly as `DiscardAllDraftsButton` did:
+
+```tsx
+{session && (
+  <DiscardAllConfirmationModal
+    open={discardAllModalOpen}
+    prState={prState}
+    threadCount={
+      session.draftComments.filter((d) => !(d.filePath === null && d.lineNumber === null)).length
+    }
+    replyCount={session.draftReplies.length}
+    hasSummary={
+      (session.draftComments.find((d) => d.filePath === null && d.lineNumber === null)?.bodyMarkdown ?? '').trim().length > 0
+    }
+    hasPendingReview={!!session.pendingReviewId}
+    onConfirm={() => { setDiscardAllModalOpen(false); onDiscardAllDrafts(); }}
+    onCancel={() => setDiscardAllModalOpen(false)}
+  />
+)}
+```
+
+Add `import { DiscardAllConfirmationModal } from './DiscardAllConfirmationModal';` to PrHeader. `onDiscardAllDrafts` (PrHeader.tsx:356, the API call) is unchanged — the modal's `onConfirm` calls it.
+
 Update imports: remove `VerdictPicker`, `SubmitButton`, `SubmitInProgressBadge`, `DiscardAllDraftsButton`, `AskAiButton` from the import block; add `import { ReviewActionButton } from './ReviewActionButton/ReviewActionButton';`. Keep `OpenInGitHubButton`, `DiscardPendingReviewConfirmationModal`, `ImportedDraftsBanner`, `SubmitDialog`. Keep `toggleAskAi` removal for Task 9 (the `useAskAiDrawer` hook + `toggleAskAi` are no longer used here once `AskAiButton` is gone — delete the `const { toggle: toggleAskAi } = useAskAiDrawer();` line and the import). The `DiscardPendingReviewConfirmationModal` for the pill stays mounted lower in the JSX (gated on `pillDiscardModalOpen`) — unchanged.
+
+- [ ] **Step 3b: Narrow-width layout contract (spec §3).** In `PrHeader.module.css`, ensure the title/meta block can truncate and the action cluster holds its size. Confirm/add: the `.pr-meta` (or the `.prHeaderTop` title column) has `min-width: 0` (so the title truncates instead of pushing the cluster off-screen), and `.prActions` is `flex: none` (already is — verify). Add the "Open-in-GitHub drops first" floor:
+
+```css
+/* PrHeader.module.css — below the floor where title+cluster can't coexist,
+   shed the secondary icon first (the action stays reachable via Open-in-GitHub
+   on the row when space returns; the primary review control never shrinks). */
+@media (max-width: 720px) {
+  .prActions :global(.open-in-github-button) { display: none; }
+}
+```
+(720px is a starting floor — confirm against the running app in Task 12; the split-button's `min-width` is the hard constraint that must always fit.)
 
 - [ ] **Step 4: Run the PrHeader suite + typecheck**
 
@@ -942,6 +1057,12 @@ describe('AskAiPullTab', () => {
     const tab = screen.getByRole('button', { name: 'Close' });
     expect(tab).toHaveAttribute('aria-expanded', 'true');
   });
+  it('renders a recognizable icon at rest (present for touch users with no hover label)', () => {
+    mocks.gate.mockReturnValue(true);
+    mocks.drawer.mockReturnValue({ isOpen: false, toggle: vi.fn() });
+    renderAt('/pr/o/r/1');
+    expect(screen.getByTestId('ask-ai-pull-tab').querySelector('.ai-icon')).toBeInTheDocument();
+  });
 });
 ```
 (Confirm the PR-detail path shape with `parsePrRefFromPathname` — use a path it accepts; adjust `/pr/o/r/1` to the real route if different.)
@@ -989,8 +1110,9 @@ export function AskAiPullTab() {
 .tab {
   position: fixed;
   /* anti-collision: parked below the Files-tab toolbar band and outside the diff
-     interaction zone. top is a vertical band, not viewport-center, so it clears a
-     wrapped two-row toolbar. Verified in the running app (#291 AC). */
+     interaction zone. STARTING VALUE — measure `.filesTabToolbar` bottom edge
+     (one-row AND forced-wrap) in the Task 9 smoke and confirm via the Task 11
+     anti-collision e2e before trusting it. Do not assume 160px is correct. */
   top: 160px;
   right: 0;
   z-index: 49; /* under the drawer (50) so the open drawer covers transit */
@@ -1050,13 +1172,13 @@ Add the import: `import { AskAiPullTab } from './components/AskAiDrawer/AskAiPul
 Run: `cd frontend && npx tsc -b && npx vitest run`
 Expected: green. Fix any test that referenced the removed `AskAiButton` in the header (it now lives nowhere in `PrHeader`; the trigger is the tab).
 
-- [ ] **Step 4: Manual smoke (serve-detached).** Launch via `serve-detached.ps1`, open a PR detail with AI enabled, confirm: tab visible at the right edge below the toolbar; click opens the drawer and the tab slides to the drawer's edge reading "Close"; navigating to the inbox hides the tab.
+- [ ] **Step 4: Measure the anti-collision anchor.** Launch via `serve-detached.ps1`, open a PR detail (Files tab) with AI enabled. In the console, read `document.querySelector('.files-tab-toolbar').getBoundingClientRect().bottom` at the default width AND at a narrow width that forces the toolbar to wrap to two rows. Set the tab's `top` to `max(bottom) + ~12px clearance`. Replace the `top: 160px` starting value with the measured number. Then confirm: tab visible below the toolbar (both layouts); click opens the drawer and the tab slides to the drawer's edge reading "Close"; navigating to the inbox hides the tab; the tab doesn't sit over diff content / the #214 sticky scrollbar / an open inline composer.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add frontend/src/components/AskAiDrawer/AskAiDrawer.module.css frontend/src/styles/tokens.css frontend/src/App.tsx
-git commit -m "feat(#291): mount AskAiPullTab at App level; drawer-width token"
+git add frontend/src/components/AskAiDrawer/ frontend/src/styles/tokens.css frontend/src/App.tsx
+git commit -m "feat(#291): mount AskAiPullTab at App level; drawer-width token; measured anchor"
 ```
 
 ---
@@ -1114,7 +1236,7 @@ git commit -m "test(#291): e2e + visual coverage for the header redesign"
 - [ ] **Step 1:** `cd frontend && npx tsc -b && npx vitest run` — all green.
 - [ ] **Step 2:** `npx eslint . && rtk proxy npx prettier --check .` — clean (rtk masks prettier's exit code; use the proxy form).
 - [ ] **Step 3:** Backend unchanged, but run `dotnet test` once to confirm no incidental break (foreground, ≥5-min timeout).
-- [ ] **Step 4:** Manual B1 capture — screenshot the header cluster (default / each verdict / pending / closed-merged) and the pull-tab (rest / hover / open) in **light and dark**, for the PR's `## Proof` and the owner B1 gate.
+- [ ] **Step 4:** Manual B1 capture — screenshot the header cluster (default / each verdict / pending / closed-merged / **needs-reconfirm with the ⚠ face signal**) and the pull-tab (rest / hover / open) in **light and dark**, for the PR's `## Proof` and the owner B1 gate. In the same pass, **eyeball the `*` and `⚠` contrast** against each fill (approve/request-changes/comment/accent) in both themes — confirm AA (they inherit the label's on-fill color, so a pass on the label is a pass here, but verify the warning fill explicitly).
 - [ ] **Step 5:** Commit any final baseline/lint fixes.
 
 ```bash
@@ -1129,4 +1251,28 @@ git commit -m "chore(#291): pre-push verification fixes"
 - **Spec coverage:** §3 cluster → Tasks 1-6; §4.1 axes → Tasks 1-3 (incl. compound pending×reconfirm test); §4.2 asterisk+tooltip → Tasks 2,4; §4.3 min-width/density → Task 4 CSS + Task 11 no-reflow check; §4.4 flat menu + dialogOpen suppression + clear-via-reselect → Tasks 3,5; §4.5 frozen + reconfirm parity → Tasks 2,4,5; §5 pull-tab (App mount, route+gate, open-state ride, anti-collision) → Tasks 8,9,11; §6 icon-only → Task 7; §7 preservation invariants → guardrails + Tasks 2,3,6 + Task 12 backend run; §9 a11y → Task 5; §10 testing → Tasks 1-11; §11 ACs → covered.
 - **Preservation:** resume/discard never gated (Task 2); discard-pending `!dialogOpen` suppression (Task 3); pending→onResume mapping (Tasks 2,6). Corrects the spec §4.1 "pending+needs-reconfirm disabled" example — resume stays enabled to match today's ungated `SubmitInProgressBadge`.
 - **Type consistency:** `deriveFace`/`deriveMenu`/`ReviewActionInputs`/`ReviewActionFace`/`ReviewActionMenuSection` names consistent across Tasks 1-5; component props (`onPatchVerdict`/`onOpenSubmit`/`onResume`/`onDiscardPending`/`onDiscardAllDrafts`) consistent Tasks 4-6.
-- **Open items for B1:** pull-tab resting anchor (Task 8 `top` is a starting value — finalize in Task 9 smoke / Task 11); reconfirm glyph treatment (Task 4 `⚠` — owner picks at B1).
+- **Open items for B1:** pull-tab resting anchor (Task 8 `top` is a starting value — measured in Task 9 Step 4); reconfirm glyph treatment (Task 4 `⚠` — owner picks at B1); `.main` min-width (Task 4 `16ch` starting value — Task 11 no-reflow check is the backstop).
+
+## ce-doc-review round 1 dispositions (5 personas)
+
+Applied to the plan above:
+- **Discard-all loses confirmation** (adversarial/design, conf 100 — destructive) → lifted `DiscardAllConfirmationModal` into `PrHeader`; menu opens it (Task 6).
+- **Reason-(a) tooltip not directional** (design, conf 100) → override the string + exact-copy test (Task 2).
+- **needs-reconfirm menu note missing** (design, conf 100) → `note` menu item + test (Task 3).
+- **Narrow-width layout contract absent** (design, conf 100) → Task 6 Step 3b (title `min-width:0`, `.prActions flex:none`, drop-Open-in-GitHub `@media`).
+- **`chevronRef` copy-paste trap** (adversarial, conf 100) → folded into Task 4; Task 5 prose removed.
+- **`onClose()` during render** (design, conf 75) → `useEffect` (Task 5).
+- **`aria-disabled` wrong on closed/merged** (adversarial/design, conf 75) → matched to the `disabled` predicate (Task 4).
+- **min-width 14.5ch unmeasured** (adversarial, conf 75) → bumped to 16ch starting value + measure-in-Task-11 note (Task 4).
+- **`top:160px` "verified" comment stale** (design, conf 75) → comment fixed + measurement step (Tasks 8, 9).
+- **Compound pending×reconfirm test claimed but absent** (adversarial, conf 75) → added (Task 2).
+- **Arrow-nav untested + Tab unhandled** (design, conf 75) → tests + Tab handler (Task 5).
+- **`?? null` masks mis-route** (adversarial, conf 75) → `if (!verdict) return` guard (Task 4).
+- **resume submits session verdict, not menu-picked** (adversarial, conf 75) → documented in guardrails.
+- **AA contrast unverified** (design, conf 100) → `*`/`⚠` inherit the label's on-fill color (already AA); explicit B1 check (Tasks 4, 12).
+- **Touch icon presence untested** (design, conf 75) → icon-presence test (Task 8).
+- **Task 5 "Modify" label** (coherence, conf 100) → "Create (replaces stub)".
+
+Verified-correct by feasibility (no change): all import paths (`../../../api/types`, `../SubmitButton`, `./parsePrRefFromPathname`), `PrState` type-only import (no runtime cycle — keep `import type`), every design token, `.btn-icon`, `GitHubMark`, `useAiGate`/`useAskAiDrawer`/`useEffectiveLocation` shapes, the `/pr/o/r/N` route parse, vitest/RTL conventions. Guardrails verified to hold: frozen↔old-idle-gate equivalence, discard-pending modal preservation, loading-gate wrapping.
+
+Not changed (FYI only): `composerAssist` gate is wire-coupled to `aiPreview` today (matches the button it replaces); the Tasks 1-3 derivation split is intentional TDD granularity. Scope-guardian: plan is right-sized, no descope re-raised (the design scope was settled with the owner).

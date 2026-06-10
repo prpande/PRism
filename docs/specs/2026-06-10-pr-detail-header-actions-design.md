@@ -66,7 +66,7 @@ A `.btn`-family control (identical metrics to today's `.btn-primary`: 30px tall,
 | Open, Request changes, needs-reconfirm | warning | `⚠ Request changes` | disabled (reason c) | face signal + menu note |
 | Pending, Comment drafted | info | `Comment*` | resume | `*` = pending |
 | Pending, no verdict | accent | `Resume review*` | resume | fallback |
-| Pending **and** needs-reconfirm | verdict color | `⚠ <verdict>*` | disabled (reason c) | compound — explicitly tested (§10) |
+| Pending **and** needs-reconfirm | verdict color | `⚠ <verdict>*` | **resume (enabled)** | compound — resume is never gated (matches today's `SubmitInProgressBadge`); `⚠` shown; explicitly tested (§10) |
 | In-flight submit (frozen) | (current fill) | (current label) | disabled; **menu disabled too** | |
 | Closed / merged | secondary | `Drafts` | opens menu (no submit) | |
 
