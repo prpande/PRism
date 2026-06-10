@@ -17,19 +17,15 @@ import { useAiGate } from '../../hooks/useAiGate';
 import { useSubmitToasts } from '../../hooks/useSubmitToasts';
 import { useToast } from '../Toast';
 import { PrSubTabStrip, type PrTabId } from './PrSubTabStrip';
-import { VerdictPicker } from './VerdictPicker';
-import { SubmitButton } from './SubmitButton';
-import { SubmitInProgressBadge } from './SubmitInProgressBadge';
-import { DiscardAllDraftsButton } from './DiscardAllDraftsButton';
 import { DiscardPendingReviewConfirmationModal } from './DiscardPendingReviewConfirmationModal';
+import { DiscardAllConfirmationModal } from './DiscardAllConfirmationModal';
 import { ImportedDraftsBanner } from './ForeignPendingReviewModal/ImportedDraftsBanner';
 import styles from './PrHeader.module.css';
-import { AskAiButton } from './AskAiButton';
 import { Avatar } from '../Avatar/Avatar';
 import { Skeleton } from '../Skeleton';
-import { useAskAiDrawer } from '../../contexts/AskAiDrawerContext';
 import { SubmitDialog } from './SubmitDialog/SubmitDialog';
 import { OpenInGitHubButton } from './OpenInGitHubButton';
+import { ReviewActionButton } from './ReviewActionButton/ReviewActionButton';
 
 // #128/#203 — double-chevron, authored pointing UP (the expanded state, where
 // content folds toward when collapsed). The collapsed state rotates it 180° to
@@ -169,8 +165,6 @@ export function PrHeader({
   // submit-orphan-cleanup-failed (spec § 11.4 / § 13.2).
   useSubmitToasts(reference, { showToast: (message) => show({ kind: 'info', message }) });
   const [dialogOpen, setDialogOpen] = useState(false);
-  const { toggle: toggleAskAi } = useAskAiDrawer();
-  const isClosedOrMerged = prState !== 'open';
 
   // Closed-dialog discard surface (spec § 4.9). When the SubmitDialog is shut,
   // the pill next to Submit offers the same Discard action. It needs its OWN
@@ -189,6 +183,7 @@ export function PrHeader({
   // open dialog. `dialogOpen` is the faithful "is the dialog open?" signal.
   const [pillDiscardModalOpen, setPillDiscardModalOpen] = useState(false);
   const [pillDiscardError, setPillDiscardError] = useState<string | null>(null);
+  const [discardAllModalOpen, setDiscardAllModalOpen] = useState(false);
 
   // Any active submit flow freezes the header verdict picker (spec § 8.3 — held
   // from Confirm through success or failure; the stale-commitOID/failed retry
@@ -463,53 +458,23 @@ export function PrHeader({
             rule rather than threading that logic through the skeleton. */}
         {!loading && (
           <div className={styles.prActions}>
-            {/* Only when nothing is in flight in *this* tab — re-firing submit()
-              over an active pipeline would 409 and (caught) wedge the dialog. */}
-            {session && submit.state.kind === 'idle' && (
-              <SubmitInProgressBadge session={session} onResume={onResume} />
-            )}
-            {/* Verdict picker is hidden (not disabled) on a closed/merged PR — a
-              verdict can't be submitted there (spec § 13.1). */}
-            {!isClosedOrMerged && (
-              <VerdictPicker
-                value={session?.draftVerdict ?? null}
-                verdictStatus={session?.draftVerdictStatus}
-                disabled={!session || inSubmitFlow}
-                onChange={patchVerdict}
-              />
-            )}
-            {/* Read order on a closed/merged PR: [Discard all drafts | Submit (disabled)]. */}
-            {session && isClosedOrMerged && (
-              <DiscardAllDraftsButton
-                prState={prState}
-                session={session}
-                onDiscard={onDiscardAllDrafts}
-              />
-            )}
-            {/* Closed-dialog discard surface (spec § 4.9) — mutually exclusive
-              with the SubmitDialog's footer Discard button via `!dialogOpen`. */}
-            {session?.pendingReviewId != null && !dialogOpen && (
-              <button
-                type="button"
-                className={styles.pendingReviewPill}
-                data-testid="pending-review-pill"
-                onClick={() => {
-                  setPillDiscardError(null);
-                  setPillDiscardModalOpen(true);
-                }}
-              >
-                Pending review on GitHub · Discard
-              </button>
-            )}
-            <SubmitButton
+            <OpenInGitHubButton href={htmlUrl} />
+            <ReviewActionButton
               session={session ?? EMPTY_SESSION}
+              prState={prState}
               headShaDrift={headShaDrift}
               validatorResults={validatorResults}
-              disabled={!session || inSubmitFlow || isClosedOrMerged}
-              onSubmit={() => setDialogOpen(true)}
+              inSubmitFlow={inSubmitFlow}
+              dialogOpen={dialogOpen}
+              onPatchVerdict={patchVerdict}
+              onOpenSubmit={() => setDialogOpen(true)}
+              onResume={onResume}
+              onDiscardPending={() => {
+                setPillDiscardError(null);
+                setPillDiscardModalOpen(true);
+              }}
+              onDiscardAllDrafts={() => setDiscardAllModalOpen(true)}
             />
-            <AskAiButton onClick={toggleAskAi} />
-            <OpenInGitHubButton href={htmlUrl} />
           </div>
         )}
       </div>
@@ -586,6 +551,33 @@ export function PrHeader({
         discardInFlight={submit.discardInFlight}
         errorMessage={pillDiscardError}
       />
+      {/* Discard-all confirmation modal — lifted from DiscardAllDraftsButton now
+          that the menu item in ReviewActionButton drives the open state. Only the
+          modal's onConfirm calls the real onDiscardAllDrafts; the menu handler
+          only opens this modal (setDiscardAllModalOpen(true)). */}
+      {session && prState !== 'open' && (
+        <DiscardAllConfirmationModal
+          open={discardAllModalOpen}
+          prState={prState}
+          threadCount={
+            session.draftComments.filter((d) => !(d.filePath === null && d.lineNumber === null))
+              .length
+          }
+          replyCount={session.draftReplies.length}
+          hasSummary={
+            (
+              session.draftComments.find((d) => d.filePath === null && d.lineNumber === null)
+                ?.bodyMarkdown ?? ''
+            ).trim().length > 0
+          }
+          hasPendingReview={!!session.pendingReviewId}
+          onConfirm={() => {
+            setDiscardAllModalOpen(false);
+            onDiscardAllDrafts();
+          }}
+          onCancel={() => setDiscardAllModalOpen(false)}
+        />
+      )}
     </div>
   );
 }

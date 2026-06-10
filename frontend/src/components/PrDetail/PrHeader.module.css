@@ -11,6 +11,13 @@
   gap: var(--s-6);
 }
 
+/* Title/meta column must shrink below its content width so long PR titles
+   truncate or wrap rather than pushing the .prActions block off-screen.
+   .prActions already carries flex:none above. */
+.prHeaderTop > :global(.pr-meta) {
+  min-width: 0;
+}
+
 .prTitle {
   font-size: var(--text-xl);
   font-weight: 600;
@@ -185,4 +192,13 @@
   display: inline-flex;
   align-items: center;
   gap: 4px;
+}
+
+/* Drop the Open-in-GitHub button at narrow viewports to keep the action row
+   tidy. The .open-in-github-button class is added to the element in Task 7;
+   this selector is harmlessly inert until then. */
+@media (max-width: 720px) {
+  .prActions :global(.open-in-github-button) {
+    display: none;
+  }
 }
