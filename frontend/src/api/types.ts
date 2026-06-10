@@ -30,8 +30,9 @@ export interface InboxPreferences {
   sections: InboxSectionsPreferences;
   defaultSort: SortKey;
   sectionOrder: string;
-  // #283 gates the (fabricated, non-AI) activity rail. Decoupled from the AI-preview
-  // toggle onto this dedicated flag; default false (config-only, no Settings UI yet).
+  // #283 gates the (non-AI) activity rail; decoupled from the AI-preview toggle onto
+  // this dedicated flag (default false). #137 wired the rail to real /api/activity
+  // data and surfaced this flag as a Settings toggle (InboxPane).
   showActivityRail: boolean;
   // #219 when false, the Inbox renders flat PR lists instead of repo-grouped
   // accordions. Default true (grouped). Pure frontend-render preference.

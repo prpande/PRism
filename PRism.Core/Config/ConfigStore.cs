@@ -44,8 +44,8 @@ public sealed class ConfigStore : IConfigStore, IDisposable
             ["inbox.sections.recently-closed"]   = ConfigFieldType.Bool,
             ["inbox.defaultSort"]                = ConfigFieldType.String,
             ["inbox.sectionOrder"]               = ConfigFieldType.String,
-            // #283 dedicated non-AI flag gating the (fabricated) activity rail. Config-only,
-            // default OFF; no Settings UI yet. Apply-switch arm lives in PatchAsync below.
+            // #283 dedicated non-AI flag gating the activity rail (default OFF). #137 wired
+            // the rail to real /api/activity data + a Settings toggle. Apply-switch arm below.
             ["inbox.showActivityRail"]           = ConfigFieldType.Bool,
             // #219 toggle: group the Inbox by repo (default) vs flat. Apply-switch arm below.
             ["inbox.groupByRepo"]                = ConfigFieldType.Bool,

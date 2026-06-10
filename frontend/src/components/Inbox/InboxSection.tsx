@@ -62,9 +62,11 @@ export function InboxSection({
     if (!forceOpen) setUserToggled(false);
   }, [forceOpen]);
   const isRecentlyClosed = section.id === RECENTLY_CLOSED;
-  const groups = buildRepoGroups(section.items);
+  // #219 skip the grouping allocation entirely when the toggle is off — the flat
+  // path renders section.items directly and never reads `groups`.
+  const groups = groupByRepo ? buildRepoGroups(section.items) : [];
   const repoDefaultOpen = !isRecentlyClosed;
-  // #219 group only when the toggle is on AND there's more than one repo to group
+  // group only when the toggle is on AND there's more than one repo to group
   // (a single repo always flattens — a one-child accordion is pointless).
   const grouped = groupByRepo && groups.length > 1;
 
