@@ -21,12 +21,10 @@ The issue's own first instruction is **"profile where the time goes — don't gu
 
 Brainstorm settled four scope calls before this spec:
 
-1. **Measurement:** apply high-confidence levers now; ship instrumentation; measure the rest on a clean VM later. (Do **not** stall the slice waiting on attribution we can't produce here.)
-2. **Distribution (AC #4):** keep **both** `portable` + `nsis` targets at equal footing; document the cold-start tradeoff neutrally — no steering.
-3. **.NET levers:** `PublishReadyToRun=true` **now** (unambiguous cold-start win); the `EnableCompressionInSingleFile` flip is **deferred to the clean-VM region-4 data** (dropping it ~doubles the sidecar binary, which *enlarges* the per-launch portable extraction — a measurement question, not a clear win).
-4. **Issue scope:** this PR does Part 1 and **closes #282**; a separate **splash follow-up** issue is filed for Part 2.
-
-> **⚠ Two calls re-challenged by ce-doc-review (round 1) — pending owner confirmation at the B2 gate.** (1) **Closing #282** — 6/6 reviewers flagged that closing it records the user-visible symptom (~1.5 min, no feedback) as resolved when it persists after this slice (splash deferred, regions 1–2 untouched). (2) **Clean-VM measurement timing** — AC #1/#5 require numbers from the clean-VM run; the spec must say whether those land **pre-merge** (a real `## Proof` gate) or **post-merge**. Both are resolved in the "Owner gate decisions" outcome and the Decision-frame/DoD text is finalized to match before implementation.
+1. **Measurement:** apply high-confidence levers now; ship instrumentation; measure the rest on a clean VM **post-merge** (owner-confirmed at the gate). The clean-VM numbers are **not a merge gate** — this PR's deliverable is the shipped instrumentation + documented protocol; the numbers land afterward on the still-open #282. (Do **not** stall the slice waiting on attribution we can't produce here.)
+2. **Distribution (AC #4):** keep **both** `portable` + `nsis` targets at equal footing; document the cold-start tradeoff neutrally — no steering. *Equal footing is itself the deliberate AC-#4 decision* (rationale in §6).
+3. **.NET levers:** `PublishReadyToRun=true` **now** (unambiguous cold-start win); the `EnableCompressionInSingleFile` flip is **deferred to the clean-VM region-4 data** (dropping it ~doubles the sidecar binary, which *enlarges* the per-launch portable extraction — a measurement question, not a clear win), to be decided from an A/B build comparison (see §1).
+4. **Issue scope (revised at the B2 gate per ce-doc-review):** this PR does **Part 1** and **does NOT close #282** — it references it (`Part 1 of #282`). **#282 stays open** as the tracker for the still-present user-visible symptom; its remaining scope is **Part 2 (splash)** and the **compression-flip decision**, both gated on the post-merge clean-VM data. No separate splash issue is filed — #282 itself carries Part 2. *(Original brainstorm call was "close #282 + file a splash follow-up"; reversed here because 6/6 reviewers flagged that closing it would record the symptom as resolved while it persists.)*
 
 ## Scope
 
@@ -36,10 +34,11 @@ Brainstorm settled four scope calls before this spec:
 - A documented **measurement protocol**.
 - Distribution docs (AC #4 caveat).
 
-**Out (deferred; follow-ups filed):**
-- The splash / loading indicator (Part 2) — gated on the clean-VM data showing a material post-`whenReady` gap.
-- The `EnableCompressionInSingleFile` flip — gated on the region-4 number.
+**Out (deferred; tracked on the still-open #282):**
+- The splash / loading indicator (**Part 2 of #282**) — gated on the post-merge clean-VM data (see §7 for the two-branch gate).
+- The `EnableCompressionInSingleFile` flip — gated on the region-4 A/B comparison.
 - Code-signing (region-2's only real fix) — no Authenticode cert available; documented as the known residual + the future fix.
+- The post-merge **clean-VM measurement** itself — not a deliverable of this PR; the numbers land on #282 afterward (Decision frame #1).
 
 **Explicit non-goal:** changing what the user sees during regions 1–2. A splash created inside Electron cannot cover pre-JS extraction/scan; only packaging (installer, signing) can, and both are out of this slice.
 
@@ -157,7 +156,7 @@ The tester records the **wall-clock total** `T` with a stopwatch: **double-click
 
 **Sanity invariant (adversarial-review finding).** `procToContent` is sound only if `process.getCreationTime()` returns the creation time of the **final, extracted** Electron process (electron-builder's portable stub extracts to `%TEMP%`, then spawns the real app; the JS runs in that extracted process, so extraction lands in `T − procToContent`, not inside `procToContent`). Guard the invariant: **`T ≥ procToContent` must always hold** — a negative or near-zero region 1 signals the timestamp came from the wrong (stub) process and the protocol is invalid for that run.
 
-Run on a clean Windows VM, Defender on, first-ever launch of the unsigned build. Record the numbers in the issue/PR (satisfies AC #1).
+Run on a clean Windows VM, Defender on, first-ever launch of the unsigned build. This is a **post-merge** step (Decision frame #1) — the numbers are recorded on the still-open **#282** afterward, not gated into this PR's merge.
 
 > **Verify the anchor early (feasibility/scope-review residual).** The whole subtraction protocol depends on `process.getCreationTime()` returning a non-null epoch-ms value on the **actual published win-x64 build**. It is a real Electron-33 process API (returns `number | null`), but confirm it is non-null on the packaged build *before* relying on it — if it returns null, `preJs`/`procToContent` degrade to `n/a` and the protocol falls back to the cruder `T − totalInstrumented` (less precise; regions 1–2 then bundle the un-instrumented pre-JS slice).
 
@@ -171,10 +170,12 @@ The README subsection: both the installer (NSIS) and the portable `.exe` are off
 
 (Product-review flagged "equal footing dodges AC #4's decide" — re-surfaced to the owner at the gate below; this framing reflects the owner's locked choice, recorded as a decision.)
 
-### 7. Follow-ups (filed during/at PR time)
+### 7. Part-2 scope on the still-open #282 (no separate issue)
 
-- **Splash / loading indicator (Part 2)** — new issue, `area:desktop`, `needs-design`. **Gate framing (product-review finding):** a splash can cover **only** regions 3–5 (post-`whenReady`), never the pre-JS regions 1–2. So the follow-up is a two-branch decision on the clean-VM data, not a single "is the gap big" check: **(a)** if regions 3–5 are a material slice of the perceived hang → build the splash (it fills exactly the window it can cover); **(b)** if regions 1–2 dominate (the portable path's likely case) → a splash does **not** help that path, and the resolution is **packaging/signing** (or accepting the limitation), not a splash. Implementation, if branch (a): a lightweight "PRism is starting…" window on `whenReady`, swapped to the main window on `contentLoaded`.
-- **Compression-flip decision** — captured in the splash issue or its own note: revisit `EnableCompressionInSingleFile=false` once the region-4 `sidecarBoot` number is known, weighing the ~2× binary-size cost against the first-run decompression saving (and its enlargement of the portable extraction).
+#282 stays open after this PR; its remaining scope is tracked there directly (Decision frame #4), not in a new issue:
+
+- **Splash / loading indicator (Part 2)** — `area:desktop`, `needs-design` (apply to #282 when Part 1 merges). **Gate framing (product-review finding):** a splash can cover **only** regions 3–5 (post-`whenReady`), never the pre-JS regions 1–2. So Part 2 is a two-branch decision on the clean-VM data, not a single "is the gap big" check: **(a)** if regions 3–5 are a material slice of the perceived hang → build the splash (it fills exactly the window it can cover); **(b)** if regions 1–2 dominate (the portable path's likely case) → a splash does **not** help that path, and the resolution is **packaging/signing** (or accepting the limitation), not a splash. Implementation, if branch (a): a lightweight "PRism is starting…" window on `whenReady`, swapped to the main window on `contentLoaded`.
+- **Compression-flip decision** — revisit `EnableCompressionInSingleFile=false` once the region-4 `sidecarBoot` number is known, decided from an **A/B build comparison** (§1), weighing the ~2× binary-size cost against the first-run decompression saving (and its enlargement of the portable extraction).
 
 ## Data flow
 
@@ -204,11 +205,15 @@ All new production code is written test-first (red → green). Units run under `
 
 ## Definition of done → acceptance-criteria map
 
-- **AC #1** (profile + attribute regions, numbers recorded) → instrumentation emits regions 3–5 + `procToContent`; the measurement protocol derives 1–2; numbers recorded in the PR from the clean-VM run.
-- **AC #2** (startup reduced via highest-impact fix) → `PublishReadyToRun` applied; instrumentation makes the impact measurable; the dominant pre-JS region's fixes (installer-over-portable behavior, signing) are documented as the levers, with portable kept by owner decision.
-- **AC #3** (splash if Part 1 insufficient) → **deferred** to the filed splash issue, gated on the clean-VM gap — consistent with "measure before building a splash that may not help."
-- **AC #4** (distribution decided + documented) → both targets kept; tradeoff documented neutrally in README.
-- **AC #5** (verified on a clean Windows machine, Defender on) → the measurement protocol is run there; numbers in the PR's `## Proof`.
+**#282 stays open after this PR.** This PR's DoD is the **shipped** deliverable (instrumentation, R2R, protocol, docs); AC #1/#3/#5 complete on #282 **post-merge** (Decision frame #1/#4). The split is explicit so nothing reads as done before it is:
+
+- **AC #1** (profile + attribute regions, numbers recorded) — *this PR:* ships the instrumentation that emits regions 3–5 + `procToContent` and the documented subtraction protocol. *Post-merge on #282:* the clean-VM numbers are recorded. **Not closed by this PR.**
+- **AC #2** (startup reduced via highest-impact fix) — *this PR:* `PublishReadyToRun` applied; instrumentation makes the impact measurable; the dominant pre-JS region's levers (installer-over-portable behavior, signing) documented. Portable kept (owner decision). The *measured* reduction is confirmed post-merge.
+- **AC #3** (splash if Part 1 insufficient) — **Part 2 of #282** (open), gated on the post-merge clean-VM data via the §7 two-branch decision. **Not in this PR.**
+- **AC #4** (distribution decided + documented) — **done in this PR:** equal-footing is the deliberate decision (§6); tradeoff documented neutrally in README.
+- **AC #5** (verified on a clean Windows machine, Defender on) — *post-merge on #282:* the measurement protocol is run there; numbers recorded. **Not gated into this PR's merge.**
+
+**This PR's `## Proof` covers:** the new pure-function tests (red→green), the R2R publish + pack smoke, the e2e `[startup]`-line assertion, and the secrets scan. It does **not** claim AC #1/#3/#5 — those are tracked open on #282.
 
 ## Behavioral notes / edge cases
 
