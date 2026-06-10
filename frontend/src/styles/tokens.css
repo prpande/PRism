@@ -47,6 +47,13 @@
      direction and overrides this below — see [data-theme="dark"]. */
   --row-hover: color-mix(in oklch, var(--surface-1), var(--surface-2) 60%);
 
+  /* Background for the comment-count pill when its row is hovered — it must stay
+     one perceptible step off --row-hover so the pill still reads as a raised chip on
+     a hovered row. surface-3 clears the light --row-hover (0.951) by ~0.05 L. Dark
+     overrides this below: dark --row-hover sits right next to surface-3, so the dark
+     pill needs a different value (#347 follow-up, claude[bot] review). */
+  --row-hover-pill: var(--surface-3);
+
   /* timings */
   --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
   --t-fast: 80ms;
@@ -174,6 +181,11 @@
      lifts clearly above both the resting rows and the header band (#347). Lands just
      under surface-3 (header hover), so it never collides with a resting header. */
   --row-hover: color-mix(in oklch, var(--surface-2), var(--surface-3) 70%);
+
+  /* Dark pill-hover bg (overrides :root surface-3). Dark --row-hover (~0.2595 L)
+     abuts surface-3 (0.27, ΔL ~0.01), so the pill would vanish on a hovered row;
+     border-1 (0.30) lifts it ~0.04 L above the hovered row — a visible raised chip. */
+  --row-hover-pill: var(--border-1);
 
   --border-1: oklch(0.30 0.012 250);
   --border-2: oklch(0.34 0.013 250);

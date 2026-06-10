@@ -274,8 +274,11 @@
   color: var(--accent);
 }
 
+/* Keep the comment-pill readable as a raised chip on a hovered row. Per-theme token:
+   surface-3 in light, but a distinct value in dark where --row-hover sits next to
+   surface-3 (claude[bot] review on #356). */
 .row:hover .comments {
-  background: var(--surface-3);
+  background: var(--row-hover-pill);
 }
 
 /* Indent grouped rows via left padding, not the accordion body, so the tail's
