@@ -101,45 +101,43 @@ function renderWithToast(node: ReactNode) {
   );
 }
 
-describe('PrHeader — pending-review pill (T24)', () => {
-  it('renders the pill when pendingReviewId is set and the dialog is closed', () => {
+// Sessions here are pending + no verdict → main button shows "Resume review", chevron present.
+function openDiscardPendingModal() {
+  fireEvent.click(screen.getByTestId('review-action-chevron'));
+  fireEvent.click(screen.getByRole('menuitem', { name: /discard pending review/i }));
+}
+
+describe('PrHeader — pending-review discard (T24)', () => {
+  it('offers Discard pending review in the menu when pendingReviewId is set', () => {
     renderWithToast(<PrHeader {...baseProps} session={session({ pendingReviewId: 'PRR_abc' })} />);
-    const pill = screen.getByTestId('pending-review-pill');
-    expect(pill).toBeInTheDocument();
-    expect(pill).toHaveTextContent(/Pending review on GitHub · Discard/);
+    fireEvent.click(screen.getByTestId('review-action-chevron'));
+    expect(screen.getByRole('menuitem', { name: /discard pending review/i })).toBeInTheDocument();
   });
 
-  it('does not render the pill when pendingReviewId is null', () => {
+  it('no Discard pending review item when pendingReviewId is null', () => {
     renderWithToast(<PrHeader {...baseProps} session={session({ pendingReviewId: null })} />);
-    expect(screen.queryByTestId('pending-review-pill')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByTestId('review-action-chevron'));
+    expect(
+      screen.queryByRole('menuitem', { name: /discard pending review/i }),
+    ).not.toBeInTheDocument();
   });
 
-  it('hides the pill while the SubmitDialog is open (even with a pendingReviewId)', () => {
-    renderWithToast(
-      <PrHeader
-        {...baseProps}
-        session={session({ pendingReviewId: 'PRR_abc', draftVerdict: 'approve' })}
-      />,
-    );
-    // Pill visible before opening the dialog.
-    expect(screen.getByTestId('pending-review-pill')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: /submit review/i }));
-    // SubmitDialog mounted → pill gone.
-    expect(screen.getByRole('dialog')).toBeInTheDocument();
-    expect(screen.queryByTestId('pending-review-pill')).not.toBeInTheDocument();
-  });
+  // The dialogOpen mutual-exclusion for discard-pending is enforced in deriveMenu
+  // and covered by reviewActionState.test.ts ("pending + dialogOpen → discard-pending suppressed").
+  // At the integration level the chevron is frozen while the dialog is open, so the
+  // menu cannot be opened — there is no clean integration expression of this invariant here.
 
-  it('clicking the pill opens the discard confirmation modal', () => {
+  it('clicking "Discard pending review" in the menu opens the discard confirmation modal', () => {
     renderWithToast(<PrHeader {...baseProps} session={session({ pendingReviewId: 'PRR_abc' })} />);
     expect(screen.queryByTestId('discard-pending-review-modal')).not.toBeInTheDocument();
-    fireEvent.click(screen.getByTestId('pending-review-pill'));
+    openDiscardPendingModal();
     expect(screen.getByTestId('discard-pending-review-modal')).toBeInTheDocument();
   });
 
   it('confirming the discard calls discardOwnPendingReview, closes the modal, and toasts on success', async () => {
     discardOwnPendingReviewMock.mockResolvedValueOnce({ ok: true });
     renderWithToast(<PrHeader {...baseProps} session={session({ pendingReviewId: 'PRR_abc' })} />);
-    fireEvent.click(screen.getByTestId('pending-review-pill'));
+    openDiscardPendingModal();
     fireEvent.click(screen.getByTestId('confirm-discard-pending'));
 
     await waitFor(() => expect(discardOwnPendingReviewMock).toHaveBeenCalledWith(ref));
@@ -156,7 +154,7 @@ describe('PrHeader — pending-review pill (T24)', () => {
       message: 'GitHub is unreachable.',
     });
     renderWithToast(<PrHeader {...baseProps} session={session({ pendingReviewId: 'PRR_abc' })} />);
-    fireEvent.click(screen.getByTestId('pending-review-pill'));
+    openDiscardPendingModal();
     fireEvent.click(screen.getByTestId('confirm-discard-pending'));
 
     const errorRow = await screen.findByTestId('discard-pending-error');
@@ -170,7 +168,7 @@ describe('PrHeader — pending-review pill (T24)', () => {
 
   it('Cancel closes the modal without calling discardOwnPendingReview', () => {
     renderWithToast(<PrHeader {...baseProps} session={session({ pendingReviewId: 'PRR_abc' })} />);
-    fireEvent.click(screen.getByTestId('pending-review-pill'));
+    openDiscardPendingModal();
     expect(screen.getByTestId('discard-pending-review-modal')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: /^cancel$/i }));
     expect(screen.queryByTestId('discard-pending-review-modal')).not.toBeInTheDocument();

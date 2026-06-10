@@ -23,6 +23,7 @@ import { OpenTabsProvider } from './contexts/OpenTabsContext';
 import { PreferencesProvider } from './contexts/PreferencesContext';
 import { AskAiDrawerProvider } from './contexts/AskAiDrawerContext';
 import { AskAiDrawer } from './components/AskAiDrawer/AskAiDrawer';
+import { AskAiPullTab } from './components/AskAiDrawer/AskAiPullTab';
 import { DrawerEffects } from './components/AskAiDrawer/DrawerEffects';
 import { PrTabStrip } from './components/PrTabStrip/PrTabStrip';
 import { useTabUnreadSignal } from './hooks/useTabUnreadSignal';
@@ -178,6 +179,7 @@ function AppShell() {
         host={authState.host}
       />
       <AskAiDrawer />
+      <AskAiPullTab />
       <DrawerEffects />
       <TabSignals />
       <ToastContainer />
