@@ -2,9 +2,11 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using FluentAssertions;
+using Microsoft.Extensions.DependencyInjection;
 using PRism.AI.Contracts.Dtos;
 using PRism.Core.Contracts;
 using PRism.Core.Inbox;
+using PRism.Core.State;
 using PRism.Web.Tests.TestHelpers;
 using Xunit;
 
@@ -250,5 +252,53 @@ public class InboxEndpointsTests
         resp.StatusCode.Should().Be(HttpStatusCode.OK);
         var body = await resp.Content.ReadFromJsonAsync<JsonElement>();
         body.GetProperty("ciProbeComplete").GetBoolean().Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task Get_inbox_overlays_live_viewed_state_without_a_refresh()
+    {
+        // Snapshot baked with a STALE viewed head (as if the user had not yet viewed at the
+        // current head): item head = "HEAD", baked LastViewedHeadSha = "STALE" → would render unread.
+        var reference = new PrReference("acme", "api", 7);
+        var staleItem = new PrInboxItem(
+            reference, "Calc", "author", "acme/api",
+            DateTimeOffset.UtcNow, DateTimeOffset.UtcNow,
+            1, 0, 1, 0, "HEAD", CiStatus.None,
+            LastViewedHeadSha: "STALE", LastSeenCommentId: null);
+        var fakeOrch = new FakeInboxRefreshOrchestrator
+        {
+            Current = MakeSnapshot(new Dictionary<string, IReadOnlyList<PrInboxItem>>
+            {
+                ["review-requested"] = new[] { staleItem },
+            }),
+        };
+
+        using var factory = new PRismWebApplicationFactory();
+        factory.FakeOrchestrator = fakeOrch;
+        var client = factory.CreateClient();   // triggers ConfigureWebHost → DataDir + DI ready
+
+        // Live state: the user has since viewed the PR at the CURRENT head ("HEAD").
+        var store = factory.Services.GetRequiredService<IAppStateStore>();
+        await store.UpdateAsync(state =>
+        {
+            var session = new ReviewSessionState(
+                new Dictionary<string, TabStamp> { ["t1"] = new TabStamp("HEAD", DateTime.UtcNow) },
+                null, null, null,
+                new Dictionary<string, string>(),
+                new List<DraftComment>(), new List<DraftReply>(),
+                null, DraftVerdictStatus.Draft);
+            var sessions = new Dictionary<string, ReviewSessionState> { [reference.ToString()] = session };
+            return state.WithDefaultReviews(state.Reviews with { Sessions = sessions });
+        }, CancellationToken.None);
+
+        var resp = await client.GetAsync(new Uri("/api/inbox", UriKind.Relative));
+
+        resp.StatusCode.Should().Be(HttpStatusCode.OK);
+        var body = await resp.Content.ReadFromJsonAsync<JsonElement>();
+        var item = body.GetProperty("sections")[0].GetProperty("items")[0];
+        item.GetProperty("lastViewedHeadSha").GetString().Should().Be("HEAD",
+            "the GET overlay must re-project the live stamp over the stale baked value");
+        fakeOrch.RefreshCalls.Should().Be(0,
+            "the overlay reflects the write without triggering an orchestrator refresh");
     }
 }
