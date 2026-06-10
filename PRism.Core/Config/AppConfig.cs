@@ -48,10 +48,15 @@ public sealed record InboxConfig(
     // #283 the activity rail is a fully fabricated, non-AI mockup (no seam backing).
     // It was previously gated on the AI-preview toggle (useAiGate('inboxRanking'));
     // #283 decouples it onto this dedicated flag, default OFF, so flipping AI preview
-    // ON for fresh installs does not surface a fabricated feed. Config-only (no
-    // Settings UI) until the rail carries real data. Appended LAST so the positional
+    // ON for fresh installs does not surface a fabricated feed. A trailing-defaulted
+    // param, so the positional `new InboxConfig(true, …, 14)` default construction
+    // stays valid. (#137 later wired real data + a Settings toggle in InboxPane.)
+    bool ShowActivityRail = false,
+    // #219 user toggle to switch the Inbox between grouped-by-repo (default) and flat
+    // rendering. A pure frontend-render preference — it does NOT reshape the backend
+    // feed. Appended LAST as a trailing-defaulted param so the positional
     // `new InboxConfig(true, …, 14)` default construction stays valid.
-    bool ShowActivityRail = false);
+    bool GroupByRepo = true);
 public sealed record InboxSectionsConfig(
     bool ReviewRequested,
     bool AwaitingAuthor,

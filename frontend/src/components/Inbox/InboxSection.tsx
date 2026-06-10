@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { InboxSection as InboxSectionDto, InboxItemEnrichment } from '../../api/types';
-import { groupByRepo, prId } from './groupByRepo';
+// Aliased: the `groupByRepo` prop (#219 toggle) would otherwise shadow this fold helper.
+import { groupByRepo as buildRepoGroups, prId } from './groupByRepo';
 import { InboxRow } from './InboxRow';
 import { InboxCaret } from './InboxCaret';
 import { RepoGroupAccordion } from './RepoGroupAccordion';
@@ -24,6 +25,9 @@ interface Props {
   maxDiff: number;
   defaultOpen?: boolean;
   forceOpen?: boolean;
+  // #219 when false, render flat InboxRows instead of nested repo accordions.
+  // Defaults true so callers/tests that omit it keep the grouped default.
+  groupByRepo?: boolean;
 }
 
 export function InboxSection({
@@ -33,6 +37,7 @@ export function InboxSection({
   maxDiff,
   defaultOpen = true,
   forceOpen,
+  groupByRepo = true,
 }: Props) {
   // A filter-revealed section opens expanded (forceOpen), but a manual collapse
   // during the session still wins. Once the filter releases the section
@@ -57,8 +62,11 @@ export function InboxSection({
     if (!forceOpen) setUserToggled(false);
   }, [forceOpen]);
   const isRecentlyClosed = section.id === RECENTLY_CLOSED;
-  const groups = groupByRepo(section.items);
+  const groups = buildRepoGroups(section.items);
   const repoDefaultOpen = !isRecentlyClosed;
+  // #219 group only when the toggle is on AND there's more than one repo to group
+  // (a single repo always flattens — a one-child accordion is pointless).
+  const grouped = groupByRepo && groups.length > 1;
 
   return (
     <section className={styles.section}>
@@ -71,7 +79,18 @@ export function InboxSection({
         <div className={styles.body}>
           {section.items.length === 0 ? (
             <div className={styles.empty}>{EmptyCopy[section.id] ?? 'Nothing here.'}</div>
-          ) : groups.length <= 1 ? (
+          ) : grouped ? (
+            groups.map((g) => (
+              <RepoGroupAccordion
+                key={g.repo}
+                group={g}
+                enrichments={enrichments}
+                showCategoryChip={showCategoryChip}
+                maxDiff={maxDiff}
+                defaultOpen={repoDefaultOpen}
+              />
+            ))
+          ) : (
             section.items.map((pr) => {
               const id = prId(pr);
               return (
@@ -84,17 +103,6 @@ export function InboxSection({
                 />
               );
             })
-          ) : (
-            groups.map((g) => (
-              <RepoGroupAccordion
-                key={g.repo}
-                group={g}
-                enrichments={enrichments}
-                showCategoryChip={showCategoryChip}
-                maxDiff={maxDiff}
-                defaultOpen={repoDefaultOpen}
-              />
-            ))
           )}
           {/* "Unconditional" per spec = not gated on truncation (the old >=30 hint). The
               length>0 guard is intentional: an empty recently-closed shows EmptyCopy, not a

@@ -112,6 +112,7 @@ export function InboxPage() {
                   maxDiff={maxDiff}
                   defaultOpen={s.id !== 'recently-closed'}
                   forceOpen={filterActive && s.id !== 'recently-closed'}
+                  groupByRepo={preferences?.inbox.groupByRepo ?? true}
                 />
               ))}
             {data.tokenScopeFooterEnabled && <InboxFooter />}

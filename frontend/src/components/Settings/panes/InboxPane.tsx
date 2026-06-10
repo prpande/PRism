@@ -49,6 +49,7 @@ export function InboxPane() {
     : 'updated';
 
   const showActivityRail = preferences.inbox.showActivityRail;
+  const groupByRepo = preferences.inbox.groupByRepo;
 
   // Apply-on-success model (PreferencesContext.set is NOT optimistic): disable all
   // reorder controls while a move POST is pending so order-dependent moves serialize
@@ -186,6 +187,20 @@ export function InboxPane() {
         <div className={pane.spring} />
         <span id="inbox-show-activity-rail-help" className={pane.help}>
           The rail is hidden on narrow windows.
+        </span>
+      </div>
+
+      <div className={pane.row}>
+        <Switch
+          id="inbox-group-by-repo"
+          label="Group by repository"
+          describedById="inbox-group-by-repo-help"
+          checked={groupByRepo}
+          onChange={(next) => set('inbox.groupByRepo', next).catch(() => {})}
+        />
+        <div className={pane.spring} />
+        <span id="inbox-group-by-repo-help" className={pane.help}>
+          Off shows a flat PR list in every section.
         </span>
       </div>
     </section>

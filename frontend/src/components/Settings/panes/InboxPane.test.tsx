@@ -10,6 +10,7 @@ const set = vi.fn().mockResolvedValue(undefined);
 let defaultSort: SortKey = 'updated';
 let sectionOrder: string = 'review-requested,awaiting-author,authored-by-me,mentioned';
 let showActivityRail: boolean = false;
+let groupByRepo: boolean = true;
 vi.mock('../../../hooks/usePreferences', () => ({
   usePreferences: () => ({
     preferences: {
@@ -25,6 +26,7 @@ vi.mock('../../../hooks/usePreferences', () => ({
         defaultSort,
         sectionOrder,
         showActivityRail,
+        groupByRepo,
       },
       github: {},
     },
@@ -38,6 +40,7 @@ function renderInboxPane(
     defaultSort?: SortKey;
     sectionOrder?: string;
     showActivityRail?: boolean;
+    groupByRepo?: boolean;
   } = {},
 ) {
   if (opts.set) {
@@ -46,6 +49,7 @@ function renderInboxPane(
   defaultSort = opts.defaultSort ?? 'updated';
   sectionOrder = opts.sectionOrder ?? 'review-requested,awaiting-author,authored-by-me,mentioned';
   showActivityRail = opts.showActivityRail ?? false;
+  groupByRepo = opts.groupByRepo ?? true;
   return render(<InboxPane />);
 }
 
@@ -55,6 +59,7 @@ beforeEach(() => {
   defaultSort = 'updated';
   sectionOrder = 'review-requested,awaiting-author,authored-by-me,mentioned';
   showActivityRail = false;
+  groupByRepo = true;
 });
 
 describe('InboxPane', () => {
@@ -70,10 +75,10 @@ describe('InboxPane', () => {
     await waitFor(() => expect(set).toHaveBeenCalledWith('inbox.sections.awaiting-author', true));
   });
 
-  it('renders five section rows + the activity-rail toggle (6 switches), without ci-failing and with the re-review label', () => {
+  it('renders five section rows + activity-rail + group-by-repo toggles (7 switches), without ci-failing and with the re-review label', () => {
     renderInboxPane();
-    // 5 section toggles + the "Show activity rail" toggle (#137).
-    expect(screen.getAllByRole('switch')).toHaveLength(6);
+    // 5 section toggles + "Show activity rail" (#137) + "Group by repository" (#219).
+    expect(screen.getAllByRole('switch')).toHaveLength(7);
     expect(screen.queryByText('CI failing on my PRs')).toBeNull();
     expect(screen.getByText('Needs re-review')).toBeInTheDocument();
   });
@@ -94,6 +99,17 @@ describe('InboxPane', () => {
 
     await userEvent.click(toggle);
     expect(setSpy).toHaveBeenCalledWith('inbox.showActivityRail', true);
+  });
+
+  it('Group by repository toggle reflects and writes inbox.groupByRepo (#219)', async () => {
+    const setSpy = vi.fn().mockResolvedValue(undefined);
+    renderInboxPane({ groupByRepo: true, set: setSpy });
+
+    const toggle = screen.getByRole('switch', { name: /group by repository/i });
+    expect(toggle).toBeChecked();
+
+    await userEvent.click(toggle);
+    expect(setSpy).toHaveBeenCalledWith('inbox.groupByRepo', false);
   });
 });
 

@@ -33,6 +33,9 @@ export interface InboxPreferences {
   // #283 gates the (fabricated, non-AI) activity rail. Decoupled from the AI-preview
   // toggle onto this dedicated flag; default false (config-only, no Settings UI yet).
   showActivityRail: boolean;
+  // #219 when false, the Inbox renders flat PR lists instead of repo-grouped
+  // accordions. Default true (grouped). Pure frontend-render preference.
+  groupByRepo: boolean;
 }
 
 export interface GithubPreferences {
