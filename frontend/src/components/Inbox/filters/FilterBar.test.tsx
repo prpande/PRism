@@ -51,3 +51,24 @@ it('CI trigger shows the failing count when unselected', () => {
   );
   expect(screen.getByRole('button', { name: /CI/ })).toHaveTextContent('CI · 1');
 });
+
+it('sort control is an accessible combobox named "Sort" with no visible "Sort:" text', () => {
+  render(
+    <MemoryRouter>
+      <OpenTabsProvider>
+        <FilterBar
+          sections={secs}
+          initialSort="updated"
+          ciProbeComplete
+          onState={onState}
+          refresh={vi.fn()}
+          isRefreshing={false}
+          justRefreshed={false}
+        />
+      </OpenTabsProvider>
+    </MemoryRouter>,
+  );
+  // #300 — the visible "Sort:" label is dropped; the select keeps an accessible name.
+  expect(screen.getByRole('combobox', { name: /^sort$/i })).toBeInTheDocument();
+  expect(screen.queryByText('Sort:')).not.toBeInTheDocument();
+});

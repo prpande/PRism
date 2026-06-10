@@ -31,7 +31,7 @@ export function InboxSkeleton({ showRail }: { showRail: boolean }) {
   return (
     <main className={styles.page} data-testid="inbox-skeleton" aria-busy="true" aria-live="polite">
       <span className="sr-only">Loading inbox…</span>
-      <Skeleton width="100%" height={36} radius={8} />
+      <Skeleton width="100%" height={36} radius={8} className={styles.toolbarBar} />
       <div className={styles.grid} data-has-rail={showRail}>
         <div>
           {Array.from({ length: SECTIONS }, (_, s) => (

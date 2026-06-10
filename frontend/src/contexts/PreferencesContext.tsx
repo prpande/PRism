@@ -24,6 +24,7 @@ export type PreferenceKey =
   | 'inbox.defaultSort'
   | 'inbox.sectionOrder'
   | 'inbox.showActivityRail'
+  | 'inbox.groupByRepo'
   | `inbox.sections.${
       | 'review-requested'
       | 'awaiting-author'
@@ -41,6 +42,7 @@ type InboxSectionKey = Exclude<
   | 'inbox.defaultSort'
   | 'inbox.sectionOrder'
   | 'inbox.showActivityRail'
+  | 'inbox.groupByRepo'
 >;
 
 export function readKey(prefs: PreferencesResponse, key: PreferenceKey): unknown {
@@ -52,6 +54,7 @@ export function readKey(prefs: PreferencesResponse, key: PreferenceKey): unknown
   if (key === 'inbox.defaultSort') return prefs.inbox.defaultSort;
   if (key === 'inbox.sectionOrder') return prefs.inbox.sectionOrder;
   if (key === 'inbox.showActivityRail') return prefs.inbox.showActivityRail;
+  if (key === 'inbox.groupByRepo') return prefs.inbox.groupByRepo;
   const id = key.slice('inbox.sections.'.length) as keyof PreferencesResponse['inbox']['sections'];
   return prefs.inbox.sections[id];
 }
@@ -94,6 +97,8 @@ export function writeKey(
     };
   if (key === 'inbox.showActivityRail')
     return { ...prefs, inbox: { ...prefs.inbox, showActivityRail: value as boolean } };
+  if (key === 'inbox.groupByRepo')
+    return { ...prefs, inbox: { ...prefs.inbox, groupByRepo: value as boolean } };
   const id = (key as InboxSectionKey).slice(
     'inbox.sections.'.length,
   ) as keyof PreferencesResponse['inbox']['sections'];

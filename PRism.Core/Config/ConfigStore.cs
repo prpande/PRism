@@ -44,9 +44,11 @@ public sealed class ConfigStore : IConfigStore, IDisposable
             ["inbox.sections.recently-closed"]   = ConfigFieldType.Bool,
             ["inbox.defaultSort"]                = ConfigFieldType.String,
             ["inbox.sectionOrder"]               = ConfigFieldType.String,
-            // #283 dedicated non-AI flag gating the (fabricated) activity rail. Config-only,
-            // default OFF; no Settings UI yet. Apply-switch arm lives in PatchAsync below.
+            // #283 dedicated non-AI flag gating the activity rail (default OFF). #137 wired
+            // the rail to real /api/activity data + a Settings toggle. Apply-switch arm below.
             ["inbox.showActivityRail"]           = ConfigFieldType.Bool,
+            // #219 toggle: group the Inbox by repo (default) vs flat. Apply-switch arm below.
+            ["inbox.groupByRepo"]                = ConfigFieldType.Bool,
         };
 
     // #262 PR3: inbox.defaultSort is a string-typed key with a CLOSED value set (unlike
@@ -203,6 +205,8 @@ public sealed class ConfigStore : IConfigStore, IDisposable
                     _current with { Inbox = _current.Inbox with { SectionOrder = (string)value! } },
                 "inbox.showActivityRail" =>
                     _current with { Inbox = _current.Inbox with { ShowActivityRail = (bool)value! } },
+                "inbox.groupByRepo" =>
+                    _current with { Inbox = _current.Inbox with { GroupByRepo = (bool)value! } },
                 _ => throw new ConfigPatchException($"unknown field: {key}")
             };
             await WriteToDiskAsync(ct).ConfigureAwait(false);

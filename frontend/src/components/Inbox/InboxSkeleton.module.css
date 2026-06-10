@@ -58,3 +58,10 @@
      placeholder a representative width so the column isn't 0-wide. */
   width: 280px;
 }
+
+/* #300 — match the real toolbar card (border + radius) so the skeleton→content
+   swap doesn't pop a border in. The Skeleton shimmer fills the inside. */
+.toolbarBar {
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-3);
+}

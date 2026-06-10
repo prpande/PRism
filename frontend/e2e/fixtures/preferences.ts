@@ -47,6 +47,8 @@ export function makeDefaultPreferences() {
       sectionOrder: 'review-requested,awaiting-author,authored-by-me,mentioned',
       // #283: real GET always emits showActivityRail; default false (rail hidden).
       showActivityRail: false,
+      // #219: real GET always emits groupByRepo; default true (Inbox grouped by repo).
+      groupByRepo: true,
     },
     github: {
       host: 'https://github.com',
