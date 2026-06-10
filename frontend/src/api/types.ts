@@ -75,6 +75,7 @@ export interface AuthState {
   hasToken: boolean;
   host: string;
   hostMismatch: { old: string; new: string } | null;
+  githubCredentialInvalid: boolean;
 }
 
 export interface ConnectResponse {

@@ -49,6 +49,18 @@ function useAuthState(): AuthContextValue {
     const handler = () => {
       void refetch();
     };
+
+    // #312: any failed request is a cue to re-read /api/auth/state (the latch is
+    // the source of truth). Debounced so frequent benign 4xx bursts don't
+    // refetch-storm, and so a refetch that itself fails can't drive a tight loop.
+    let debounceId: ReturnType<typeof setTimeout> | undefined;
+    const onRequestFailed = () => {
+      if (debounceId) clearTimeout(debounceId);
+      debounceId = setTimeout(() => {
+        void refetch();
+      }, 750);
+    };
+
     window.addEventListener('focus', handler);
     // S6 PR4 (spec § 3.2.1) — `prism-identity-changed` is dispatched by the SSE
     // bridge in api/events.ts whenever the backend publishes an IdentityChanged
@@ -61,10 +73,13 @@ function useAuthState(): AuthContextValue {
     // events fired during a disconnect, so refetch auth state on every reconnect
     // to catch identity changes that landed while we were offline.
     window.addEventListener('prism-events-reconnected', handler);
+    window.addEventListener('prism-request-failed', onRequestFailed);
     return () => {
       window.removeEventListener('focus', handler);
       window.removeEventListener('prism-identity-changed', handler);
       window.removeEventListener('prism-events-reconnected', handler);
+      window.removeEventListener('prism-request-failed', onRequestFailed);
+      if (debounceId) clearTimeout(debounceId);
     };
   }, [refetch]);
 

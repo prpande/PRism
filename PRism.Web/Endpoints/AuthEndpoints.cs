@@ -24,7 +24,7 @@ internal static partial class AuthEndpoints
     {
         ArgumentNullException.ThrowIfNull(app);
 
-        app.MapGet("/api/auth/state", async (ITokenStore tokens, IAppStateStore stateStore, IConfigStore config, ILogger<Category> log, CancellationToken ct) =>
+        app.MapGet("/api/auth/state", async (ITokenStore tokens, IAppStateStore stateStore, IConfigStore config, IGitHubCredentialHealth credentialHealth, ILogger<Category> log, CancellationToken ct) =>
         {
             var hasToken = await tokens.HasTokenAsync(ct).ConfigureAwait(false);
             var state = await stateStore.LoadAsync(ct).ConfigureAwait(false);
@@ -36,10 +36,10 @@ internal static partial class AuthEndpoints
                 mismatch = new AuthHostMismatch(state.LastConfiguredGithubHost, host);
             }
             Log.AuthStateProbed(log, hasToken, host, mismatch is not null);
-            return Results.Ok(new AuthStateResponse(hasToken, host, mismatch));
+            return Results.Ok(new AuthStateResponse(hasToken, host, mismatch, credentialHealth.IsInvalid));
         });
 
-        app.MapPost("/api/auth/connect", async (HttpContext ctx, ITokenStore tokens, IReviewAuth review, IAppStateStore stateStore, IConfigStore config, IViewerLoginProvider viewerLogin, IActivityProvider activityProvider, ILogger<Category> log, CancellationToken ct) =>
+        app.MapPost("/api/auth/connect", async (HttpContext ctx, ITokenStore tokens, IReviewAuth review, IAppStateStore stateStore, IConfigStore config, IViewerLoginProvider viewerLogin, IGitHubCredentialHealth credentialHealth, IActivityProvider activityProvider, ILogger<Category> log, CancellationToken ct) =>
         {
             JsonDocument doc;
             try
@@ -61,7 +61,7 @@ internal static partial class AuthEndpoints
 
             Log.ConnectValidating(log, pat.Length, config.Current.Github.Host);
             await tokens.WriteTransientAsync(pat, ct).ConfigureAwait(false);
-            var result = await review.ValidateCredentialsAsync(ct).ConfigureAwait(false);
+            var result = await review.ValidateCredentialsAsync(ct, skipCredentialHealth: true).ConfigureAwait(false);
             if (!result.Ok)
             {
                 await tokens.RollbackTransientAsync(ct).ConfigureAwait(false);
@@ -87,6 +87,8 @@ internal static partial class AuthEndpoints
             }
 
             await tokens.CommitAsync(ct).ConfigureAwait(false);
+            credentialHealth.BumpEpoch();
+            credentialHealth.MarkValid();
             var state = await stateStore.LoadAsync(ct).ConfigureAwait(false);
             await stateStore.SaveAsync(state.WithDefaultLastConfiguredGithubHost(config.Current.Github.Host), ct).ConfigureAwait(false);
             viewerLogin.Set(result.Login ?? "");
@@ -98,7 +100,7 @@ internal static partial class AuthEndpoints
             return Results.Ok(new AuthConnectSuccess(Ok: true, Login: result.Login, Host: config.Current.Github.Host));
         });
 
-        app.MapPost("/api/auth/connect/commit", async (ITokenStore tokens, IAppStateStore stateStore, IConfigStore config, IViewerLoginProvider viewerLogin, IActivityProvider activityProvider, ILogger<Category> log, CancellationToken ct) =>
+        app.MapPost("/api/auth/connect/commit", async (ITokenStore tokens, IAppStateStore stateStore, IConfigStore config, IViewerLoginProvider viewerLogin, IGitHubCredentialHealth credentialHealth, IActivityProvider activityProvider, ILogger<Category> log, CancellationToken ct) =>
         {
             // Read the validated login BEFORE CommitAsync clears it.
             var login = await tokens.ReadTransientLoginAsync(ct).ConfigureAwait(false);
@@ -112,6 +114,9 @@ internal static partial class AuthEndpoints
                 Log.CommitNoPendingToken(log);
                 return Results.Conflict(new AuthConnectError(Ok: false, Error: "no-pending-token"));
             }
+
+            credentialHealth.BumpEpoch();
+            credentialHealth.MarkValid();
 
             var state = await stateStore.LoadAsync(ct).ConfigureAwait(false);
             await stateStore.SaveAsync(state.WithDefaultLastConfiguredGithubHost(config.Current.Github.Host), ct).ConfigureAwait(false);
@@ -173,6 +178,7 @@ internal static partial class AuthEndpoints
             IActivePrCache activePrCache,
             ActivePrSubscriberRegistry activeRegistry,
             InboxPoller inboxPoller,
+            IGitHubCredentialHealth credentialHealth,
             IActivityProvider activityProvider,
             ILogger<Category> log,
             CancellationToken ct) =>
@@ -225,7 +231,7 @@ internal static partial class AuthEndpoints
             var validationCompleted = false;
             try
             {
-                result = await review.ValidateCredentialsAsync(ct).ConfigureAwait(false);
+                result = await review.ValidateCredentialsAsync(ct, skipCredentialHealth: true).ConfigureAwait(false);
                 validationCompleted = true;
             }
             finally
@@ -285,6 +291,8 @@ internal static partial class AuthEndpoints
             //    next process startup's ViewerLoginHydrator re-derives the on-disk login
             //    from the committed PAT, self-healing the on-disk divergence.
             await tokens.CommitAsync(ct).ConfigureAwait(false);
+            credentialHealth.BumpEpoch();
+            credentialHealth.MarkValid();
             try
             {
                 await config.SetDefaultAccountLoginAsync(newLogin, ct).ConfigureAwait(false);

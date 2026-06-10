@@ -28,6 +28,8 @@ import { DrawerEffects } from './components/AskAiDrawer/DrawerEffects';
 import { PrTabStrip } from './components/PrTabStrip/PrTabStrip';
 import { useTabUnreadSignal } from './hooks/useTabUnreadSignal';
 import { ErrorModal } from './components/ErrorModal';
+import { GitHubAuthBanner } from './components/GitHubAuthBanner';
+import { ReauthRouteGuard } from './components/ReauthRouteGuard';
 
 function TabSignals() {
   useTabUnreadSignal();
@@ -100,6 +102,7 @@ function AppShell() {
   }
 
   const isAuthed = authState.hasToken && !authInvalidated;
+  const credentialInvalid = authState.hasToken && authState.githubCredentialInvalid === true;
   // #212: unauthed users split by whether they've ever connected. A true first
   // run (!hasToken) gets the welcome screen; a token-rejected re-auth session
   // (hasToken true) goes straight to the /setup token form — never re-onboarded.
@@ -184,6 +187,8 @@ function AppShell() {
       <TabSignals />
       <ToastContainer />
       <StreamHealthSnackbar />
+      <GitHubAuthBanner />
+      <ReauthRouteGuard credentialInvalid={credentialInvalid} />
       <Cheatsheet />
     </>
   );

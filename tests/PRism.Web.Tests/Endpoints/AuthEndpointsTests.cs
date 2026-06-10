@@ -416,7 +416,7 @@ public class AuthEndpointsTests
     {
         private readonly Func<Task<AuthValidationResult>> _validate;
         public StubReviewAuth(Func<Task<AuthValidationResult>> validate) { _validate = validate; }
-        public Task<AuthValidationResult> ValidateCredentialsAsync(CancellationToken ct) => _validate();
+        public Task<AuthValidationResult> ValidateCredentialsAsync(CancellationToken ct, bool skipCredentialHealth = false) => _validate();
     }
 
     // Counts Reset() calls. GetActivityAsync is never exercised by these tests (the auth
