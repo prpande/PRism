@@ -204,4 +204,33 @@ public class PreferencesEndpointsTests
         var after = await client.GetFromJsonAsync<JsonElement>(new Uri("/api/preferences", UriKind.Relative));
         after.GetProperty("inbox").GetProperty("showActivityRail").GetBoolean().Should().BeTrue();
     }
+
+    // #219: inbox.groupByRepo surfaces in GET (default true) and round-trips through POST.
+    [Fact]
+    public async Task GET_inbox_groupByRepo_defaults_true_and_POST_round_trips()
+    {
+        using var factory = new PRismWebApplicationFactory();
+        var client = factory.CreateClient();
+        var origin = client.BaseAddress!.GetLeftPart(UriPartial.Authority);
+
+        var initial = await client.GetFromJsonAsync<JsonElement>(new Uri("/api/preferences", UriKind.Relative));
+        initial.GetProperty("inbox").GetProperty("groupByRepo").GetBoolean().Should().BeTrue();
+
+        using var content = new StringContent(
+            """{ "inbox.groupByRepo": false }""",
+            System.Text.Encoding.UTF8,
+            "application/json");
+        using var req = new HttpRequestMessage(HttpMethod.Post, new Uri("/api/preferences", UriKind.Relative))
+        {
+            Content = content,
+        };
+        req.Headers.Add("Origin", origin);
+        var post = await client.SendAsync(req);
+        post.StatusCode.Should().Be(HttpStatusCode.OK);
+        var postBody = await post.Content.ReadFromJsonAsync<JsonElement>();
+        postBody.GetProperty("inbox").GetProperty("groupByRepo").GetBoolean().Should().BeFalse();
+
+        var after = await client.GetFromJsonAsync<JsonElement>(new Uri("/api/preferences", UriKind.Relative));
+        after.GetProperty("inbox").GetProperty("groupByRepo").GetBoolean().Should().BeFalse();
+    }
 }
