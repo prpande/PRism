@@ -20,8 +20,10 @@ describe('RefreshButton', () => {
     expect(btn).toBeDisabled();
   });
 
-  it('shows the transient confirmation when justRefreshed', () => {
+  it('morphs the icon to a checkmark when justRefreshed (button stays enabled)', () => {
     render(<RefreshButton isRefreshing={false} justRefreshed onRefresh={vi.fn()} />);
-    expect(screen.getByTestId('inbox-refresh-confirm')).toHaveTextContent('Refreshed');
+    // Success confirmation is a self-contained checkmark inside the button (no overlay/pill).
+    expect(screen.getByTestId('inbox-refresh-confirm')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Refresh inbox' })).toBeEnabled();
   });
 });
