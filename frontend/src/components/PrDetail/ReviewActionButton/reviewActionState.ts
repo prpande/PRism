@@ -1,5 +1,6 @@
 import type { DraftVerdict, ReviewSessionDto, ValidatorResult } from '../../../api/types';
 import type { PrState } from '../PrHeader';
+import { submitDisabledReason } from '../SubmitButton';
 
 export type ReviewActionFill = 'accent' | 'approve' | 'request-changes' | 'comment' | 'secondary';
 
@@ -48,16 +49,36 @@ export function deriveFace(i: ReviewActionInputs): ReviewActionFace {
         ? 'Resume review'
         : 'Submit review';
 
-  // Filled in by Task 2 — stubbed so the module type-checks.
+  const needsReconfirm = session.draftVerdictStatus === 'needs-reconfirm';
+  const mainAction: ReviewActionFace['mainAction'] = isClosedOrMerged
+    ? 'none'
+    : pending
+      ? 'resume'
+      : 'submit';
+
+  // Resume + discard are never gated (today's SubmitInProgressBadge/pill aren't).
+  // Only the fresh-submit path consults submitDisabledReason.
+  const rawReason =
+    mainAction === 'submit'
+      ? submitDisabledReason(session, i.headShaDrift, i.validatorResults)
+      : null;
+  // Spec §4.1: with the inline verdict picker gone, reason (a) must direct the
+  // user to the caret menu. submitDisabledReason returns this exact string for (a).
+  const REASON_A = 'Pick a verdict or add a comment, reply, or summary before submitting.';
+  const submitReason =
+    rawReason === REASON_A ? 'Pick a verdict using the ▾ menu, or add a comment.' : rawReason;
+  const frozen = i.inSubmitFlow;
+  const mainDisabled = isClosedOrMerged || frozen || submitReason !== null;
+
   return {
     fill,
     label,
     pending,
-    needsReconfirm: false,
-    mainAction: 'submit',
-    mainDisabled: false,
-    mainDisabledReason: null,
-    frozen: false,
-    pendingTooltip: null,
+    needsReconfirm,
+    mainAction,
+    mainDisabled,
+    mainDisabledReason: submitReason,
+    frozen,
+    pendingTooltip: pending ? 'Pending review on GitHub — not yet submitted' : null,
   };
 }
