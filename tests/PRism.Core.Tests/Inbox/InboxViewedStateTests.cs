@@ -95,4 +95,29 @@ public class InboxViewedStateTests
         overlaid.HeadSha.Should().Be("HEAD");
         overlaid.Reference.Should().Be(reference);
     }
+
+    [Fact]
+    public void ApplyViewedState_reprojects_every_section_independently()
+    {
+        var viewed = new PrReference("acme", "api", 1);   // has a live stamp at HEAD
+        var unviewed = new PrReference("acme", "api", 2);  // no session → stays unread
+        var snapshot = new InboxSnapshot(
+            new Dictionary<string, IReadOnlyList<PrInboxItem>>
+            {
+                ["review-requested"] = new[] { Item(viewed, headSha: "HEAD", lastViewedHeadSha: "STALE") },
+                ["authored-by-me"] = new[] { Item(unviewed, headSha: "HEAD2", lastViewedHeadSha: null) },
+            },
+            new Dictionary<string, InboxItemEnrichment>(),
+            System.DateTimeOffset.UtcNow);
+        var state = StateWithSession(viewed.ToString(), Session(new Dictionary<string, TabStamp>
+        {
+            ["t1"] = new TabStamp("HEAD", System.DateTime.UtcNow),
+        }));
+
+        var result = InboxViewedState.ApplyViewedState(snapshot, state);
+
+        result.Sections.Keys.Should().BeEquivalentTo(new[] { "review-requested", "authored-by-me" });
+        result.Sections["review-requested"][0].LastViewedHeadSha.Should().Be("HEAD");   // overlaid from live stamp
+        result.Sections["authored-by-me"][0].LastViewedHeadSha.Should().BeNull();        // no session → unread preserved
+    }
 }
