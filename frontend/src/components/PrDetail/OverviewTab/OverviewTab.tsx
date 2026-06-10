@@ -17,7 +17,11 @@ export function OverviewTab() {
   const aiOn = useAiGate('summary');
 
   const diff = useFileDiff(prRef, buildAllRange(prDetail.pr));
-  const { summary: aiSummary } = useAiSummary(prRef, aiOn, subscribed);
+  const {
+    summary: aiSummary,
+    loading: aiLoading,
+    error: aiError,
+  } = useAiSummary(prRef, aiOn, subscribed);
 
   const filesCount = diff.data?.files.length ?? 0;
   const threadsCount = prDetail.reviewComments.length;
@@ -71,7 +75,7 @@ export function OverviewTab() {
 
   return (
     <div className={`${styles.overviewTab} ${styles.overviewGrid}`} data-testid="overview-tab">
-      <AiSummaryCard summary={aiSummary} />
+      <AiSummaryCard summary={aiSummary} loading={aiLoading} error={aiError} />
       <PrDescription title={prDetail.pr.title} body={prDetail.pr.body} aiPreview={aiOn} />
       <StatsTiles
         filesCount={filesCount}
