@@ -37,9 +37,7 @@ export function deriveFace(i: ReviewActionInputs): ReviewActionFace {
   const verdict = session.draftVerdict;
   const pending = session.pendingReviewId !== null;
 
-  const fill: ReviewActionFill = isClosedOrMerged
-    ? 'secondary'
-    : verdict ?? 'accent'; // 'approve' | 'request-changes' | 'comment' map 1:1 to fill ids
+  const fill: ReviewActionFill = isClosedOrMerged ? 'secondary' : (verdict ?? 'accent'); // 'approve' | 'request-changes' | 'comment' map 1:1 to fill ids
 
   const label = isClosedOrMerged
     ? 'Drafts'

@@ -71,13 +71,21 @@ describe('deriveFace — pending / reconfirm / action / disabled', () => {
     expect(f.mainDisabledReason).toBe('Pick a verdict using the ▾ menu, or add a comment.');
   });
   it('pending + needs-reconfirm → resume stays ENABLED (resume is never gated), face signal shown', () => {
-    const f = deriveFace(inputs({ pendingReviewId: 'PR_1', draftVerdict: 'approve', draftVerdictStatus: 'needs-reconfirm' }));
+    const f = deriveFace(
+      inputs({
+        pendingReviewId: 'PR_1',
+        draftVerdict: 'approve',
+        draftVerdictStatus: 'needs-reconfirm',
+      }),
+    );
     expect(f.mainAction).toBe('resume');
     expect(f.mainDisabled).toBe(false);
     expect(f.needsReconfirm).toBe(true);
   });
   it('needs-reconfirm flagged from draftVerdictStatus', () => {
-    const f = deriveFace(inputs({ draftVerdict: 'approve', draftVerdictStatus: 'needs-reconfirm' }));
+    const f = deriveFace(
+      inputs({ draftVerdict: 'approve', draftVerdictStatus: 'needs-reconfirm' }),
+    );
     expect(f.needsReconfirm).toBe(true);
     expect(f.mainDisabled).toBe(true);
   });
@@ -95,12 +103,18 @@ describe('deriveFace — pending / reconfirm / action / disabled', () => {
 
 import { deriveMenu } from './reviewActionState';
 
-const ids = (sections: ReturnType<typeof deriveMenu>) => sections.flatMap((s) => s.items.map((it) => it.id));
+const ids = (sections: ReturnType<typeof deriveMenu>) =>
+  sections.flatMap((s) => s.items.map((it) => it.id));
 
 describe('deriveMenu', () => {
   it('normal verdict menu: 3 verdicts + submit, checked reflects draftVerdict', () => {
     const m = deriveMenu(inputs({ draftVerdict: 'approve' }));
-    expect(ids(m)).toEqual(['verdict:approve', 'verdict:request-changes', 'verdict:comment', 'submit']);
+    expect(ids(m)).toEqual([
+      'verdict:approve',
+      'verdict:request-changes',
+      'verdict:comment',
+      'submit',
+    ]);
     const approve = m.flatMap((s) => s.items).find((it) => it.id === 'verdict:approve');
     expect(approve?.checked).toBe(true);
   });
@@ -110,7 +124,10 @@ describe('deriveMenu', () => {
     expect(ids(m)).toContain('discard-pending');
   });
   it('pending + dialogOpen → discard-pending suppressed (invariant)', () => {
-    const m = deriveMenu({ ...inputs({ draftVerdict: 'approve', pendingReviewId: 'PR_1' }), dialogOpen: true });
+    const m = deriveMenu({
+      ...inputs({ draftVerdict: 'approve', pendingReviewId: 'PR_1' }),
+      dialogOpen: true,
+    });
     expect(ids(m)).not.toContain('discard-pending');
   });
   it('closed/merged → discard-all only', () => {
@@ -126,7 +143,9 @@ describe('deriveMenu', () => {
     expect(ids(m)).toEqual(['discard-all']);
   });
   it('needs-reconfirm → reconfirm note in the verdict section', () => {
-    const m = deriveMenu(inputs({ draftVerdict: 'approve', draftVerdictStatus: 'needs-reconfirm' }));
+    const m = deriveMenu(
+      inputs({ draftVerdict: 'approve', draftVerdictStatus: 'needs-reconfirm' }),
+    );
     expect(ids(m)).toContain('reconfirm-note');
   });
 });
