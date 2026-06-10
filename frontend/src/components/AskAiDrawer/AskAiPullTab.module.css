@@ -1,0 +1,49 @@
+.tab {
+  position: fixed;
+  /* anti-collision: parked below the Files-tab toolbar band. STARTING VALUE —
+     measured/confirmed in Task 9. Do not assume 160px is final. */
+  top: 160px;
+  right: 0;
+  z-index: 49; /* under the drawer (50) so the open drawer covers transit */
+  display: flex;
+  align-items: center;
+  gap: 0;
+  background: var(--surface-1);
+  border: 1px solid var(--border-2);
+  border-right: none;
+  border-radius: var(--radius-3) 0 0 var(--radius-3);
+  padding: 9px 8px;
+  color: var(--accent);
+  cursor: pointer;
+  box-shadow: var(--shadow-2);
+  transition:
+    right 220ms var(--ease-out),
+    background var(--t-fast) var(--ease-out);
+}
+
+.open {
+  right: var(--ask-ai-drawer-width, 400px);
+  background: var(--surface-3);
+}
+
+.label {
+  max-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  opacity: 0;
+  font-size: var(--text-sm);
+  font-weight: 500;
+  color: var(--text-1);
+  transition:
+    max-width 180ms var(--ease-out),
+    opacity 180ms var(--ease-out),
+    margin 180ms var(--ease-out);
+}
+
+.tab:hover .label,
+.tab:focus-visible .label,
+.open .label {
+  max-width: 80px;
+  opacity: 1;
+  margin-right: 7px;
+}
