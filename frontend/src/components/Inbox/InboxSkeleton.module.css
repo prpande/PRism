@@ -1,22 +1,30 @@
 /* Mirror InboxPage.module.css so the skeleton occupies the same box as the real
-   inbox (no reflow when data lands): same padding / max-width / centering, and
-   the same 1fr auto grid that collapses the rail at <=1179px. */
+   inbox (no reflow when data lands): same padding (--s-4), max-width (1600px), and
+   centering, and the same rail grid — minmax(0, 1fr) 380px — that collapses to a
+   single column at <=1179px. Keep these in sync with InboxPage.module.css. */
 .page {
   display: flex;
   flex-direction: column;
-  gap: var(--s-3);
+  /* No row-gap: the toolbar→grid spacing is owned solely by .grid margin-top
+     (mirroring the real InboxPage, where .page is a block and .grid margin-top is
+     the only spacer). A page gap here would stack on top of that margin and make
+     the skeleton→content swap reflow. */
   padding: var(--s-4);
-  max-width: 1280px;
+  max-width: 1600px;
   margin: 0 auto;
 }
 .grid {
   display: grid;
   grid-template-columns: 1fr;
   gap: var(--s-4);
-  margin-top: var(--s-3);
+  /* Match InboxPage.module.css .grid margin-top (--s-4) so the cold-load skeleton's
+     toolbar→first-section gap equals the real inbox's — no reflow on data land. */
+  margin-top: var(--s-4);
 }
+/* Match InboxPage's rail column (post-#137): a fixed 380px rail, not an auto column,
+   so the PR-list width during load equals the loaded width — no horizontal reflow. */
 .grid[data-has-rail='true'] {
-  grid-template-columns: 1fr auto;
+  grid-template-columns: minmax(0, 1fr) 380px;
 }
 @media (max-width: 1179px) {
   .grid[data-has-rail='true'] {
@@ -54,9 +62,9 @@
   display: flex;
   flex-direction: column;
   gap: 12px;
-  /* The live ActivityRail is content-sized in the grid's `auto` column; give the
-     placeholder a representative width so the column isn't 0-wide. */
-  width: 280px;
+  /* Fill the fixed 380px rail column (matches InboxPage's rail width) so the
+     placeholder occupies the same box as the live ActivityRail. */
+  width: 100%;
 }
 
 /* #300 — match the real toolbar card (border + radius) so the skeleton→content
