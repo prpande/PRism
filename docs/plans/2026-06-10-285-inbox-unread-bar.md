@@ -30,7 +30,7 @@ No frontend source changes. No new visual baselines expected (init render is unc
 - Modify: `PRism.Core/Inbox/InboxRefreshOrchestrator.cs:289-318` (`MaterializePrInboxItem`)
 - Test: `tests/PRism.Core.Tests/Inbox/InboxViewedStateTests.cs`
 
-Reference — the current inlined projection in `MaterializePrInboxItem` (lines 296-310), which moves into `Project` unchanged:
+Reference — the current inlined projection in `MaterializePrInboxItem` (lines 295-310), which moves into `Project` unchanged:
 ```csharp
 var sessionKey = r.Reference.ToString();
 string? lastViewedHeadSha = null;
