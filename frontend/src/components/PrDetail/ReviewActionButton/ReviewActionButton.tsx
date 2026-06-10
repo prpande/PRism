@@ -14,8 +14,17 @@ export interface ReviewActionButtonProps extends ReviewActionInputs {
 
 function Chevron() {
   return (
-    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor"
-      strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
       <path d="M4 6.5l4 4 4-4" />
     </svg>
   );
@@ -25,7 +34,10 @@ export function ReviewActionButton(props: ReviewActionButtonProps) {
   const face = deriveFace(props);
   const [menuOpen, setMenuOpen] = useState(false);
   const chevronRef = useRef<HTMLButtonElement>(null);
-  const closeMenu = () => { setMenuOpen(false); chevronRef.current?.focus(); };
+  const closeMenu = () => {
+    setMenuOpen(false);
+    chevronRef.current?.focus();
+  };
 
   const onMainClick = () => {
     if (face.mainAction === 'submit') props.onOpenSubmit();
@@ -50,11 +62,21 @@ export function ReviewActionButton(props: ReviewActionButtonProps) {
         onClick={mainInteractiveDisabled ? undefined : onMainClick}
       >
         {face.needsReconfirm && (
-          <span className={styles.reconfirm} data-testid="review-action-reconfirm" aria-hidden="true">⚠</span>
+          <span
+            className={styles.reconfirm}
+            data-testid="review-action-reconfirm"
+            aria-hidden="true"
+          >
+            ⚠
+          </span>
         )}
         <span className={styles.label}>
           {face.label}
-          {face.pending && <span className={styles.asterisk} aria-hidden="true">*</span>}
+          {face.pending && (
+            <span className={styles.asterisk} aria-hidden="true">
+              *
+            </span>
+          )}
         </span>
       </button>
       <button
