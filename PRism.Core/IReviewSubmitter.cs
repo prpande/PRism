@@ -67,4 +67,15 @@ public interface IReviewSubmitter
         PrReference reference,
         string bodyMarkdown,
         CancellationToken ct);
+
+    // #302 — post a single NEW inline review comment directly (REST POST /pulls/{n}/comments),
+    // bypassing the pending-review pipeline. Publishes immediately.
+    Task<CreatedReviewCommentResult> CreateReviewCommentAsync(
+        PrReference reference, ReviewCommentRequest request, CancellationToken ct);
+
+    // #302 — post a single reply to an existing review thread directly, via GraphQL
+    // addPullRequestReviewThreadReply WITHOUT a pullRequestReviewId (omitting it posts immediately —
+    // see GitHubReviewService.Submit.cs:115-116). Uses the draft's own ParentThreadId.
+    Task<CreatedReviewCommentResult> CreateReviewCommentReplyAsync(
+        PrReference reference, string parentThreadId, string bodyMarkdown, CancellationToken ct);
 }

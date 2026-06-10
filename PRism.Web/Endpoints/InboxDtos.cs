@@ -8,7 +8,8 @@ internal sealed record InboxResponse(
     IReadOnlyList<InboxSectionDto> Sections,
     IReadOnlyDictionary<string, InboxItemEnrichment> Enrichments,
     DateTimeOffset LastRefreshedAt,
-    bool TokenScopeFooterEnabled);
+    bool TokenScopeFooterEnabled,
+    bool CiProbeComplete);
 
 internal sealed record InboxSectionDto(
     string Id,

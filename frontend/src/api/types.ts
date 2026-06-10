@@ -2,6 +2,7 @@ export type Theme = 'light' | 'dark' | 'system';
 export type Accent = 'indigo' | 'amber' | 'teal';
 export type Density = 'comfortable' | 'compact';
 export type AiMode = 'off' | 'preview' | 'live';
+export type ContentScale = 'xs' | 's' | 'm' | 'l' | 'xl';
 
 // S6 PR1 widened GET /api/preferences from the flat { theme, accent, aiPreview }
 // shape to a nested { ui, inbox, github } shape (spec § 2.4). UiPreferences is now
@@ -15,6 +16,7 @@ export interface UiPreferences {
   accent: Accent;
   aiMode: AiMode;
   density: Density;
+  contentScale: ContentScale;
 }
 
 export interface InboxSectionsPreferences {
@@ -22,12 +24,20 @@ export interface InboxSectionsPreferences {
   'awaiting-author': boolean;
   'authored-by-me': boolean;
   mentioned: boolean;
-  'ci-failing': boolean;
   'recently-closed': boolean;
 }
 
 export interface InboxPreferences {
   sections: InboxSectionsPreferences;
+  defaultSort: SortKey;
+  sectionOrder: string;
+  // #283 gates the (non-AI) activity rail; decoupled from the AI-preview toggle onto
+  // this dedicated flag (default false). #137 wired the rail to real /api/activity
+  // data and surfaced this flag as a Settings toggle (InboxPane).
+  showActivityRail: boolean;
+  // #219 when false, the Inbox renders flat PR lists instead of repo-grouped
+  // accordions. Default true (grouped). Pure frontend-render preference.
+  groupByRepo: boolean;
 }
 
 export interface GithubPreferences {
@@ -77,7 +87,7 @@ export interface ConnectResponse {
   warning?: 'no-repos-selected';
 }
 
-export type CiStatus = 'none' | 'pending' | 'failing';
+export type CiStatus = 'none' | 'pending' | 'failing' | 'passing';
 
 export interface PrReference {
   owner: string;
@@ -125,11 +135,14 @@ export interface InboxItemEnrichment {
   hoverSummary: string | null;
 }
 
+export type SortKey = 'updated' | 'pushed' | 'diff' | 'comments';
+
 export interface InboxResponse {
   sections: InboxSection[];
   enrichments: Record<string, InboxItemEnrichment>;
   lastRefreshedAt: string;
   tokenScopeFooterEnabled: boolean;
+  ciProbeComplete: boolean;
 }
 
 export interface ParsePrUrlResponse {
@@ -199,6 +212,7 @@ export interface ReviewCommentDto {
   createdAt: string;
   body: string;
   editedAt: string | null;
+  databaseId?: number | null; // #302 — REST numeric id for optimistic de-dup
 }
 
 export interface ReviewThreadDto {
@@ -517,4 +531,41 @@ export interface ResumeForeignPendingReviewResponse {
   threadCount: number;
   replyCount: number;
   threads: ImportedThread[];
+}
+
+// #137 Activity rail (Phase 1). Mirrors PRism.Core/Activity contracts; enums are
+// the kebab-case wire strings. P2 grows ActivityResponse (Watching) + ActivityVerb
+// (review-requested, mentioned) + degraded flags additively — read leniently.
+export type ActivityVerb =
+  | 'opened'
+  | 'reopened'
+  | 'closed'
+  | 'merged'
+  | 'reviewed'
+  | 'commented'
+  | 'other';
+
+export type ActivitySource = 'received-event';
+
+export interface ActivityItem {
+  actorLogin: string | null;
+  actorAvatarUrl: string | null;
+  actorIsBot: boolean;
+  verb: ActivityVerb;
+  repo: string;
+  prNumber: number;
+  title: string | null;
+  url: string;
+  timestamp: string;
+  source: ActivitySource;
+}
+
+export interface ActivityDegradation {
+  receivedEvents: boolean;
+}
+
+export interface ActivityResponse {
+  items: ActivityItem[];
+  generatedAt: string;
+  degraded: ActivityDegradation;
 }

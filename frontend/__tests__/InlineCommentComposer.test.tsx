@@ -69,18 +69,18 @@ describe('InlineCommentComposer — accessibility (A3)', () => {
     expect(form).toHaveAttribute('aria-label', 'Draft comment on src/Foo.cs line 42');
   });
 
-  it('Save button is aria-disabled when body is empty', () => {
+  it('"Add to review" button is aria-disabled when body is empty', () => {
     render(<Harness />);
-    const save = screen.getByRole('button', { name: 'Save' });
+    const save = screen.getByRole('button', { name: 'Add to review' });
     expect(save).toHaveAttribute('aria-disabled', 'true');
     expect(save).toHaveAttribute('title', 'Type something to save.');
   });
 
-  it('Save button is enabled (aria-disabled=false) once body is non-empty', async () => {
+  it('"Add to review" button is enabled (aria-disabled=false) once body is non-empty', async () => {
     render(<Harness />);
     const textarea = screen.getByLabelText('Comment body') as HTMLTextAreaElement;
     fireEvent.change(textarea, { target: { value: 'hello' } });
-    const save = screen.getByRole('button', { name: 'Save' });
+    const save = screen.getByRole('button', { name: 'Add to review' });
     expect(save).toHaveAttribute('aria-disabled', 'false');
   });
 });
@@ -211,8 +211,10 @@ describe('InlineCommentComposer — 404 recovery', () => {
   });
 });
 
-describe('InlineCommentComposer — closed PR banner (spec § 5.3)', () => {
-  it('renders a banner when prState !== "open"', () => {
+describe('InlineCommentComposer — closed PR (spec § 5.3, #302 updated)', () => {
+  // #302: "text not saved" banner removed (guard relaxed — drafts now stage on closed/merged).
+  // The "comments post immediately" footer note replaces it.
+  it('does NOT render a "text not saved" banner when prState !== "open"', () => {
     render(
       <InlineCommentComposer
         prRef={ref}
@@ -224,6 +226,16 @@ describe('InlineCommentComposer — closed PR banner (spec § 5.3)', () => {
         onClose={() => undefined}
       />,
     );
-    expect(screen.getByText(/PR closed — text not saved/i)).toBeInTheDocument();
+    expect(screen.queryByText(/text not saved/i)).not.toBeInTheDocument();
+    // The "comments post immediately" note is shown instead.
+    expect(screen.getByText(/comments post immediately/i)).toBeInTheDocument();
+  });
+});
+
+describe('InlineCommentComposer — composer-frame (Task 7)', () => {
+  it('wraps the composer in the shared composer-frame', () => {
+    render(<Harness />);
+    const form = screen.getByRole('form', { name: /Draft comment/ });
+    expect(form).toHaveClass('composer-frame');
   });
 });

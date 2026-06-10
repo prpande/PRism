@@ -81,7 +81,9 @@ public sealed record DraftReply(
     string? ReplyCommentId,
     string BodyMarkdown,
     DraftStatus Status,
-    bool IsOverriddenStale);
+    bool IsOverriddenStale,
+    long? PostedCommentId = null,        // #302 — stamped (= databaseId) after a successful post-now reply
+    string? PostedBodySnapshot = null);  // #302 — body at post time, for idempotent re-post detection
 
 public enum DraftVerdict { Approve, RequestChanges, Comment }
 public enum DraftVerdictStatus { Draft, NeedsReconfirm }

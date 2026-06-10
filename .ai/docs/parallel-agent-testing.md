@@ -45,21 +45,45 @@ both.**
 
 ## Launch the app
 
+**Agents launch with `serve-detached.ps1`** — it brings the server up _detached_
+(survives the tool call returning), waits until `/api/health` actually answers,
+and prints a structured handle. A human who wants to watch the console runs
+`run.ps1` in the foreground instead.
+
 ```powershell
-# From your worktree root:
-./run.ps1 -Port 5200 -DataDir $env:TEMP\PRism-wt-0 --no-browser
+# From your worktree root (agent / non-interactive):
+scripts\serve-detached.ps1 -Port 5200 -DataDir $env:TEMP\PRism-wt-0
 ```
 
-- The port is honored: `run.ps1` passes `--no-launch-profile` so
-  `launchSettings.json`'s `applicationUrl` (pinned to 5180) no longer overrides
-  `-Port`, and restores `ASPNETCORE_ENVIRONMENT=Development` (so the SPA bundle
-  still serves — Production via `dotnet run` would serve an empty bundle).
-- Confirm it bound where you asked: the console prints
-  `PRism listening on http://localhost:5200 (dataDir: …\PRism-wt-0)`.
-- Two such instances with distinct `(port, dataDir)` run concurrently with no
-  lockfile contention.
-- Defaults are unchanged: bare `./run.ps1 --no-browser` is still
-  `5180` + `%LocalApplicationData%\PRism` + Development, exactly as before.
+- The call **returns** once the server answers, emitting
+  `{ Pid; Url; Log; DataDir; Version }`. `Url` is `http://localhost:5200`; the
+  server keeps running after the call returns.
+- Build is synchronous and in the foreground, so an `npm ci` lockfile-drift or a
+  C# compile error fails the call _before_ anything detaches (you see the real
+  error, not a timeout). Pass `-SkipBuild` only when the build is known current.
+- Relaunching the same store while it is healthy is idempotent — it reattaches
+  and **warns** that no rebuild occurred (the running server may predate your
+  edits; `-Stop` then relaunch to refresh).
+- Tear down with `scripts\serve-detached.ps1 -Stop -DataDir $env:TEMP\PRism-wt-0`.
+- An occupied port **fails by default** (it is most likely another agent's
+  server); pass `-Force` to kill a foreign occupant and take the port.
+
+```powershell
+# Human, watching the console (foreground, blocks until Ctrl-C):
+./run.ps1 -Reset None -Port 5200 -DataDir $env:TEMP\PRism-wt-0 --no-browser
+```
+
+- Name `-Reset None` when you pass `--no-browser` (or any pass-through app arg):
+  `$Reset` is `run.ps1`'s position-0 parameter, so a bare leading `--no-browser`
+  with no named `-Reset` binds to it and fails its validation. `None` is the
+  no-op reset.
+- `run.ps1` passes `--no-launch-profile` (so `-Port` is honored over
+  `launchSettings.json`'s 5180) and restores `ASPNETCORE_ENVIRONMENT=Development`
+  (so the SPA bundle serves — Production via `dotnet run` would serve an empty
+  bundle). It prints `PRism listening on http://localhost:5200 (dataDir: …)`.
+- Two instances with distinct `(port, dataDir)` run concurrently with no lockfile
+  contention. Defaults are unchanged: `./run.ps1 -Reset None --no-browser` is
+  still `5180` + `%LocalApplicationData%\PRism` + Development.
 
 ## Run the frontend Playwright suite
 
@@ -112,7 +136,8 @@ Two caveats for **real** (non-e2e) desktop instances:
 
 ## Zero-config alternative
 
-If you only need the app (not a pinned port), omit `--urls` is **not** exposed by
-`run.ps1` (it always sets `-Port`, default 5180). True auto-port for `run.ps1` —
-letting the app self-select from 5180–5199 — is a deferred enhancement (the issue's
-Approach A). For now, assign an explicit `5200 + N` per the table above.
+If you only need the app without a pinned port: note that `--urls` is **not**
+exposed by `run.ps1` directly (it always sets `-Port`, default 5180). True
+auto-port for `run.ps1` — letting the app self-select from 5180–5199 — is a
+deferred enhancement (the issue's Approach A). For now, assign an explicit
+`5200 + N` per the table above.

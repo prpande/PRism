@@ -18,11 +18,15 @@ public sealed record AppConfig(
 {
     public static AppConfig Default => new(
         new PollingConfig(30, 120),
-        new InboxConfig(true, new InboxSectionsConfig(true, true, true, true, true, true), true, 14),
+        new InboxConfig(true, new InboxSectionsConfig(true, true, true, true, true), true, 14),
         new ReviewConfig(true, true),
         new IterationsConfig(60, ClusteringDisabled: false),
         new LoggingConfig("info", true, 30),
-        new UiConfig("system", "indigo", new AiConfig(AiMode.Off, AiConsentConfig.None, AiFeaturesConfig.AllOn), "comfortable"),
+        // #283 flipped the out-of-the-box AI default Off → Preview (preview summaries on,
+        // zero egress). P1 keeps consent unrecorded (None) and every per-feature gate on
+        // (AllOn): Live egress still demands explicit opt-in + per-provider consent on top
+        // of this default. ContentScale "m" (#135) carried in from the merged base.
+        new UiConfig("system", "indigo", new AiConfig(AiMode.Preview, AiConsentConfig.None, AiFeaturesConfig.AllOn), "comfortable", "m"),
         new GithubConfig(new[]
         {
             new GithubAccountConfig(
@@ -39,18 +43,35 @@ public sealed record InboxConfig(
     bool Deduplicate,
     InboxSectionsConfig Sections,
     bool ShowHiddenScopeFooter,
-    int RecentlyClosedWindowDays = 14);
+    int RecentlyClosedWindowDays = 14,
+    string DefaultSort = "updated",
+    // #275 user-customizable order of the four WORK sections. recently-closed is
+    // deliberately absent — it is an archive pinned to the bottom in the frontend,
+    // never part of the reorderable/persisted order. Validated as a permutation of
+    // these four ids in ConfigStore.PatchAsync.
+    string SectionOrder = "review-requested,awaiting-author,authored-by-me,mentioned",
+    // #283 the activity rail (a non-AI inbox panel) was previously gated on the
+    // AI-preview toggle (useAiGate('inboxRanking')); #283 decoupled it onto this
+    // dedicated flag, default OFF. #137 then wired it to the real /api/activity
+    // endpoint and surfaced it as a Settings toggle (InboxPane). A trailing-defaulted
+    // param, so the positional `new InboxConfig(true, …, 14)` default construction
+    // stays valid.
+    bool ShowActivityRail = false,
+    // #219 user toggle to switch the Inbox between grouped-by-repo (default) and flat
+    // rendering. A pure frontend-render preference — it does NOT reshape the backend
+    // feed. Appended LAST as a trailing-defaulted param so the positional
+    // `new InboxConfig(true, …, 14)` default construction stays valid.
+    bool GroupByRepo = true);
 public sealed record InboxSectionsConfig(
     bool ReviewRequested,
     bool AwaitingAuthor,
     bool AuthoredByMe,
     bool Mentioned,
-    bool CiFailing,
     bool RecentlyClosed = true);
 public sealed record ReviewConfig(bool BlockSubmitOnStaleDrafts, bool RequireVerdictReconfirmOnNewIteration);
 public sealed record IterationsConfig(int ClusterGapSeconds, bool ClusteringDisabled = false);
 public sealed record LoggingConfig(string Level, bool StateEvents, int StateEventsRetentionFiles);
-public sealed record UiConfig(string Theme, string Accent, AiConfig Ai, string Density = "comfortable");
+public sealed record UiConfig(string Theme, string Accent, AiConfig Ai, string Density = "comfortable", string ContentScale = "m");
 
 /// <summary>AI mode config (spec §4). Persisted at <c>ui.ai.mode</c>.</summary>
 public sealed record AiConfig(AiMode Mode, AiConsentConfig Consent, AiFeaturesConfig Features);

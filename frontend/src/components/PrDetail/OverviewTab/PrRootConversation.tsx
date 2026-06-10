@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { DraftCommentDto, IssueCommentDto, PrReference } from '../../../api/types';
-import { Avatar } from '../../Avatar/Avatar';
-import { MarkdownRenderer } from '../../Markdown/MarkdownRenderer';
+import { CommentCard } from '../Comment/CommentCard';
+import { CollapsedComposerAffordance } from '../Composer/CollapsedComposerAffordance';
 import { PrRootReplyComposer } from '../Composer/PrRootReplyComposer';
 import { MarkAllReadButton } from './MarkAllReadButton';
 import styles from './PrRootConversation.module.css';
@@ -38,22 +38,15 @@ export function PrRootConversation({ comments, replyContext }: PrRootConversatio
               <span className={styles.rail} aria-hidden="true">
                 <span className={styles.node} />
               </span>
-              <article
-                className={styles.card}
+              <CommentCard
+                author={comment.author}
+                avatarUrl={comment.avatarUrl}
+                createdAt={comment.createdAt}
+                body={comment.body}
+                density="comfortable"
                 data-testid="pr-root-comment"
                 aria-label={`Comment by ${comment.author}`}
-              >
-                <header className={styles.band}>
-                  <Avatar src={comment.avatarUrl} login={comment.author} size="md" />
-                  <span className={styles.author}>{comment.author}</span>
-                  <time className={styles.time} dateTime={comment.createdAt}>
-                    {new Date(comment.createdAt).toLocaleDateString()}
-                  </time>
-                </header>
-                <div className={styles.body}>
-                  <MarkdownRenderer source={comment.body} />
-                </div>
-              </article>
+              />
             </li>
           ))}
         </ol>
@@ -103,9 +96,13 @@ function PrRootConversationActions({
     <div className={styles.prRootConversationActions}>
       <div className={styles.prRootConversationActionsRow}>
         {!composerOpen && (
-          <button type="button" className={styles.prRootReplyButton} onClick={handleReplyClick}>
-            Reply
-          </button>
+          <CollapsedComposerAffordance
+            label={existingPrRootDraft ? 'Continue draft…' : 'Reply…'}
+            ariaLabel="Reply to the PR conversation"
+            hasDraft={!!existingPrRootDraft}
+            readOnly={readOnly ?? false}
+            onOpen={handleReplyClick}
+          />
         )}
         <MarkAllReadButton prRef={prRef} readOnly={readOnly ?? false} />
       </div>

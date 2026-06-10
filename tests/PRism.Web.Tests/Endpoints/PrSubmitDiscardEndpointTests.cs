@@ -344,6 +344,12 @@ internal sealed class DiscardTestSubmitter : IReviewSubmitter
 
     public Task<CreatedIssueCommentResult> CreateIssueCommentAsync(PrReference reference, string bodyMarkdown, CancellationToken ct)
         => throw new NotImplementedException("CreateIssueCommentAsync is not exercised by DiscardTestSubmitter.");
+
+    public Task<CreatedReviewCommentResult> CreateReviewCommentAsync(PrReference reference, ReviewCommentRequest request, CancellationToken ct)
+        => throw new NotImplementedException();
+
+    public Task<CreatedReviewCommentResult> CreateReviewCommentReplyAsync(PrReference reference, string parentThreadId, string bodyMarkdown, CancellationToken ct)
+        => throw new NotImplementedException();
 }
 
 /// <summary>Per-test harness for the submit/discard endpoint tests.</summary>

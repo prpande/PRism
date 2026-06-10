@@ -161,7 +161,7 @@ public class EventsEndpointsTests
         // deterministically on every run (not just under contention), then assert
         // read-until-match still delivers our published event.
         bus.Publish(new InboxUpdated(
-            new[] { "review-requested", "awaiting-author", "authored-by-me", "mentioned", "ci-failing", "recently-closed" },
+            new[] { "review-requested", "awaiting-author", "authored-by-me", "mentioned", "recently-closed" },
             0));
         bus.Publish(new InboxUpdated(new[] { "review-requested" }, 1));
 

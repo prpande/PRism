@@ -19,25 +19,22 @@ public sealed class GitHubCiFailingDetector : ICiFailingDetector
         _readToken = readToken;
     }
 
-    public async Task<IReadOnlyList<(RawPrInboxItem Item, CiStatus Ci)>> DetectAsync(
-        IReadOnlyList<RawPrInboxItem> authoredItems, CancellationToken ct)
+    public async Task<CiDetectResult> DetectAsync(
+        IReadOnlyList<RawPrInboxItem> items, CancellationToken ct)
     {
-        ArgumentNullException.ThrowIfNull(authoredItems);
-        if (authoredItems.Count == 0) return Array.Empty<(RawPrInboxItem Item, CiStatus Ci)>();
+        ArgumentNullException.ThrowIfNull(items);
+        if (items.Count == 0) return new CiDetectResult(Array.Empty<(RawPrInboxItem, CiStatus)>(), true);
         var token = await _readToken().ConfigureAwait(false);
         using var sem = new SemaphoreSlim(ConcurrencyCap);
 
-        // 5xx / timeout from any per-PR probe propagates here — the orchestrator
-        // decides whether to skip the tick. Unlike the section runner (which
-        // isolates per-section failures), per-PR failures abort the detect tick.
-        var done = await Task.WhenAll(authoredItems.Select(async c =>
+        var done = await Task.WhenAll(items.Select(async c =>
         {
             await sem.WaitAsync(ct).ConfigureAwait(false);
             try
             {
-                if (string.IsNullOrEmpty(c.HeadSha)) return (Item: c, Ci: CiStatus.None);
+                if (string.IsNullOrEmpty(c.HeadSha)) return (Item: c, Ci: CiStatus.None, Degraded: false);
                 var key = (c.Reference, c.HeadSha);
-                if (_cache.TryGetValue(key, out var cached)) return (Item: c, Ci: cached);
+                if (_cache.TryGetValue(key, out var cached)) return (Item: c, Ci: cached, Degraded: false);
 
                 var (ci, degraded) = await ProbeAsync(c.Reference, c.HeadSha, token, ct).ConfigureAwait(false);
                 // Only cache a result built from complete, successful reads. A DEGRADED
@@ -47,12 +44,15 @@ public sealed class GitHubCiFailingDetector : ICiFailingDetector
                 // until the token is replaced. Caching None here would pin it until the
                 // head SHA changes — contradicting the "recovers next tick" contract. (#213)
                 if (!degraded) _cache[key] = ci;
-                return (Item: c, Ci: ci);
+                return (Item: c, Ci: ci, Degraded: degraded);
             }
             finally { sem.Release(); }
         })).ConfigureAwait(false);
 
-        return done;
+        var anyDegraded = Array.Exists(done, t => t.Degraded);
+        return new CiDetectResult(
+            done.Select(t => (t.Item, t.Ci)).ToList(),
+            Complete: !anyDegraded);
     }
 
     // Returns the classified status plus a Degraded flag: true when either probe hit a
@@ -74,6 +74,13 @@ public sealed class GitHubCiFailingDetector : ICiFailingDetector
         // the incomplete read, so they must re-probe rather than cache an untrustworthy result.
         if (checks == CiStatus.Failing || statuses == CiStatus.Failing) return (CiStatus.Failing, false);
         if (checks == CiStatus.Pending || statuses == CiStatus.Pending) return (CiStatus.Pending, degraded);
+        // Passing is degraded-flagged like Pending/None: a Passing read from one source
+        // while the OTHER source returned a non-2xx could mask a hidden Failing, so a
+        // DEGRADED Passing must not be cached (DetectAsync caches only when `!degraded`).
+        // A fully-successful, non-degraded Passing IS cached normally; Failing is special
+        // only in that it's returned non-degraded EVEN when the other source degraded, so
+        // it's the one status cacheable despite a degraded read. (#264/#213)
+        if (checks == CiStatus.Passing || statuses == CiStatus.Passing) return (CiStatus.Passing, degraded);
         return (CiStatus.None, degraded);
     }
 
@@ -88,6 +95,7 @@ public sealed class GitHubCiFailingDetector : ICiFailingDetector
         var anyFailing = false;
         var anyPending = false;
         var anyPage = false;
+        var anySuccess = false; // ≥1 check-run completed with conclusion "success". #264
 
         // GitHub paginates /check-runs when a PR has > per_page entries (monorepo
         // matrix builds routinely cross 100). Follow the rel="next" link until
@@ -135,6 +143,12 @@ public sealed class GitHubCiFailingDetector : ICiFailingDetector
             {
                 if (anyFailing) return (CiStatus.Failing, false);
                 if (anyPending) return (CiStatus.Pending, true);
+                // anySuccess from earlier pages is deliberately discarded here: an incomplete
+                // read (a later page 5xx'd) cannot confirm Passing — a not-yet-read page could
+                // carry a Failing. Degrade to None-not-cached so the next tick re-probes the
+                // full set. (anyPending above is safe to surface through degradation; a worse
+                // state can't hide behind it. Passing can. Covered by
+                // All_passing_first_page_then_degraded_next_page_marks_none_not_passing.) #264
                 return (CiStatus.None, true);
             }
             var body = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
@@ -154,13 +168,28 @@ public sealed class GitHubCiFailingDetector : ICiFailingDetector
                 var conclusion = r.TryGetProperty("conclusion", out var cn) ? cn.GetString() : null;
                 if (status != "completed") { anyPending = true; continue; }
                 if (conclusion is "failure" or "timed_out" or "cancelled") anyFailing = true;
+                else if (conclusion == "success") anySuccess = true;
+                // Other completed conclusions (skipped / neutral / action_required /
+                // startup_failure / stale) contribute neither failing nor success: a PR whose
+                // checks were all skipped (path filters, matrix exclusions) is NOT a positive
+                // signal and must not show a false green tick — it stays None unless a real
+                // success exists. `action_required` (a manual gate awaiting human action) is
+                // DELIBERATELY left as None here rather than mapped to Failing/Pending —
+                // surfacing manual-gate state in the 4-state inbox model is a separate design
+                // call tracked in #305, not an oversight. #264
             }
 
             nextUri = TryGetNextLink(resp);
             if (nextUri is null) break;
         }
 
-        return (anyFailing ? CiStatus.Failing : (anyPending ? CiStatus.Pending : CiStatus.None), false);
+        // A successful run with nothing failing/pending → Passing. Only conclusion=="success"
+        // counts (anySuccess) — empty/no check_runs, or all-skipped/neutral, → None. #264
+        return (anyFailing
+            ? CiStatus.Failing
+            : anyPending
+                ? CiStatus.Pending
+                : anySuccess ? CiStatus.Passing : CiStatus.None, false);
     }
 
     // Parses the GitHub Link response header and returns the URL whose attributes
@@ -213,17 +242,41 @@ public sealed class GitHubCiFailingDetector : ICiFailingDetector
         var body = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
         using var doc = JsonDocument.Parse(body);
         var state = doc.RootElement.TryGetProperty("state", out var s) ? s.GetString() : "success";
-        // GitHub's combined-status endpoint returns state="pending" when no legacy
-        // statuses are registered; combined with check-runs results in the outer
-        // Failing > Pending > None precedence, so an "all-Checks-pass + no-statuses"
-        // PR may still surface as Pending. Acceptable for PoC; v2 may refine.
+        // GitHub's combined-status endpoint returns state="pending" when NO legacy commit
+        // statuses are registered — the default for a modern Actions-only PR (check-runs,
+        // not statuses) or a PR with no CI at all. Reading that bare "pending" as Pending
+        // lit a false amber "checks in progress" dot on PRs that have no checks (#286). So
+        // "pending" is only honored when at least one status context is actually registered
+        // (total_count > 0); otherwise this source contributes None and the check-runs probe
+        // decides. Failing/None states are unaffected. (Pre-#286 this was a PoC shortcut.)
         var status = state switch
         {
             "failure" or "error" => CiStatus.Failing,
-            "pending" => CiStatus.Pending,
+            "pending" when HasRegisteredStatuses(doc.RootElement) => CiStatus.Pending,
+            // A registered success is a positive signal → Passing. Success with no
+            // registered statuses stays None (the #286 "no legacy CI" case). (#264)
+            "success" when HasRegisteredStatuses(doc.RootElement) => CiStatus.Passing,
             _ => CiStatus.None,
         };
         return (status, false);
+    }
+
+    // A registered status context surfaces as a positive `total_count` OR a non-empty
+    // inline `statuses` array. The two agree in practice, but OR-ing them (rather than
+    // letting `total_count` short-circuit) matches the documented intent and tolerates
+    // payload quirks. `total_count` is read with TryGetInt32 so an unexpected non-integer
+    // number degrades to the array signal instead of throwing. An absent/zero count with
+    // an empty array means "none registered", which GitHub still labels state="pending". (#286)
+    private static bool HasRegisteredStatuses(JsonElement root)
+    {
+        var hasStatuses = root.TryGetProperty("statuses", out var statuses)
+            && statuses.ValueKind == JsonValueKind.Array
+            && statuses.GetArrayLength() > 0;
+        var hasCount = root.TryGetProperty("total_count", out var count)
+            && count.ValueKind == JsonValueKind.Number
+            && count.TryGetInt32(out var n)
+            && n > 0;
+        return hasStatuses || hasCount;
     }
 
     private Task<HttpResponseMessage> SendAsync(string url, string? token, CancellationToken ct)

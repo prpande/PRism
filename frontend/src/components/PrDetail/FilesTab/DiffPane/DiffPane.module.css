@@ -46,6 +46,9 @@
   width: 100%;
   border-collapse: collapse;
   font-family: var(--font-mono);
+  /* #135: content font-size scaling is applied on the `.diff-line` <tr> (tokens.css),
+     NOT here — each <td> inherits from the nearer <tr>, which would shadow a value set
+     on the table. Keep the base token here for the table baseline. */
   font-size: var(--text-sm);
   line-height: 1.55;
 }
@@ -236,6 +239,18 @@
 }
 :global(.diff-pane--split .diff-line--paired) .diffContent[data-side='new'] {
   background: var(--diff-add-bg);
+}
+
+/* Commented-line accent wash must beat the split add/paired tints above.
+   The add/paired new-side tints are specificity (0,4,0); tokens.css's
+   `.diff-content[data-commented='true']` wash is only (0,2,0), so on a
+   commented INSERTED or PAIRED line in split mode (the common case —
+   people comment on added lines) the green add-tint wins and the accent
+   wash never paints. This (0,5,0) rule restores it for the new-side cell.
+   The box-shadow inset edge still comes from tokens.css (it works — the
+   tints set no box-shadow). Recipe matches tokens.css:1018/1022. */
+:global(.diff-pane--split .diff-line) .diffContent[data-side='new'][data-commented='true'] {
+  background: color-mix(in oklch, var(--accent-soft) 70%, var(--surface-1));
 }
 
 /* PR9b-ai-gating § 4.4. AI hunk annotation row — colspan-3 (unified) / colspan-4 (split) <tr> emitted after

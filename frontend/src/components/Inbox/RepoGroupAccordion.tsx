@@ -52,7 +52,7 @@ export function RepoGroupAccordion({
         <span className={styles.count}>{count}</span>
       </button>
       {open && (
-        <div className={styles.body}>
+        <div>
           {group.items.map((pr) => {
             const id = prId(pr);
             return (
@@ -63,6 +63,7 @@ export function RepoGroupAccordion({
                 showCategoryChip={showCategoryChip}
                 maxDiff={maxDiff}
                 showRepo={false}
+                grouped
               />
             );
           })}

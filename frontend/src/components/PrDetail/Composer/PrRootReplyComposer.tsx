@@ -13,7 +13,7 @@ import { PrRootBodyEditor } from './PrRootBodyEditor';
 import type { PrReference } from '../../../api/types';
 import type { ComposerOwnerKey } from '../../../hooks/useDraftSession';
 
-type AutosaveControl = { flush: () => Promise<void>; badge: ComposerSaveBadge };
+type AutosaveControl = { flush: () => Promise<string | null>; badge: ComposerSaveBadge };
 
 export interface PrRootReplyComposerProps {
   prRef: PrReference;

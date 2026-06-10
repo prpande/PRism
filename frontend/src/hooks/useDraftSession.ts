@@ -2,6 +2,19 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { getDraft } from '../api/draft';
 import type { DraftCommentDto, DraftReplyDto, PrReference, ReviewSessionDto } from '../api/types';
 
+// Are there OTHER staged drafts besides this composer's own? During a post-now (postingInProgress),
+// suppress entirely: by D3 post-now is only reachable when no other real drafts are staged, so the
+// only draft present mid-post is the transient one — never flicker other composers. (#302 D3 + F3/F5.)
+export function computeAnyOtherDraftsStaged(
+  comments: DraftCommentDto[],
+  replies: DraftReplyDto[],
+  ownDraftId: string | null,
+  postingInProgress: boolean,
+): boolean {
+  if (postingInProgress) return false;
+  return comments.some((d) => d.id !== ownDraftId) || replies.some((r) => r.id !== ownDraftId);
+}
+
 export type DraftSessionStatus = 'loading' | 'ready' | 'error';
 
 // Identifies which composer surface holds an open draft. 'reply-composer' and
@@ -32,6 +45,12 @@ export interface UseDraftSessionResult {
   getPrRootHolder: () => ComposerOwnerKey | null;
   outOfBandToast: OutOfBandUpdate | null;
   clearOutOfBandToast: () => void;
+  // Ref-counted suppressor: while any post-now is in flight, postingInProgress
+  // is true, and computeAnyOtherDraftsStaged returns false so other open
+  // composers never flicker into "review in progress". (#302 F3/F5.)
+  postingInProgress: boolean;
+  beginPosting: () => void;
+  endPosting: () => void;
 }
 
 export function useDraftSession(prRef: PrReference): UseDraftSessionResult {
@@ -42,6 +61,20 @@ export function useDraftSession(prRef: PrReference): UseDraftSessionResult {
 
   const openComposers = useRef(new Map<string, Set<ComposerOwnerKey>>());
   const isOpen = useCallback((id: string) => (openComposers.current.get(id)?.size ?? 0) > 0, []);
+
+  // Ref-counted posting suppressor (#302 F3/F5). Multiple simultaneous post-now
+  // calls (e.g. rapid double-tap) each hold a count; postingInProgress stays true
+  // until the last one resolves.
+  const postingCountRef = useRef(0);
+  const [postingInProgress, setPostingInProgress] = useState(false);
+  const beginPosting = useCallback(() => {
+    postingCountRef.current += 1;
+    setPostingInProgress(true);
+  }, []);
+  const endPosting = useCallback(() => {
+    postingCountRef.current = Math.max(0, postingCountRef.current - 1);
+    setPostingInProgress(postingCountRef.current > 0);
+  }, []);
 
   const registerOpenComposer = useCallback(
     (draftId: string, ownerKey: ComposerOwnerKey): (() => void) => {
@@ -130,6 +163,9 @@ export function useDraftSession(prRef: PrReference): UseDraftSessionResult {
     getPrRootHolder,
     outOfBandToast,
     clearOutOfBandToast,
+    postingInProgress,
+    beginPosting,
+    endPosting,
   };
 }
 

@@ -1,6 +1,10 @@
 import { useEffect } from 'react';
 import { usePreferences } from '../hooks/usePreferences';
-import { applyThemeToDocument, applyDensityToDocument } from '../utils/applyTheme';
+import {
+  applyThemeToDocument,
+  applyDensityToDocument,
+  applyContentScaleToDocument,
+} from '../utils/applyTheme';
 
 // Headless: applies the saved theme/accent/density to <html> on load and on any
 // preference change. This was previously HeaderControls' mount-effect; the
@@ -16,6 +20,7 @@ export function AppearanceSync() {
     if (preferences) {
       applyThemeToDocument(preferences.ui.theme, preferences.ui.accent);
       applyDensityToDocument(preferences.ui.density);
+      applyContentScaleToDocument(preferences.ui.contentScale);
     }
   }, [preferences]);
 

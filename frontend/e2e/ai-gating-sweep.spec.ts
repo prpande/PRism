@@ -1,7 +1,9 @@
 // frontend/e2e/ai-gating-sweep.spec.ts
 //
 // PR9b-ai-gating § 5.5. Single spec covering the off → on → off flow with
-// all five AI-surface classes + InboxPage activity rail.
+// all five AI-surface classes. (#283: the InboxPage activity rail is no longer an
+// AI surface — it is decoupled onto inbox.showActivityRail — so this sweep now
+// asserts it stays HIDDEN under AI-on; its flag-driven visibility lives in inbox.spec.ts.)
 //
 // This is a mock-only spec — no real backend required. All routes are
 // intercepted via page.route() before navigation so there is no race
@@ -421,8 +423,8 @@ test('ai-gating-sweep: off → on → off shows/hides AI surfaces', async ({ pag
   await page.locator('[data-testid="files-tab-tree-row"][data-path="src/Calc.cs"]').click();
 
   // All three tone annotations must render in DiffPane.
-  await expect(page.getByTestId('ai-hunk-annotation').first()).toBeVisible({ timeout: 10_000 });
-  expect(await page.getByTestId('ai-hunk-annotation').count()).toBe(3);
+  await expect(page.getByTestId('ai-hunk').first()).toBeVisible({ timeout: 10_000 });
+  expect(await page.getByTestId('ai-hunk').count()).toBe(3);
 
   // TONE_CHIP labels — calm="Note" / heads-up="Behavior change" / concern="Concern".
   await expect(page.locator('.chip-info', { hasText: 'Note' })).toBeVisible();
@@ -437,16 +439,13 @@ test('ai-gating-sweep: off → on → off shows/hides AI surfaces', async ({ pag
   // StaleDraftRow's AI suggestion carries the Preview-only SampleBadge.
   await expect(page.getByTestId('sample-badge').first()).toBeVisible({ timeout: 10_000 });
 
-  // (e) Inbox activity rail — a fresh navigation to "/" remounts InboxPage so
-  // usePreferences + useCapabilities refetch and see aiMode='preview' and
-  // inboxRanking=true from the now-mutated mock state.
+  // (e) Inbox activity rail is DECOUPLED from AI (#283): it is gated on
+  // inbox.showActivityRail (default false), NOT on the AI-preview toggle. So even with
+  // AI preview fully on here, the fabricated rail must stay hidden. (Its own
+  // flag-driven visibility is covered in inbox.spec.ts.)
   await page.goto('/');
   await expect(page.getByText('Refactor Calc utilities')).toBeVisible({ timeout: 15_000 });
-  await expect(page.getByRole('complementary', { name: /activity/i })).toBeVisible({
-    timeout: 10_000,
-  });
-  // ActivityRail carries the Preview-only SampleBadge on the inbox surface.
-  await expect(page.getByTestId('sample-badge').first()).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByRole('complementary', { name: /activity/i })).not.toBeAttached();
 
   // ─── STEP 4: Toggle OFF ───────────────────────────────────────────────────
 

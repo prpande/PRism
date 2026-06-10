@@ -245,8 +245,9 @@ describe('PrRootReplyComposer — Post flow', () => {
   });
 });
 
-describe('PrRootReplyComposer — closed PR banner', () => {
-  it('renders a banner when prState !== "open"', () => {
+describe('PrRootReplyComposer — closed PR (#302 updated)', () => {
+  // #302: "text not saved" banner removed from PrRootBodyEditor (guard relaxed).
+  it('does NOT render a "text not saved" banner when prState !== "open"', () => {
     render(
       <PrRootReplyComposer
         prRef={ref}
@@ -257,6 +258,6 @@ describe('PrRootReplyComposer — closed PR banner', () => {
         onClose={() => undefined}
       />,
     );
-    expect(screen.getByText(/PR closed — text not saved/i)).toBeInTheDocument();
+    expect(screen.queryByText(/text not saved/i)).not.toBeInTheDocument();
   });
 });

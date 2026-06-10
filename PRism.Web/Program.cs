@@ -81,6 +81,7 @@ builder.Services.AddPrismClaudeCode(
 builder.Services.AddPrismAi();
 builder.Services.AddPrismWeb();
 builder.Services.AddSingleton<SessionTokenProvider>();
+builder.Services.AddSingleton<PRism.Core.Activity.IActivityProvider, PRism.Core.Activity.ActivityProvider>();
 
 // Test environment: opt-in swap GitHubReviewService → the split fakes so Playwright
 // can drive the backend without needing a real GitHub PAT. The swap also makes /test/*
@@ -113,6 +114,8 @@ if (builder.Environment.IsEnvironment("Test")
     builder.Services.AddSingleton<IPrDiscovery, FakePrDiscovery>();
     builder.Services.AddSingleton<IPrReader, FakePrReader>();
     builder.Services.AddSingleton<IReviewSubmitter, FakeReviewSubmitter>();
+    builder.Services.RemoveAll<PRism.Core.Activity.IActivityProvider>();
+    builder.Services.AddSingleton<PRism.Core.Activity.IActivityProvider, PRism.Web.TestHooks.FakeActivityProvider>();
 }
 
 // Test env + REAL_INJECT: attach TestFailureInjectionHandler to the "github" named HttpClient.
@@ -324,11 +327,13 @@ app.MapPreferences();
 app.MapAuth();
 app.MapEvents();
 app.MapInbox();
+app.MapActivity();
 app.MapPrDetail();
 app.MapPrDraftEndpoints();
 app.MapPrReloadEndpoints();
 app.MapPrSubmitEndpoints();
 app.MapPrRootCommentEndpoints();
+app.MapPrCommentEndpoints();
 app.MapSubmitInFlight();
 app.MapPrDraftsDiscardAllEndpoint();
 app.MapAi();

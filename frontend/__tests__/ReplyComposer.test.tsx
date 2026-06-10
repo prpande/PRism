@@ -59,9 +59,9 @@ describe('ReplyComposer — accessibility (A3)', () => {
     expect(form).toHaveAttribute('aria-label', `Reply to thread ${PARENT_THREAD_ID}`);
   });
 
-  it('Save button is aria-disabled when body is empty', () => {
+  it('Add to review button is aria-disabled when body is empty', () => {
     render(<Harness />);
-    const save = screen.getByRole('button', { name: 'Save' });
+    const save = screen.getByRole('button', { name: 'Add to review' });
     expect(save).toHaveAttribute('aria-disabled', 'true');
     expect(save).toHaveAttribute('title', 'Type something to save.');
   });
@@ -143,8 +143,10 @@ describe('ReplyComposer — discard flow', () => {
   });
 });
 
-describe('ReplyComposer — closed PR banner (spec § 5.3)', () => {
-  it('renders a banner when prState !== "open"', () => {
+describe('ReplyComposer — closed PR (#302 updated)', () => {
+  // #302: "text not saved" banner removed (guard relaxed — drafts now stage on closed/merged).
+  // The "comments post immediately" footer note replaces it.
+  it('does NOT render a "text not saved" banner when prState !== "open"', () => {
     render(
       <ReplyComposer
         prRef={ref}
@@ -156,6 +158,8 @@ describe('ReplyComposer — closed PR banner (spec § 5.3)', () => {
         onClose={() => undefined}
       />,
     );
-    expect(screen.getByText(/PR merged — text not saved/i)).toBeInTheDocument();
+    expect(screen.queryByText(/text not saved/i)).not.toBeInTheDocument();
+    // The "comments post immediately" note is shown instead.
+    expect(screen.getByText(/comments post immediately/i)).toBeInTheDocument();
   });
 });

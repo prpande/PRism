@@ -18,6 +18,7 @@ vi.mock('../api/client', () => {
       theme: 'dark',
       accent: 'indigo',
       density: 'comfortable',
+      contentScale: 'm',
       aiMode: state.aiMode,
     },
     inbox: { sections: {} } as never,

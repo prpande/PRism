@@ -1,8 +1,12 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { useInbox } from '../hooks/useInbox';
 import { useInboxUpdates } from '../hooks/useInboxUpdates';
 import { useAiGate } from '../hooks/useAiGate';
+import { usePreferences } from '../hooks/usePreferences';
+import { useMediaQuery } from '../hooks/useMediaQuery';
+import { INBOX_RAIL_MIN_WIDTH } from '../components/Inbox/inboxLayout';
 import { InboxBanner } from '../components/Inbox/InboxBanner';
+import { orderInboxSections } from '../components/Inbox/sectionOrder';
 import { InboxToolbar } from '../components/Inbox/InboxToolbar';
 import { InboxSection } from '../components/Inbox/InboxSection';
 import { InboxFooter } from '../components/Inbox/InboxFooter';
@@ -12,16 +16,32 @@ import { SampleBadge } from '../components/Ai/SampleBadge';
 import { InboxSkeleton } from '../components/Inbox/InboxSkeleton';
 import { LoadingBar } from '../components/LoadingBar';
 import { ErrorModal } from '../components/ErrorModal';
+import { NoFilterMatches } from '../components/Inbox/filters/NoFilterMatches';
+import type { FilterBarState } from '../components/Inbox/filters/FilterBar';
 import styles from './InboxPage.module.css';
 
 export function InboxPage() {
   const { data, error, isLoading, reload } = useInbox();
   const updates = useInboxUpdates();
+  const { preferences } = usePreferences();
+  const initialSort = preferences?.inbox.defaultSort ?? 'updated';
 
   const showCategoryChip = useAiGate('inboxEnrichment');
-  const showActivityRail = useAiGate('inboxRanking');
+  // #283 the activity rail is a fabricated, non-AI mockup — decoupled from the AI-preview
+  // toggle onto a dedicated inbox flag (default false).
+  // #300 the rail also requires a wide-enough viewport: below INBOX_RAIL_MIN_WIDTH it is
+  // not rendered at all (genuinely hidden, no background fetch), giving the single-column
+  // Layout B. One `showRail` drives both the rail render and the cold-load skeleton.
+  const wideEnoughForRail = useMediaQuery(`(min-width: ${INBOX_RAIL_MIN_WIDTH}px)`);
+  const showRail = (preferences?.inbox.showActivityRail ?? false) && wideEnoughForRail;
   const sections = data?.sections ?? [];
   const allEmpty = sections.length > 0 && sections.every((s) => s.items.length === 0);
+
+  const [filterState, setFilterState] = useState<FilterBarState | null>(null);
+  const result = filterState?.result ?? null;
+  const filterActive = result?.filterActive ?? false;
+  const visibleSections = result ? result.sections : sections;
+  const zeroMatch = filterActive && result?.matchCount === 0;
 
   const maxDiff = useMemo(() => {
     let m = 1;
@@ -40,7 +60,7 @@ export function InboxPage() {
         {/* Per-surface loading bar pinned to the inbox content top (self-contained,
             no layout shift) + the content-shaped skeleton. */}
         <LoadingBar active data-testid="inbox-loading-bar" />
-        <InboxSkeleton showRail={showActivityRail} />
+        <InboxSkeleton showRail={showRail} />
       </>
     );
   if (error && !data)
@@ -79,24 +99,33 @@ export function InboxPage() {
         {updates.hasUpdate && (
           <InboxBanner summary={updates.summary} onReload={onReload} onDismiss={updates.dismiss} />
         )}
-        <InboxToolbar />
+        <InboxToolbar
+          sections={sections}
+          initialSort={initialSort}
+          ciProbeComplete={data.ciProbeComplete}
+          onState={setFilterState}
+        />
         <div className={styles.grid}>
           <div className={styles.sections}>
             {showCategoryChip && <SampleBadge variant="region" />}
-            {allEmpty && <EmptyAllSections />}
-            {sections.map((s) => (
-              <InboxSection
-                key={s.id}
-                section={s}
-                enrichments={data.enrichments}
-                showCategoryChip={showCategoryChip}
-                maxDiff={maxDiff}
-                defaultOpen={s.id !== 'recently-closed'}
-              />
-            ))}
+            {!filterActive && allEmpty && <EmptyAllSections />}
+            {zeroMatch && <NoFilterMatches onClear={() => filterState?.clear()} />}
+            {!zeroMatch &&
+              orderInboxSections(visibleSections, preferences?.inbox.sectionOrder).map((s) => (
+                <InboxSection
+                  key={s.id}
+                  section={s}
+                  enrichments={data.enrichments}
+                  showCategoryChip={showCategoryChip}
+                  maxDiff={maxDiff}
+                  defaultOpen={s.id !== 'recently-closed'}
+                  forceOpen={filterActive && s.id !== 'recently-closed'}
+                  groupByRepo={preferences?.inbox.groupByRepo ?? true}
+                />
+              ))}
             {data.tokenScopeFooterEnabled && <InboxFooter />}
           </div>
-          {showActivityRail && <ActivityRail />}
+          {showRail && <ActivityRail />}
         </div>
       </main>
     </>
