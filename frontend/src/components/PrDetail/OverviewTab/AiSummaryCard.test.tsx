@@ -33,6 +33,20 @@ describe('AiSummaryCard', () => {
     expect(screen.getByText('Fix')).toBeInTheDocument();
   });
 
+  it('maps a capitalized category (Preview placeholder) case-insensitively', () => {
+    render(
+      <AiSummaryCard summary={{ body: 'b', category: 'Refactor' }} loading={false} error={false} />,
+    );
+    expect(screen.getByText('Refactor')).toBeInTheDocument();
+  });
+
+  it('renders no chip for an out-of-taxonomy category', () => {
+    render(
+      <AiSummaryCard summary={{ body: 'b', category: 'cat' }} loading={false} error={false} />,
+    );
+    expect(screen.queryByTestId('ai-summary-category')).not.toBeInTheDocument();
+  });
+
   it('renders no category row when category is empty', () => {
     render(<AiSummaryCard summary={{ body: 'b', category: '' }} loading={false} error={false} />);
     expect(screen.queryByTestId('ai-summary-category')).not.toBeInTheDocument();

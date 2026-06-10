@@ -48,7 +48,10 @@ export function AiSummaryCard({ summary, loading, error }: AiSummaryCardProps) {
   }
   if (!summary) return null;
 
-  const label = summary.category ? CATEGORY_LABELS[summary.category] : undefined;
+  // Normalize case: the Live parser emits lowercase canonical categories, but the Preview
+  // PlaceholderPrSummarizer emits capitalized ones (e.g. "Refactor"). Out-of-taxonomy / empty
+  // values fall through to no chip (body-only), per spec §10.
+  const label = summary.category ? CATEGORY_LABELS[summary.category.toLowerCase()] : undefined;
   return (
     <section
       className={`ai-summary-card ${styles.aiSummaryCard} overview-card overview-card-hero ai-tint`}
