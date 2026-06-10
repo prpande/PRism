@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import type { DraftVerdict } from '../../../api/types';
 import { deriveFace, deriveMenu, type ReviewActionInputs } from './reviewActionState';
 import { ReviewActionMenu } from './ReviewActionMenu';
@@ -34,10 +34,10 @@ export function ReviewActionButton(props: ReviewActionButtonProps) {
   const face = deriveFace(props);
   const [menuOpen, setMenuOpen] = useState(false);
   const chevronRef = useRef<HTMLButtonElement>(null);
-  const closeMenu = () => {
+  const closeMenu = useCallback(() => {
     setMenuOpen(false);
     chevronRef.current?.focus();
-  };
+  }, []);
 
   const onMainClick = () => {
     if (face.mainAction === 'submit') props.onOpenSubmit();
@@ -96,6 +96,7 @@ export function ReviewActionButton(props: ReviewActionButtonProps) {
         <ReviewActionMenu
           sections={deriveMenu(props)}
           onClose={closeMenu}
+          triggerRef={chevronRef}
           onSelect={(id, verdict) => {
             if (id.startsWith('verdict:')) {
               if (!verdict) return; // mis-route guard — fail loud rather than silently clearing

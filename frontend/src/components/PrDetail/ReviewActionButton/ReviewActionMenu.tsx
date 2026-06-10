@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react';
+import type React from 'react';
 import type { DraftVerdict } from '../../../api/types';
 import type { ReviewActionMenuSection } from './reviewActionState';
 import styles from './ReviewActionButton.module.css';
@@ -7,9 +8,10 @@ interface Props {
   sections: ReviewActionMenuSection[];
   onClose: () => void;
   onSelect: (id: string, verdict?: DraftVerdict) => void;
+  triggerRef?: React.RefObject<HTMLElement | null>;
 }
 
-export function ReviewActionMenu({ sections, onClose, onSelect }: Props) {
+export function ReviewActionMenu({ sections, onClose, onSelect, triggerRef }: Props) {
   const ref = useRef<HTMLDivElement>(null);
   const items = sections.flatMap((s) => s.items);
 
@@ -29,7 +31,10 @@ export function ReviewActionMenu({ sections, onClose, onSelect }: Props) {
       else if (e.key === 'Tab') onClose();
     };
     const onDocClick = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) onClose();
+      const t = e.target as Node;
+      if (ref.current && !ref.current.contains(t) && !triggerRef?.current?.contains(t)) {
+        onClose();
+      }
     };
     document.addEventListener('keydown', onKey);
     document.addEventListener('mousedown', onDocClick);
@@ -37,7 +42,7 @@ export function ReviewActionMenu({ sections, onClose, onSelect }: Props) {
       document.removeEventListener('keydown', onKey);
       document.removeEventListener('mousedown', onDocClick);
     };
-  }, [onClose]);
+  }, [onClose, triggerRef]);
 
   // Empty menu (closed/merged with no drafts) → close via effect, NOT during
   // render (calling a parent state-setter in render is a React anti-pattern).
@@ -57,7 +62,13 @@ export function ReviewActionMenu({ sections, onClose, onSelect }: Props) {
   if (items.length === 0) return null; // close handled by the effect above
 
   return (
-    <div ref={ref} role="menu" className={styles.menu} data-testid="review-action-menu">
+    <div
+      ref={ref}
+      role="menu"
+      aria-label="Review actions"
+      className={styles.menu}
+      data-testid="review-action-menu"
+    >
       {sections.map((section, si) => (
         <div key={si} className={styles.section}>
           {section.header && <div className={styles.menuHeader}>{section.header}</div>}

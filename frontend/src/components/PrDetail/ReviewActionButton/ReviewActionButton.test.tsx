@@ -85,6 +85,14 @@ describe('ReviewActionButton — menu', () => {
     );
     expect(screen.getByTestId('review-action-chevron')).toBeDisabled();
   });
+  it('clicking the chevron while open closes the menu without reopening it', async () => {
+    render(<ReviewActionButton {...props()} />);
+    const chevron = screen.getByTestId('review-action-chevron');
+    await userEvent.click(chevron); // open
+    expect(screen.getByRole('menu')).toBeInTheDocument();
+    await userEvent.click(chevron); // close
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+  });
 });
 
 describe('ReviewActionButton — face', () => {
