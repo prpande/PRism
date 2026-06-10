@@ -98,6 +98,28 @@ public static class ServiceCollectionExtensions
                 () => Task.FromResult(viewerLogin.Get() is { Length: > 0 } l ? l : null));
         });
 
+        // P2 activity readers. Both endpoints (notifications, user/subscriptions) are
+        // self-scoped to the authenticated viewer, so — unlike GitHubReceivedEventsReader
+        // — they need no readLogin Func: just the named "github" client + the late-bound
+        // token reader, mirroring the received-events registration above.
+        services.AddSingleton<PRism.Core.Activity.INotificationsReader>(sp =>
+        {
+            var tokens = sp.GetRequiredService<ITokenStore>();
+            var factory = sp.GetRequiredService<IHttpClientFactory>();
+            return new PRism.GitHub.Activity.GitHubNotificationsReader(
+                factory,
+                () => tokens.ReadAsync(CancellationToken.None));
+        });
+
+        services.AddSingleton<PRism.Core.Activity.IWatchedReposReader>(sp =>
+        {
+            var tokens = sp.GetRequiredService<ITokenStore>();
+            var factory = sp.GetRequiredService<IHttpClientFactory>();
+            return new PRism.GitHub.Activity.GitHubWatchedReposReader(
+                factory,
+                () => tokens.ReadAsync(CancellationToken.None));
+        });
+
         // Feedback always targets github.com (the feedback repo lives there),
         // independent of the user's configured host (§4.1).
         services.AddHttpClient(GitHubFeedbackSubmitter.ClientName, client =>

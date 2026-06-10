@@ -70,6 +70,11 @@ builder.Services.AddPrismGitHub();
 builder.Services.AddPrismAi();
 builder.Services.AddPrismWeb();
 builder.Services.AddSingleton<SessionTokenProvider>();
+// TimeProvider is an ActivityProvider ctor dependency (clock for cache TTL + the
+// notifications "since" window). Not registered elsewhere, so register the system
+// clock here; a missing registration would throw "Unable to resolve service" at
+// startup when the generic IActivityProvider registration below is built.
+builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddSingleton<PRism.Core.Activity.IActivityProvider, PRism.Core.Activity.ActivityProvider>();
 
 // Test environment: opt-in swap GitHubReviewService → the split fakes so Playwright
