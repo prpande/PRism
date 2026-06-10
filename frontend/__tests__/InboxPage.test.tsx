@@ -27,6 +27,25 @@ import { useCapabilities } from '../src/hooks/useCapabilities';
 import { usePreferences } from '../src/hooks/usePreferences';
 import { useAiGate } from '../src/hooks/useAiGate';
 
+// The global setup mock returns matches:false. The rail now also requires a
+// >=1180px viewport, so rail-visible tests must opt into a wide viewport.
+const realMatchMedia = window.matchMedia;
+function mockViewportWide(wide: boolean) {
+  window.matchMedia = ((q: string) => ({
+    matches: wide,
+    media: q,
+    onchange: null,
+    addEventListener() {},
+    removeEventListener() {},
+    addListener() {},
+    removeListener() {},
+    dispatchEvent: () => false,
+  })) as unknown as typeof window.matchMedia;
+}
+beforeEach(() => {
+  window.matchMedia = realMatchMedia; // reset to the setup default (matches:false) per test
+});
+
 function setHooks(
   opts: {
     data?: InboxResponse | null;
@@ -203,9 +222,18 @@ describe('InboxPage', () => {
 
   it('renders ActivityRail when inbox.showActivityRail is on', () => {
     // #283 decoupled from AI: even with aiPreview off, the rail shows when its flag is on.
+    mockViewportWide(true); // #300 rail also needs a wide viewport
     setHooks({ data: sampleData, aiPreview: false, showActivityRail: true });
     renderPage();
     expect(screen.getByRole('complementary', { name: /activity/i })).toBeInTheDocument();
+  });
+
+  it('hides ActivityRail below the 1180px breakpoint even when the toggle is on', () => {
+    // #300 two-layout gate: rail visible iff toggle ON *and* viewport wide enough.
+    mockViewportWide(false);
+    setHooks({ data: sampleData, aiPreview: false, showActivityRail: true });
+    renderPage();
+    expect(screen.queryByRole('complementary', { name: /activity/i })).not.toBeInTheDocument();
   });
 
   it('hides ActivityRail when inbox.showActivityRail is off even with aiPreview on', () => {
@@ -394,6 +422,7 @@ describe('InboxPage — useAiGate migrations', () => {
   });
 
   it('shows the activity rail when inbox.showActivityRail is true (AI gate off)', () => {
+    mockViewportWide(true); // #300 rail also needs a wide viewport
     vi.mocked(useAiGate).mockReturnValue(false); // AI fully off — rail still shows
     setShowActivityRail(true);
     const { container } = render(

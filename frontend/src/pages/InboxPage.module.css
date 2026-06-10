@@ -11,6 +11,9 @@
   margin-top: var(--s-3);
 }
 
+/* #300 — 1179px == INBOX_RAIL_MIN_WIDTH (1180) − 1. Below it the grid is single-column
+   (Layout B); InboxPage's useMediaQuery gate (same const) also stops rendering the rail.
+   Keep these two boundaries in sync — see frontend/src/components/Inbox/inboxLayout.ts. */
 @media (max-width: 1179px) {
   .grid {
     grid-template-columns: 1fr;
