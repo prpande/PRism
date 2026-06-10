@@ -56,6 +56,20 @@
   font-weight: 600;
 }
 
+/* Actorless rows (review-requested / mentioned / standalone comment notifications):
+   the phrase carries no actor prefix, so it reads as ordinary body text. */
+.actorless {
+  color: var(--text-2);
+}
+
+/* Watching panel title — lighter weight than the Activity title so Activity
+   reads as the primary panel (matches the repo-group-header precedent, #272). */
+.watchTitle {
+  font-weight: 500;
+  color: var(--text-1);
+  font-size: var(--text-sm);
+}
+
 .pr {
   color: var(--accent);
   text-decoration: none;
@@ -92,6 +106,38 @@
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   margin-left: 8px;
+}
+
+/* Idle (count 0) watching repo — muted, no pill emphasis. */
+.idle {
+  margin-left: 8px;
+  font-size: var(--text-2xs);
+  color: var(--text-3);
+}
+
+/* Watching row link: repo (left) + count/idle + external icon (right). */
+.watchRow {
+  display: flex;
+  align-items: center;
+  color: inherit;
+  text-decoration: none;
+}
+.watchRow:hover .repo {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.extIcon {
+  margin-left: 6px;
+  color: var(--text-3);
+  flex-shrink: 0;
+}
+
+/* Muted inline note below partial / unavailable Watching lists. */
+.watchIncomplete {
+  font-size: var(--text-2xs);
+  color: var(--text-3);
+  margin: var(--s-2) 0 0;
 }
 
 @media (max-width: 1179px) {
