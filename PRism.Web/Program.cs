@@ -337,6 +337,7 @@ app.MapPrCommentEndpoints();
 app.MapSubmitInFlight();
 app.MapPrDraftsDiscardAllEndpoint();
 app.MapAi();
+app.MapAiConsent();
 app.MapFeedback();
 
 if (builder.Environment.IsEnvironment("Test"))
