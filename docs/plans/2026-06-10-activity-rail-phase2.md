@@ -47,7 +47,11 @@ Expected: 0 errors, 0 warnings (`TreatWarningsAsErrors` is on — CA1305 culture
 - Create `NotificationReasonMap.cs` — `reason` → `ActivityVerb` mapping (pure, testable).
 - Modify `ActivityFeedBuilder.cs` — multi-source overload: normalize notifications, within-group notification dedup, two-stage merge, slot-reserved cap **at the visible 12**, Watching computation.
 - Modify `IActivityProvider.cs` — add `void Reset()`.
-- Modify `ActivityProvider.cs` — inject notifications + watched readers + `TimeProvider`; TTL cache; **non-blocking** `Reset()` (generation counter); aggregate degradation.
+- Modify `ActivityProvider.cs` — inject notifications + watched readers + `TimeProvider` + `IConfigStore` (sources host + extra-bots fresh per fetch); TTL cache; **non-blocking** `Reset()` (generation counter); aggregate degradation.
+
+**Backend (PRism.Core/Config):**
+- Modify `AppConfig.cs` — add `InboxConfig.KnownBots = ""` (additive activity-rail bot list).
+- Modify `ConfigStore.cs` — register the `inbox.knownBots` scalar key + apply-on-patch. (Settings UI deferred to a separate issue.)
 
 **Backend (PRism.GitHub/Activity):**
 - Create `GitHubNotificationsReader.cs`, `GitHubWatchedReposReader.cs` — fault-isolated.
@@ -577,7 +581,9 @@ git commit -m "feat(#137): GitHubWatchedReposReader (fault-isolated)"
 - Modify: `PRism.Core/Activity/ActivityFeedBuilder.cs`
 - Test: `tests/PRism.Core.Tests/Activity/ActivityFeedBuilderTests.cs`
 
-Keep the P1 single-source `Build(events, now)` as a thin delegate to the new overload (empty notifications/watched, default host) so Phase 1 tests stay green.
+Keep the P1 single-source `Build(events, now)` as a thin delegate to the new overload (empty notifications/watched, default host, **empty `extraBotLogins`**) so Phase 1 tests stay green.
+
+> **Additive bot detection (#137 owner decision 2026-06-10).** Phase 1 hardcodes `KnownBots = { "Copilot" }`. Keep that set as the **always-on built-in baseline** (rename to `BuiltInBots` for clarity) — a user can never accidentally un-detect Copilot. The new `extraBotLogins` param is ADDITIVE on top. At the top of `Build`, compute the effective set once: `var bots = new HashSet<string>(BuiltInBots, StringComparer.OrdinalIgnoreCase); bots.UnionWith(extraBotLogins);` and change `IsBot` to take it: `static bool IsBot(string login, HashSet<string> bots) => login.EndsWith("[bot]", StringComparison.OrdinalIgnoreCase) || bots.Contains(login);`. The `[bot]`-suffix auto-detection is unchanged and independent of config. (Settings UI to edit the list is deferred to **#316**; this phase wires only the config value + builder plumbing.)
 
 New signature:
 
@@ -587,6 +593,7 @@ public static ActivityBuildResult Build(
     IReadOnlyList<RawNotification> notifications,
     IReadOnlyList<string> watchedRepos,
     string host,                 // FULL configured GitHub host URL incl. scheme, e.g. "https://github.com" — NOT a bare hostname. `config.Current.Github.Host` is a full URL (AppConfig default "https://github.com"); pass it `TrimEnd('/')`. Construct URLs as $"{host}/..." — do NOT prepend "https://".
+    IReadOnlyCollection<string> extraBotLogins,  // user-configured extra bot logins (inbox.knownBots); ADDITIVE — see bot-detection note below
     DateTimeOffset now)
 ```
 
@@ -629,8 +636,8 @@ private static RawReceivedEvent Ev(string id, string actor, string type, string 
 private static RawNotification Nf(string reason, string repo, int pr, DateTimeOffset ts) =>
     new(repo, reason, pr, $"PR #{pr}", $"https://api.github.com/repos/{repo}/pulls/{pr}", ts);
 
-private static ActivityBuildResult Build(RawReceivedEvent[] ev, RawNotification[] nf, string[] watched, DateTimeOffset now)
-    => ActivityFeedBuilder.Build(ev, nf, watched, Host, now);
+private static ActivityBuildResult Build(RawReceivedEvent[] ev, RawNotification[] nf, string[] watched, DateTimeOffset now, string[]? extraBots = null)
+    => ActivityFeedBuilder.Build(ev, nf, watched, Host, extraBots ?? [], now);
 
 [Fact] // non-you-relevant duplicate notification folds into matching event, keeping actor
 public void Comment_notification_merges_into_matching_event_keeping_actor()
@@ -728,6 +735,31 @@ public void Slot_reservation_reserves_non_bot_events_under_bot_and_notification_
         .Should().BeGreaterThanOrEqualTo(ActivityFeedBuilder.MinEventSlots);  // >=4 HUMAN events survive client filter
 }
 
+[Fact] // ADDITIVE bot config: a configured extra bot login is flagged ActorIsBot
+public void Configured_extra_bot_login_is_flagged_as_bot()
+{
+    var now = DateTimeOffset.UnixEpoch.AddHours(48);
+    var ev = Ev("1", "acme-ci", "PullRequestReviewEvent", "", "acme/api", 10, now.AddMinutes(-5));
+    var item = Build([ev], [], [], now, extraBots: ["acme-ci"]).Items.Should().ContainSingle().Subject;
+    item.ActorIsBot.Should().BeTrue();
+}
+
+[Fact] // built-in baseline always applies, even with empty config
+public void Builtin_copilot_flagged_with_empty_extra_bots()
+{
+    var now = DateTimeOffset.UnixEpoch.AddHours(48);
+    var ev = Ev("1", "Copilot", "PullRequestReviewEvent", "", "acme/api", 10, now.AddMinutes(-5));
+    Build([ev], [], [], now).Items.Should().ContainSingle().Subject.ActorIsBot.Should().BeTrue();
+}
+
+[Fact] // a human login not in any list is NOT a bot (extra-bots matching is exact, case-insensitive)
+public void Human_login_not_in_lists_is_not_bot()
+{
+    var now = DateTimeOffset.UnixEpoch.AddHours(48);
+    var ev = Ev("1", "noah.s", "PullRequestReviewEvent", "", "acme/api", 10, now.AddMinutes(-5));
+    Build([ev], [], [], now, extraBots: ["acme-ci"]).Items.Should().ContainSingle().Subject.ActorIsBot.Should().BeFalse();
+}
+
 [Fact] public void Watching_count_pre_cap_orders_by_count_then_name_with_idle_padding()
 {
     var now = DateTimeOffset.UnixEpoch.AddHours(48);
@@ -808,17 +840,29 @@ git commit -m "feat(#137): builder multi-source merge + notif dedup + visible-wi
 **Files:**
 - Modify: `PRism.Core/Activity/IActivityProvider.cs` (add `void Reset();`)
 - Modify: `PRism.Core/Activity/ActivityProvider.cs`
+- Modify: `PRism.Core/Config/AppConfig.cs` — add `string KnownBots = ""` to `InboxConfig` (the new activity-rail bot list; the rail already lives under `inbox.`).
+- Modify: `PRism.Core/Config/ConfigStore.cs` — register the `inbox.knownBots` scalar key + apply it on patch.
 - Add package: `Directory.Packages.props` + `tests/PRism.Core.Tests/PRism.Core.Tests.csproj`
-- Test: `tests/PRism.Core.Tests/Activity/ActivityProviderTests.cs`
+- Test: `tests/PRism.Core.Tests/Activity/ActivityProviderTests.cs`, and the dotted-path patch test file (follow the existing convention — `tests/PRism.Core.Tests/Config/ConfigStorePatchAsyncDottedPathTests.cs`) for the `inbox.knownBots` round-trip
 
 - [ ] **Step 0: Add the FakeTimeProvider test package** (central package management — both edits required, or Task 7 tests won't compile):
   - `Directory.Packages.props`: add `<PackageVersion Include="Microsoft.Extensions.Time.Testing" Version="10.0.0" />` (match the existing `Microsoft.Extensions.*` 10.0.0 line).
   - `tests/PRism.Core.Tests/PRism.Core.Tests.csproj`: add `<PackageReference Include="Microsoft.Extensions.Time.Testing" />` (versionless, per CPM).
   - Verify: `dotnet restore` succeeds.
 
+- [ ] **Step 0.5: Add the `inbox.knownBots` config (additive bot list, file- and API-configurable; Settings UI deferred to #316).**
+  - `PRism.Core/Config/AppConfig.cs` — append `string KnownBots = ""` as the LAST `InboxConfig` parameter (mirrors how `ShowActivityRail` was appended last so positional `new InboxConfig(true, …, 14)` defaults stay valid). Doc comment: "#137 additive extra bot logins for the activity rail, comma-separated, matched case-insensitively on top of the built-in `{Copilot}` baseline and the `[bot]` suffix. Default empty. Settings UI tracked separately in #316."
+  - `PRism.Core/Config/ConfigStore.cs` — add `["inbox.knownBots"] = ConfigFieldType.String` to the field-type map (next to `inbox.sectionOrder`), and in the patch-apply switch add `"inbox.knownBots" => current with { Inbox = current.Inbox with { KnownBots = (value ?? "").Trim() } }` (no strict validation — logins are free-form; unlike `sectionOrder` there is no permutation constraint).
+  - Test (`ConfigStorePatchAsyncDottedPathTests`, the existing dotted-path convention): patch `inbox.knownBots` = `"acme-ci, security-scanner"` then read back; assert `Inbox.KnownBots` round-trips. (No UI, no frontend change this phase.)
+  - Verify: `dotnet test tests/PRism.Core.Tests --filter "FullyQualifiedName~ConfigStore"` → PASS.
+
 Inject the three readers + `TimeProvider` (prod registers `TimeProvider.System`). Cache = an instance field `(ActivityResponse Response, DateTimeOffset At)?` guarded by a `SemaphoreSlim` for the *fetch*. **`Reset()` must be non-blocking** (it is called from the auth/replace request thread and must never wait on an in-flight 3-call GitHub fetch): use a generation counter. `Reset()` increments the generation and nulls the cache field **without taking the fetch gate**; `GetActivityAsync` captures the generation before fetching and discards its result (does not cache it) if the generation moved while it was fetching — so a token rotation mid-fetch is never cached.
 
-Host for the builder: pass `config.Current.Github.Host` (the existing per-account config value — a **full URL incl. scheme**, e.g. `"https://github.com"`; default in `AppConfig` is `"https://github.com"`), `TrimEnd('/')`. The builder constructs `$"{host}/..."` so it must receive the full base URL, NOT a bare hostname (passing a bare hostname or re-prepending `https://` produces `https://https://github.com/...` — see Task 6 signature note). Resolve `IConfigStore` in the DI factory (Task 8) and pass the trimmed host string into the `ActivityProvider` ctor → `ActivityFeedBuilder.Build`.
+Host + extra-bots for the builder: **inject `IConfigStore`** (the established Core pattern — `InboxPoller`/`PrDetailLoader` already take it) and read both values **fresh on each fetch** inside `GetActivityAsync`, so a Settings change takes effect on the next 60s poll without a restart:
+- **Host:** `_config.Current.Github.Host.TrimEnd('/')` — a **full URL incl. scheme** (`"https://github.com"`; `GithubConfig.Host` delegates to the default account). The builder constructs `$"{host}/..."`, so it must receive the full base URL, NOT a bare hostname (re-prepending `https://` produces `https://https://github.com/...` — see Task 6 signature note).
+- **Extra bots:** `_config.Current.Inbox.KnownBots` (new comma-string key `inbox.knownBots`, default `""` — see Task 8) parsed via a private `ParseExtraBots(string)` helper: `split(',') → Trim() → drop empties → distinct (OrdinalIgnoreCase)`. ADDITIVE on top of the builder's built-in `{ "Copilot" }` baseline.
+
+Pass both into `ActivityFeedBuilder.Build(..., host, extraBots, now)`. This replaces the earlier captured-`string host` ctor param — one `IConfigStore` dependency now sources both config-derived values.
 
 - [ ] **Step 1: Write failing tests** (seed `FakeTimeProvider` explicitly in **every** test — an unseeded fake starts at an arbitrary epoch and will window-filter real-timestamp fixtures unpredictably):
 
@@ -828,7 +872,7 @@ public async Task Caches_within_ttl_then_refetches_after()
 {
     var clock = new FakeTimeProvider(DateTimeOffset.UnixEpoch.AddYears(56)); // ~2026, matches fixtures
     var ev = new CountingReceivedEventsReader();
-    var p = new ActivityProvider(ev, new EmptyNotifReader(), new EmptyWatchReader(), clock, Host(), NullLogger<ActivityProvider>.Instance);
+    var p = new ActivityProvider(ev, new EmptyNotifReader(), new EmptyWatchReader(), clock, Config(), NullLogger<ActivityProvider>.Instance);
     await p.GetActivityAsync(default); await p.GetActivityAsync(default);
     ev.Calls.Should().Be(1);                                   // 2nd served from cache
     clock.Advance(TimeSpan.FromSeconds(61));
@@ -841,7 +885,7 @@ public async Task Reset_forces_refetch()
 {
     var clock = new FakeTimeProvider(DateTimeOffset.UnixEpoch.AddYears(56));
     var ev = new CountingReceivedEventsReader();
-    var p = new ActivityProvider(ev, new EmptyNotifReader(), new EmptyWatchReader(), clock, Host(), NullLogger<ActivityProvider>.Instance);
+    var p = new ActivityProvider(ev, new EmptyNotifReader(), new EmptyWatchReader(), clock, Config(), NullLogger<ActivityProvider>.Instance);
     await p.GetActivityAsync(default); p.Reset(); await p.GetActivityAsync(default);
     ev.Calls.Should().Be(2);
 }
@@ -852,7 +896,7 @@ public async Task Reset_during_inflight_fetch_discards_that_result()
     var clock = new FakeTimeProvider(DateTimeOffset.UnixEpoch.AddYears(56));
     var release = new TaskCompletionSource();                       // gates the reader mid-fetch
     var ev = new GatedReceivedEventsReader(release.Task);           // ReadAsync awaits release.Task, counts calls
-    var p = new ActivityProvider(ev, new EmptyNotifReader(), new EmptyWatchReader(), clock, Host(), NullLogger<ActivityProvider>.Instance);
+    var p = new ActivityProvider(ev, new EmptyNotifReader(), new EmptyWatchReader(), clock, Config(), NullLogger<ActivityProvider>.Instance);
 
     var inflight = p.GetActivityAsync(default);                     // starts fetch #1, blocks on release
     await ev.Entered.Task;                                          // ensure fetch #1 is inside ReadAsync
@@ -868,12 +912,12 @@ public async Task Reset_during_inflight_fetch_discards_that_result()
 public async Task Aggregates_degradation_from_three_sources()
 {
     var clock = new FakeTimeProvider(DateTimeOffset.UnixEpoch.AddYears(56));
-    var p = new ActivityProvider(new DegradedReceivedEventsReader(), new DegradedNotifReader(), new DegradedWatchReader(), clock, Host(), NullLogger<ActivityProvider>.Instance);
+    var p = new ActivityProvider(new DegradedReceivedEventsReader(), new DegradedNotifReader(), new DegradedWatchReader(), clock, Config(), NullLogger<ActivityProvider>.Instance);
     (await p.GetActivityAsync(default)).Degraded.Should().Be(new ActivityDegradation(true, true, true));
 }
 ```
 
-Also **update the two existing P1 `ActivityProviderTests` constructions** (`new ActivityProvider(reader, NullLogger...)`) to the new 6-arg ctor (pass `EmptyNotifReader`/`EmptyWatchReader`/seeded `FakeTimeProvider`/host). Add the small fake readers (`Counting*`, `Empty*`, `Degraded*`, and `GatedReceivedEventsReader` — exposes an `Entered` `TaskCompletionSource` signalled when `ReadAsync` is first entered, awaits the injected `release` task, and increments `Calls`) and `since`-aware notif fakes as nested classes.
+Also **update the two existing P1 `ActivityProviderTests` constructions** (`new ActivityProvider(reader, NullLogger...)`) to the new 6-arg ctor (pass `EmptyNotifReader`/`EmptyWatchReader`/seeded `FakeTimeProvider`/`Config()`). Add a **`Config()` helper** returning an `IConfigStore` whose `Current` is `AppConfig.Default` (a static property — no parens; already has `Github.Host = "https://github.com"` and `Inbox.KnownBots = ""`); a tiny stub or a real `ConfigStore` seeded with the default both work — use whichever the existing Core tests already use for `IConfigStore`. Add the small fake readers (`Counting*`, `Empty*`, `Degraded*`, and `GatedReceivedEventsReader` — exposes an `Entered` `TaskCompletionSource` signalled when `ReadAsync` is first entered, awaits the injected `release` task, and increments `Calls`) and `since`-aware notif fakes as nested classes. Add a test that a configured extra bot (`Inbox.KnownBots = "acme-ci"` via `Config(knownBots: "acme-ci")`) flows through to the builder and flags an `acme-ci` event as a bot (the provider→builder bot wiring, distinct from the Task 6 pure-builder test).
 
 - [ ] **Step 2: Run to verify failure** — compile/assert failure.
 
@@ -887,7 +931,7 @@ public sealed partial class ActivityProvider : IActivityProvider, IDisposable
     private readonly INotificationsReader _notifs;
     private readonly IWatchedReposReader _watched;
     private readonly TimeProvider _clock;
-    private readonly string _host;
+    private readonly IConfigStore _config;
     private readonly ILogger<ActivityProvider> _log;
     private readonly SemaphoreSlim _gate = new(1, 1);
     private volatile CacheEntry? _cache;   // volatile reference: atomic publish/clear on every CLR (no torn struct read)
@@ -896,8 +940,12 @@ public sealed partial class ActivityProvider : IActivityProvider, IDisposable
     private sealed record CacheEntry(ActivityResponse Response, DateTimeOffset At, int Generation);
 
     public ActivityProvider(IReceivedEventsReader events, INotificationsReader notifs,
-        IWatchedReposReader watched, TimeProvider clock, string host, ILogger<ActivityProvider> log)
-    { _events = events; _notifs = notifs; _watched = watched; _clock = clock; _host = host; _log = log; }
+        IWatchedReposReader watched, TimeProvider clock, IConfigStore config, ILogger<ActivityProvider> log)
+    { _events = events; _notifs = notifs; _watched = watched; _clock = clock; _config = config; _log = log; }
+
+    private static IReadOnlyCollection<string> ParseExtraBots(string csv) =>
+        csv.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+           .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
 
     public async Task<ActivityResponse> GetActivityAsync(CancellationToken ct)
     {
@@ -919,7 +967,10 @@ public sealed partial class ActivityProvider : IActivityProvider, IDisposable
             await Task.WhenAll(evT, nfT, wtT).ConfigureAwait(false);
             var ev = evT.Result; var nf = nfT.Result; var wt = wtT.Result;
 
-            var built = ActivityFeedBuilder.Build(ev.Events, nf.Notifications, wt.Repos, _host, now);
+            var cfg = _config.Current;                                 // read host + bots fresh per fetch
+            var host = cfg.Github.Host.TrimEnd('/');
+            var extraBots = ParseExtraBots(cfg.Inbox.KnownBots);
+            var built = ActivityFeedBuilder.Build(ev.Events, nf.Notifications, wt.Repos, host, extraBots, now);
             if (built.DroppedRecognized > 0) Log.DroppedRecognized(_log, built.DroppedRecognized);
 
             var resp = new ActivityResponse(built.Items, now,
@@ -949,8 +1000,8 @@ public sealed partial class ActivityProvider : IActivityProvider, IDisposable
 - [ ] **Step 5: Commit**
 
 ```bash
-git add Directory.Packages.props tests/PRism.Core.Tests/PRism.Core.Tests.csproj PRism.Core/Activity/IActivityProvider.cs PRism.Core/Activity/ActivityProvider.cs tests/PRism.Core.Tests/Activity/ActivityProviderTests.cs
-git commit -m "feat(#137): ActivityProvider multi-source + 60s TTL cache + non-blocking generation Reset()"
+git add Directory.Packages.props tests/PRism.Core.Tests/PRism.Core.Tests.csproj PRism.Core/Activity/IActivityProvider.cs PRism.Core/Activity/ActivityProvider.cs PRism.Core/Config/AppConfig.cs PRism.Core/Config/ConfigStore.cs tests/PRism.Core.Tests/Activity/ActivityProviderTests.cs tests/PRism.Core.Tests/Config/ConfigStorePatchAsyncDottedPathTests.cs
+git commit -m "feat(#137): ActivityProvider multi-source + 60s TTL cache + non-blocking Reset() + inbox.knownBots (additive, config-sourced host+bots)"
 ```
 
 ---
@@ -959,17 +1010,7 @@ git commit -m "feat(#137): ActivityProvider multi-source + 60s TTL cache + non-b
 
 **Files:**
 - Modify: `PRism.GitHub/ServiceCollectionExtensions.cs` — register `INotificationsReader`/`IWatchedReposReader` (mirror the received-events reader registration: same `IHttpClientFactory` + `readToken` Func; drop `readLogin` — these endpoints are self-scoped).
-- Modify: `PRism.Web/Program.cs` — register `builder.Services.AddSingleton(TimeProvider.System)` (not currently registered) **and replace the line 73 generic registration** `AddSingleton<IActivityProvider, ActivityProvider>()` with a **factory lambda** — the new `string host` ctor param cannot be resolved by the generic auto-wiring form, so the app throws `Unable to resolve service for type 'System.String'` at startup if left as-is:
-  ```csharp
-  builder.Services.AddSingleton<IActivityProvider>(sp => new ActivityProvider(
-      sp.GetRequiredService<IReceivedEventsReader>(),
-      sp.GetRequiredService<INotificationsReader>(),
-      sp.GetRequiredService<IWatchedReposReader>(),
-      sp.GetRequiredService<TimeProvider>(),
-      sp.GetRequiredService<IConfigStore>().Current.Github.Host.TrimEnd('/'),  // full base URL incl. scheme
-      sp.GetRequiredService<ILogger<ActivityProvider>>()));
-  ```
-  (The Test-env override at Program.cs:106-107 — `RemoveAll<IActivityProvider>()` + `AddSingleton<…, FakeActivityProvider>()` — is unaffected; the Fake has a parameterless ctor.)
+- Modify: `PRism.Web/Program.cs` — register `builder.Services.AddSingleton(TimeProvider.System)` (not currently registered). **Keep** the line 73 generic registration `AddSingleton<IActivityProvider, ActivityProvider>()` as-is: because host + bots are now sourced from the injected `IConfigStore` (not a `string` param), **every** `ActivityProvider` ctor param is DI-resolvable — `IReceivedEventsReader` (P1), `INotificationsReader`/`IWatchedReposReader` (registered in `PRism.GitHub` below), `TimeProvider` (registered here), `IConfigStore` (already registered), `ILogger` (DI built-in). No factory lambda is needed; just ensure all five services are registered before the app builds — a missing one throws `Unable to resolve service…` at startup. (The Test-env override at Program.cs:106-107 — `RemoveAll<IActivityProvider>()` + `AddSingleton<…, FakeActivityProvider>()` — is unaffected; the Fake has a parameterless ctor.)
 - Modify: `PRism.Web/Endpoints/AuthEndpoints.cs` — inject `IActivityProvider`; call `Reset()` on **every** successful token-commit path.
 - Test: `tests/PRism.Web.Tests/Endpoints/AuthEndpointsTests.cs`.
 
@@ -1236,6 +1277,7 @@ git commit -m "feat(#137): inbox skeleton shows Activity + Watching rail panels"
 - [ ] `ActivityResponse` / `ActivityDegradation` grown additively; cache invalidated on every token-commit path (replace incl. same-login rotation, connect, connect/commit); `Reset()` non-blocking.
 - [ ] Wire values are kebab-case end to end (`review-requested`, `mentioned`, `notification`); frontend unions/maps match.
 - [ ] Classic `repo` covers notifications + subscriptions (verified live); FG Notifications/Metadata read documented + graceful-degrade; no Authorization-header logging.
+- [ ] Activity-rail bot list is human-configurable via `inbox.knownBots` (file + PATCH API), **additive** on top of the built-in `{Copilot}` baseline and `[bot]`-suffix detection; configured logins flow through to `ActorIsBot`. Settings UI for it is deferred to **#316** (not in this PR).
 
 ---
 
