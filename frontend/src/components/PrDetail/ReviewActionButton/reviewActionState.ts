@@ -115,7 +115,12 @@ export function deriveMenu(i: ReviewActionInputs): ReviewActionMenuSection[] {
   const isClosedOrMerged = prState !== 'open';
   const pending = session.pendingReviewId !== null;
   const needsReconfirm = session.draftVerdictStatus === 'needs-reconfirm';
-  const hasDrafts = session.draftComments.length > 0 || session.draftReplies.length > 0;
+  // Mirror DiscardAllDraftsButton.hasDiscardableContent — a leftover pendingReviewId
+  // on a closed/merged PR is discardable even with no draft comments/replies.
+  const hasDrafts =
+    session.draftComments.length > 0 ||
+    session.draftReplies.length > 0 ||
+    session.pendingReviewId !== null;
   // Spec §4.5: needs-reconfirm is surfaced in TWO places — the button face (Task 4)
   // and a menu note. Re-selecting the verdict re-confirms it (existing patchVerdict).
   const note: ReviewActionMenuItem[] = needsReconfirm ? [RECONFIRM_NOTE] : [];

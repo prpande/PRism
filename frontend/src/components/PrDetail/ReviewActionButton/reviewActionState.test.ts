@@ -121,6 +121,10 @@ describe('deriveMenu', () => {
     const m = deriveMenu({ ...inputs(), prState: 'closed' });
     expect(ids(m)).toEqual([]);
   });
+  it('closed/merged with only a leftover pending review (no draft comments) → discard-all still offered (preserve DiscardAllDraftsButton behavior)', () => {
+    const m = deriveMenu({ ...inputs({ pendingReviewId: 'PR_1' }), prState: 'merged' });
+    expect(ids(m)).toEqual(['discard-all']);
+  });
   it('needs-reconfirm → reconfirm note in the verdict section', () => {
     const m = deriveMenu(inputs({ draftVerdict: 'approve', draftVerdictStatus: 'needs-reconfirm' }));
     expect(ids(m)).toContain('reconfirm-note');
