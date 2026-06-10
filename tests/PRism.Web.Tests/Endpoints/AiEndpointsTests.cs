@@ -6,6 +6,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using PRism.Core.Ai;
 using PRism.Core.PrDetail;
+using PRism.Web.Middleware;
 using PRism.Web.Tests.TestHelpers;
 using Xunit;
 
@@ -52,7 +53,7 @@ public class AiEndpointsTests
         // WithWebHostBuilder returns a vanilla WebApplicationFactory; CreateClient() does not
         // auto-inject the session token the way PRismWebApplicationFactory.ConfigureClient does.
         // Mirror the PRismWebApplicationFactory pattern: read the token and inject it manually.
-        var token = factory.Services.GetRequiredService<PRism.Web.Middleware.SessionTokenProvider>().Current;
+        var token = factory.Services.GetRequiredService<SessionTokenProvider>().Current;
         var client = factory.CreateClient();
         client.DefaultRequestHeaders.Add("X-PRism-Session", token);
         client.DefaultRequestHeaders.Add("Cookie", $"prism-session={token}");
@@ -80,7 +81,7 @@ public class AiEndpointsTests
         }));
         factory.Services.GetRequiredService<AiModeState>().Mode = AiMode.Preview;
         // Same session-token injection as above.
-        var token = factory.Services.GetRequiredService<PRism.Web.Middleware.SessionTokenProvider>().Current;
+        var token = factory.Services.GetRequiredService<SessionTokenProvider>().Current;
         var client = factory.CreateClient();
         client.DefaultRequestHeaders.Add("X-PRism-Session", token);
         client.DefaultRequestHeaders.Add("Cookie", $"prism-session={token}");

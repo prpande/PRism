@@ -22,7 +22,6 @@ internal static class AiEndpoints
                    IAiSeamSelector ai, IActivePrCache activePrCache, CancellationToken ct) =>
             {
                 var prRef = new PrReference(owner, repo, number);
-                // D111 (spec §6): only spend tokens for a PR with an active subscriber.
                 if (!activePrCache.IsSubscribed(prRef))
                     return Results.NoContent();
 
