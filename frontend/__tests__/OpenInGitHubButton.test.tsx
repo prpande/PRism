@@ -21,7 +21,7 @@ describe('OpenInGitHubButton', () => {
     expect(link).toHaveAttribute('href', HREF);
     expect(link).toHaveAttribute('target', '_blank');
     expect(link).toHaveAttribute('rel', 'noreferrer');
-    expect(link).toHaveTextContent('Open in GitHub');
+    expect(link).toHaveAttribute('aria-label', 'Open in GitHub');
   });
 
   it('intercepts the click and calls openExternal on desktop', () => {

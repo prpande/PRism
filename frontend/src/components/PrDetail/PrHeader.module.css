@@ -11,6 +11,13 @@
   gap: var(--s-6);
 }
 
+/* Title/meta column must shrink below its content width so long PR titles
+   truncate or wrap rather than pushing the .prActions block off-screen.
+   .prActions already carries flex:none above. */
+.prHeaderTop > :global(.pr-meta) {
+  min-width: 0;
+}
+
 .prTitle {
   font-size: var(--text-xl);
   font-weight: 600;
@@ -31,31 +38,6 @@
   align-items: center;
   gap: var(--s-3);
   flex: none;
-}
-
-/* Closed-dialog discard surface (spec § 4.9). Mirrors SubmitInProgressBadge's
-   visual treatment: the global `.chip` + `.chip-warning` pill idiom, made
-   clickable (button reset + hover). Inlined here rather than reusing the global
-   classes so the pill stays a CSS-module-scoped element like the rest of
-   PrHeader. Warning color tokens match `.chip-warning` in tokens.css. */
-.pendingReviewPill {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  height: 20px;
-  padding: 0 7px;
-  font-size: var(--text-2xs);
-  font-weight: 500;
-  border-radius: 999px;
-  letter-spacing: 0.01em;
-  background: var(--warning-soft);
-  color: var(--warning-fg);
-  border: none;
-  cursor: pointer;
-}
-
-.pendingReviewPill:hover {
-  filter: brightness(0.96);
 }
 
 /* Merged/closed status label — mirrors the inbox badge colour tokens for
@@ -185,4 +167,13 @@
   display: inline-flex;
   align-items: center;
   gap: 4px;
+}
+
+/* Drop the Open-in-GitHub button at narrow viewports to keep the action row
+   tidy. The .open-in-github-button class is added to the element in Task 7;
+   this selector is harmlessly inert until then. */
+@media (max-width: 720px) {
+  .prActions :global(.open-in-github-button) {
+    display: none;
+  }
 }
