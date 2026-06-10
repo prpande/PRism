@@ -11,9 +11,13 @@ public readonly record struct ActivityBuildResult(
 
 public static class ActivityFeedBuilder
 {
-    public const int MaxActivityItems = 12; // must match frontend MAX_VISIBLE (ActivityRail.tsx) — the VISIBLE cap; slot reservation is baked against this, not MaxRawItems
-    public const int MaxRawItems = 50;       // server ceiling; client filters bots then caps to MaxActivityItems
-    public const int MinEventSlots = 4;      // non-bot event rows reserved inside the visible window
+    // Top-of-feed reservation window. The client renders ALL returned rows in a scrollable
+    // list (no client-side count cap), but the server still orders the first MaxActivityItems
+    // so the bot-filtered top of the feed keeps >=MinEventSlots real event rows rather than
+    // being buried under a burst of notifications. Reservation is baked against this, not MaxRawItems.
+    public const int MaxActivityItems = 12;
+    public const int MaxRawItems = 50;       // server ceiling on rows returned; client renders all of them (bot-filtered), scrollable
+    public const int MinEventSlots = 4;      // non-bot event rows reserved inside the top window
     public const int MaxWatchingRows = 8;
     private const int WindowHours = 24;
 
@@ -73,13 +77,13 @@ public static class ActivityFeedBuilder
         // Two-stage cross-feed merge keyed on (Repo, PrNumber, Verb).
         var merged = MergeFeeds(eventItems, notifItems);
 
-        // Watching is computed BEFORE the visible cap so a repo whose activity sits
-        // above the 12-cap never falsely shows as idle.
+        // Watching is computed from the full merged set (before the MaxRawItems ceiling) so a
+        // repo whose activity sits beyond the returned rows never falsely shows as idle.
         var watching = BuildWatching(merged, watchedRepos, host);
 
         // Sort newest-first, then bake the slot reservation into the server's order so the
-        // client's first-MaxActivityItems slice (after its bot filter) keeps >=MinEventSlots
-        // non-bot event rows. Finally cap to the raw ceiling.
+        // bot-filtered top MaxActivityItems rows keep >=MinEventSlots real event rows (the
+        // client renders all rows in order, scrollable). Finally cap to the raw ceiling.
         // Deterministic tiebreakers (Url ordinal, then Source) keep equal-timestamp rows in a
         // runtime-stable order independent of dictionary/group enumeration, protecting the e2e
         // visual baseline from same-second nondeterminism.
@@ -213,13 +217,13 @@ public static class ActivityFeedBuilder
         static (string, int, ActivityVerb) Key(ActivityItem i) => (i.Repo, i.PrNumber, i.Verb);
     }
 
-    // Bake the visible-window slot reservation into the server's order: the client takes
-    // the first MaxActivityItems (after stripping bots) WITHOUT re-sorting, so the reserve
-    // must land inside that window. Take the top (MaxActivityItems - MinEventSlots) by
-    // timestamp, then promote the most-recent NON-BOT events not yet chosen to fill the
-    // reserved slots up to MaxActivityItems, then append the remainder by timestamp.
-    // Reserve NON-BOT events (Source==ReceivedEvent && !ActorIsBot) because the client
-    // strips bots before slicing; bot events filling the reserve would vanish client-side.
+    // Bake a top-of-feed reservation into the server's order. The client renders every row
+    // in order (scrollable, no re-sort), so the reserve must land inside the first
+    // MaxActivityItems the user sees without scrolling. Take the top (MaxActivityItems -
+    // MinEventSlots) by timestamp, then promote the most-recent NON-BOT events not yet chosen
+    // to fill the reserved slots up to MaxActivityItems, then append the remainder by timestamp.
+    // Reserve NON-BOT events (Source==ReceivedEvent && !ActorIsBot) because the client filters
+    // bots out by default; bot events filling the reserve would vanish from the default view.
     private static List<ActivityItem> ReserveEventSlots(List<ActivityItem> sorted)
     {
         if (sorted.Count <= MaxActivityItems) return sorted;
