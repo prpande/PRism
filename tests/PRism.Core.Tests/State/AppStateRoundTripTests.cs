@@ -108,4 +108,17 @@ public class AppStateRoundTripTests
         Assert.NotNull(roundTripped);
         Assert.Equal(draft, roundTripped);
     }
+
+    [Fact]
+    public void DraftReply_posted_fields_round_trip_and_default_null()
+    {
+        var reply = new DraftReply("r1", "PRRT_1", null, "body", DraftStatus.Draft, false);
+        Assert.Null(reply.PostedCommentId);
+        Assert.Null(reply.PostedBodySnapshot);
+        var stamped = reply with { PostedCommentId = 99L, PostedBodySnapshot = "body" };
+        var json = JsonSerializer.Serialize(stamped, JsonSerializerOptionsFactory.Storage);
+        var back = JsonSerializer.Deserialize<DraftReply>(json, JsonSerializerOptionsFactory.Storage)!;
+        Assert.Equal(99L, back.PostedCommentId);
+        Assert.Equal("body", back.PostedBodySnapshot);
+    }
 }

@@ -7,6 +7,12 @@ interface SpinnerProps {
   label?: string;
   /** Layout hook for the call site (centering, margins). */
   className?: string;
+  /**
+   * Render only the rotating ring (no `role=status` live region, no label) for
+   * callers that already own a status region — nesting two status regions
+   * double-announces. The ring is `aria-hidden`; the caller announces state.
+   */
+  decorative?: boolean;
 }
 
 /**
@@ -18,7 +24,16 @@ interface SpinnerProps {
  * role does not derive an accessible name from content, so assert on the text,
  * not a name-scoped query).
  */
-export function Spinner({ size = 'md', label = 'Loading…', className }: SpinnerProps) {
+export function Spinner({
+  size = 'md',
+  label = 'Loading…',
+  className,
+  decorative = false,
+}: SpinnerProps) {
+  if (decorative) {
+    const ringClass = [styles.ring, styles[size], className].filter(Boolean).join(' ');
+    return <span className={ringClass} aria-hidden="true" />;
+  }
   const rootClass = [styles.root, className].filter(Boolean).join(' ');
   return (
     <span role="status" aria-live="polite" className={rootClass}>

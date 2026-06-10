@@ -1,31 +1,45 @@
+import { render, screen, within } from '@testing-library/react';
 import { describe, it, expect } from 'vitest';
-import { render, screen } from '@testing-library/react';
 import { ExistingCommentWidget } from './ExistingCommentWidget';
 import type { ReviewThreadDto } from '../../../../api/types';
 
-const thread: ReviewThreadDto = {
-  threadId: 'PRRT_1',
-  filePath: 'src/Widget.cs',
-  lineNumber: 42,
-  anchorSha: 'sha',
-  isResolved: false,
-  comments: [
-    {
-      commentId: 'PRC_1',
-      author: 'bob',
-      createdAt: '2026-01-02T00:01:00Z',
-      body: 'nit',
-      editedAt: null,
-      avatarUrl: 'https://avatars.githubusercontent.com/u/2?v=4',
-    },
-  ],
-};
+function thread(over: Partial<ReviewThreadDto> = {}): ReviewThreadDto {
+  return {
+    threadId: 't1',
+    filePath: 'src/Calc.cs',
+    lineNumber: 5,
+    isResolved: false,
+    comments: [
+      {
+        commentId: 'c1',
+        author: 'amelia.cho',
+        avatarUrl: null,
+        body: 'one',
+        createdAt: '2026-05-18T00:00:00Z',
+      },
+      {
+        commentId: 'c2',
+        author: 'prpande',
+        avatarUrl: null,
+        body: 'two',
+        createdAt: '2026-05-18T00:00:00Z',
+      },
+    ],
+    ...over,
+  } as ReviewThreadDto; // cast satisfies the omitted editedAt/anchorSha fields — keep it.
+}
 
 describe('ExistingCommentWidget', () => {
-  it('renders an avatar next to the review-comment author', () => {
-    render(<ExistingCommentWidget threads={[thread]} />);
-    const author = screen.getByText('bob');
-    const meta = author.closest('.comment-meta');
-    expect(meta?.querySelector('[data-testid="avatar"]')).not.toBeNull();
+  it('renders one CommentCard per comment (clear demarcation)', () => {
+    render(<ExistingCommentWidget threads={[thread()]} />);
+    const cards = screen.getAllByTestId('inline-comment-card');
+    expect(cards).toHaveLength(2);
+    expect(within(cards[0]).getByText('amelia.cho')).toBeInTheDocument();
+    expect(within(cards[1]).getByText('prpande')).toBeInTheDocument();
+  });
+
+  it('shows a Resolved tag on resolved threads', () => {
+    render(<ExistingCommentWidget threads={[thread({ isResolved: true })]} />);
+    expect(screen.getByLabelText('Resolved thread')).toBeInTheDocument();
   });
 });

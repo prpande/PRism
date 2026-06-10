@@ -16,7 +16,7 @@ import { isSettingsPath } from './hooks/useEffectiveLocation';
 import { SettingsModalRoutes } from './components/Settings/SettingsModalRoutes';
 import { HelpModalRoutes } from './components/Help/HelpModalRoutes';
 import { FeedbackModalRoutes } from './components/Feedback/FeedbackModalRoutes';
-import { useAuth } from './hooks/useAuth';
+import { AuthProvider, useAuth } from './hooks/useAuth';
 import { EventStreamProvider } from './hooks/useEventSource';
 import { apiClient } from './api/client';
 import { OpenTabsProvider } from './contexts/OpenTabsContext';
@@ -34,6 +34,17 @@ function TabSignals() {
 }
 
 export function App() {
+  // AuthProvider wraps AppShell so App and SetupPage (rendered via the routes
+  // inside AppShell) share ONE auth instance — the routing gate and the token
+  // submit can't drift apart. See hooks/useAuth.tsx for why this matters.
+  return (
+    <AuthProvider>
+      <AppShell />
+    </AuthProvider>
+  );
+}
+
+function AppShell() {
   const { authState, error, refetch } = useAuth();
   const [authInvalidated, setAuthInvalidated] = useState(false);
   const location = useLocation();

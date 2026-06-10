@@ -40,7 +40,7 @@ public sealed partial class GitHubReviewService : IReviewAuth, IPrDiscovery, IPr
         "author{login avatarUrl} createdAt closedAt mergedAt changedFiles " +
         "comments(first:100){pageInfo{hasNextPage endCursor} nodes{databaseId author{login avatarUrl} createdAt body}}" +
         "reviewThreads(first:100){pageInfo{hasNextPage endCursor} nodes{id path line isResolved " +
-        "comments(first:100){nodes{id author{login avatarUrl} createdAt body lastEditedAt}}}}" +
+        "comments(first:100){nodes{id databaseId author{login avatarUrl} createdAt body lastEditedAt}}}}" +
         "timelineItems(first:100,itemTypes:[PULL_REQUEST_COMMIT,HEAD_REF_FORCE_PUSHED_EVENT,PULL_REQUEST_REVIEW]){" +
         "pageInfo{hasNextPage endCursor} nodes{__typename " +
         "... on PullRequestCommit{commit{oid committedDate message additions deletions}} " +
@@ -1086,7 +1086,7 @@ public sealed partial class GitHubReviewService : IReviewAuth, IPrDiscovery, IPr
         return result;
     }
 
-    private static List<ReviewThreadDto> ParseReviewThreads(JsonElement pull)
+    internal static List<ReviewThreadDto> ParseReviewThreads(JsonElement pull)
     {
         var result = new List<ReviewThreadDto>();
         if (!pull.TryGetProperty("reviewThreads", out var rt) ||
@@ -1108,6 +1108,8 @@ public sealed partial class GitHubReviewService : IReviewAuth, IPrDiscovery, IPr
                 foreach (var cn in cnodes.EnumerateArray())
                 {
                     var cid = cn.TryGetProperty("id", out var idEl) ? idEl.GetString() ?? "" : "";
+                    long? cDatabaseId = cn.TryGetProperty("databaseId", out var dbEl) && dbEl.ValueKind == JsonValueKind.Number
+                        ? dbEl.GetInt64() : null;
                     var hasCauthor = cn.TryGetProperty("author", out var ca) && ca.ValueKind == JsonValueKind.Object;
                     var cauthor = hasCauthor
                         ? (ca.TryGetProperty("login", out var cl) ? cl.GetString() ?? "" : "")
@@ -1119,7 +1121,7 @@ public sealed partial class GitHubReviewService : IReviewAuth, IPrDiscovery, IPr
                     DateTimeOffset? edited = null;
                     if (cn.TryGetProperty("lastEditedAt", out var le) && le.ValueKind != JsonValueKind.Null)
                         edited = le.GetDateTimeOffset();
-                    comments.Add(new ReviewCommentDto(cid, cauthor, cts, cbody, edited, cavatar));
+                    comments.Add(new ReviewCommentDto(cid, cauthor, cts, cbody, edited, cavatar, cDatabaseId));
                 }
             }
             // AnchorSha is intentionally empty here. The reviewThreads GraphQL connection

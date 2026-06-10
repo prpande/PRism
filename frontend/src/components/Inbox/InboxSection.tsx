@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { InboxSection as InboxSectionDto, InboxItemEnrichment } from '../../api/types';
-import { groupByRepo, prId } from './groupByRepo';
+// Aliased: the `groupByRepo` prop (#219 toggle) would otherwise shadow this fold helper.
+import { groupByRepo as buildRepoGroups, prId } from './groupByRepo';
 import { InboxRow } from './InboxRow';
 import { InboxCaret } from './InboxCaret';
 import { RepoGroupAccordion } from './RepoGroupAccordion';
@@ -11,10 +12,9 @@ const RECENTLY_CLOSED = 'recently-closed';
 
 const EmptyCopy: Record<string, string> = {
   'review-requested': 'No reviews requested right now.',
-  'awaiting-author': 'Nothing waiting on the author.',
+  'awaiting-author': 'Nothing needs re-review.',
   'authored-by-me': "You haven't opened any PRs.",
   mentioned: "You aren't @-mentioned on any open PRs.",
-  'ci-failing': 'No CI failures on your PRs — nice.',
   'recently-closed': 'No PRs closed recently.',
 };
 
@@ -24,6 +24,10 @@ interface Props {
   showCategoryChip: boolean;
   maxDiff: number;
   defaultOpen?: boolean;
+  forceOpen?: boolean;
+  // #219 when false, render flat InboxRows instead of nested repo accordions.
+  // Defaults true so callers/tests that omit it keep the grouped default.
+  groupByRepo?: boolean;
 }
 
 export function InboxSection({
@@ -32,15 +36,43 @@ export function InboxSection({
   showCategoryChip,
   maxDiff,
   defaultOpen = true,
+  forceOpen,
+  groupByRepo = true,
 }: Props) {
-  const [open, setOpen] = useState(defaultOpen);
+  // A filter-revealed section opens expanded (forceOpen), but a manual collapse
+  // during the session still wins. Once the filter releases the section
+  // (forceOpen → false), the session's manual-toggle memory is dropped so the
+  // section returns to its pre-filter default on the next reveal.
+  const [userToggled, setUserToggled] = useState(false);
+  const [userOpen, setUserOpen] = useState(defaultOpen);
+  // `forceOpen` is a force-OPEN signal only: it never force-collapses. The page
+  // wires it as `filterActive && id !== 'recently-closed'`, a concrete boolean —
+  // so we OR with defaultOpen (not `??`), otherwise an explicit `forceOpen={false}`
+  // would override a `defaultOpen={true}` section and wrongly collapse it.
+  const open = userToggled ? userOpen : forceOpen || defaultOpen;
+  // Flip relative to the CURRENTLY DISPLAYED state, not `userOpen`. On the first
+  // toggle after a forceOpen reveal, `userOpen` still holds `defaultOpen` (e.g.
+  // false) while the section shows expanded — a functional flip of `userOpen`
+  // would leave it open. Inverting `open` makes a manual collapse always win.
+  const onToggle = () => {
+    setUserToggled(true);
+    setUserOpen(!open);
+  };
+  useEffect(() => {
+    if (!forceOpen) setUserToggled(false);
+  }, [forceOpen]);
   const isRecentlyClosed = section.id === RECENTLY_CLOSED;
-  const groups = groupByRepo(section.items);
+  // #219 skip the grouping allocation entirely when the toggle is off — the flat
+  // path renders section.items directly and never reads `groups`.
+  const groups = groupByRepo ? buildRepoGroups(section.items) : [];
   const repoDefaultOpen = !isRecentlyClosed;
+  // group only when the toggle is on AND there's more than one repo to group
+  // (a single repo always flattens — a one-child accordion is pointless).
+  const grouped = groupByRepo && groups.length > 1;
 
   return (
     <section className={styles.section}>
-      <button className={styles.header} onClick={() => setOpen((o) => !o)} aria-expanded={open}>
+      <button className={styles.header} onClick={onToggle} aria-expanded={open}>
         <InboxCaret open={open} />
         <span className={styles.label}>{section.label}</span>
         <span className={styles.count}>{section.items.length}</span>
@@ -49,7 +81,18 @@ export function InboxSection({
         <div className={styles.body}>
           {section.items.length === 0 ? (
             <div className={styles.empty}>{EmptyCopy[section.id] ?? 'Nothing here.'}</div>
-          ) : groups.length <= 1 ? (
+          ) : grouped ? (
+            groups.map((g) => (
+              <RepoGroupAccordion
+                key={g.repo}
+                group={g}
+                enrichments={enrichments}
+                showCategoryChip={showCategoryChip}
+                maxDiff={maxDiff}
+                defaultOpen={repoDefaultOpen}
+              />
+            ))
+          ) : (
             section.items.map((pr) => {
               const id = prId(pr);
               return (
@@ -62,17 +105,6 @@ export function InboxSection({
                 />
               );
             })
-          ) : (
-            groups.map((g) => (
-              <RepoGroupAccordion
-                key={g.repo}
-                group={g}
-                enrichments={enrichments}
-                showCategoryChip={showCategoryChip}
-                maxDiff={maxDiff}
-                defaultOpen={repoDefaultOpen}
-              />
-            ))
           )}
           {/* "Unconditional" per spec = not gated on truncation (the old >=30 hint). The
               length>0 guard is intentional: an empty recently-closed shows EmptyCopy, not a

@@ -442,7 +442,14 @@ export function PrHeader({
               </span>
             )}
             {ciSummary && <span className={`chip chip-ci chip-ci-${ciSummary}`}>{ciSummary}</span>}
-            {mergeability && (
+            {/* "unknown" is GitHub's not-yet-computed / indeterminate sentinel — it
+                carries no actionable meaning, so suppress the chip rather than show a
+                meaningless status (Truthful-by-default). Today this prop only ever holds
+                the uppercase GraphQL value ("UNKNOWN"); the REST poll's lowercase
+                mergeable_state is dropped at the ActivePrUpdated boundary and never
+                reaches the frontend. The lowercased compare is defensive — it also covers
+                the poll's lowercase "unknown" should that value ever be plumbed through. */}
+            {mergeability && mergeability.toLowerCase() !== 'unknown' && (
               <span className={`chip chip-mergeability chip-mergeability-${mergeability}`}>
                 {mergeability}
               </span>

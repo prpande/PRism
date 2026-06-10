@@ -15,7 +15,7 @@ vi.mock('../src/components/PrDetail/Composer/PrRootBodyEditor', () => ({
     lastEditorProps = p;
     // Surface the autosave control synchronously on mount.
     const onAutosaveControl = p.onAutosaveControl as
-      | ((c: { flush: () => Promise<void>; badge: string }) => void)
+      | ((c: { flush: () => Promise<string | null>; badge: string }) => void)
       | undefined;
     onAutosaveControl?.({ flush: editorFlush, badge: 'saved' });
     return (

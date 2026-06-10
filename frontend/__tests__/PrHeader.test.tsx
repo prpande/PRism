@@ -189,16 +189,25 @@ describe('PrHeader', () => {
   it('renders the Ask AI button + clicking it toggles the AskAiDrawer when aiPreview is on', () => {
     preferencesValue.preferences = {
       // aiMode:'preview' opens the gate (useAiGate reads aiMode).
-      ui: { theme: 'system', accent: 'indigo', aiMode: 'preview', density: 'comfortable' },
+      ui: {
+        theme: 'system',
+        accent: 'indigo',
+        aiMode: 'preview',
+        density: 'comfortable',
+        contentScale: 'm',
+      },
       inbox: {
         sections: {
           'review-requested': true,
           'awaiting-author': true,
           'authored-by-me': true,
           mentioned: true,
-          'ci-failing': true,
           'recently-closed': true,
         },
+        defaultSort: 'updated',
+        sectionOrder: 'review-requested,awaiting-author,authored-by-me,mentioned',
+        showActivityRail: false,
+        groupByRepo: true,
       },
       github: {
         host: 'https://github.com',

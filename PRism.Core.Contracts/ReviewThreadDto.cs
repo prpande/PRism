@@ -20,4 +20,5 @@ public sealed record ReviewCommentDto(
     DateTimeOffset CreatedAt,
     string Body,
     DateTimeOffset? EditedAt,
-    string? AvatarUrl = null);
+    string? AvatarUrl = null,
+    long? DatabaseId = null);   // #302 — REST numeric id, used to de-dup optimistic vs refetched comments

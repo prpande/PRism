@@ -53,18 +53,28 @@ vi.mock('../../hooks/useAuth', () => ({
     authState: { hasToken: true, host: 'https://github.com', hostMismatch: null },
     error: null,
     refetch: vi.fn(),
-    connect: vi.fn(),
   }),
+  AuthProvider: ({ children }: { children: React.ReactNode }) => children,
 }));
 
-// Inbox renders with empty-but-ready data.
+// Inbox renders with empty-but-ready data. Hoist to a stable object so the
+// reference matches the real `useInbox` (which holds `data` in `useState`):
+// a per-call factory would hand the authed InboxPage a fresh `sections` array
+// each render, re-firing FilterBar's onState effect → setState → re-render → loop.
+const inboxSnapshot = vi.hoisted(() => ({
+  data: {
+    sections: [] as never[],
+    enrichments: {},
+    lastRefreshedAt: '',
+    tokenScopeFooterEnabled: false,
+    ciProbeComplete: true,
+  },
+  isLoading: false,
+  error: null,
+  reload: vi.fn(),
+}));
 vi.mock('../../hooks/useInbox', () => ({
-  useInbox: () => ({
-    data: { sections: [], enrichments: {}, lastRefreshedAt: '', tokenScopeFooterEnabled: false },
-    isLoading: false,
-    error: null,
-    reload: vi.fn(),
-  }),
+  useInbox: () => inboxSnapshot,
 }));
 vi.mock('../../hooks/useInboxUpdates', () => ({
   useInboxUpdates: () => ({ hasUpdate: false, summary: '', dismiss: vi.fn() }),

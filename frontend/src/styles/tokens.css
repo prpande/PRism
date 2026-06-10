@@ -354,7 +354,21 @@ a:hover { text-decoration: underline; }
    instead of scrolling within the block. (Note: this addresses text/code
    overflow; intrinsically-wide GFM content like tables or images can still
    overflow and would need their own `overflow-x` wrapper.) */
-.markdown-body { overflow-wrap: anywhere; }
+/* #135 — content font-size scaling. A single multiplier var, selected by the
+   data-content-scale attribute on <html> (set by applyContentScaleToDocument).
+   No attribute / "m" → 1 → no-op (existing baselines unchanged). Consumed only by
+   the content hooks below + the enumerated module-CSS classes; chrome uses the bare
+   --text-* tokens and stays fixed. */
+:root { --content-scale: 1; }
+[data-content-scale='xs'] { --content-scale: 0.8; }
+[data-content-scale='s'] { --content-scale: 0.9; }
+[data-content-scale='l'] { --content-scale: 1.2; }
+[data-content-scale='xl'] { --content-scale: 1.4; }
+
+.markdown-body {
+  overflow-wrap: anywhere;
+  font-size: calc(1em * var(--content-scale));
+}
 .markdown-body pre {
   max-width: 100%;
   white-space: pre-wrap;
@@ -922,6 +936,43 @@ a:hover { text-decoration: underline; }
    etc.) composes `composer-save btn btn-primary btn-sm`, and the .btn / .btn-primary /
    .btn-sm globals supply the full visual treatment. An empty `.composer-save` stub
    would be a speculative future-anchor with no current consumer. */
+/* #302 — post-now button (secondary style so it visually reads as less-committed than
+   composer-save / "Add to review" which is the primary action on an open PR). */
+.composer-post-now {
+  height: 26px;
+  padding: 0 10px;
+  font-size: var(--text-xs);
+  border-radius: var(--radius-2);
+  border: 1px solid var(--border-2);
+  background: var(--surface-1);
+  color: var(--text-1);
+  cursor: pointer;
+  white-space: nowrap;
+  user-select: none;
+  transition: background var(--t-fast) var(--ease-out),
+              border-color var(--t-fast) var(--ease-out);
+}
+.composer-post-now:hover:not(:disabled) {
+  background: var(--surface-3);
+  border-color: var(--border-strong);
+}
+.composer-post-now:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+/* Small muted sub-label shown when the PR is merged (post-now only mode). */
+.composer-merged-note {
+  font-size: var(--text-xs);
+  color: var(--text-2);
+}
+/* Inline error banner shown below the action row after a failed post. */
+.composer-error {
+  padding: var(--s-1) var(--s-2);
+  border-radius: var(--radius-1);
+  background: var(--danger-soft);
+  color: var(--danger-fg);
+  font-size: var(--text-xs);
+}
 .composer-closed-banner {
   font-size: var(--text-sm);
   padding: var(--s-2) var(--s-3);
@@ -939,6 +990,45 @@ a:hover { text-decoration: underline; }
   gap: var(--s-2);
 }
 
+/* #287 — composer-frame: the expanded inline/reply composer reads as ONE
+   bordered control. ADDITIVE — the bare `.composer-textarea`/`.composer-badge`/
+   `.composer-preview-toggle` globals are unchanged (PrRootBodyEditor +
+   SubmitDialog consume them frameless). */
+.composer-frame {
+  background: var(--surface-1);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-3);
+  box-shadow: var(--shadow-1);
+  overflow: hidden;
+}
+/* The frame is the SOLE focus indicator: kill the inner textarea's border AND
+   its :focus-visible ring so focus doesn't paint two rings. */
+.composer-frame .composer-textarea {
+  border: none;
+  border-radius: 0;
+  background: transparent;
+}
+.composer-frame .composer-textarea:focus-visible {
+  outline: none;
+}
+.composer-frame:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-ring);
+}
+/* Action bar = a footer strip, not a loose row. */
+.composer-frame .composer-actions {
+  padding: var(--s-2) var(--s-3);
+  border-top: 1px solid var(--border-1);
+  background: var(--surface-2);
+}
+
+/* #302 Task 11b — optimistic just-posted comment placeholder. Dimmed to read
+   as "posting…": the real comment replaces it once the refetch lands (de-dup
+   by databaseId). Applied to CommentCard via its `className` prop. */
+.comment-card--posting {
+  opacity: 0.6;
+}
+
 /* Diff-line tints (spec §4.4, D34). Lifted from the per-row literal class
    strings DiffPane emits — `.diff-line diff-line--insert` / `--delete` /
    `--hunk-header`. `--context` lines stay transparent (no rule needed —
@@ -947,7 +1037,12 @@ a:hover { text-decoration: underline; }
    (`.diff-line.diff-add` / `.diff-line.diff-rem` equivalents). */
 .diff-line {
   font-family: var(--font-mono);
-  font-size: var(--text-sm);
+  /* #135: the diff <tr> is the EFFECTIVE font-size hook for diff code + gutter
+     line numbers — each <td> inherits from this nearer ancestor, so a font-size on
+     `.diffTable` alone is shadowed here. Scale on the row so code + line numbers
+     scale together. The `--hunk-header` row below re-pins var(--text-xs) (unscaled),
+     so the `@@ … @@` markers stay fixed. */
+  font-size: calc(var(--text-sm) * var(--content-scale));
 }
 .diff-line--insert {
   background: var(--diff-add-bg);
@@ -959,6 +1054,17 @@ a:hover { text-decoration: underline; }
   background: var(--surface-2);
   color: var(--accent);
   font-size: var(--text-xs);
+}
+/* #287 — anchored (commented) line. Unified: row wash + accent inset edge.
+   Split: the new-side content cell only (a row shadow would land on the wrong
+   column / wash the empty half-cell). Threads are always new-side. */
+.diff-line--commented {
+  background: color-mix(in oklch, var(--accent-soft) 70%, var(--surface-1));
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+.diff-content[data-commented='true'] {
+  background: color-mix(in oklch, var(--accent-soft) 70%, var(--surface-1));
+  box-shadow: inset 2px 0 0 var(--accent);
 }
 /* Syntax highlighting — global classes so the dual-theme selector below
    matches the literal rendered class (CSS-module hashing would not). */

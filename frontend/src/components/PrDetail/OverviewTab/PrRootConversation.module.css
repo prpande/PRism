@@ -76,89 +76,6 @@
   box-shadow: 0 0 0 3px var(--surface-1);
 }
 
-/*
- * Standalone comment card. Same surface as its host section (--surface-1), lifted
- * by border + shadow — NOT a recessed well (the Overview page is already
- * --surface-0, the darkest surface, so there is nothing to recess into). This
- * inverts the old sunken read where the body was --surface-2 (darker than host).
- * In dark mode --shadow-2 (alpha 0.40) carries the lift; in light the border +
- * band do more of the work.
- */
-.card {
-  min-width: 0;
-  background: var(--surface-1);
-  border: 1px solid var(--border-1);
-  border-radius: var(--radius-3);
-  box-shadow: var(--shadow-2);
-  overflow: hidden;
-}
-
-/*
- * Header band: binds author/time into the card. `align-items: center` (NOT
- * baseline): .author is a scroll container (overflow:hidden for the ellipsis),
- * which synthesizes its baseline from the margin box and would misalign .time
- * under baseline alignment. In dark mode the fill delta vs the card is tiny
- * (~0.025 L) so the border-bottom is the real separator there; the fill carries
- * it in light.
- */
-.band {
-  display: flex;
-  align-items: center;
-  gap: var(--s-2);
-  font-size: var(--text-xs);
-  background: var(--surface-2);
-  border-bottom: 1px solid var(--border-1);
-  padding: var(--s-2) var(--s-4);
-}
-
-.author {
-  font-weight: 600;
-  color: var(--text-1);
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.time {
-  color: var(--text-3);
-  flex: none;
-  white-space: nowrap;
-}
-
-.body {
-  min-width: 0;
-  padding: var(--s-3) var(--s-4);
-  font-size: var(--text-sm);
-  color: var(--text-1);
-  line-height: 1.55;
-}
-
-/* `white-space: pre-wrap` is carried verbatim from the prior implementation —
-   it preserves intentional hard line breaks in comment prose. Kept unchanged to
-   avoid altering how existing comments render in this visual restyle. */
-.body p {
-  margin: 0 0 var(--s-2);
-  text-wrap: pretty;
-  white-space: pre-wrap;
-}
-
-.body p:last-child {
-  margin: 0;
-}
-
-.body code {
-  font-family: var(--font-mono);
-  font-size: 12px;
-  padding: 1px 5px;
-  background: var(--surface-3);
-  border-radius: 3px;
-  color: var(--text-1);
-  /* don't inherit the prose `pre-wrap` — inline code wraps normally and does
-     not preserve runs of whitespace (the `.body p` pre-wrap is for prose only). */
-  white-space: normal;
-}
-
 .prRootConversationActions {
   margin-top: var(--s-3);
   padding-top: var(--s-3);
@@ -172,27 +89,6 @@
   display: flex;
   align-items: center;
   gap: var(--s-2);
-}
-
-.prRootReplyButton {
-  display: inline-flex;
-  align-items: center;
-  text-align: left;
-  font-size: var(--text-sm);
-  color: var(--text-3);
-  background: var(--surface-2);
-  border: 1px solid var(--border-1);
-  border-radius: var(--radius-2);
-  padding: 8px 12px;
-  cursor: text;
-  transition:
-    border-color var(--t-fast),
-    color var(--t-fast);
-}
-
-.prRootReplyButton:hover {
-  border-color: var(--border-strong);
-  color: var(--text-2);
 }
 
 .prRootConversationFooter {

@@ -123,11 +123,18 @@ const components: Components = {
 export interface MarkdownRendererProps {
   source: string;
   className?: string;
+  // Forwarded onto the rendered `.markdown-body` element. #135: lets callers tag the
+  // element that actually carries the (scaled) font-size for e2e measurement, instead
+  // of wrapping in an extra div whose inherited size wouldn't reflect the scale.
+  dataTestId?: string;
 }
 
-export function MarkdownRenderer({ source, className }: MarkdownRendererProps) {
+export function MarkdownRenderer({ source, className, dataTestId }: MarkdownRendererProps) {
   return (
-    <div className={className ? `markdown-body ${className}` : 'markdown-body'}>
+    <div
+      className={className ? `markdown-body ${className}` : 'markdown-body'}
+      data-testid={dataTestId}
+    >
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         urlTransform={urlTransform}

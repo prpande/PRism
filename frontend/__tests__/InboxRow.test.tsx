@@ -113,9 +113,9 @@ describe('InboxRow', () => {
     expect(screen.getByRole('button')).toHaveAttribute('data-unread', 'false');
   });
 
-  it('shows CI failing dot when ci is failing', () => {
-    renderRow({ ...basePr, ci: 'failing', lastViewedHeadSha: 'old-sha' });
-    expect(screen.getByTitle('CI failing')).toBeInTheDocument();
+  it('renders the CI failing glyph when ci is failing', () => {
+    const { container } = renderRow({ ...basePr, ci: 'failing', lastViewedHeadSha: 'old-sha' });
+    expect(container.querySelector('[data-ci="failing"]')).not.toBeNull();
   });
 
   it('does not render category chip when showCategoryChip is false', () => {
@@ -150,14 +150,22 @@ describe('InboxRow', () => {
     expect(screen.getByText(/just now/i)).toBeInTheDocument();
   });
 
-  it('shows a Merged badge for a merged row', () => {
-    renderRow({ ...basePr, mergedAt: new Date().toISOString() });
-    expect(screen.getByText('Merged')).toBeInTheDocument();
+  it('shows merged state via the leading icon + aria (no text badge)', () => {
+    const { container } = renderRow({ ...basePr, mergedAt: new Date().toISOString() });
+    expect(container.querySelector('[data-pr-state="merged"]')).not.toBeNull();
+    expect(screen.queryByText('Merged')).toBeNull();
+    expect(screen.getByRole('button').getAttribute('aria-label')).toContain('· merged');
   });
 
-  it('shows a Closed badge for a closed-unmerged row', () => {
-    renderRow({ ...basePr, mergedAt: null, closedAt: new Date().toISOString() });
-    expect(screen.getByText('Closed')).toBeInTheDocument();
+  it('shows closed state via the leading icon + aria (no text badge)', () => {
+    const { container } = renderRow({
+      ...basePr,
+      mergedAt: null,
+      closedAt: new Date().toISOString(),
+    });
+    expect(container.querySelector('[data-pr-state="closed"]')).not.toBeNull();
+    expect(screen.queryByText('Closed')).toBeNull();
+    expect(screen.getByRole('button').getAttribute('aria-label')).toContain('· closed');
   });
 
   it('does not show the New chip on a done row even when lastViewedHeadSha is null', () => {
@@ -167,8 +175,12 @@ describe('InboxRow', () => {
     expect(screen.getByRole('button')).toHaveAttribute('data-unread', 'false');
   });
 
-  it('does not show the CI-failing dot on a done row', () => {
-    renderRow({ ...basePr, ci: 'failing', mergedAt: new Date().toISOString() });
-    expect(screen.queryByTitle('CI failing')).not.toBeInTheDocument();
+  it('renders no CI glyph on a done row', () => {
+    const { container } = renderRow({
+      ...basePr,
+      ci: 'failing',
+      mergedAt: new Date().toISOString(),
+    });
+    expect(container.querySelector('[data-ci]')).toBeNull();
   });
 });

@@ -32,16 +32,20 @@ import {
 // cache miss; the next GET /api/pr/{ref} re-fetches the detail with the done
 // state + the (now non-null) mergedAt / closedAt the fake derives from it.
 //
-// MUTATION-SUPPRESSION MECHANISM (verified against the components, NOT assumed):
+// MUTATION-SUPPRESSION MECHANISM (updated for #302 post-now):
 // the diff-line "Add comment" affordance and the Overview "Reply" button are
 // NOT hidden on a done PR — they are gated on the cross-tab-presence readOnly
-// flag, which is false here. The done-PR guarantee is instead that PERSISTENCE
-// is hard-blocked (useComposerAutoSave early-returns when prState !== 'open')
-// and every composer renders a "PR <closed|merged> — text not saved" banner
-// with its Save / Post action disabled (spec § 5 line 142). So the audit asserts
-// the composer opens in NON-MUTATING mode (banner present + Save disabled),
-// which is the real GitHub-mutating-surface suppression — rather than asserting
-// the affordance is absent (it isn't).
+// flag, which is false here. Before #302, the done-PR guarantee was that
+// PERSISTENCE was hard-blocked (useComposerAutoSave early-returned when
+// prState !== 'open') and every inline/reply composer rendered a "text not saved"
+// banner. #302 intentionally removed that guard: drafts now stage on done PRs
+// so the post-now "Comment" button has a draft id to ship, and GitHub permits
+// comments on merged PRs. The mutation-suppression guarantee is now:
+//   - The REVIEW SUBMIT pipeline remains hard-blocked (Submit Review disabled).
+//   - Single-comment post-now IS allowed (GitHub permits it; spec § 5.1 updated).
+//   - The "text not saved" banner is gone; InlineCommentComposer and
+//     ReplyComposer instead show "comments post immediately".
+// This spec's inline-composer block is updated to reflect the new contract.
 
 const NEW_HEAD = 'a'.repeat(40);
 // src/Calc.cs with line 3 (the Add method) preserved so a line-3 draft stays
@@ -118,15 +122,25 @@ for (const { state, label } of [
       page.getByText(/public static int Add\(int a, int b\) => a \+ b;/).first(),
     ).toBeVisible();
 
-    // Inline-draft composer is NON-MUTATING: clicking the diff-line affordance
-    // opens a composer that shows the "PR <closed|merged> — text not saved"
-    // banner, and TYPING into it persists nothing — useComposerAutoSave
-    // early-returns when prState !== 'open', so no draft PUT reaches the
-    // backend (and thus no review can be attached to GitHub). We assert the
-    // banner AND that a draft-PUT never fires for ~750ms after typing (3×
-    // the 250ms autosave debounce), which is the load-bearing suppression
-    // signal — the Save button itself is gated on cross-tab readOnly (false
-    // here), not on prState, so its disabled state is not the guarantee.
+    // Inline-draft composer on a done PR (#302-updated contract):
+    //
+    // Before #302, useComposerAutoSave early-returned when prState !== 'open',
+    // so no draft PUT would fire and the composer showed a "text not saved"
+    // banner. #302 intentionally relaxed that guard so that:
+    //   (a) drafts DO stage on merged/closed PRs (enabling post-now), and
+    //   (b) the "text not saved" banner is gone — replaced by a
+    //       "comments post immediately" note (InlineCommentComposer line ~364).
+    //
+    // The GitHub-mutation suppression guarantee is NOW enforced differently:
+    //   - The REVIEW SUBMIT pipeline is still hard-blocked (Submit Review button
+    //     disabled above), so no multi-comment review can be attached to GitHub.
+    //   - Single-comment post-now IS allowed on done PRs (GitHub permits it).
+    //
+    // What this block now asserts:
+    //   (a) the old "text not saved" banner is GONE,
+    //   (b) the "comments post immediately" note is VISIBLE,
+    //   (c) a draft PUT DOES fire after typing (the new expected behavior —
+    //       drafts stage so the post-now path has an id to ship).
     await page.getByRole('treeitem', { name: /Calc\.cs/i }).click();
     await page
       .getByRole('button', { name: /add comment on line 3/i })
@@ -134,7 +148,10 @@ for (const { state, label } of [
       .click();
     const inlineComposer = page.getByTestId('inline-comment-composer');
     await expect(inlineComposer).toBeVisible({ timeout: 10_000 });
-    await expect(inlineComposer.getByText(/text not saved/i)).toBeVisible();
+    // OLD banner is gone (#302).
+    await expect(inlineComposer.getByText(/text not saved/i)).toHaveCount(0);
+    // New note is present (#302: closedBanner path in InlineCommentComposer).
+    await expect(inlineComposer.getByText(/comments post immediately/i)).toBeVisible();
 
     let draftPutFired = false;
     const onDraftPut = (req: import('@playwright/test').Request) => {
@@ -144,35 +161,39 @@ for (const { state, label } of [
     };
     page.on('request', onDraftPut);
     await inlineComposer.getByRole('textbox', { name: /comment body/i }).fill('attempt to mutate');
-    // Give the autosave debounce (250ms) a generous window to fire; a real
-    // (open-PR) composer would have PUT a draft within it. On a done PR it
-    // must stay silent.
+    // Give the autosave debounce (250ms) a generous window to fire; after
+    // #302 the draft DOES stage (prState guard removed from useComposerAutoSave).
     await page.waitForTimeout(1_500);
-    expect(draftPutFired).toBe(false);
+    // #302: drafts now stage on done PRs so the post-now path has a draft id.
+    expect(draftPutFired).toBe(true);
     page.off('request', onDraftPut);
 
-    // PR-root reply composer is NON-MUTATING the same way: opening it via the
-    // Overview "Reply" button surfaces the "text not saved" banner. Persistence
-    // is hard-blocked identically (PrRootBodyEditor renders the banner;
-    // useComposerAutoSave no-ops on a done PR).
+    // PR-root reply composer on a done PR: opening it via the Overview "Reply"
+    // button shows the composer. PrRootReplyComposer does not render a
+    // closed-state banner (no "text not saved", no "comments post immediately"
+    // note — the root reply path is not yet hooked into post-now per #302 scope).
+    // The still-valid invariant: the Post button is disabled when the body is
+    // empty (postDisabled = bodyEmpty || belowCreateThreshold) — this holds
+    // regardless of prState.
     await page.goto('/pr/acme/api/123');
-    await page.getByRole('button', { name: /^reply$/i }).click();
+    await page.getByRole('button', { name: /^reply to the PR conversation$/i }).click();
     const rootComposer = page.getByRole('form', { name: /reply to this pr/i });
     await expect(rootComposer).toBeVisible({ timeout: 10_000 });
-    await expect(rootComposer.getByText(/text not saved/i)).toBeVisible();
-    // The Post button is disabled (empty body + below the create threshold on a
-    // done PR — there is no persisted draft to post).
+    // The Post button is disabled (empty body — no persisted draft to post).
     await expect(rootComposer.getByRole('button', { name: /^post$/i })).toBeDisabled();
 
     // ---------------------------------------------------------------------
-    // (iii) Read-only Drafts tab (Task 14): the seeded draft body is visible
+    // (iii) Read-only Drafts tab (Task 14): the draft body is visible
     //       (selectable / copy-able) but there are NO Edit / NO Delete buttons.
+    // NOTE: after #302 the mutation block above DOES fire a draft PUT, so the
+    // draft on line 3 now contains "attempt to mutate" (the update replaced the
+    // seeded "draft on a done pr"). We assert the most-recently-persisted body.
     // ---------------------------------------------------------------------
     await page.goto('/pr/acme/api/123/drafts');
     const draftsTab = page.getByTestId('drafts-tab-root');
     await expect(draftsTab).toBeVisible({ timeout: 10_000 });
-    // Body text renders read-only.
-    await expect(draftsTab.getByText('draft on a done pr')).toBeVisible();
+    // Body text renders read-only (updated by the autosave in section ii above).
+    await expect(draftsTab.getByText('attempt to mutate')).toBeVisible();
     // No per-draft action buttons (DraftListItem gates Edit/Delete on !readOnly).
     await expect(draftsTab.getByRole('button', { name: /^edit$/i })).toHaveCount(0);
     await expect(draftsTab.getByRole('button', { name: /^delete$/i })).toHaveCount(0);

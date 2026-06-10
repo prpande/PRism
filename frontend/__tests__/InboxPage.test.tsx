@@ -1,4 +1,4 @@
-import { render, screen, within } from '@testing-library/react';
+import { render, screen, within, fireEvent } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { InboxResponse, AiCapabilities, PreferencesResponse } from '../src/api/types';
@@ -28,15 +28,37 @@ import { useCapabilities } from '../src/hooks/useCapabilities';
 import { usePreferences } from '../src/hooks/usePreferences';
 import { useAiGate } from '../src/hooks/useAiGate';
 
+// The global setup mock returns matches:false. The rail now also requires a
+// >=1180px viewport, so rail-visible tests must opt into a wide viewport.
+const realMatchMedia = window.matchMedia;
+function mockViewportWide(wide: boolean) {
+  window.matchMedia = ((q: string) => ({
+    matches: wide,
+    media: q,
+    onchange: null,
+    addEventListener() {},
+    removeEventListener() {},
+    addListener() {},
+    removeListener() {},
+    dispatchEvent: () => false,
+  })) as unknown as typeof window.matchMedia;
+}
+beforeEach(() => {
+  window.matchMedia = realMatchMedia; // reset to the setup default (matches:false) per test
+});
+
 function setHooks(
   opts: {
     data?: InboxResponse | null;
     isLoading?: boolean;
     error?: unknown;
     hasUpdate?: boolean;
-    // aiPreview now controls the inboxRanking gate (ActivityRail visibility)
     aiPreview?: boolean;
     inboxEnrichment?: boolean;
+    // #283 the ActivityRail is gated on preferences.inbox.showActivityRail (default false),
+    // decoupled from the AI-preview toggle.
+    showActivityRail?: boolean;
+    sectionOrder?: string;
   } = {},
 ) {
   vi.mocked(useInbox).mockReturnValue({
@@ -78,9 +100,12 @@ function setHooks(
           'awaiting-author': true,
           'authored-by-me': true,
           mentioned: true,
-          'ci-failing': true,
           'recently-closed': true,
         },
+        sectionOrder:
+          opts.sectionOrder ?? 'review-requested,awaiting-author,authored-by-me,mentioned',
+        // #283 the rail reads this dedicated flag, not the AI gate.
+        showActivityRail: opts.showActivityRail ?? false,
       },
       github: {
         host: 'https://github.com',
@@ -92,12 +117,10 @@ function setHooks(
     refetch: vi.fn().mockResolvedValue(undefined),
     set: vi.fn().mockResolvedValue(undefined),
   });
-  // Wire useAiGate: inboxEnrichment → showCategoryChip, inboxRanking → showActivityRail.
-  // aiPreview maps to inboxRanking because showActivityRail was previously gated on
-  // preferences.ui.aiPreview (see migration note in InboxPage.tsx).
+  // #283 useAiGate only gates the category chip now (inboxEnrichment). The ActivityRail
+  // is gated on preferences.inbox.showActivityRail above, not via useAiGate.
   vi.mocked(useAiGate).mockImplementation((key) => {
     if (key === 'inboxEnrichment') return opts.inboxEnrichment ?? false;
-    if (key === 'inboxRanking') return opts.aiPreview ?? false;
     return false;
   });
 }
@@ -132,6 +155,7 @@ const sampleData: InboxResponse = {
   enrichments: {},
   lastRefreshedAt: new Date().toISOString(),
   tokenScopeFooterEnabled: true,
+  ciProbeComplete: true,
 };
 
 const emptyData: InboxResponse = {
@@ -161,6 +185,23 @@ describe('InboxPage', () => {
     expect(within(skeleton).getByText(/loading inbox/i)).toBeInTheDocument();
     // The per-surface loading bar shows alongside the skeleton.
     expect(screen.getByTestId('inbox-loading-bar')).toHaveAttribute('data-active', 'true');
+  });
+
+  it('cold-load skeleton hides its rail column below the 1180px breakpoint', () => {
+    // #300 the skeleton's rail column is gated on the SAME showRail as the live rail,
+    // so a narrow viewport drops it even with the toggle on.
+    mockViewportWide(false);
+    setHooks({ data: null, isLoading: true, showActivityRail: true });
+    renderPage();
+    expect(screen.getByTestId('inbox-skeleton')).toBeInTheDocument();
+    expect(screen.queryByTestId('inbox-skeleton-rail')).not.toBeInTheDocument();
+  });
+
+  it('cold-load skeleton shows its rail column when wide and the toggle is on', () => {
+    mockViewportWide(true);
+    setHooks({ data: null, isLoading: true, showActivityRail: true });
+    renderPage();
+    expect(screen.getByTestId('inbox-skeleton-rail')).toBeInTheDocument();
   });
 
   it('shows error state with retry button when initial fetch fails', () => {
@@ -200,14 +241,25 @@ describe('InboxPage', () => {
     expect(screen.getByRole('button', { name: /reload/i })).toBeInTheDocument();
   });
 
-  it('renders ActivityRail when aiPreview is on', () => {
-    setHooks({ data: sampleData, aiPreview: true });
+  it('renders ActivityRail when inbox.showActivityRail is on', () => {
+    // #283 decoupled from AI: even with aiPreview off, the rail shows when its flag is on.
+    mockViewportWide(true); // #300 rail also needs a wide viewport
+    setHooks({ data: sampleData, aiPreview: false, showActivityRail: true });
     renderPage();
     expect(screen.getByRole('complementary', { name: /activity/i })).toBeInTheDocument();
   });
 
-  it('hides ActivityRail when aiPreview is off', () => {
-    setHooks({ data: sampleData, aiPreview: false });
+  it('hides ActivityRail below the 1180px breakpoint even when the toggle is on', () => {
+    // #300 two-layout gate: rail visible iff toggle ON *and* viewport wide enough.
+    mockViewportWide(false);
+    setHooks({ data: sampleData, aiPreview: false, showActivityRail: true });
+    renderPage();
+    expect(screen.queryByRole('complementary', { name: /activity/i })).not.toBeInTheDocument();
+  });
+
+  it('hides ActivityRail when inbox.showActivityRail is off even with aiPreview on', () => {
+    // #283 decoupled from AI: AI on must NOT surface the fabricated rail.
+    setHooks({ data: sampleData, aiPreview: true, showActivityRail: false });
     renderPage();
     expect(screen.queryByRole('complementary', { name: /activity/i })).not.toBeInTheDocument();
   });
@@ -223,6 +275,59 @@ describe('InboxPage', () => {
     renderPage();
     expect(screen.queryByText(/some prs may be hidden/i)).not.toBeInTheDocument();
   });
+
+  it('filtering to nothing shows the no-match zero-state, not EmptyAllSections', async () => {
+    // sampleData has one PR with ci: 'none'. Filtering on CI failing matches
+    // nothing, so the distinct zero-match state shows — NOT EmptyAllSections
+    // (which is reserved for a genuinely empty inbox, gated on !filterActive).
+    setHooks({ data: sampleData });
+    renderPage();
+    await screen.findByTestId('inbox-page');
+    fireEvent.click(screen.getByRole('button', { name: /CI/ }));
+    fireEvent.click(await screen.findByRole('checkbox', { name: 'failing' }));
+    expect(screen.getByText(/No PRs match your filters/)).toBeInTheDocument();
+    expect(screen.queryByText(/Nothing in your inbox/)).toBeNull();
+  });
+
+  it('renders sections in the saved order with recently-closed pinned last', () => {
+    setHooks({
+      data: {
+        sections: [
+          { id: 'review-requested', label: 'Review requested', items: [] },
+          { id: 'authored-by-me', label: 'Authored by me', items: [] },
+          { id: 'mentioned', label: 'Mentioned', items: [] },
+          { id: 'recently-closed', label: 'Recently closed', items: [] },
+        ],
+        enrichments: {},
+        lastRefreshedAt: '',
+        tokenScopeFooterEnabled: false,
+        ciProbeComplete: true,
+      },
+      // awaiting-author is in the saved order but absent from `sections` — exercises
+      // orderInboxSections' "saved id matching no live section is harmlessly ignored".
+      sectionOrder: 'mentioned,authored-by-me,review-requested,awaiting-author',
+    });
+    render(
+      <MemoryRouter>
+        <OpenTabsProvider>
+          <InboxPage />
+        </OpenTabsProvider>
+      </MemoryRouter>,
+    );
+    // InboxSection renders a <button> header whose textContent is: caret + label + count.
+    // Filter to buttons that contain any of the four section label substrings.
+    const order = screen
+      .getAllByRole('button')
+      .map((b) => b.textContent ?? '')
+      .filter((t) => /Review requested|Authored by me|Mentioned|Recently closed/.test(t));
+    // Exactly the 4 live sections render; pin the count so "recently-closed last" is
+    // an explicit guarantee, not an artifact of the filter happening to match 4.
+    expect(order).toHaveLength(4);
+    expect(order[0]).toMatch(/Mentioned/);
+    expect(order[1]).toMatch(/Authored by me/);
+    expect(order[2]).toMatch(/Review requested/);
+    expect(order.at(-1)).toMatch(/Recently closed/);
+  });
 });
 
 describe('InboxPage — useAiGate migrations', () => {
@@ -235,6 +340,7 @@ describe('InboxPage — useAiGate migrations', () => {
         enrichments: {},
         lastRefreshedAt: '2026-01-01T00:00:00Z',
         tokenScopeFooterEnabled: false,
+        ciProbeComplete: true,
       } as InboxResponse,
       isLoading: false,
       error: null,
@@ -254,15 +360,24 @@ describe('InboxPage — useAiGate migrations', () => {
     });
     vi.mocked(usePreferences).mockReturnValue({
       preferences: {
-        ui: { theme: 'system', accent: 'indigo', aiMode: 'off' },
+        ui: {
+          theme: 'system',
+          accent: 'indigo',
+          aiMode: 'off',
+          density: 'comfortable',
+          contentScale: 'm',
+        },
         inbox: {
           sections: {
             'review-requested': true,
             'awaiting-author': true,
             'authored-by-me': true,
             mentioned: true,
-            'ci-failing': true,
+            'recently-closed': true,
           },
+          defaultSort: 'updated',
+          sectionOrder: 'review-requested,awaiting-author,authored-by-me,mentioned',
+          showActivityRail: false,
         },
         github: {
           host: 'https://github.com',
@@ -276,7 +391,43 @@ describe('InboxPage — useAiGate migrations', () => {
     });
   });
 
-  it('calls useAiGate("inboxEnrichment") and useAiGate("inboxRanking")', () => {
+  // #283: re-point usePreferences with a chosen showActivityRail; AI preview stays whatever
+  // the beforeEach set (off) to prove the rail does not ride the AI gate.
+  function setShowActivityRail(showActivityRail: boolean) {
+    vi.mocked(usePreferences).mockReturnValue({
+      preferences: {
+        ui: {
+          theme: 'system',
+          accent: 'indigo',
+          aiMode: 'off',
+          density: 'comfortable',
+          contentScale: 'm',
+        },
+        inbox: {
+          sections: {
+            'review-requested': true,
+            'awaiting-author': true,
+            'authored-by-me': true,
+            mentioned: true,
+            'recently-closed': true,
+          },
+          defaultSort: 'updated',
+          sectionOrder: 'review-requested,awaiting-author,authored-by-me,mentioned',
+          showActivityRail,
+        },
+        github: {
+          host: 'https://github.com',
+          configPath: '/fake/config.json',
+          logsPath: '/fake/logs',
+        },
+      } as PreferencesResponse,
+      error: null,
+      refetch: vi.fn().mockResolvedValue(undefined),
+      set: vi.fn().mockResolvedValue(undefined),
+    });
+  }
+
+  it('uses useAiGate for the category chip but NOT for the activity rail (#283 decouple)', () => {
     vi.mocked(useAiGate).mockReturnValue(false);
     render(
       <MemoryRouter initialEntries={['/']}>
@@ -287,11 +438,12 @@ describe('InboxPage — useAiGate migrations', () => {
     );
     const calls = vi.mocked(useAiGate).mock.calls.map((c) => c[0]);
     expect(calls).toContain('inboxEnrichment');
-    expect(calls).toContain('inboxRanking');
+    expect(calls).not.toContain('inboxRanking'); // rail no longer rides the AI gate
   });
 
-  it('hides the activity rail when inboxRanking gate is off', () => {
-    vi.mocked(useAiGate).mockImplementation((key) => key === 'inboxEnrichment');
+  it('hides the activity rail when inbox.showActivityRail is false', () => {
+    vi.mocked(useAiGate).mockReturnValue(false);
+    setShowActivityRail(false);
     const { container } = render(
       <MemoryRouter initialEntries={['/']}>
         <OpenTabsProvider>
@@ -302,8 +454,10 @@ describe('InboxPage — useAiGate migrations', () => {
     expect(container.querySelector('[data-testid="activity-rail"]')).toBeNull();
   });
 
-  it('shows the activity rail when inboxRanking gate is on', () => {
-    vi.mocked(useAiGate).mockImplementation((key) => key === 'inboxRanking');
+  it('shows the activity rail when inbox.showActivityRail is true (AI gate off)', () => {
+    mockViewportWide(true); // #300 rail also needs a wide viewport
+    vi.mocked(useAiGate).mockReturnValue(false); // AI fully off — rail still shows
+    setShowActivityRail(true);
     const { container } = render(
       <MemoryRouter initialEntries={['/']}>
         <OpenTabsProvider>

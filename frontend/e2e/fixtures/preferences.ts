@@ -31,6 +31,7 @@ export function makeDefaultPreferences() {
       accent: 'indigo' as const,
       aiMode: 'off' as const,
       density: 'comfortable' as const,
+      contentScale: 'm' as const,
     },
     inbox: {
       sections: {
@@ -38,9 +39,16 @@ export function makeDefaultPreferences() {
         'awaiting-author': true,
         'authored-by-me': true,
         mentioned: true,
-        'ci-failing': true,
         'recently-closed': true,
       },
+      defaultSort: 'updated',
+      // #275: the real GET /api/preferences always emits sectionOrder; keep the
+      // shared mock in contract with it (canonical order = no reorder applied).
+      sectionOrder: 'review-requested,awaiting-author,authored-by-me,mentioned',
+      // #283: real GET always emits showActivityRail; default false (rail hidden).
+      showActivityRail: false,
+      // #219: real GET always emits groupByRepo; default true (Inbox grouped by repo).
+      groupByRepo: true,
     },
     github: {
       host: 'https://github.com',

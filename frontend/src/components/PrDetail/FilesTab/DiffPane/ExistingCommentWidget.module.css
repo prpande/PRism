@@ -1,54 +1,18 @@
 .commentWidget {
-  padding: var(--s-3) var(--s-4);
-  background: var(--surface-2);
+  padding: var(--s-3) var(--s-4) var(--s-4);
 }
 .commentThread {
-  /* Handoff `.thread-widget` border-left accent rail (screens.css L708-715) */
   display: flex;
   flex-direction: column;
   gap: var(--s-2);
-  padding: var(--s-2);
-  background: var(--surface-1);
-  border: 1px solid var(--border-1);
-  border-left: 2px solid var(--accent);
-  border-radius: var(--radius-3);
-  overflow: hidden;
 }
 .commentThreadResolved {
-  opacity: 0.7;
-  border-style: dashed;
+  opacity: 0.72;
+  transition: opacity var(--t-fast);
 }
-.commentEntry {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding-bottom: var(--s-2);
-}
-.commentEntry + .commentEntry {
-  border-top: 1px solid var(--border-1);
-  padding-top: var(--s-2);
-}
-.commentMeta {
-  display: flex;
-  gap: var(--s-2);
-  align-items: center;
-  font-size: var(--text-xs);
-}
-.commentAuthor {
-  font-weight: 600;
-  color: var(--text-1);
-}
-.commentTime {
-  color: var(--text-3);
-}
-.commentBody {
-  font-size: var(--text-sm);
-  color: var(--text-1);
-  margin-top: 2px;
-  line-height: 1.55;
+.commentThreadResolved:hover {
+  opacity: 1;
 }
 .commentThreadActions {
   display: flex;
-  justify-content: flex-end;
-  gap: var(--s-2);
 }

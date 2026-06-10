@@ -4,7 +4,7 @@ import { setupServer } from 'msw/node';
 import { http, HttpResponse } from 'msw';
 import { usePreferences } from '../src/hooks/usePreferences';
 import { useCapabilities } from '../src/hooks/useCapabilities';
-import { useAuth } from '../src/hooks/useAuth';
+import { AuthProvider, useAuth } from '../src/hooks/useAuth';
 
 const showMock = vi.fn();
 vi.mock('../src/components/Toast', () => ({
@@ -21,7 +21,7 @@ const server = setupServer(
           'awaiting-author': true,
           'authored-by-me': true,
           mentioned: true,
-          'ci-failing': true,
+          'recently-closed': true,
         },
       },
       github: {
@@ -66,7 +66,7 @@ describe('usePreferences', () => {
     const { result } = renderHook(() => usePreferences());
     await waitFor(() => expect(result.current.preferences).not.toBeNull());
     expect(result.current.preferences!.inbox.sections['review-requested']).toBe(true);
-    expect(result.current.preferences!.inbox.sections['ci-failing']).toBe(true);
+    expect(result.current.preferences!.inbox.sections['awaiting-author']).toBe(true);
     expect(result.current.preferences!.github.configPath).toContain('config.json');
     expect(result.current.preferences!.github.logsPath).toContain('logs');
   });
@@ -80,18 +80,18 @@ describe('usePreferences', () => {
     const { result } = renderHook(() => usePreferences());
     await waitFor(() => expect(result.current.preferences).not.toBeNull());
 
-    // First POST: succeed and flip ci-failing → false.
+    // First POST: succeed and flip review-requested → false.
     server.use(
       http.post('/api/preferences', async () =>
         HttpResponse.json({
           ui: { theme: 'system', accent: 'indigo', aiMode: 'off', density: 'comfortable' },
           inbox: {
             sections: {
-              'review-requested': true,
+              'review-requested': false,
               'awaiting-author': true,
               'authored-by-me': true,
               mentioned: true,
-              'ci-failing': false,
+              'recently-closed': true,
             },
           },
           github: {
@@ -103,9 +103,9 @@ describe('usePreferences', () => {
       ),
     );
     await act(async () => {
-      await result.current.set('inbox.sections.ci-failing', false);
+      await result.current.set('inbox.sections.review-requested', false);
     });
-    expect(result.current.preferences!.inbox.sections['ci-failing']).toBe(false);
+    expect(result.current.preferences!.inbox.sections['review-requested']).toBe(false);
 
     // Second POST: fail on the mentioned toggle.
     server.use(http.post('/api/preferences', () => HttpResponse.text('boom', { status: 500 })));
@@ -113,9 +113,9 @@ describe('usePreferences', () => {
       await expect(result.current.set('inbox.sections.mentioned', false)).rejects.toBeDefined();
     });
 
-    // Only `mentioned` reverts; the prior successful `ci-failing` flip survives.
+    // Only `mentioned` reverts; the prior successful `review-requested` flip survives.
     expect(result.current.preferences!.inbox.sections['mentioned']).toBe(true);
-    expect(result.current.preferences!.inbox.sections['ci-failing']).toBe(false);
+    expect(result.current.preferences!.inbox.sections['review-requested']).toBe(false);
   });
 
   it('rolls back preferences and surfaces an error toast when POST /api/preferences rejects', async () => {
@@ -165,9 +165,35 @@ describe('useCapabilities', () => {
 
 describe('useAuth', () => {
   it('fetches auth state on mount', async () => {
-    const { result } = renderHook(() => useAuth());
+    const { result } = renderHook(() => useAuth(), { wrapper: AuthProvider });
     await waitFor(() => expect(result.current.authState).not.toBeNull());
     expect(result.current.authState?.hasToken).toBe(false);
+  });
+
+  it('clears a prior error when a later refetch succeeds', async () => {
+    // claude[bot] review (issue 2): a successful refetch must clear any stale
+    // `error`, so the App error-modal invariant (authState === null && error)
+    // can't resurface a dead error if authState ever reverts to null.
+    let calls = 0;
+    server.use(
+      http.get('/api/auth/state', () => {
+        calls += 1;
+        if (calls === 1) return HttpResponse.json({ error: 'boom' }, { status: 500 });
+        return HttpResponse.json({
+          hasToken: true,
+          host: 'https://github.com',
+          hostMismatch: null,
+        });
+      }),
+    );
+    const { result } = renderHook(() => useAuth(), { wrapper: AuthProvider });
+    // First mount fetch fails → error is set, authState stays null.
+    await waitFor(() => expect(result.current.error).not.toBeNull());
+    expect(result.current.authState).toBeNull();
+    // A later successful refetch must clear the stale error.
+    window.dispatchEvent(new Event('focus'));
+    await waitFor(() => expect(result.current.authState?.hasToken).toBe(true));
+    expect(result.current.error).toBeNull();
   });
 
   it('refetches auth state when window regains focus', async () => {
@@ -182,7 +208,7 @@ describe('useAuth', () => {
         });
       }),
     );
-    const { result } = renderHook(() => useAuth());
+    const { result } = renderHook(() => useAuth(), { wrapper: AuthProvider });
     await waitFor(() => expect(result.current.authState).not.toBeNull());
     expect(result.current.authState?.hasToken).toBe(false);
     window.dispatchEvent(new Event('focus'));
@@ -205,7 +231,7 @@ describe('useAuth', () => {
         });
       }),
     );
-    const { result } = renderHook(() => useAuth());
+    const { result } = renderHook(() => useAuth(), { wrapper: AuthProvider });
     await waitFor(() => expect(result.current.authState).not.toBeNull());
     expect(result.current.authState?.hasToken).toBe(false);
     window.dispatchEvent(new CustomEvent('prism-identity-changed'));
@@ -228,7 +254,7 @@ describe('useAuth', () => {
         });
       }),
     );
-    const { result } = renderHook(() => useAuth());
+    const { result } = renderHook(() => useAuth(), { wrapper: AuthProvider });
     await waitFor(() => expect(result.current.authState).not.toBeNull());
     expect(result.current.authState?.hasToken).toBe(false);
     window.dispatchEvent(new CustomEvent('prism-events-reconnected'));

@@ -24,7 +24,7 @@ export function AiHunkAnnotation({ annotation }: AiHunkAnnotationProps) {
   // compile-time once FE types catch up.
   const chip = TONE_CHIP[annotation.tone] ?? { variant: 'info' as const, label: annotation.tone };
   return (
-    <div className={`ai-hunk ${styles.aiHunk}`} data-testid="ai-hunk-annotation">
+    <div className={`ai-hunk ${styles.aiHunk}`} data-testid="ai-hunk">
       <span className="ai-icon" aria-hidden="true">
         ✨
       </span>

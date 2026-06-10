@@ -11,11 +11,14 @@ describe('InboxSkeleton', () => {
     expect(screen.getAllByTestId('inbox-skeleton-row')).toHaveLength(9);
   });
 
-  it('renders the rail only when showRail is true', () => {
+  it('renders the rail (single P1 panel) only when showRail is true', () => {
     const { rerender } = render(<InboxSkeleton showRail={false} />);
     expect(screen.queryByTestId('inbox-skeleton-rail')).toBeNull();
     rerender(<InboxSkeleton showRail />);
-    expect(screen.getByTestId('inbox-skeleton-rail')).toBeInTheDocument();
+    const rail = screen.getByTestId('inbox-skeleton-rail');
+    // P1 rail shows ONE panel block (Watching's second block returns in P2).
+    // Skeleton does not forward data-testid unless explicitly passed — count direct children.
+    expect(rail.children).toHaveLength(1);
   });
 
   it('carries the AT loading signal and renders no buttons', () => {

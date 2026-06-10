@@ -26,8 +26,12 @@ export function StatsTiles({
 function Tile({ label, value }: { label: string; value: number | string }) {
   return (
     <div className={styles.statsTile} data-testid="stats-tile">
-      <dt className={styles.statsTileLabel}>{label}</dt>
-      <dd className={styles.statsTileValue}>{value}</dd>
+      <dt className={styles.statsTileLabel} data-testid="stats-tile-label">
+        {label}
+      </dt>
+      <dd className={styles.statsTileValue} data-testid="stats-tile-value">
+        {value}
+      </dd>
     </div>
   );
 }
