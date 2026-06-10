@@ -26,6 +26,8 @@ Brainstorm settled four scope calls before this spec:
 3. **.NET levers:** `PublishReadyToRun=true` **now** (unambiguous cold-start win); the `EnableCompressionInSingleFile` flip is **deferred to the clean-VM region-4 data** (dropping it ~doubles the sidecar binary, which *enlarges* the per-launch portable extraction — a measurement question, not a clear win).
 4. **Issue scope:** this PR does Part 1 and **closes #282**; a separate **splash follow-up** issue is filed for Part 2.
 
+> **⚠ Two calls re-challenged by ce-doc-review (round 1) — pending owner confirmation at the B2 gate.** (1) **Closing #282** — 6/6 reviewers flagged that closing it records the user-visible symptom (~1.5 min, no feedback) as resolved when it persists after this slice (splash deferred, regions 1–2 untouched). (2) **Clean-VM measurement timing** — AC #1/#5 require numbers from the clean-VM run; the spec must say whether those land **pre-merge** (a real `## Proof` gate) or **post-merge**. Both are resolved in the "Owner gate decisions" outcome and the Decision-frame/DoD text is finalized to match before implementation.
+
 ## Scope
 
 **In:**
@@ -51,10 +53,11 @@ Add `<PublishReadyToRun>true</PublishReadyToRun>` to the **existing** `Condition
 - **Compatibility:** R2R composes with single-file self-contained publish; R2R images are RID-specific and the publish is already per-RID (`-r win-x64` / `-r osx-arm64`), so no new RID handling.
 - **Verification:** a successful `dotnet publish` of the win-x64 single-file profile + the desktop pack smoke. This is a build property — **no unit test** (consistent with the existing single-file props, which are likewise build-verified, not unit-tested).
 - **Keep** `EnableCompressionInSingleFile=true` unchanged — its flip is deferred (see Decision frame #3).
+- **Measurement confound (adversarial-review finding).** `sidecarBoot` (region 4a) is **not** pure JIT: with `PublishSingleFile` + `EnableCompressionInSingleFile` + `IncludeNativeLibrariesForSelfExtract`, the **first** launch also self-extracts and decompresses native libs to a temp dir *before* managed code runs — that cost lives inside `sidecarBoot` and may dominate the JIT R2R displaces. The instrumentation **cannot separate** extraction/decompression from JIT within `sidecarBoot`. Consequences: (a) R2R's isolated win may read as noise in a single number; (b) the deferred compression-flip decision (Decision frame #3) must be made from an **A/B build comparison** — `sidecarBoot` measured with vs. without compression on the same machine — **not** from reading the blended region-4 number once. The spec calls this out so the recorded number is not over-interpreted.
 
-### 2. Startup instrumentation — new `desktop/src/startupTimings.ts` (pure, unit-tested)
+### 2. Startup instrumentation — new `desktop/src/startupTimings.ts` (two pure functions)
 
-A pure module: a phase recorder + an attribution/format pass. No Electron imports, no I/O — so it is `node:test`-unit-testable exactly like `planSpawn` / `parsePortFromLine`.
+**Scope-review correction:** the first draft wrapped this in a `createStartupRecorder` factory with an injected clock and first-write-wins idempotency — over-built for a module invoked once per process lifetime at six fixed call sites that each run once. Collapsed to **two pure exported functions plus the `Phase` type**, matching the house convention (`planSpawn` / `parsePortFromLine` are plain exported functions, not factories). The marks themselves live in a plain `Map<Phase, number>` owned by `main.ts` (one `marks.set(phase, Date.now())` per call site); the pure module owns only the arithmetic. No Electron imports, no I/O — `node:test`-unit-testable directly.
 
 **Phases** (epoch-ms marks, in startup order):
 
@@ -67,23 +70,15 @@ A pure module: a phase recorder + an attribution/format pass. No Electron import
 | `healthOk` | health poll passed (`startSidecar` `onHealthy` callback) |
 | `contentLoaded` | `await mainWindow.loadURL(...)` resolved |
 
-**Clock:** marks use `Date.now()` (epoch), **injected** as `now: () => number` (default `Date.now`) for deterministic tests. Epoch (not `performance.now()`) is required so a mark can be differenced against `process.getCreationTime()` (which returns epoch ms). Over a ~minute startup on a normal machine, wall-clock skew is immaterial; noted as a caveat.
+**Clock:** `main.ts` marks with `Date.now()` (epoch) at each call site. Epoch (not `performance.now()`) is required so a mark can be differenced against `process.getCreationTime()` (which returns epoch ms). Each call site runs exactly once in `bootstrap()`, so no idempotency guard is needed. `Date.now()` is not monotonic — a mid-startup NTP step could skew a region; immaterial over a one-shot ~minute measurement, noted as a caveat so a wildly-negative region reads as skew, not signal.
 
-**Recorder API:**
+**Module API:**
 
 ```ts
 export type Phase =
   | "moduleLoad" | "whenReady" | "sidecarSpawn"
   | "portReceived" | "healthOk" | "contentLoaded";
-
-export interface StartupRecorder {
-  mark(phase: Phase): void;          // first-write-wins; a second mark of the same phase is ignored
-  marks(): ReadonlyMap<Phase, number>;
-}
-export function createStartupRecorder(now?: () => number): StartupRecorder;
 ```
-
-`mark` is **idempotent (first-write-wins)** — a phase re-entered (e.g. a navigation that re-fires) keeps its original timestamp rather than corrupting the measurement.
 
 **Attribution** — each region is `null` when either endpoint mark is absent (startup can fail partway; a partial line is still emitted):
 
@@ -114,16 +109,22 @@ Null fields render as `n/a` (so a failed/partial startup still produces a parsea
 
 ### 3. Wiring into `desktop/src/main.ts` (thin glue, e2e-covered)
 
-- **Module top** (before the single-instance gate): `const startup = createStartupRecorder(); startup.mark("moduleLoad");`
-- **`bootstrap()` entry:** `startup.mark("whenReady");`
-- **Before `startSidecar`:** `startup.mark("sidecarSpawn");`
-- **Pass callbacks** to `startSidecar` (see §4): `onPortReceived: () => startup.mark("portReceived")`, `onHealthy: () => startup.mark("healthOk")`.
-- **After `await mainWindow.loadURL(...)` resolves:** `startup.mark("contentLoaded"); emitStartupSummary();`
+`main.ts` owns a module-level `const marks = new Map<Phase, number>()` and marks each phase once:
+
+- **Module top** (before the single-instance gate): `marks.set("moduleLoad", Date.now());`
+- **`bootstrap()` entry:** `marks.set("whenReady", Date.now());`
+- **Before `startSidecar`:** `marks.set("sidecarSpawn", Date.now());`
+- **Pass callbacks** to `startSidecar` (see §4): `onPortReceived: () => marks.set("portReceived", Date.now())`, `onHealthy: () => marks.set("healthOk", Date.now())`.
+- **After `await mainWindow.loadURL(...)` resolves:** `marks.set("contentLoaded", Date.now()); emitStartupSummary();`
 - **In the `catch`** (sidecar failed to start): call `emitStartupSummary()` before `app.quit()` — a failed cold-start is still measured (partial line).
 
-`emitStartupSummary()` is a small main.ts helper that calls `attribute(startup.marks(), process.getCreationTime())` → `formatSummary(...)`, then:
+`emitStartupSummary()` is a small main.ts helper that calls `attribute(marks, process.getCreationTime())` → `formatSummary(...)`, then:
 - `console.log(line)` (dev console), **and**
 - appends `line + "\n"` to `path.join(app.getPath("logs"), "startup.log")` (double-click launches have no console). The write is wrapped so a logging failure never aborts startup. `app.getPath("logs")` is created by Electron on demand (Windows: `%APPDATA%/PRism/logs`).
+
+**Security / correctness constraints (security-review findings):**
+- **`emitStartupSummary()` is called ONLY inside the `gotLock` branch** (from `bootstrap()` and from its `catch`). The non-lock-holder path (`if (!gotLock) app.quit()`) must **never** reach it — a rejected second instance writes no log. The module-top `marks.set("moduleLoad", …)` runs on every instance but is harmless (an in-memory map write); only `emitStartupSummary` touches the filesystem, and it stays behind the lock.
+- **The summary line never interpolates `err.message`.** `startSidecar` appends a sidecar-stderr tail to its thrown `Error.message` (existing `sidecar.ts` behavior); `emitStartupSummary` must call only `formatSummary(attribute(...))` — pure timing integers — so raw backend stderr (which can carry paths / runtime diagnostics) never lands in `startup.log`. The error still goes to `dialog.showErrorBox`, not the log.
 
 The file-write + `process.getCreationTime()` call live in main.ts (thin, Electron-bound) and are exercised by the e2e smoke, **not** unit-tested. All arithmetic lives in the pure module.
 
@@ -150,17 +151,29 @@ The tester records the **wall-clock total** `T` with a stopwatch: **double-click
 
 - On the **NSIS-installed** path there is no portable extraction, so `T − procToContent` ≈ region 2 (AV) + spawn overhead.
 - On the **portable** path, `T − procToContent` = extraction + AV.
-- **Isolating region 1 specifically:** compare `T` for the two distributions on the same clean machine — the delta is the portable per-launch extraction cost.
+- **Isolating region 1 specifically:** compare `T` for the two distributions on the same clean machine — the delta is the portable per-launch cost. **Caveat (adversarial-review finding):** this delta is **extraction + the differential AV rescan**, not pure extraction. The portable target re-extracts fresh files to `%TEMP%` every launch, which Defender may re-scan each time, whereas the NSIS files were scanned once at install and are not re-extracted. To separate the one-time AV scan from the per-launch extraction on the portable path, also record a **second, back-to-back portable launch** (`T_warm`): its `%TEMP%` files may already be scanned/reputation-cached, so `T_warm` approximates extraction without the first-run scan, and `T_cold − T_warm` approximates the first-run AV component. Read the single-run region-1 figure as an **upper bound**.
+
+**Endpoint precision (feasibility-review finding).** `contentLoaded` is marked when `await mainWindow.loadURL(...)` resolves — the document-load boundary, which fires *before* the Vite/React bundle mounts and paints actual UI. The stopwatch `T` ("window shows content") is stopped only when UI is visibly rendered, strictly later. So `spaLoad` (R5) undercounts real first-paint and the derived `regions 1–2 = T − procToContent` **absorbs the React-mount delta** (i.e. slightly over-counts the pre-JS regions). Acceptable for a first attribution pass; if first-paint precision is needed later, mark `contentLoaded` from a renderer signal (an IPC ping on React mount) instead of `loadURL` resolution.
+
+**Sanity invariant (adversarial-review finding).** `procToContent` is sound only if `process.getCreationTime()` returns the creation time of the **final, extracted** Electron process (electron-builder's portable stub extracts to `%TEMP%`, then spawns the real app; the JS runs in that extracted process, so extraction lands in `T − procToContent`, not inside `procToContent`). Guard the invariant: **`T ≥ procToContent` must always hold** — a negative or near-zero region 1 signals the timestamp came from the wrong (stub) process and the protocol is invalid for that run.
 
 Run on a clean Windows VM, Defender on, first-ever launch of the unsigned build. Record the numbers in the issue/PR (satisfies AC #1).
 
+> **Verify the anchor early (feasibility/scope-review residual).** The whole subtraction protocol depends on `process.getCreationTime()` returning a non-null epoch-ms value on the **actual published win-x64 build**. It is a real Electron-33 process API (returns `number | null`), but confirm it is non-null on the packaged build *before* relying on it — if it returns null, `preJs`/`procToContent` degrade to `n/a` and the protocol falls back to the cruder `T − totalInstrumented` (less precise; regions 1–2 then bundle the un-instrumented pre-JS slice).
+
+> **Privacy note (security-review finding).** `startup.log` lives under `app.getPath("logs")` = `%APPDATA%\PRism\logs`, a path that embeds the OS username. The log **line** is safe (pure integers), but when recording numbers in a public issue/PR, paste only the `[startup] … (ms)` line — never the file path or a terminal prompt/file-explorer path that exposes the username.
+
 ### 6. Distribution docs (AC #4) — `README.md`
 
-A short subsection under the desktop/download guidance: both the installer (NSIS) and the portable `.exe` are offered; note that the portable EXE re-extracts the full app to `%TEMP%` on **every** launch (slower cold-start), while the installer unpacks once at install. State it as a tradeoff, neutrally — no recommendation steering (Decision frame #2). Cross-reference the unsigned-binary SmartScreen note already implied by `electron-builder.yml`.
+**AC #4 asks the distribution path to be "decided and documented." The decision is: keep both targets at equal footing and document the tradeoff without steering** (Decision frame #2; owner-locked). Equal footing is itself the deliberate call — not an absence of one — and its rationale is recorded so the docs don't read as a dodge: portable preserves the **zero-install / run-from-anywhere** option for cohort testers who can't or won't install, which has standalone value at PRism's current small-known-audience stage; the cold-start cost is surfaced as a caveat rather than used to push users off it.
+
+The README subsection: both the installer (NSIS) and the portable `.exe` are offered; note that the portable EXE re-extracts the full app to `%TEMP%` on **every** launch (slower cold-start), while the installer unpacks once at install. State it as a tradeoff, neutrally — no recommendation steering. Cross-reference the unsigned-binary SmartScreen note already implied by `electron-builder.yml`.
+
+(Product-review flagged "equal footing dodges AC #4's decide" — re-surfaced to the owner at the gate below; this framing reflects the owner's locked choice, recorded as a decision.)
 
 ### 7. Follow-ups (filed during/at PR time)
 
-- **Splash / loading indicator (Part 2)** — new issue, `area:desktop`, `needs-design`. Notes: gated on the clean-VM data showing a material post-`whenReady` gap (regions 3–5); a splash can cover **only** regions 3–5, never the portable path's 1–2; implementation would show a lightweight "PRism is starting…" window on `whenReady` and swap to the main window on `contentLoaded`.
+- **Splash / loading indicator (Part 2)** — new issue, `area:desktop`, `needs-design`. **Gate framing (product-review finding):** a splash can cover **only** regions 3–5 (post-`whenReady`), never the pre-JS regions 1–2. So the follow-up is a two-branch decision on the clean-VM data, not a single "is the gap big" check: **(a)** if regions 3–5 are a material slice of the perceived hang → build the splash (it fills exactly the window it can cover); **(b)** if regions 1–2 dominate (the portable path's likely case) → a splash does **not** help that path, and the resolution is **packaging/signing** (or accepting the limitation), not a splash. Implementation, if branch (a): a lightweight "PRism is starting…" window on `whenReady`, swapped to the main window on `contentLoaded`.
 - **Compression-flip decision** — captured in the splash issue or its own note: revisit `EnableCompressionInSingleFile=false` once the region-4 `sidecarBoot` number is known, weighing the ~2× binary-size cost against the first-run decompression saving (and its enlargement of the portable extraction).
 
 ## Data flow
@@ -179,9 +192,7 @@ OS double-click ──▶ [R1 portable extract to %TEMP%] ──▶ [R2 AV scan]
 
 All new production code is written test-first (red → green). Units run under `desktop` `npm run test:unit` (`node:test`).
 
-**`startupTimings.ts` (pure, fully unit-tested):**
-- `createStartupRecorder` with an injected clock: `mark` records the injected time; `marks()` returns them.
-- **First-write-wins:** marking the same phase twice keeps the first timestamp.
+**`startupTimings.ts` (two pure functions, fully unit-tested — tests build `Map<Phase, number>` literals directly; no recorder, no injected clock):**
 - `attribute` with a complete mark set + a `processCreationTime` → every region computes correctly (fixed numbers).
 - `attribute` with a **missing** mid-phase (e.g. no `healthOk`) → `healthPoll` and `spaLoad` are `null`; the regions that don't depend on it still compute.
 - `attribute` with `processCreationTime = null` → `preJs` and `procToContent` are `null`; `totalInstrumented` still computes.
@@ -189,7 +200,7 @@ All new production code is written test-first (red → green). Units run under `
 
 **`sidecar.ts`:** existing `planSpawn` units stay green (callbacks don't touch the pure plan). The `onPortReceived`/`onHealthy` ordering is exercised by the e2e smoke against the real sidecar (consistent with the house rule that units don't spawn processes).
 
-**`main.ts` wiring + R2R:** the `_electron` Playwright smoke (`shell.e2e.ts`, local/manual) launches the real shell against a published sidecar and asserts a `[startup]` line is written to `app.getPath("logs")/startup.log`. R2R is verified by a successful publish + pack smoke.
+**`main.ts` wiring + R2R:** the `_electron` Playwright smoke (`shell.e2e.ts`, local/manual) launches the real shell against a published sidecar and asserts a `[startup]` line is written to `startup.log`. **The log path must be derived from the launch, not hardcoded (feasibility-review finding):** `shell.e2e.ts` launches with `--user-data-dir=<temp>`, and Electron derives `getPath("logs")` from `userData`, so the file lands under the **per-launch temp dir**, not `%APPDATA%/PRism/logs`. The smoke reads the path via `electronApp.evaluate(({ app }) => app.getPath("logs"))` (or `path.join(userDataDir, "logs", "startup.log")`) — never the packaged default — or it asserts against an empty directory and fails. R2R is verified by a successful publish + pack smoke.
 
 ## Definition of done → acceptance-criteria map
 
@@ -205,4 +216,5 @@ All new production code is written test-first (red → green). Units run under `
 - **Logging never breaks startup:** the file append and `getCreationTime` are guarded; any failure is swallowed (startup proceeds, the line is best-effort).
 - **`getCreationTime` may return `null`** on some platforms/builds → `preJs` / `procToContent` degrade to `n/a`; the post-JS regions remain. The protocol then falls back to `T − totalInstrumented` minus an un-instrumented pre-JS slice (less precise; noted).
 - **Epoch clock skew:** `Date.now()` is not monotonic; a mid-startup NTP step could skew a region. Acceptable for a one-shot ~minute measurement; called out so a wildly negative region is read as skew, not signal.
-- **No secret surface:** the log line is pure timing integers; no tokens, paths-with-usernames are limited to the `logs` dir path Electron owns. Secrets scan over the diff is clean by construction.
+- **Log content is integers-only:** the `[startup]` line carries pure timing integers — no tokens, no interpolated `err.message`/stderr (see §3), no embedded paths. The *file path* (`%APPDATA%\PRism\logs`) embeds the OS username, so the measurement protocol instructs testers to share only the line, not the path (§5). Secrets scan over the diff is clean by construction.
+- **`emitStartupSummary` stays behind the single-instance lock** — a rejected second instance writes nothing (§3).
