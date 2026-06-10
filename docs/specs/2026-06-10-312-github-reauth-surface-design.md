@@ -16,7 +16,7 @@ When the stored GitHub PAT is revoked, expires, or loses required scope **while 
 - The only GitHub-401 → `InvalidToken` interpretation (`GitHubReviewService.ValidateCredentialsAsync` → `InterpretAsync`, `PRism.GitHub/GitHubReviewService.cs:69-203`) runs **only at token connect/replace time**, never during normal operation.
 - `/api/auth/state` reports only `HasToken` (a token is *stored*) — never whether it is still *valid* (`PRism.Web/Endpoints/AuthEndpoints.cs:26-39`, `AuthDtos.cs:5`).
 
-**Net effect:** a dead PAT mid-session = the app looks quietly broken (empty inbox, failed PR loads) with no "Reconnect GitHub" affordance.
+**Net effect:** a dead PAT mid-session = the app looks quietly broken (empty inbox, failed PR loads) with no "Re-authorize GitHub" affordance.
 
 ### Correction to the issue's framing
 
@@ -46,7 +46,7 @@ In the **fully-idle** case — the PAT dies while the user sits on an already-lo
 - [ ] A mid-session GitHub 401 on **any** GitHub-backed call (inbox poll, PR load, draft fetch) flips a server-side credential-invalid latch.
 - [ ] `GET /api/auth/state` reports the latch as `githubCredentialInvalid: boolean`.
 - [ ] The frontend renders a **red/danger, non-dismissible** app-level banner (mirroring `StreamHealthSnackbar`'s *appearance*, but persistent — no `×`) whenever `hasToken && githubCredentialInvalid`. In the **background/idle** case, surfacing is bounded by the next window-focus or triggered refetch (Approach A, § 10) — it is **not** instantaneous, by design.
-- [ ] The banner's **Reconnect** action routes to `/setup?replace=1`. "Non-dismissible" means the *user* cannot close it — it still auto-closes when the credential becomes valid (committing a valid token, or the auto-clear in the next criterion). The replace flow's validate-before-swap (existing) refuses an invalid token, so the user cannot clear the banner with a bad one.
+- [ ] The banner's **Re-authorize** action routes to `/setup?replace=1`. "Non-dismissible" means the *user* cannot close it — it still auto-closes when the credential becomes valid (committing a valid token, or the auto-clear in the next criterion). The replace flow's validate-before-swap (existing) refuses an invalid token, so the user cannot clear the banner with a bad one.
 - [ ] A single transient `401`, or any `403 / 429 / 5xx / transport` failure, does **not** flip the latch (no false banner) — the latch flips only on **2 consecutive** authenticated 401s (§ 6.1).
 - [ ] The latch **auto-clears** on the next successful *authenticated* GitHub call, and clears immediately on a successful connect-commit / replace.
 - [ ] A bad **candidate** token during connect/replace validation does **not** flip the latch for the still-stored token (all candidate-token probe paths opt out).
@@ -72,7 +72,7 @@ GitHub API ──401/2xx──▶ GitHubAuthHealthHandler (DelegatingHandler on 
                               ▼
                     useAuth().authState.githubCredentialInvalid
                               ▼
-   GitHubAuthBanner (red Snackbar)  ── Reconnect ──▶ /setup?replace=1
+   GitHubAuthBanner (red Snackbar)  ── Re-authorize ──▶ /setup?replace=1
         (suppressed while !streamHealthy, and on /setup)
 ```
 
@@ -234,12 +234,12 @@ New component, mirroring `StreamHealthSnackbar`'s **appearance** (red top-center
 
 - Reads `useAuth()` for `authState.githubCredentialInvalid && authState.hasToken`, `useStreamHealth()` for `healthy`, and the router location.
 - Renders `null` unless `hasToken && githubCredentialInvalid && healthy && route !== '/setup'`. There is **no local dismiss state and no `×`** — the banner stays up the entire time the credential is invalid, on every route except `/setup`. (Suppressing on `/setup` avoids showing a "reconnect" prompt on top of the very page that performs the reconnect.)
-- Renders `<Snackbar tone="danger" message="GitHub access token invalid — reconnect" action={{ label: 'Reconnect', onClick: () => navigate('/setup?replace=1') }} role="status" aria-live="polite" />` — **no `onDismiss`**, so the primitive renders no dismiss button.
-  - **Copy (revised per design/product review):** "GitHub access token invalid — reconnect" — accurate for revoked / expired / bad-credential cases (the earlier "sign-in expired" implied OAuth-session timeout and misframed a *revoked* token; PRism uses PATs). Final copy is a B1 item the owner confirms at the visual gate.
-  - **a11y (corrected — a persistent region must not re-announce):** a *non-dismissible* banner stays mounted for the whole invalid session, so `aria-live="assertive"` would re-announce "GitHub access token invalid — reconnect" on **every** re-render / route change (App re-renders on each navigation + refetch) — disruptive to the point of unusable with a screen reader. Use **`role="status"` / `aria-live="polite"` / `aria-atomic="true"`**, with the live-region element kept **always mounted** and only its text *content* toggling on the invalid edge, so it announces **once** when it appears and once when it clears — not on every render. (Assertive is for transient urgent interrupts, not a standing condition.) It does **not** steal focus on appear; `Reconnect` is keyboard-reachable.
+- Renders `<Snackbar tone="danger" message="Your GitHub access token is no longer valid" action={{ label: 'Re-authorize', onClick: () => navigate('/setup?replace=1') }} role="status" aria-live="polite" />` — **no `onDismiss`**, so the primitive renders no dismiss button.
+  - **Copy (revised per design/product review):** "Your GitHub access token is no longer valid" — accurate for revoked / expired / bad-credential cases (the earlier "sign-in expired" implied OAuth-session timeout and misframed a *revoked* token; PRism uses PATs). Final copy is a B1 item the owner confirms at the visual gate.
+  - **a11y (corrected — a persistent region must not re-announce):** a *non-dismissible* banner stays mounted for the whole invalid session, so `aria-live="assertive"` would re-announce "Your GitHub access token is no longer valid" on **every** re-render / route change (App re-renders on each navigation + refetch) — disruptive to the point of unusable with a screen reader. Use **`role="status"` / `aria-live="polite"` / `aria-atomic="true"`**, with the live-region element kept **always mounted** and only its text *content* toggling on the invalid edge, so it announces **once** when it appears and once when it clears — not on every render. (Assertive is for transient urgent interrupts, not a standing condition.) It does **not** steal focus on appear; `Re-authorize` is keyboard-reachable.
 - **Mandatory re-auth — the replace screen is a one-way gate (owner directive).** While `githubCredentialInvalid && hasToken`, `/setup?replace=1` is **exit-gated**: the user cannot return to the app until a **valid** token is committed. A navigation guard (mirroring the existing first-run `!hasToken` gate that redirects app routes to `/setup`) holds the user on the replace screen while the credential is invalid — any away-navigation redirects back to `/setup?replace=1`. Only a successful **validate-before-swap** commit (`/api/auth/replace`, § 1) clears `githubCredentialInvalid` and releases them; an invalid candidate token is rejected and never commits, so it never opens the gate. The banner is **suppressed on `/setup`** because the screen *is* the gate — no redundant prompt. On app routes the non-dismissible banner remains the cue to start re-auth; once the user enters the replace screen, the gate ensures they finish. `isAuthed` stays true (we do **not** fall back to the first-run flow and lose context elsewhere) — the lock is a credential-invalid route guard scoped to the replace screen, not a teardown of app state.
 - **Navigation target is a compile-time string literal** (`/setup?replace=1`); it must never be derived from a server-supplied field, so a compromised/MITM'd response cannot redirect the user to an attacker-controlled setup page.
-- **Message lives in the banner, not the setup screen (owner directive).** The user-facing explanation is carried by the banner copy ("GitHub access token invalid — reconnect"); the `/setup` replace screen text is **not** modified (no added context line). The existing #213 classic-PAT guidance and rejection copy on that screen are sufficient for completing re-auth.
+- **Message lives in the banner, not the setup screen (owner directive).** The user-facing explanation is carried by the banner copy ("Your GitHub access token is no longer valid"); the `/setup` replace screen text is **not** modified (no added context line). The existing #213 classic-PAT guidance and rejection copy on that screen are sufficient for completing re-auth.
 - **Position.** Mounts at the connectivity slot (floating top-center, `top:100px`), matching `StreamHealthSnackbar`'s appearance per the owner's original directive. Because the flow funnels the user into the exit-gated replace screen, the banner is a transient cue rather than a permanent fixture to work around; exact placement/overlap is a B1 visual the owner eyeballs at green-and-ready.
 - Mounted in `App.tsx` next to `StreamHealthSnackbar` (`App.tsx:184`); the credential-invalid navigation guard lives alongside the existing routing gate in `App.tsx`.
 
@@ -255,7 +255,7 @@ New component, mirroring `StreamHealthSnackbar`'s **appearance** (red top-center
 
 **Foreground (direct interaction):** user opens a PR with a dead PAT → GitHub call 401s → handler `RecordAuthFailure()`; the request still fails → Web returns 500 *or* a remapped typed 4xx → `apiClient` dispatches `prism-request-failed` → debounced `useAuth` refetch → `githubCredentialInvalid: true` → banner. The very interaction that failed surfaces the explanation, regardless of how the endpoint reshaped the error status.
 
-**Recovery:** Reconnect → `/setup?replace=1` → successful replace `BumpEpoch()` + `MarkValid()` (§ 6.4) + SetupPage `refetch()` → `githubCredentialInvalid: false` → banner gone (no flash). A stale in-flight old-token 401 across the swap is ignored by the epoch guard.
+**Recovery:** Re-authorize → `/setup?replace=1` → successful replace `BumpEpoch()` + `MarkValid()` (§ 6.4) + SetupPage `refetch()` → `githubCredentialInvalid: false` → banner gone (no flash). A stale in-flight old-token 401 across the swap is ignored by the epoch guard.
 
 ## 9. Testing strategy
 
@@ -274,7 +274,7 @@ New component, mirroring `StreamHealthSnackbar`'s **appearance** (red top-center
 **Frontend (vitest):**
 - `Snackbar` primitive: renders message/action/dismiss; tone class mapping incl. border; reduced-motion.
 - `StreamHealthSnackbar`: unchanged behavior after re-pointing (existing test stays green).
-- `GitHubAuthBanner`: shows on `hasToken && invalid && healthy && route!=='/setup'`; hidden when `!hasToken`, `!invalid`, `!healthy`, or on `/setup`; renders **no dismiss button** and stays mounted while invalid (no dismiss path); Reconnect navigates to `/setup?replace=1`.
+- `GitHubAuthBanner`: shows on `hasToken && invalid && healthy && route!=='/setup'`; hidden when `!hasToken`, `!invalid`, `!healthy`, or on `/setup`; renders **no dismiss button** and stays mounted while invalid (no dismiss path); Re-authorize navigates to `/setup?replace=1`.
 - `Snackbar` primitive: renders the `×` only when `onDismiss` is provided (warning consumer) and omits it otherwise (danger consumer).
 - `useAuth`: `prism-request-failed` triggers a debounced refetch; flag surfaces from `authState`.
 - `apiClient`: a failed response dispatches `prism-request-failed`.
@@ -323,6 +323,6 @@ New component, mirroring `StreamHealthSnackbar`'s **appearance** (red top-center
 ## 13. Risk / gate
 
 - **B2 (auth/token surface):** this spec is the spec-gate artifact. Owner reviews the *approach* before planning.
-- **B1 (new red banner):** visual assert at green-and-ready (screenshots / baseline), plus the **copy** ("GitHub access token invalid — reconnect") the owner confirms. Behavior resolved: non-dismissible while invalid; floating top-center (connectivity-slot appearance) — § 7.4.
+- **B1 (new red banner):** visual assert at green-and-ready (screenshots / baseline), plus the **copy** ("Your GitHub access token is no longer valid") the owner confirms. Behavior resolved: non-dismissible while invalid; floating top-center (connectivity-slot appearance) — § 7.4.
 - **Owner decisions — resolved at the gate:** (1) replace screen is a **one-way exit-gate** (leave only on valid token); (2) **GHES → github.com-only** this slice (§ 6.2 host gate, § 11); (3) message stays in the **banner**, `/setup` screen text **unchanged**; (4) non-dismissible + consecutive-401 threshold.
 - Secrets scan over the diff required at PR time. The handler/latch inspect status codes and the *presence* of an `Authorization` header only — they never read, log, or expose token material (§ 6.1 logging contract).

@@ -8,8 +8,8 @@ import {
 // #312 Task 13 — visual e2e for the re-auth banner (GitHubAuthBanner).
 //
 // The banner (frontend/src/components/GitHubAuthBanner/GitHubAuthBanner.tsx)
-// renders its VISIBLE danger bar — text "GitHub access token invalid —
-// reconnect" + a "Reconnect" button — only when ALL of:
+// renders its VISIBLE danger bar — text "Your GitHub access token is no longer
+// valid" + a "Re-authorize" button — only when ALL of:
 //   - authState.hasToken === true AND authState.githubCredentialInvalid === true
 //   - the SSE stream is healthy (useStreamHealth)
 //   - the route is NOT /setup (which IS the fix)
@@ -90,12 +90,12 @@ test('re-auth banner is shown on the inbox when the GitHub credential is invalid
   // stable page (not mid-load skeleton).
   await expect(page.locator('[data-testid="inbox-page"]')).toBeVisible({ timeout: 30_000 });
 
-  // The visible banner is proven by its Reconnect button, which is unique to the
-  // visible bar. The message text "GitHub access token invalid — reconnect" also
+  // The visible banner is proven by its Re-authorize button, which is unique to the
+  // visible bar. The message text "Your GitHub access token is no longer valid" also
   // lives in an always-mounted .sr-only live region (a11y, announce-once), so a bare
   // getByText would match twice and trip strict mode — assert the unique button
   // instead (the message itself is captured by the screenshot + the unit test).
-  await expect(page.getByRole('button', { name: 'Reconnect' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Re-authorize' })).toBeVisible();
 
   // Kill animations/transitions so the snapshot is byte-stable across runs
   // (mirrors no-layout-shift-on-banner.spec.ts).

@@ -3,7 +3,7 @@ import { useAuth } from '../../hooks/useAuth';
 import { useStreamHealth } from '../../hooks/useStreamHealth';
 import { Snackbar } from '../Snackbar';
 
-const MESSAGE = 'GitHub access token invalid — reconnect';
+const MESSAGE = 'Your GitHub access token is no longer valid';
 
 /**
  * #312: non-dismissible re-auth banner. The VISIBLE bar shows whenever the stored
@@ -36,7 +36,7 @@ export function GitHubAuthBanner() {
         <Snackbar
           tone="danger"
           message={MESSAGE}
-          action={{ label: 'Reconnect', onClick: () => navigate('/setup?replace=1') }}
+          action={{ label: 'Re-authorize', onClick: () => navigate('/setup?replace=1') }}
         />
       )}
     </>

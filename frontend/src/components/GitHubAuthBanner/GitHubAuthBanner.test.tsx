@@ -32,7 +32,7 @@ vi.mock('../../hooks/useStreamHealth', () => ({
   useStreamHealth: () => ({ healthy: state.healthy, retry: vi.fn() }),
 }));
 
-const reconnectButton = () => screen.queryByRole('button', { name: /reconnect/i });
+const authButton = () => screen.queryByRole('button', { name: /re-authorize/i });
 
 describe('GitHubAuthBanner', () => {
   beforeEach(() => {
@@ -48,9 +48,11 @@ describe('GitHubAuthBanner', () => {
         <GitHubAuthBanner />
       </MemoryRouter>,
     );
-    expect(reconnectButton()).toBeInTheDocument();
+    expect(authButton()).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /dismiss/i })).toBeNull(); // non-dismissible
-    expect(screen.getByRole('status')).toHaveTextContent('GitHub access token invalid — reconnect');
+    expect(screen.getByRole('status')).toHaveTextContent(
+      'Your GitHub access token is no longer valid',
+    );
   });
 
   it('hides the visible bar on /setup but the live region still reflects the invalid credential', () => {
@@ -60,8 +62,10 @@ describe('GitHubAuthBanner', () => {
         <GitHubAuthBanner />
       </MemoryRouter>,
     );
-    expect(reconnectButton()).toBeNull();
-    expect(screen.getByRole('status')).toHaveTextContent('GitHub access token invalid — reconnect');
+    expect(authButton()).toBeNull();
+    expect(screen.getByRole('status')).toHaveTextContent(
+      'Your GitHub access token is no longer valid',
+    );
   });
 
   it('hides the visible bar while the SSE stream is unhealthy', () => {
@@ -71,8 +75,10 @@ describe('GitHubAuthBanner', () => {
         <GitHubAuthBanner />
       </MemoryRouter>,
     );
-    expect(reconnectButton()).toBeNull();
-    expect(screen.getByRole('status')).toHaveTextContent('GitHub access token invalid — reconnect');
+    expect(authButton()).toBeNull();
+    expect(screen.getByRole('status')).toHaveTextContent(
+      'Your GitHub access token is no longer valid',
+    );
   });
 
   it('clears the live region and shows no banner when the credential is valid', () => {
@@ -82,7 +88,7 @@ describe('GitHubAuthBanner', () => {
         <GitHubAuthBanner />
       </MemoryRouter>,
     );
-    expect(reconnectButton()).toBeNull();
+    expect(authButton()).toBeNull();
     expect(screen.getByRole('status')).toBeInTheDocument();
     expect(screen.getByRole('status')).toHaveTextContent('');
   });
@@ -93,7 +99,7 @@ describe('GitHubAuthBanner', () => {
         <GitHubAuthBanner />
       </MemoryRouter>,
     );
-    await userEvent.click(reconnectButton()!);
+    await userEvent.click(authButton()!);
     expect(navigate).toHaveBeenCalledWith('/setup?replace=1');
   });
 });
