@@ -2,7 +2,7 @@
 
 **Issue:** [#312](https://github.com/prpande/PRism/issues/312) — "Mid-session GitHub PAT revocation/expiry has no re-auth surface (app degrades silently)"
 **Date:** 2026-06-10
-**Tier / Risk:** T3 · gated **B2** (auth/token surface) + **B1** (new visible snackbar)
+**Tier / Risk:** T3 · gated **B2** (auth/token surface) + **B1** (new visible banner)
 **Worktree / branch:** `D:\src\PRism-312-reauth-surface` / `feature/312-reauth-surface`
 
 ---
@@ -39,15 +39,15 @@ The issue says the global reconnect path "fires only on a session-cookie 401, no
 
 ### Accepted limitation (Approach A)
 
-In the **fully-idle** case — the PAT dies while the user sits on an already-loaded inbox with no interaction and no window-focus change — the snackbar surfaces only on the next focus or triggered refetch (§ 7.2). The headline complaint (silent degradation) is therefore *fully* closed for active users and *bounded* (not instant) for idle ones. This is the deliberate cost of skipping SSE-push (§ 10). The owner accepts this at the spec gate; if idle latency is felt in practice, the SSE-push follow-up (§ 11) closes it.
+In the **fully-idle** case — the PAT dies while the user sits on an already-loaded inbox with no interaction and no window-focus change — the banner surfaces only on the next focus or triggered refetch (§ 7.2). The headline complaint (silent degradation) is therefore *fully* closed for active users and *bounded* (not instant) for idle ones. This is the deliberate cost of skipping SSE-push (§ 10). The owner accepts this at the spec gate; if idle latency is felt in practice, the SSE-push follow-up (§ 11) closes it.
 
 ## 4. Acceptance criteria
 
 - [ ] A mid-session GitHub 401 on **any** GitHub-backed call (inbox poll, PR load, draft fetch) flips a server-side credential-invalid latch.
 - [ ] `GET /api/auth/state` reports the latch as `githubCredentialInvalid: boolean`.
 - [ ] The frontend renders a **red/danger, non-dismissible** app-level banner (mirroring `StreamHealthSnackbar`'s *appearance*, but persistent — no `×`) whenever `hasToken && githubCredentialInvalid`. In the **background/idle** case, surfacing is bounded by the next window-focus or triggered refetch (Approach A, § 10) — it is **not** instantaneous, by design.
-- [ ] The banner's **Reconnect** action routes to `/setup?replace=1`, and the banner persists until a **valid** token is committed — the replace flow's validate-before-swap (existing) refuses an invalid token, so the user cannot clear the banner with a bad token.
-- [ ] A transient `403 / 429 / 5xx / transport` failure does **not** flip the latch (no false snackbar).
+- [ ] The banner's **Reconnect** action routes to `/setup?replace=1`. "Non-dismissible" means the *user* cannot close it — it still auto-closes when the credential becomes valid (committing a valid token, or the auto-clear in the next criterion). The replace flow's validate-before-swap (existing) refuses an invalid token, so the user cannot clear the banner with a bad one.
+- [ ] A single transient `401`, or any `403 / 429 / 5xx / transport` failure, does **not** flip the latch (no false banner) — the latch flips only on **2 consecutive** authenticated 401s (§ 6.1).
 - [ ] The latch **auto-clears** on the next successful *authenticated* GitHub call, and clears immediately on a successful connect-commit / replace.
 - [ ] A bad **candidate** token during connect/replace validation does **not** flip the latch for the still-stored token (all candidate-token probe paths opt out).
 - [ ] A successful token **replace** does not leave a residual false-invalid latch even if an old-token request was in flight across the swap (epoch guard, § 6.2).
@@ -58,7 +58,7 @@ In the **fully-idle** case — the PAT dies while the user sits on an already-lo
 ```
 GitHub API ──401/2xx──▶ GitHubAuthHealthHandler (DelegatingHandler on "github" client)
                               │ (epoch-guarded, auth-header-gated)
-                              │ 401 → MarkInvalid()      2xx → MarkValid()
+                              │ 401×2 → invalid          2xx → MarkValid()
                               ▼
                     IGitHubCredentialHealth  (PRism.Core singleton: IsInvalid, Epoch)
                               │  read
@@ -70,7 +70,7 @@ GitHub API ──401/2xx──▶ GitHubAuthHealthHandler (DelegatingHandler on 
                               ▼
                     useAuth().authState.githubCredentialInvalid
                               ▼
-   GitHubAuthSnackbar (red Snackbar)  ── Reconnect ──▶ /setup?replace=1
+   GitHubAuthBanner (red Snackbar)  ── Reconnect ──▶ /setup?replace=1
         (suppressed while !streamHealthy, and on /setup)
 ```
 
@@ -88,18 +88,20 @@ namespace PRism.Core.Auth;
 public interface IGitHubCredentialHealth
 {
     bool IsInvalid { get; }
-    int  Epoch     { get; }   // bumped on every token change; see § 6.2 race guard
-    void MarkInvalid();
-    void MarkValid();
-    void BumpEpoch();         // call on connect/replace commit (token changed)
+    int  Epoch     { get; }    // bumped on every token change; see § 6.2 race guard
+    void RecordAuthFailure();  // handler, on an authenticated 401: ++counter; flips IsInvalid at the threshold
+    void MarkValid();          // handler 2xx OR endpoint commit: counter→0, IsInvalid→false
+    void BumpEpoch();          // endpoint commit (token changed)
 }
 ```
 
-Default implementation backs the state with a small lock (or `Interlocked`) so `IsInvalid` and `Epoch` stay coordinated. Initial state: **valid** (`IsInvalid == false`, `Epoch == 0`) — before any GitHub call we assume valid; the first real 401 flips it.
+**Consecutive-401 threshold (debounce against transient/false 401s).** Because the banner is now **non-dismissible** (§ 7.4), a single spurious 401 on a genuinely-valid token would otherwise force the user through an unnecessary re-auth with no escape — a real cost flagged by the adversarial + security reviews. The latch therefore flips invalid only after **`THRESHOLD = 2` consecutive** authenticated 401s with no intervening authenticated 2xx. `RecordAuthFailure()` increments an internal counter and sets `IsInvalid` once it reaches the threshold; `MarkValid()` resets the counter to 0 and clears `IsInvalid`. A genuinely dead token 401s on *every* call, so the second consecutive failure (next poll tick or retry) flips it within one cadence — detection stays prompt; a lone transient blip that is followed by any 2xx never flips. (This does not reopen the dismiss-and-forget hole — it is non-dismissible either way; it only filters the false-trigger.)
+
+Default implementation backs the state with a small lock so `IsInvalid`, `Epoch`, and the counter stay coordinated. Initial state: **valid** (`IsInvalid == false`, `Epoch == 0`, counter `== 0`).
 
 **Premise (stated, load-bearing):** credential health is modeled **process-global** because PRism stores exactly one GitHub token per process and all windows/tabs share it via the same `/api/auth/state`. One surface's masked 401 correctly raises the banner in every window — intended. If PRism ever goes multi-account (per-window token), the latch must become per-token.
 
-No persistence. `MarkInvalid` / `MarkValid` are idempotent and track current state; an **edge transition** is any actual state change (false→true or true→false) regardless of call site (handler or endpoint). Logging fires **once per edge** by comparing state before vs after the call (valid→invalid at Warning, invalid→valid at Information) — so an explicit `MarkValid()` (§ 6.4) followed by a handler `MarkValid()` on the next 2xx does not double-log. The log line carries only the transition direction and a timestamp — **never** request URL, headers, or any token fragment.
+No persistence. The methods track current state; an **edge transition** is any actual `IsInvalid` change (false→true or true→false) regardless of call site (handler or endpoint). Logging fires **once per edge** by comparing state before vs after the call (valid→invalid at Warning, invalid→valid at Information) — so an explicit `MarkValid()` (§ 6.4) followed by a handler `MarkValid()` on the next 2xx does not double-log. The log line carries only the transition direction and a timestamp — **never** request URL, headers, or any token fragment.
 
 ### 6.2 `GitHubAuthHealthHandler : DelegatingHandler` (PRism.GitHub)
 
@@ -129,11 +131,11 @@ protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage 
     if (resp.StatusCode == HttpStatusCode.Unauthorized)
     {
         // Ignore a 401 from a token that was already replaced mid-flight (epoch moved).
-        if (_health.Epoch == epochBefore) _health.MarkInvalid();
+        if (_health.Epoch == epochBefore) _health.RecordAuthFailure();   // flips invalid at THRESHOLD
     }
     else if (resp.IsSuccessStatusCode)
     {
-        _health.MarkValid();
+        _health.MarkValid();   // resets the consecutive-401 counter and clears invalid
     }
     return resp;
 }
@@ -141,9 +143,9 @@ protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage 
 
 | Outcome | Action |
 |---------|--------|
-| `401`, auth header present, epoch unchanged | `MarkInvalid()` |
+| `401`, auth header present, epoch unchanged | `RecordAuthFailure()` — flips `IsInvalid` only on the **2nd consecutive** such 401 |
 | `401`, epoch changed during the request (a replace landed) | **ignored** (stale old-token 401) |
-| `2xx`, auth header present | `MarkValid()` |
+| `2xx`, auth header present | `MarkValid()` (resets the 401 counter) |
 | no `Authorization` header (unauthenticated/public call) | no-op (can't speak to the stored token) |
 | `skip` option set (validation probe) | no-op |
 | `403 / 429 / other non-2xx` | no-op |
@@ -155,17 +157,19 @@ The handler **never** alters the response or throws — it observes and passes t
 
 ### 6.3 Validation opt-out (candidate-token guard) — all probe paths
 
-`/api/auth/connect` and `/api/auth/replace` probe GitHub with a **candidate** transient token through the same `"github"` client. A bad candidate must not latch the **stored** token as invalid. **Every** candidate-token probe sets the opt-out on its `HttpRequestMessage`:
+`/api/auth/connect` and `/api/auth/replace` probe GitHub with a **candidate** transient token through the same `"github"` client. A bad candidate must not latch the **stored** token as invalid. The probe sets the opt-out on its `HttpRequestMessage`:
 
 ```csharp
 req.Options.Set(SkipHealthKey, true);  // SkipHealthKey = new HttpRequestOptionsKey<bool>("prism-skip-credential-health")
 ```
 
-Probe sites to cover (all build their own `HttpRequestMessage`, so the option is threadable — verified):
-- `ValidateCredentialsAsync` → `GET /user` (`GitHubReviewService.cs:77`).
-- The fine-grained-token follow-up probes invoked during validation (repo-visibility / search probes around `GitHubReviewService.cs:217`), which also use the `"github"` client with the candidate token.
+**Thread the opt-out as a parameter, do not hardcode it inside `ValidateCredentialsAsync`.** That method has **three** callers, not two (feasibility-verified):
+- `/api/auth/connect` and `/api/auth/replace` — **candidate** token → **skip** (pass `skipCredentialHealth: true`).
+- `ViewerLoginHydrator` (`ViewerLoginHydrator.cs:60`) — validates the **stored, committed** token at startup → must **NOT** skip. A dead stored token here *should* latch invalid so the banner shows on launch (this is a *feature* — startup detection). Pass `skipCredentialHealth: false` (the default).
 
-A negative test asserts a bad candidate during connect/replace does **not** flip the latch (§ 9).
+So `ValidateCredentialsAsync(bool skipCredentialHealth = false, …)` sets the request option from the parameter. The fine-grained-token follow-up probes invoked *during candidate validation* (repo-visibility / search probes around `GitHubReviewService.cs:217`) inherit the same candidate context and also set the skip option. Hardcoding the option at the request-build site (the earlier draft's "set it at line 77") would wrongly suppress the hydrator's stored-token signal.
+
+Negative tests (§ 9): a bad **candidate** during connect/replace does **not** flip the latch; a dead **stored** token at hydrator startup **does**.
 
 ### 6.4 Explicit clear + epoch bump on successful (re)connect
 
@@ -176,7 +180,9 @@ On a successful validate+commit (connect or replace), the endpoint calls `BumpEp
 
 Call sites: `/api/auth/connect` success-commit (`AuthEndpoints.cs:88`), `/api/auth/connect/commit`, and `/api/auth/replace` success-commit.
 
-**Why this is not redundant with auto-clear-on-2xx (rejected scope-guardian removal):** `SetupPage` `await refetch()`s `/api/auth/state` immediately after a successful replace. If the latch were cleared only by the *next* GitHub 2xx (a poll cadence away), that refetch would read `githubCredentialInvalid: true` and **flash the red snackbar on top of the success the user just achieved**. The explicit `MarkValid()` on commit closes that window. Auto-clear-on-2xx remains as the belt-and-suspenders backstop for any other recovery path.
+**Latch-clear is validation-gated (mandatory-valid guarantee).** `BumpEpoch()`/`MarkValid()` are called from **only** these post-validation commit paths and the handler's authenticated-2xx branch — never from a path that commits a token without a successful GitHub probe. Verified: `/api/auth/replace` rolls back the candidate and returns `BadRequest` *before* any `CommitAsync` when validation fails (`AuthEndpoints.cs:233-240,279`), so an invalid token can never reach commit and therefore never clears the latch. A negative test pins this: `/api/auth/replace` with a bad token leaves `githubCredentialInvalid == true` (§ 9). This is what makes "the user cannot proceed out of the degraded state with a bad token" (§ 7.4) true rather than asserted.
+
+**Why this is not redundant with auto-clear-on-2xx (rejected scope-guardian removal):** `SetupPage` `await refetch()`s `/api/auth/state` immediately after a successful replace. If the latch were cleared only by the *next* GitHub 2xx (a poll cadence away), that refetch would read `githubCredentialInvalid: true` and **flash the red banner on top of the success the user just achieved**. The explicit `MarkValid()` on commit closes that window. Auto-clear-on-2xx remains as the belt-and-suspenders backstop for any other recovery path.
 
 ### 6.5 `/api/auth/state` surfacing
 
@@ -214,55 +220,60 @@ Extract the presentational shape of `StreamHealthSnackbar` into a reusable `Snac
 - CSS module mirrors `StreamHealthSnackbar.module.css` (top-center fixed, `top:100px`, `z-index:200`, slide-in, reduced-motion-aware). Tone maps to design tokens for **all three** facets — background, **border**, and foreground: `warning` → `--warning-soft` / `border 1px solid --warning` / `--warning-fg`; `danger` → `--danger-soft` / `border 1px solid --danger` / `--danger-fg` (theme-aware, `tokens.css:113-115` light / `:187-189` dark). The border is explicit so the danger variant keeps the same visual boundary as the existing warning one.
 - `StreamHealthSnackbar` is re-pointed at `<Snackbar tone="warning" message="Connection lost — reconnecting" action={{label:'Retry now', onClick: retry}} onDismiss={…} role="status" aria-live="polite" />` with **zero visual change** (regression-pinned by its existing test + visual baselines).
 
-> **Scope note (rejected scope-guardian removal):** the extraction is kept rather than forking the CSS module. Building `GitHubAuthSnackbar` against a copy would create the exact two-copies-drift the codebase already suffers (#326/#328); extracting at the moment the *second* instance appears is the natural, lower-risk point, and the warning consumer is pinned by an existing test + baseline so the refactor is verifiable. If the owner prefers to minimize the B2 diff, the fallback is a standalone fork + a #328 follow-up — called out at the gate.
+> **Scope note (rejected scope-guardian removal):** the extraction is kept rather than forking the CSS module. Building `GitHubAuthBanner` against a copy would create the exact two-copies-drift the codebase already suffers (#326/#328); extracting at the moment the *second* instance appears is the natural, lower-risk point, and the warning consumer is pinned by an existing test + baseline so the refactor is verifiable. If the owner prefers to minimize the B2 diff, the fallback is a standalone fork + a #328 follow-up — called out at the gate.
 
-### 7.4 `GitHubAuthSnackbar`
+### 7.4 `GitHubAuthBanner`
 
 New component, mirroring `StreamHealthSnackbar`'s **appearance** (red top-center bar) but with **action-required, non-dismissible** behavior (owner decision: re-auth is mandatory, not optional):
 
 - Reads `useAuth()` for `authState.githubCredentialInvalid && authState.hasToken`, `useStreamHealth()` for `healthy`, and the router location.
 - Renders `null` unless `hasToken && githubCredentialInvalid && healthy && route !== '/setup'`. There is **no local dismiss state and no `×`** — the banner stays up the entire time the credential is invalid, on every route except `/setup`. (Suppressing on `/setup` avoids showing a "reconnect" prompt on top of the very page that performs the reconnect.)
-- Renders `<Snackbar tone="danger" message="GitHub access token invalid — reconnect" action={{ label: 'Reconnect', onClick: () => navigate('/setup?replace=1') }} role="alert" aria-live="assertive" />` — **no `onDismiss`**, so the primitive renders no dismiss button.
+- Renders `<Snackbar tone="danger" message="GitHub access token invalid — reconnect" action={{ label: 'Reconnect', onClick: () => navigate('/setup?replace=1') }} role="status" aria-live="polite" />` — **no `onDismiss`**, so the primitive renders no dismiss button.
   - **Copy (revised per design/product review):** "GitHub access token invalid — reconnect" — accurate for revoked / expired / bad-credential cases (the earlier "sign-in expired" implied OAuth-session timeout and misframed a *revoked* token; PRism uses PATs). Final copy is a B1 item the owner confirms at the visual gate.
-  - **a11y:** `role="alert"`/`aria-live="assertive"` (vs the amber one's `status`/`polite`) because the condition is action-required and persistent. Following the snackbar convention it does **not** steal focus on appear; the `Reconnect` button is keyboard-reachable.
+  - **a11y (corrected — a persistent region must not re-announce):** a *non-dismissible* banner stays mounted for the whole invalid session, so `aria-live="assertive"` would re-announce "GitHub access token invalid — reconnect" on **every** re-render / route change (App re-renders on each navigation + refetch) — disruptive to the point of unusable with a screen reader. Use **`role="status"` / `aria-live="polite"` / `aria-atomic="true"`**, with the live-region element kept **always mounted** and only its text *content* toggling on the invalid edge, so it announces **once** when it appears and once when it clears — not on every render. (Assertive is for transient urgent interrupts, not a standing condition.) It does **not** steal focus on appear; `Reconnect` is keyboard-reachable.
 - **Mandatory re-auth (owner directive):** the banner cannot be dismissed, and the only thing that removes it is the latch returning to valid — which happens only when a **valid** token is committed. The `/setup?replace=1` flow already does **validate-before-swap** (`/api/auth/replace`, § 1): an invalid candidate token is rejected with an inline error and **not** committed, so it never clears the credential-invalid state. Net: the user cannot "proceed" out of the degraded state with a bad token — they either commit a working token (banner clears) or stay blocked. The user is not hard-jailed from navigating the (degraded) app, but the non-dismissible banner is omnipresent until resolved. *(If the owner wants a harder full-screen gate — route-lock to `/setup` until valid, like the first-run `!hasToken` gate — that's a small follow-up tweak; the current design keeps the `Banner, not mutation` posture while making re-auth unavoidable.)*
 - **Navigation target is a compile-time string literal** (`/setup?replace=1`); it must never be derived from a server-supplied field, so a compromised/MITM'd response cannot redirect the user to an attacker-controlled setup page.
+- **Recovery context on `/setup` (design finding).** When the user lands on `/setup?replace=1` via Reconnect, the banner is (correctly) suppressed there, but they should see *why* they were sent. Pass a lightweight hint (e.g. `?replace=1&reason=invalid`) and have the replace form show a one-line context note — "Your saved GitHub token is no longer valid. Enter a new one to continue." — above the existing #213 classic-PAT guidance and rejection copy (`SetupForm` / `tokenErrorCopy.ts`). This closes the "confused user loops between banner and a context-less form" gap without changing the replace mechanics.
+- **Position (B1 layout decision — flag for owner).** `top:100px` was chosen for the *transient* `StreamHealthSnackbar`; for a *permanent* banner it overlaps the tab strip (tabs sit at `48–89px`) for the entire invalid session, partially obscuring tabs on PR-detail/settings. Two options for the gate: **(i)** keep the floating top-center bar (matches the connectivity look; accepts a permanent partial overlap), or **(ii)** make the re-auth banner a full-width bar that **reserves layout space** (pushes content down) — the conventional pattern for a standing system banner. Recommendation: **(ii)** for the permanent case; defaulting to (i) only if the owner wants strict visual parity with the connectivity snackbar. Owner decides at B1.
 - Mounted in `App.tsx` next to `StreamHealthSnackbar` (`App.tsx:184`).
 
-**Co-occurrence / suppression bound:** suppressing on `!healthy` and on `/setup` means only one snackbar shows at the shared `top:100px` slot. If the PRism server connection is *also* down, the re-auth snackbar is deferred — but while the server is unreachable the app is non-functional anyway and `/api/auth/state` can't be read, so the credential prompt is moot until the server returns. On reconnect, `prism-events-reconnected` refetches auth-state (§ 7.1) and the snackbar surfaces if still invalid. The masking window is therefore **bounded by SSE reconnect, not unbounded**.
+**Co-occurrence / suppression bound:** suppressing on `!healthy` and on `/setup` means only one bar shows at the shared `top:100px` slot. If the PRism server connection is *also* down, the re-auth banner is deferred — but while the server is unreachable the app is non-functional anyway and `/api/auth/state` can't be read, so the credential prompt is moot until the server returns. On reconnect, `prism-events-reconnected` refetches auth-state (§ 7.1) and the banner surfaces if still invalid. The masking window is therefore **bounded by SSE reconnect, not unbounded**.
 
-**Banner-over-UI, not redirect:** `isAuthed = hasToken && !authInvalidated` is **untouched** — the user keeps their context; the snackbar is an overlay, consistent with the `Banner, not mutation` architectural invariant. Recovery (successful replace) bumps the epoch + clears the latch (§ 6.4); the SetupPage refetch then drops the snackbar without a flash.
+**Banner-over-UI, not redirect:** `isAuthed = hasToken && !authInvalidated` is **untouched** — the user keeps their context; the banner is an overlay, consistent with the `Banner, not mutation` architectural invariant. Recovery (successful replace) bumps the epoch + clears the latch (§ 6.4); the SetupPage refetch then drops the banner without a flash.
 
 > **Resolved (owner decision) — non-dismissible, mandatory re-auth.** Design-lens (P1) and product-lens (P2) flagged that `StreamHealthSnackbar` is dismissible only because connectivity *self-heals*; a dead PAT does **not** self-heal, so a dismissible banner would let the user re-hide the exact silent-broken state #312 exists to fix. Owner chose **(b) non-dismissible while invalid**, with the added requirement that the replace workflow cannot be completed with an invalid token (satisfied by the existing validate-before-swap on `/api/auth/replace`). The banner therefore persists until a valid token is committed.
 
 ## 8. Data flow — the two paths
 
-**Background (idle / inbox):** PAT dies → next `InboxPoller` tick's authenticated GitHub call 401s → handler `MarkInvalid()`. Inbox degrades as today. Snackbar surfaces on the next `/api/auth/state` refetch (window focus, or a `prism-request-failed` from any request the user makes). Matches the chosen "surface when they interact/refocus" promptness (Approach A) and the § 3 accepted limitation for the fully-idle case.
+**Background (idle / inbox):** PAT dies → next `InboxPoller` tick's authenticated GitHub call 401s → handler `RecordAuthFailure()`. Inbox degrades as today. Snackbar surfaces on the next `/api/auth/state` refetch (window focus, or a `prism-request-failed` from any request the user makes). Matches the chosen "surface when they interact/refocus" promptness (Approach A) and the § 3 accepted limitation for the fully-idle case.
 
-**Foreground (direct interaction):** user opens a PR with a dead PAT → GitHub call 401s → handler `MarkInvalid()`; the request still fails → Web returns 500 *or* a remapped typed 4xx → `apiClient` dispatches `prism-request-failed` → debounced `useAuth` refetch → `githubCredentialInvalid: true` → snackbar. The very interaction that failed surfaces the explanation, regardless of how the endpoint reshaped the error status.
+**Foreground (direct interaction):** user opens a PR with a dead PAT → GitHub call 401s → handler `RecordAuthFailure()`; the request still fails → Web returns 500 *or* a remapped typed 4xx → `apiClient` dispatches `prism-request-failed` → debounced `useAuth` refetch → `githubCredentialInvalid: true` → banner. The very interaction that failed surfaces the explanation, regardless of how the endpoint reshaped the error status.
 
-**Recovery:** Reconnect → `/setup?replace=1` → successful replace `BumpEpoch()` + `MarkValid()` (§ 6.4) + SetupPage `refetch()` → `githubCredentialInvalid: false` → snackbar gone (no flash). A stale in-flight old-token 401 across the swap is ignored by the epoch guard.
+**Recovery:** Reconnect → `/setup?replace=1` → successful replace `BumpEpoch()` + `MarkValid()` (§ 6.4) + SetupPage `refetch()` → `githubCredentialInvalid: false` → banner gone (no flash). A stale in-flight old-token 401 across the swap is ignored by the epoch guard.
 
 ## 9. Testing strategy
 
 **Backend (xUnit):**
-- `GitHubAuthHealthHandler` (stub inner handler): 401+auth-header+same-epoch → `MarkInvalid`; 401 with epoch changed mid-request → **no-op**; 401 with no auth header → no-op; 2xx+auth-header → `MarkValid`; 2xx no auth header → no-op; 403/429/500 → no-op; transport throw → no-op + rethrow; `prism-skip-credential-health` option → no-op on a 401.
-- `IGitHubCredentialHealth` default impl: initial `IsInvalid == false` / `Epoch == 0`; mark/clear transitions; `BumpEpoch` increments; edge-only logging fires once per actual state change.
+- `GitHubAuthHealthHandler` (stub inner handler): 401+auth-header+same-epoch → `RecordAuthFailure`; 401 with epoch changed mid-request → **no-op**; 401 with no auth header → no-op; 2xx+auth-header → `MarkValid`; 2xx no auth header → no-op; 403/429/500 → no-op; transport throw → no-op + rethrow; `prism-skip-credential-health` option → no-op on a 401.
+- **Threshold test:** one isolated authenticated 401 → `IsInvalid == false` (not flipped); **two consecutive** → `IsInvalid == true`; a 2xx *between* two 401s resets the counter so it does not flip.
+- `IGitHubCredentialHealth` default impl: initial `IsInvalid == false` / `Epoch == 0` / counter 0; `RecordAuthFailure` flips only at `THRESHOLD`; `MarkValid` resets counter + clears; `BumpEpoch` increments; edge-only logging fires once per actual `IsInvalid` change.
 - `/api/auth/state` integration (`WebApplicationFactory`): latch invalid → `githubCredentialInvalid == true`; valid → false.
-- **Candidate-token negative test:** connect/replace with a bad candidate token (validation 401, skip-option set) → `/api/auth/state` still `githubCredentialInvalid == false`.
+- **Candidate-token negative test:** connect/replace with a bad candidate token (validation 401, `skipCredentialHealth: true`) → `/api/auth/state` still `githubCredentialInvalid == false`.
+- **Stored-token startup-latch test:** `ViewerLoginHydrator` validating a dead **stored** token (`skipCredentialHealth: false`) → `githubCredentialInvalid == true` after two failures (confirms the hydrator does *not* skip).
+- **Mandatory-valid test:** `POST /api/auth/replace` with an **invalid** token → `BadRequest`, no commit, and `githubCredentialInvalid` stays `true` (the latch cannot be cleared by a bad token).
 - **Feedback-client negative test:** a 401 on the feedback-client path → `githubCredentialInvalid == false` (pins the handler-wiring exclusion).
 - **Replace-race test:** an old-token 401 delivered after a `BumpEpoch` does not set the latch.
-- **Red-on-main proof:** an integration test where a fake `"github"` client returns 401 on an inbox/PR path, then asserts `/api/auth/state` reports `githubCredentialInvalid == true`. **Red on `origin/main`** (no field / no handler — fails to compile or returns false), green on head.
+- **Red-on-main proof:** an integration test where a fake `"github"` client returns two 401s on an inbox/PR path, then asserts `/api/auth/state` reports `githubCredentialInvalid == true`. **Red on `origin/main`** (no field / no handler — fails to compile or returns false), green on head.
 
 **Frontend (vitest):**
 - `Snackbar` primitive: renders message/action/dismiss; tone class mapping incl. border; reduced-motion.
 - `StreamHealthSnackbar`: unchanged behavior after re-pointing (existing test stays green).
-- `GitHubAuthSnackbar`: shows on `hasToken && invalid && healthy && route!=='/setup'`; hidden when `!hasToken`, `!invalid`, `!healthy`, or on `/setup`; renders **no dismiss button** and stays mounted while invalid (no dismiss path); Reconnect navigates to `/setup?replace=1`.
+- `GitHubAuthBanner`: shows on `hasToken && invalid && healthy && route!=='/setup'`; hidden when `!hasToken`, `!invalid`, `!healthy`, or on `/setup`; renders **no dismiss button** and stays mounted while invalid (no dismiss path); Reconnect navigates to `/setup?replace=1`.
 - `Snackbar` primitive: renders the `×` only when `onDismiss` is provided (warning consumer) and omits it otherwise (danger consumer).
 - `useAuth`: `prism-request-failed` triggers a debounced refetch; flag surfaces from `authState`.
 - `apiClient`: a failed response dispatches `prism-request-failed`.
 
-**e2e (Playwright):** B1 visual baseline for the red snackbar (a fake-mode route forcing `githubCredentialInvalid` via the auth-state fake). New baselines regenerated from CI artifact per house process.
+**e2e (Playwright):** B1 visual baseline for the red banner (a fake-mode route forcing `githubCredentialInvalid` via the auth-state fake). New baselines regenerated from CI artifact per house process.
 
 ## 10. Rejected alternatives
 
@@ -277,9 +288,12 @@ New component, mirroring `StreamHealthSnackbar`'s **appearance** (red top-center
 ## 11. Follow-ups (out of scope)
 
 - Mid-session **scope-loss (403 / GraphQL-200-with-errors)** detection (needs SSO/rate-limit disambiguation).
-- **GHES 401 semantics.** On GitHub Enterprise Server, some versions can return `401` for resource-level authorization failures, not only credential invalidity, which could false-trigger. This slice assumes github.com `401`-means-bad-credentials semantics; the auth-header + epoch guards reduce but don't eliminate the GHES edge. Verify/scope before relying on it for GHES users.
+- **GHES 401 semantics (owner gate item, § 13).** On GitHub Enterprise Server, some versions can return `401` for resource-level authorization failures, not only credential invalidity, which could false-trigger. The consecutive-401 threshold (§ 6.1) + auth-header + epoch guards reduce this, but a *persistent* resource-401 on GHES could still flip a non-dismissible banner. This slice assumes github.com `401`-means-bad-credentials semantics; the owner decides at the gate whether to **scope the latch to github.com hosts only** until GHES disambiguation lands, or ship with the threshold mitigation for all hosts.
+- **False-positive recovery (non-dismissible).** With the threshold + auto-clear-on-2xx, a genuinely-valid token self-heals on the next authenticated 2xx (active poller / next interaction). The narrow residual — a false latch while fully idle with no further traffic — is bounded by the next focus/refetch. If even that proves annoying, a one-shot authenticated re-probe (`GET /user` with the stored token) on banner mount could confirm-or-clear before forcing replace; deferred unless observed.
 - **#137** activity rail: once landed, its GitHub calls feed this latch automatically (no extra work) — verify at that time.
 - **SSE-push promptness** for the fully-idle case (§ 3) if Approach A's latency is felt.
+
+**`prism-request-failed` is an auth-state-refetch cue only** (§ 7.2) — it is not a general failure bus; nothing else should subscribe to it for unrelated behavior.
 
 ## 12. File-change map (orientation, not exhaustive)
 
@@ -294,14 +308,15 @@ New component, mirroring `StreamHealthSnackbar`'s **appearance** (red top-center
 **Frontend**
 - `frontend/src/components/Snackbar/` — **new** shared primitive (+ module + test).
 - `frontend/src/components/StreamHealthSnackbar/StreamHealthSnackbar.tsx` — re-point at `Snackbar` (no visual change).
-- `frontend/src/components/GitHubAuthSnackbar/` — **new** (+ test).
+- `frontend/src/components/GitHubAuthBanner/` — **new** (+ test).
 - `frontend/src/api/types.ts:74` — `githubCredentialInvalid` on `AuthState`.
 - `frontend/src/api/client.ts:67` — dispatch `prism-request-failed` on any failed response.
 - `frontend/src/hooks/useAuth.tsx` — debounced refetch on `prism-request-failed`.
-- `frontend/src/App.tsx:184` — mount `GitHubAuthSnackbar`.
+- `frontend/src/App.tsx:184` — mount `GitHubAuthBanner`.
 
 ## 13. Risk / gate
 
 - **B2 (auth/token surface):** this spec is the spec-gate artifact. Owner reviews the *approach* before planning.
 - **B1 (new red banner):** visual assert at green-and-ready (screenshots / baseline), plus the **copy** ("GitHub access token invalid — reconnect") the owner confirms. Behavior resolved: non-dismissible while invalid (§ 7.4).
+- **Owner decisions still open at the gate** (defaults in brackets): (1) banner **position** — floating top-center vs full-width reserve-space bar (§ 7.4 Position) *[recommend reserve-space]*; (2) **GHES scoping** — latch on all hosts with the threshold mitigation, or github.com-only this slice (§ 11) *[recommend github.com-only until GHES disambiguation]*; (3) the small **recovery-context line** on `/setup` (§ 7.4) *[recommend include]*.
 - Secrets scan over the diff required at PR time. The handler/latch inspect status codes and the *presence* of an `Authorization` header only — they never read, log, or expose token material (§ 6.1 logging contract).
