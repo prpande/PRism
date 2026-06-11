@@ -1,4 +1,4 @@
-import { apiClient, ApiError } from './client';
+import { apiClient } from './client';
 import type { AiSummaryResult, PrReference, PrSummary } from './types';
 
 export async function getAiSummaryResult(prRef: PrReference): Promise<AiSummaryResult> {
@@ -7,9 +7,8 @@ export async function getAiSummaryResult(prRef: PrReference): Promise<AiSummaryR
       `/api/pr/${prRef.owner}/${prRef.repo}/${prRef.number}/ai/summary`,
     );
     return result ? { kind: 'ok', summary: result } : { kind: 'absent' };
-  } catch (e) {
+  } catch {
     // Any non-2xx (incl. 503) or network failure → error. 204 never throws (returns undefined above).
-    void (e instanceof ApiError);
     return { kind: 'error' };
   }
 }

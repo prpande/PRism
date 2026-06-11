@@ -18,10 +18,11 @@ internal static class PrCategoryParser
         var firstLine = (newline >= 0 ? raw[..newline] : raw).TrimEnd('\r');
 
         const string prefix = "CATEGORY:";
-        if (!firstLine.TrimStart().StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+        var trimmed = firstLine.TrimStart();
+        if (!trimmed.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
             return (raw, "");
 
-        var value = firstLine.TrimStart()[prefix.Length..].Trim();
+        var value = trimmed[prefix.Length..].Trim();
 
         // Resolve canonical lowercase entry from the taxonomy set to avoid CA1308
         // (prefer ToUpperInvariant for normalisation). We want the lowercase canonical
