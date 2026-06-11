@@ -2,7 +2,8 @@
 
 - **Issue:** #320 (epic #317, Theme B — GitHub provider; severity High / P1)
 - **Date:** 2026-06-11
-- **Tier / Risk:** T3 (cross-cutting + new shared abstraction) · hands-off, with a B2 pre-PR re-check
+- **Tier / Risk:** T3 (cross-cutting + new shared abstraction) · **hands-off (conditionally
+  escalates to B2-gated iff the pre-PR re-check finds a submit-path *semantic* shift)**
 - **Worktree / branch:** `D:\src\PRism-320` · `feature/320-github-transport-helper`
 
 ## 1. Problem
@@ -19,13 +20,18 @@ each of which also inlines the header set and omits `X-GitHub-Api-Version`.
 | Group | What | Where (current) |
 |-------|------|-----------------|
 | **A. Request headers** | `Authorization: Bearer`, `User-Agent: PRism/0.1`, `Accept: application/vnd.github+json`, sometimes `X-GitHub-Api-Version: 2022-11-28` rebuilt inline | `GitHubReviewService.cs` (`ValidateCredentialsAsync` :79, `SearchHasResultsAsync` :221, `GetFileContentAsync` :417 *custom Accept*, `GetCommitAsync` :459, `PostGraphQLAsync` :802, plus the `SendGitHubAsync` helper :758) + `Inbox/GitHubSectionQueryRunner` :112, `Inbox/GitHubPrEnricher` :55, `Inbox/GitHubAwaitingAuthorFilter` :63, `Inbox/GitHubCiFailingDetector` :322, `Activity/GitHubReceivedEventsReader` :46, `Activity/GitHubNotificationsReader` :40, `Activity/GitHubWatchedReposReader` :35, `Activity/GitHubPrTimelineReader` :63, `Feedback/GitHubFeedbackSubmitter` :65 |
-| **B. 429 → `RateLimitExceededException`** | identical `if (resp.StatusCode == TooManyRequests) throw new RateLimitExceededException(msg, resp.Headers.RetryAfter?.Delta)` | `GitHubSectionQueryRunner` :116, `GitHubPrEnricher` :60, `GitHubAwaitingAuthorFilter` :68, `GitHubCiFailingDetector` :136 + :259 (×5) |
-| **C. Link-header parsers (RFC 8288)** | three parsers, **three return semantics** | `GitHubReviewService.TryParseLastPage` (`bool` + `out int page`, from rel=`last`), `GitHubReviewService.ExtractNextLink` (`string?` *relative path*, rel=`next`), `GitHubCiFailingDetector.TryGetNextLink` (`Uri?` *absolute*, rel=`next`) |
-| **D. Error-body read → wrap** | best-effort body read (try/catch + `CA1031` pragma) then `throw new HttpRequestException(...statusCode:...)` | `PostGraphQLAsync` :806, `ReviewComments.cs` :34, `IssueComments.cs` :41 (×3); plus near-identical success-path `id`/`created_at` parse in `ReviewComments.cs` :50 and `IssueComments.cs` :71 |
-| **E. `pulls/{n}` fetchers** | two fetch scaffolds → two records (`PollPullMeta(HeadSha,State,Mergeability,Merged)` vs `PullMeta(BaseSha,HeadSha,ChangedFiles)`) | `GitHubReviewService.FetchPullJsonAsync` / `FetchPullMetaAsync` |
+| **B. 429 → `RateLimitExceededException`** | `if (resp.StatusCode == TooManyRequests) throw new RateLimitExceededException(msg, resp.Headers.RetryAfter?.Delta)` | `GitHubSectionQueryRunner` :116, `GitHubPrEnricher` :60, `GitHubAwaitingAuthorFilter` :68, `GitHubCiFailingDetector` :136 + :259 (×5) |
+| **C. Link-header parsers (RFC 8288)** | three parsers, three return shapes | `GitHubReviewService.TryParseLastPage` (`bool` + `out int page`, rel=`last`), `GitHubReviewService.ExtractNextLink` (`string?` *relative path*, rel=`next`), `GitHubCiFailingDetector.TryGetNextLink` (`Uri?` *absolute*, rel=`next`) |
+| **D. Error-body read** | best-effort body read (try/catch + `CA1031` pragma) before throwing | `PostGraphQLAsync` :806, `ReviewComments.cs` :34, `IssueComments.cs` :41 (×3) |
+| **E. `pulls/{n}` fetchers** | two fetch scaffolds → two records (`PollPullMeta` vs `PullMeta`) | `GitHubReviewService.FetchPullJsonAsync` / `FetchPullMetaAsync` — **deferred, see §5** |
 | **F. Timeline GraphQL fragment** | the `timelineItems(...)` selection duplicated, second copy **outside** the frozen-shape test's protection | `PrDetailGraphQLQuery` :44 vs `GetTimelineAsync` :353 |
 | **G. `author{login avatarUrl}` extraction** | same `TryGetProperty`+`ValueKind==String` null-dance ×3 | `GitHubReviewService.cs` :1018, :1079, :1116 |
-| **H. Tuning constants** | `ConcurrencyCap = 8` declared 4×; page sizes as bare `per_page=…`/`first:…` vs named consts | `GitHubReviewService` :391, `GitHubPrEnricher` :12, `GitHubAwaitingAuthorFilter` :12, `GitHubCiFailingDetector` :11; page-size literals scattered |
+| **H. Tuning constants** | `ConcurrencyCap = 8` declared 4×; page sizes scattered (out of scope, §5) | `GitHubReviewService` :391, `GitHubPrEnricher` :12, `GitHubAwaitingAuthorFilter` :12, `GitHubCiFailingDetector` :11 |
+
+**Survey correction (round-1 review):** the five 429 blocks are **not** byte-identical —
+`GitHubSectionQueryRunner` throws `"GitHub Search API rate-limited (429); …"` (note the
+`Search API` qualifier); the other four omit it. The shared helper must preserve this
+(see §4.3), so consolidation is message-preserving, not message-flattening.
 
 ### 1.2 Observed drift (the bug this fixes)
 
@@ -39,28 +45,35 @@ version number would rot in 15 places.
 
 **Goals**
 - One definition each of the UA string and the GitHub header set.
-- Every REST call sends `X-GitHub-Api-Version` (closes the drift).
-- One Link-header parser, one 429 throw, one error-body-wrap helper; satellite copies deleted.
+- Every **REST** call sends `X-GitHub-Api-Version` (closes the drift).
+- One Link-header parser, one 429 throw, one error-body-read helper; satellite copies deleted.
 - **No GraphQL query text change** — fragment extraction is byte-identical textual composition.
-- `dotnet test` green; behavior preserved everywhere except the inert header addition.
+- `dotnet test` green; behavior preserved everywhere except the inert REST header addition
+  and the GHES pagination-correctness fix called out in §4.2.
 
 **Non-goals**
-- No change to *what* any endpoint fetches, parses, or returns (pure provider-internal refactor).
+- No change to *what* any endpoint fetches, parses, or returns.
 - No `GitHubReviewService` god-object decomposition (tracked separately by the epic).
 - No DI/lifetime changes to the 10 classes (see §4.1 rejected alternative).
-- Not in this PR: group **E** (`pulls/{n}` union record) and force-merging semantically-distinct
-  page sizes — see §5.
+- **The reviewer-atomic submit pipeline's GraphQL transport (`GitHubReviewService.Submit.cs`,
+  `PostSubmitGraphQLAsync`) is NOT touched** (B2 — see §7).
+- Not in this PR: group **E** (`pulls/{n}` union record) and force-merging
+  semantically-distinct page sizes — see §5.
 
 ## 3. Acceptance criteria
 
-1. `"PRism/0.1"` and the `Accept` / `X-GitHub-Api-Version` header set are defined **exactly
-   once** in production code (`grep -c "PRism/0.1"` over `PRism.GitHub/**` non-test = 1).
-2. **All** REST calls send `X-GitHub-Api-Version: 2022-11-28`, including the three
-   previously-missed Activity readers. (GHES-inert where unsupported — see §6.)
-3. Exactly one Link-header parser, one 429-throw, one error-body-wrap helper; the satellite
-   copies are deleted.
-4. The two production GraphQL query strings (`PrDetailGraphQLQuery`, `GetTimelineAsync`'s
-   `query`) are **byte-identical** to their current values, pinned by a characterization test.
+1. The UA literal `"PRism/0.1"` appears **exactly once** in `PRism.GitHub/**` production
+   (non-test) code — the `GitHubHttp.UserAgent` const definition; every other site
+   references the const. (`grep -rc '"PRism/0.1"'` over production `*.cs` = 1; this counts
+   the string literal, not const *references*.) The `Accept` / `X-GitHub-Api-Version` values
+   are likewise single-sourced as consts.
+2. **All REST** calls send `X-GitHub-Api-Version: 2022-11-28`, including the three
+   previously-missed Activity readers. (GHES tolerance — see §6.) GraphQL POSTs are
+   exempt by design via `apiVersion:false` (§4.1).
+3. Exactly one Link-header parser, one 429-throw helper, one error-body-read helper; the
+   satellite copies are deleted.
+4. `PrDetailGraphQLQuery` and `GetTimelineAsync`'s `query` string are **byte-identical** to
+   their current values, pinned by a characterization test.
 5. `dotnet test` green across Core / Web / GitHub / Integration with zero new build warnings.
 
 ## 4. Design
@@ -76,15 +89,22 @@ internal static class GitHubHttp
     internal const string AcceptJson = "application/vnd.github+json";
     internal const string ApiVersion = "2022-11-28";
 
-    // Resolves the token via the caller's existing delegate, applies the standard
-    // header set, attaches optional content, and sends. `accept` overrides AcceptJson
-    // (e.g. GetFileContentAsync's raw media type); `apiVersion:false` is reserved for
-    // any future call that must NOT send the version header (none today).
+    // Inter-batch concurrency cap for per-commit fan-out (was declared 4× as
+    // `ConcurrencyCap = 8`). Lives here as the GitHub-adapter's shared tuning const;
+    // page sizes deliberately do NOT live here (§5).
+    internal const int ConcurrencyCap = 8;
+
+    // Takes the ALREADY-RESOLVED token (string?), so each caller keeps its current
+    // token-read cadence: GitHubReviewService/Activity/Feedback read per request;
+    // GitHubSectionQueryRunner/GitHubCiFailingDetector read once upstream and pass the
+    // shared value across their N concurrent/paginated calls (round-1 feasibility finding).
+    // The empty-token guard (no Authorization when null/empty) moves inside here.
+    // `accept` overrides AcceptJson (GetFileContentAsync's raw media type).
+    // `apiVersion:false` suppresses the version header (read-side GraphQL POST — §4.4).
     internal static async Task<HttpResponseMessage> SendAsync(
-        HttpClient http, HttpMethod method, string url,
-        Func<Task<string?>> readToken, CancellationToken ct,
+        HttpClient http, HttpMethod method, string url, string? token, CancellationToken ct,
         HttpContent? content = null, string? accept = null, bool apiVersion = true)
-    { /* build request, apply headers, send */ }
+    { /* build request, host-guard the Authorization (below), apply headers, send */ }
 }
 ```
 
@@ -93,68 +113,105 @@ policy — it is a pure function of `(http, method, url, token)`. Injecting it w
 constructor parameter to **10 sealed classes** and their test fixtures for zero behavioral
 benefit, and the classes do not share a single client name (`"github"` vs the feedback
 submitter's `"github.com"`), so there is nothing to centralize in an instance. A static
-helper that takes the already-injected `_readToken` delegate is the minimal diff and is
-trivially unit-testable with a stub `HttpMessageHandler`. The empty-token guard
-(`if (!string.IsNullOrEmpty(token))`) moves inside the helper, removing that duplicate too.
+method taking the already-resolved token is the minimal diff, is trivially unit-testable
+with a stub `HttpMessageHandler`, and does **not** foreclose a future `IGitHubHttp` seam
+(the static method can later delegate to one). Every one of the 10 classes already stores
+`_readToken` as `Func<Task<string?>>`; passing the *resolved* token (not the delegate)
+preserves each site's exact read cadence — a delegate parameter would silently re-read the
+token once per request for the two callers that currently read once per batch.
 
-**`X-GitHub-Api-Version` on GraphQL.** `PostGraphQLAsync` will route through the same header
-application. The REST version header is ignored by the GraphQL endpoint, so this is inert
-there; it keeps a single header path rather than a GraphQL-special-case.
+**Same-host Authorization guard.** Unifying the `next`-link adapters to absolute URLs (§4.2)
+means `SendAsync` now receives server-controlled absolute URLs (from `Link` response headers)
+at two callers instead of one. To keep the PAT from ever riding a request to an unexpected
+host, `SendAsync` attaches `Authorization` only when the request URL is **relative** (resolved
+against the trusted `BaseAddress`) **or** its host equals `http.BaseAddress!.Host`; an
+absolute, off-host URL throws `ArgumentException` (fail loud — never silently send the token
+off-host, never silently drop it). GitHub pagination `Link` URLs are always same-host, so this
+is inert for every legitimate response; it is a cheap chokepoint guard at the moment the
+absolute-URL path is broadened. (Pre-existing posture hardened, not new required behavior —
+the deeper "validate all egress hosts" work is out of scope.)
 
-### 4.2 `GitHubLinkHeader` — one parser, caller-side adapters
-
-The three parsers differ only in their *return shape*, not their RFC-8288 parsing. Extract
-the parsing once; preserve each caller's exact current semantics with a one-line adapter.
+### 4.2 `GitHubLinkHeader` — one parser, unified to absolute URLs
 
 ```csharp
 internal static class GitHubLinkHeader
 {
     // Returns the absolute URL GitHub put in the `Link` header for the given rel
-    // ("next" | "last" | ...), or false if absent. Handles quoted and unquoted rel.
+    // ("next" | "last" | ...), or false if absent. Accepts quoted (rel="next") and
+    // unquoted (rel=next) forms — standardizing on the most-capable existing parser
+    // (GitHubCiFailingDetector's). This slightly broadens the two GitHubReviewService
+    // callers, which currently match quoted-only; inert because GitHub always quotes rel.
     internal static bool TryGetRel(HttpResponseMessage resp, string rel, out string url);
 }
 ```
 
-Caller adapters (behavior-preserving):
-- **`TryParseLastPage`** (rel=`last`, wants the `&page=N` value): `TryGetRel(resp,"last",out var u)` → parse the `page` query param from `u`. The page-extraction stays at the caller (it is a `last`-specific concern, not Link parsing).
-- **`ExtractNextLink`** (rel=`next`, wants a *relative* path to reuse `BaseAddress`): `TryGetRel(resp,"next",out var u)` → `new Uri(u).PathAndQuery.TrimStart('/')`.
-- **`TryGetNextLink`** (rel=`next`, wants an *absolute* `Uri`): `TryGetRel(resp,"next",out var u)` → `new Uri(u)`.
+**Corrected rationale (round-1 adversarial finding).** The previous draft justified keeping
+the three parsers' divergent return shapes as "the callers resolve against different
+`BaseAddress` expectations." **That was false** — `ExtractNextLink` and `TryGetNextLink` use
+the *same* `"github"` client and the *same* single `BaseAddress`. The real divergence:
+`ExtractNextLink` strips the URL to `PathAndQuery.TrimStart('/')` and re-resolves it against
+`BaseAddress`, which is github.com-correct but on GHES (`BaseAddress = {host}/api/v3/`)
+produces a doubled `/api/v3/api/v3/…` → **404 on every paginated diff past page 1**.
+`TryGetNextLink` hands the absolute URL through unchanged — correct on both. Freezing
+`ExtractNextLink`'s transform behind a characterization test would have *defended the bug*.
 
-The relative-vs-absolute divergence is **deliberately preserved** — the two callers resolve
-against different `BaseAddress` expectations, and "simplify both to absolute" is a behavior
-change this refactor will not make (§ rejected alternatives).
+**Decision: unify both `next`-link callers to the absolute URL.** On github.com (the
+exercised target) the resulting wire request is byte-identical to today (a relative path
+resolved against `BaseAddress` yields the same absolute URL GitHub returned). On GHES it
+removes the double-prefix 404. Caller adapters over the single primitive:
+- **last-page** (`TryParseLastPage`, rel=`last`): `TryGetRel(resp,"last",out var u)` → parse
+  the `page` query param from `u` (the `page` extraction stays at the caller — it is a
+  `last`-specific concern, not Link parsing).
+- **next, diff pagination** (was `ExtractNextLink`): `TryGetRel(resp,"next",out var u)` → pass
+  the absolute `u` (or `new Uri(u)`) to `SendAsync`. **Behavior change: GHES-correct now.**
+- **next, CI pagination** (was `TryGetNextLink`): `TryGetRel(resp,"next",out var u)` →
+  `new Uri(u)` — unchanged.
 
-### 4.3 `ThrowIfRateLimited` — one 429 throw
+This collapses three parsers into one **and** fixes a latent GHES pagination bug. The PR body
+calls the GHES fix out explicitly (it is the one intentional behavior delta beyond the header
+addition); a GHES-shaped `Link`-header test pins it (§8).
+
+### 4.3 `ThrowIfRateLimited` — one 429 throw, message-preserving
 
 ```csharp
-// On HTTP 429, throw RateLimitExceededException(message, resp.Headers.RetryAfter?.Delta).
-// No-op otherwise. Replaces the 5 inline blocks.
-internal static void ThrowIfRateLimited(HttpResponseMessage resp);
+// On HTTP 429, throw RateLimitExceededException($"GitHub{subject} rate-limited (429);
+// orchestrator should skip this tick.", resp.Headers.RetryAfter?.Delta). No-op otherwise.
+// `subject` is " Search API" for the search-section caller, "" (default) for the other four
+// — preserving each site's current message exactly (§1.1 correction).
+internal static void ThrowIfRateLimited(HttpResponseMessage resp, string subject = "");
 ```
 
-The current five blocks share an identical message ("GitHub rate-limited (429); orchestrator
-should skip this tick."). That single message moves into the helper.
+### 4.4 Error-body read (group D) — shared best-effort read, throws stay at callers
 
-### 4.4 Error-body wrap + created-entity parse
+The triplicated ugly part is the `CA1031`-suppressed best-effort body read, not the throw
+(whose context label differs per caller). Extract the read; keep each caller's throw/log:
 
 ```csharp
-// Best-effort body read (CA1031-suppressed in this ONE audited place), then throw
-// HttpRequestException with statusCode populated and a truncated body in the message.
-// `context` is the caller's label ("GitHub GraphQL", "GitHub review comment POST", ...).
-internal static async Task ThrowGitHubHttpErrorAsync(
-    HttpResponseMessage resp, string context, CancellationToken ct);
-
-// Reads { id:int64, created_at:string } → (long Id, DateTimeOffset CreatedAt); throws
-// HttpRequestException(statusCode: OK) on a missing field. Shared by ReviewComments /
-// IssueComments success paths.
-internal static (long Id, DateTimeOffset CreatedAt) ParseCreatedEntity(JsonElement root, string context);
+// The ONE audited CA1031-suppressed read. Returns the body, or "" on a non-cancellation
+// read failure. OperationCanceledException propagates (caller shutdown).
+internal static async Task<string> ReadErrorBodyBestEffortAsync(HttpResponseMessage resp, CancellationToken ct);
 ```
 
-`PostGraphQLAsync` keeps its extra transport-failure **log** call (`s_graphqlTransportFailed`)
-at the caller — it is GraphQL-specific telemetry, not part of the shared wrap. The helper
-owns only the read-body-then-throw shape; the GraphQL caller logs, then calls it (or the
-helper returns the body for the caller to log; decided in the plan to keep the log call-site
-intact). The `Truncate` helper stays where it is and is reused.
+Callers:
+- **GraphQL** (`PostGraphQLAsync`): `var body = await GitHubHttp.ReadErrorBodyBestEffortAsync(resp, ct);`
+  then its existing `s_graphqlTransportFailed(… Truncate(body,1024) …)` log, then
+  `throw new HttpRequestException($"GitHub GraphQL HTTP {(int)code} {reason}: {Truncate(body,512)}", null, code);`.
+  The GraphQL-specific log stays at the caller (it is telemetry, not part of the shared read).
+- **review / issue comment POST**: `var body = await GitHubHttp.ReadErrorBodyBestEffortAsync(resp, ct);`
+  then `throw new HttpRequestException($"GitHub {context} HTTP {(int)code} {reason}: {Truncate(body,512)}", null, code);`
+  with `context` = `"review comment POST"` / `"issue comment POST"` — reproducing both messages exactly.
+
+The **success-path** `id`/`created_at` parse in `ReviewComments.cs` / `IssueComments.cs` is
+**left inline, not extracted** (round-1 finding): the two callers' missing-field messages
+differ (`missing 'id'.` vs `missing 'id' field.`) and a single shared parser cannot reproduce
+both without flattening a user-facing message. A 2-caller, ~6-line, message-divergent parse
+is below the extraction bar; deduping it would trade byte-identical behavior for a premature
+unifier. `Truncate` stays where it is and is reused.
+
+`PostGraphQLAsync` routes its send through `GitHubHttp.SendAsync(…, apiVersion:false)` — the
+REST version header is meaningless to the GraphQL endpoint, and suppressing it keeps the
+read-side GraphQL request **byte-identical to today** (no spurious header on a GraphQL POST).
+This is the `apiVersion` param's first real consumer.
 
 ### 4.5 `ReadActor` — author extraction (group G)
 
@@ -163,7 +220,8 @@ intact). The `Truncate` helper stays where it is and is reused.
 internal static (string Login, string? AvatarUrl) ReadActor(JsonElement node);
 ```
 
-Replaces the three inline null-dances. Pure JSON read; zero behavior risk.
+Replaces the three inline null-dances. Pure JSON read; zero behavior risk. Not AC-mandated —
+an explicit cheap extra (§5).
 
 ### 4.6 Timeline GraphQL fragment (group F) — byte-identical extraction
 
@@ -182,58 +240,80 @@ internal const string TimelineNodes =
     "}";
 ```
 
-Composition (verified byte-equal to the originals):
+Composition (verified byte-equal to the originals at survey time):
 - PR-detail: `… + TimelineItemsArgs + "{pageInfo{hasNextPage endCursor} " + TimelineNodes + "}" + …`
 - Timeline: `… + TimelineItemsArgs + "{" + TimelineNodes + "}" + …`
 
 This brings the previously-unprotected `GetTimelineAsync` copy under a characterization test
-(AC #4). Extraction is the *only* change here — no schema/shape edit.
+(AC #4). Extraction is the *only* change here — no schema/shape edit. **The characterization
+pin (§8.1) is written and green BEFORE the extraction**, so the bytes are locked first.
 
 ### 4.7 `ConcurrencyCap` (subset of group H)
 
 Collapse the four identical `ConcurrencyCap = 8` declarations into one
-`internal const int GitHubLimits.ConcurrencyCap = 8`. Page sizes are **not** force-merged
-(see §5).
+`internal const int GitHubHttp.ConcurrencyCap = 8` (§4.1). **No separate `GitHubLimits`
+class** (round-1 scope finding): a one-const umbrella class named for "limits" would invite
+the very page-size folding §5 argues against. Page sizes are not consolidated (§5).
 
 ## 5. Scope boundary (what lands vs. defers)
 
-**Lands in this PR** (AC-mandated + cheap/safe): A (headers + UA const), B (429), C (Link),
-D (error-wrap + created-entity parse), F (timeline fragment), G (`ReadActor`), and the
-`ConcurrencyCap` consolidation from H.
+**Lands in this PR.**
+- **AC-mandated:** A (headers + UA const), B (429), C (Link — incl. the §4.2 GHES fix),
+  D (error-body read), F (timeline fragment).
+- **Explicit cheap extras** (issue-listed, zero behavior risk, *not* AC-required — included
+  by deliberate choice, not drift): G (`ReadActor`), the `ConcurrencyCap` consolidation
+  (the in-scope half of group H).
 
 **Deferred** (filed as a follow-up issue, cross-linked from this PR):
 - **Group E — `pulls/{n}` union record.** `PollPullMeta` carries `Mergeability`/`Merged`,
   which feeds the active-PR mergeability surface (#259/#270) — a B2-adjacent concern. Merging
   it with `PullMeta` couples two consumers and restructures a model that touches mergeability
-  semantics; that does not belong in a "transport plumbing" PR whose safety rests on being
-  behavior-preserving. Defer to keep this PR hands-off.
-- **Aggressive page-size consolidation.** `per_page=1` (existence probe), `per_page=50`
-  (sections), `per_page=100` (full pagination), and `first:50`/`first:100` (GraphQL) are
-  **different limits for different endpoints**, not one concept. Forcing them into a single
-  `GitHubLimits` surface would be false consolidation that obscures intent. Where a page size
-  is currently an unnamed literal it may get a *local* named const, but cross-endpoint merging
-  is out of scope.
+  semantics; that does not belong in a behavior-preserving transport PR. *Note:* both `pulls/{n}`
+  fetchers still route their requests through `GitHubHttp.SendAsync`, so the **transport/header
+  unification reaches them** — only the *record merge* is deferred, leaving no raw header
+  duplication behind.
+- **Page-size consolidation** (the other half of group H). `per_page=1` (existence probe),
+  `per_page=50` (sections), `per_page=100` (full pagination), and `first:50`/`first:100`
+  (GraphQL) are **different limits for different endpoints**, not one concept. A local named
+  const may replace an unnamed literal, but cross-endpoint merging is out of scope (false
+  consolidation that obscures intent).
+- **Same-host egress allowlist beyond the §4.1 guard**, and **`Submit.cs` GraphQL transport**
+  (B2 — §7).
 
-This split keeps the PR's risk envelope at "behavior-preserving + one inert header" while
-still satisfying every acceptance criterion.
+## 6. Behavior change: `X-GitHub-Api-Version` on REST, and GHES tolerance
 
-## 6. Behavior change: `X-GitHub-Api-Version` everywhere
+Routing the previously-omitting REST sites through `GitHubHttp.SendAsync` means they start
+sending `X-GitHub-Api-Version: 2022-11-28`.
 
-Routing the previously-omitting sites through `GitHubHttp.SendAsync` means they start sending
-`X-GitHub-Api-Version: 2022-11-28`. Intended. On github.com this pins the documented API
-version (the current default — no response change). On GHES the header is ignored where the
-version is unsupported, so it is inert. One sentence to this effect goes in the PR body.
+- **github.com:** `2022-11-28` is the current default REST version, so responses are
+  unchanged. No behavior delta.
+- **GHES:** `2022-11-28` is the **baseline** date-based REST version, supported by every GHES
+  release that implements API versioning (3.9+). GHES releases that predate API versioning
+  ignore the unknown request header (HTTP servers ignore unrecognized request headers by
+  default), so the header is inert there too. The narrow theoretical gap — a GHES that
+  implements versioning but rejects `2022-11-28` — does not exist (it is the first/lowest
+  version). If a specific deployment is ever found to reject it, the per-call `apiVersion:false`
+  escape hatch (§4.1) is the mitigation; this is noted, not pre-built.
+
+GraphQL POSTs do **not** gain the header (`apiVersion:false`, §4.4). One sentence to this
+effect goes in the PR body.
 
 ## 7. Risk surface (B2 pre-PR re-check)
 
-The shared transport underlies `PostGraphQLAsync` and the issue/review-comment POST paths,
-which sit beneath the **reviewer-atomic submit pipeline** (a B2 surface). The refactor is
-behavior-preserving on those paths: same auth, same body, same error shape, plus the inert
-version header. The atomic-submit GraphQL sequence (`addPullRequestReview` →
-thread/reply → `submitPullRequestReview`) and its pending-review-id handling are **not
-touched**. At pre-PR re-check (workflow step 7) the committed diff is re-read against the
-Axis-B table; if any submit-path *semantic* shifted, the issue re-classifies to gated (B2)
-and routes to the human gate before the PR opens.
+The shared transport underlies `PostGraphQLAsync` (read-side GraphQL) and the standalone
+issue/review-comment REST POSTs. To hold the tightest B2 envelope:
+
+- **The reviewer-atomic submit pipeline's GraphQL transport (`Submit.cs`,
+  `PostSubmitGraphQLAsync`, the `addPullRequestReview → thread/reply → submitPullRequestReview`
+  sequence and its pending-review-id handling) is left untouched.** Out of scope.
+- Read-side `PostGraphQLAsync` keeps its request **byte-identical** (`apiVersion:false`, same
+  auth, same body, same error shape).
+- The standalone comment POSTs already route through `SendGitHubAsync` (which already sends the
+  version header), so rerouting them through `GitHubHttp.SendAsync` is header-identical.
+
+At pre-PR re-check (workflow step 7) the committed diff is re-read against the Axis-B table; if
+any submit-path *semantic* shifted, the issue re-classifies to gated (B2) and routes to the
+human gate before the PR opens.
 
 ## 8. Testing strategy (TDD)
 
@@ -243,18 +323,28 @@ the new helpers.
 
 1. **GraphQL byte-identity (AC #4).** Pin `PrDetailGraphQLQuery` and `GetTimelineAsync`'s
    query string to their exact current bytes (the frozen-shape integration test already covers
-   the former; add an explicit pin for the latter). Refactor → both stay green.
+   the former; add an explicit pin for the latter) **before** extraction; both stay green after.
 2. **Header presence (AC #1/#2).** Unit-test `GitHubHttp.SendAsync` via a stub
-   `HttpMessageHandler`: asserts UA / Accept / `X-GitHub-Api-Version` / Bearer present; Accept
-   override honored; empty token → no Authorization header. Add a regression test that a
-   previously-omitting reader (e.g. `GitHubReceivedEventsReader`) now sends the version header.
-3. **Link parser parity (AC #3).** Table-test `GitHubLinkHeader.TryGetRel` across quoted /
-   unquoted rel, multi-rel headers, missing header; plus per-caller adapter tests proving the
-   relative-path / absolute-Uri / last-page outputs equal the pre-refactor outputs.
-4. **429 (AC #3).** `ThrowIfRateLimited` throws on 429 with `RetryAfter.Delta`, no-ops otherwise.
-5. **Error-wrap + created-entity (AC #3).** `ThrowGitHubHttpErrorAsync` populates `StatusCode`
-   and truncates the body; `ParseCreatedEntity` returns id/created_at and throws on a missing field.
-6. **Full suite (AC #5).** `dotnet test` Release across all four projects; zero new warnings.
+   `HttpMessageHandler`: UA / Accept / `X-GitHub-Api-Version` / Bearer present; `accept`
+   override replaces the default; empty token → no Authorization; **`apiVersion:false` → no
+   version header**; **`GetFileContentAsync`'s raw Accept + version header still returns the
+   raw body unchanged** (the one site where a non-default Accept meets the version header).
+   Regression: a previously-omitting reader (e.g. `GitHubReceivedEventsReader`) now sends the
+   version header.
+3. **Same-host guard (§4.1).** `SendAsync` with a relative URL attaches Authorization; with a
+   same-host absolute URL attaches it; with an off-host absolute URL throws `ArgumentException`
+   (token never leaves the host).
+4. **Link parser parity + GHES fix (AC #3, §4.2).** Table-test `GitHubLinkHeader.TryGetRel`
+   across quoted / unquoted rel, multi-rel headers, missing header. Per-caller adapter tests
+   prove last-page / next outputs equal the pre-refactor outputs **on github.com-shaped
+   headers**, and a **GHES-shaped `Link` header** (`{host}/api/v3/…` next URL) resolves to a
+   request URL with a single `/api/v3/` segment (the bug the unification fixes).
+5. **429 message-preserving (AC #3).** `ThrowIfRateLimited` throws on 429 with
+   `RetryAfter.Delta`; the `subject:" Search API"` variant reproduces the search message; no-op
+   otherwise.
+6. **Error-body read (AC #3).** `ReadErrorBodyBestEffortAsync` returns the body, returns `""`
+   on a faulted read, and propagates `OperationCanceledException`.
+7. **Full suite (AC #5).** `dotnet test` Release across all four projects; zero new warnings.
 
 The existing endpoint/integration tests for the 10 classes are the backstop that the
 call-site rewrites preserved behavior.
@@ -262,23 +352,39 @@ call-site rewrites preserved behavior.
 ## 9. Rejected alternatives
 
 - **Injected `IGitHubHttp` collaborator** — more churn (ctor + fixture changes across 10
-  sealed classes), no shared state to justify it. Static helper wins on minimal-diff +
-  testability. (§4.1)
-- **Merge `PollPullMeta` + `PullMeta` now** — B2-adjacent (mergeability) and not AC-required;
-  deferred. (§5)
-- **Force page sizes into one `GitHubLimits`** — false consolidation of distinct endpoint
-  limits. (§5)
-- **Simplify both `next`-link callers to absolute URLs** — a real behavior change to URL
-  resolution against differing `BaseAddress`; out of scope for a behavior-preserving refactor. (§4.2)
-- **Fold the GraphQL transport-failure log into the shared wrap** — the log is GraphQL-specific
-  telemetry; keep it at the caller, share only the throw shape. (§4.4)
+  sealed classes), no shared state to justify it. Static helper wins; does not foreclose a
+  future seam. (§4.1)
+- **Pass `Func<Task<string?>>` to `SendAsync`** — silently re-reads the token per request for
+  the two callers that currently read once per batch. Pass the resolved token instead. (§4.1)
+- **Preserve `ExtractNextLink`'s relative-path transform** — it is a latent GHES double-prefix
+  bug, not intent; unify to absolute and fix it. (§4.2)
+- **Extract `ParseCreatedEntity` for the success-path parse** — the two callers' missing-field
+  messages differ; a shared parser flattens a user-facing message for a 2-caller, 6-line gain.
+  Left inline. (§4.4)
+- **A `GitHubLimits` class for `ConcurrencyCap`** — a one-const umbrella invites the page-size
+  folding §5 rejects. Put the const on `GitHubHttp`. (§4.7)
+- **Merge `PollPullMeta` + `PullMeta`; force page sizes into one surface; touch `Submit.cs`
+  transport** — deferred / out of scope. (§5, §7)
 
-## 10. Self-review
+## 10. Round-1 `ce-doc-review` dispositions
+
+Recorded in full in the PR `## Proof`. Summary: adversarial **P1** (false Link rationale
+masking a GHES bug) → applied (§4.2, unify-to-absolute + GHES test); feasibility **P2** (429
+messages not identical) → applied (§4.3 `subject`); feasibility **P2** (delegate misfits
+token-sharing callers) → applied (§4.1 resolved-token); feasibility **P3** + scope **P2**
+(`ParseCreatedEntity` un-reproducible / premature) → applied (dropped, §4.4); security **P2**
+(token on off-host absolute URL) → applied (§4.1 host guard); coherence **P1** (GHES claim
+unevidenced) → applied (§6); scope **P2** (`GitHubLimits` one-const class) → applied (§4.7);
+plus coherence/scope wording clarifications (gate phrasing, Group H split, AC#1 grep semantics,
+explicit cheap extras). Security **P3** (error-body in messages) → FYI: pre-existing, truncated,
+no token material; noted, no behavior change. Round 2 pending.
+
+## 11. Self-review
 
 - **Placeholders:** none.
-- **Consistency:** AC ↔ design ↔ scope cross-checked; groups A–D + F + G + ConcurrencyCap map
-  to §4; E + page sizes explicitly deferred in §5 with rationale.
-- **Scope:** single coherent refactor; the riskiest satellite (E) is carved out to hold the
-  hands-off envelope.
-- **Ambiguity:** the one load-bearing claim ("byte-identical") is made falsifiable by the
-  §8.1 characterization pin.
+- **Consistency:** AC ↔ design ↔ scope cross-checked; A–D + F map to §4 (AC), G + ConcurrencyCap
+  are §5 explicit extras; E + page sizes + `Submit.cs` deferred in §5/§7 with rationale.
+- **Scope:** single coherent refactor; the riskiest satellite (E) and the B2 submit transport
+  are carved out to hold the hands-off envelope.
+- **Ambiguity:** the load-bearing claims (byte-identical fragment; GHES Link fix) are made
+  falsifiable by the §8.1 and §8.4 tests.
