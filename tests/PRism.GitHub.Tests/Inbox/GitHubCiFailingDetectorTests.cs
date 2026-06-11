@@ -768,4 +768,91 @@ public sealed class GitHubCiFailingDetectorTests
         afterFirst.Should().Be(2);
         requestCount.Should().Be(4, "a Pending result must re-probe next sweep, not hit the cache");
     }
+
+    [Fact]
+    public async Task forceReprobe_bypasses_cache_read_and_refreshes_value()
+    {
+        // #355 Lever 2: a normal call caches Passing; a forceReprobe call ignores the cache and
+        // re-reads (now Failing) for the SAME sha, then WRITES the fresh value so a subsequent
+        // normal call returns Failing with no new HTTP.
+        var failing = false;
+        var requestCount = 0;
+        var handler = new FakeHttpMessageHandler(req =>
+        {
+            Interlocked.Increment(ref requestCount);
+            if (req.RequestUri!.AbsoluteUri.Contains("/check-runs", StringComparison.Ordinal))
+                return Respond(HttpStatusCode.OK, failing ? FailingCheckRun : AllPassingCheckRuns);
+            return Respond(HttpStatusCode.OK, SuccessNoLegacyStatus);
+        });
+        var sut = BuildSut(handler);
+        var candidate = Raw(1, "sha-A");
+
+        var first = await sut.DetectAsync([candidate], default);
+        first.Items[0].Ci.Should().Be(CiStatus.Passing);
+        var afterFirst = requestCount; // 2
+
+        failing = true;
+        var forced = await sut.DetectAsync([candidate], default, forceReprobe: true);
+        forced.Items[0].Ci.Should().Be(CiStatus.Failing, "forceReprobe must bypass the cached Passing");
+        requestCount.Should().Be(afterFirst + 2, "forceReprobe re-probes both sources");
+
+        var afterForced = requestCount;
+        var third = await sut.DetectAsync([candidate], default); // normal, no force
+        third.Items[0].Ci.Should().Be(CiStatus.Failing, "the forced reprobe refreshed the cached value");
+        requestCount.Should().Be(afterForced, "the refreshed terminal is now served from cache");
+    }
+
+    [Fact]
+    public async Task forceReprobe_does_not_cache_pending()
+    {
+        // forceReprobe still honors Lever 1: a forced reprobe returning Pending is not pinned.
+        var requestCount = 0;
+        var handler = new FakeHttpMessageHandler(req =>
+        {
+            Interlocked.Increment(ref requestCount);
+            if (req.RequestUri!.AbsoluteUri.Contains("/check-runs", StringComparison.Ordinal))
+                return Respond(HttpStatusCode.OK, InProgressCheckRun);
+            return Respond(HttpStatusCode.OK, RegisteredPendingStatus);
+        });
+        var sut = BuildSut(handler);
+        var candidate = Raw(1, "sha-A");
+
+        var forced = await sut.DetectAsync([candidate], default, forceReprobe: true);
+        forced.Items[0].Ci.Should().Be(CiStatus.Pending);
+        var afterForced = requestCount;
+
+        var normal = await sut.DetectAsync([candidate], default);
+        normal.Items[0].Ci.Should().Be(CiStatus.Pending);
+        requestCount.Should().Be(afterForced + 2, "a forced Pending was not cached — the next sweep re-probes");
+    }
+
+    [Fact]
+    public async Task forceReprobe_degraded_leaves_existing_cached_terminal()
+    {
+        // A forced reprobe that degrades (5xx) writes nothing and does NOT evict the prior
+        // cached terminal — a transient blip is not evidence the terminal is wrong.
+        var degrade = false;
+        var handler = new FakeHttpMessageHandler(req =>
+        {
+            if (req.RequestUri!.AbsoluteUri.Contains("/check-runs", StringComparison.Ordinal))
+                return degrade
+                    ? Respond(HttpStatusCode.ServiceUnavailable, "{}")
+                    : Respond(HttpStatusCode.OK, AllPassingCheckRuns);
+            return Respond(HttpStatusCode.OK, SuccessNoLegacyStatus);
+        });
+        var sut = BuildSut(handler);
+        var candidate = Raw(1, "sha-A");
+
+        var first = await sut.DetectAsync([candidate], default);
+        first.Items[0].Ci.Should().Be(CiStatus.Passing);
+
+        degrade = true;
+        var forced = await sut.DetectAsync([candidate], default, forceReprobe: true);
+        forced.Items[0].Ci.Should().Be(CiStatus.None, "the forced reprobe degraded this sweep");
+
+        degrade = false;
+        var normal = await sut.DetectAsync([candidate], default);
+        normal.Items[0].Ci.Should().Be(CiStatus.Passing,
+            "the degraded forced reprobe did not evict the prior cached terminal");
+    }
 }

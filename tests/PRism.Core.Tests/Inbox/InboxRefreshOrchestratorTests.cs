@@ -122,7 +122,8 @@ public sealed class InboxRefreshOrchestratorTests
         public IReadOnlyList<RawPrInboxItem>? LastInput { get; private set; }
         public FakeCiDetector(CiStatus status = CiStatus.None, bool complete = true, Exception? toThrow = null)
             { _status = status; _complete = complete; _throw = toThrow; }
-        public Task<CiDetectResult> DetectAsync(IReadOnlyList<RawPrInboxItem> items, CancellationToken ct)
+        public Task<CiDetectResult> DetectAsync(
+            IReadOnlyList<RawPrInboxItem> items, CancellationToken ct, bool forceReprobe = false)
         {
             LastInput = items;
             if (_throw is not null) throw _throw;

@@ -20,7 +20,7 @@ public sealed class GitHubCiFailingDetector : ICiFailingDetector
     }
 
     public async Task<CiDetectResult> DetectAsync(
-        IReadOnlyList<RawPrInboxItem> items, CancellationToken ct)
+        IReadOnlyList<RawPrInboxItem> items, CancellationToken ct, bool forceReprobe = false)
     {
         ArgumentNullException.ThrowIfNull(items);
         if (items.Count == 0) return new CiDetectResult(Array.Empty<(RawPrInboxItem, CiStatus)>(), true);
@@ -34,7 +34,10 @@ public sealed class GitHubCiFailingDetector : ICiFailingDetector
             {
                 if (string.IsNullOrEmpty(c.HeadSha)) return (Item: c, Ci: CiStatus.None, Degraded: false);
                 var key = (c.Reference, c.HeadSha);
-                if (_cache.TryGetValue(key, out var cached)) return (Item: c, Ci: cached, Degraded: false);
+                // forceReprobe (the manual "Refresh now" path) skips the cache read so an
+                // unchanged head SHA re-reads CI; it still writes the fresh result below. (#355)
+                if (!forceReprobe && _cache.TryGetValue(key, out var cached))
+                    return (Item: c, Ci: cached, Degraded: false);
 
                 var (ci, degraded) = await ProbeAsync(c.Reference, c.HeadSha, token, ct).ConfigureAwait(false);
                 // Cache only a complete, successful, NON-TRANSIENT read. A DEGRADED result
