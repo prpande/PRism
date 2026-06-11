@@ -158,11 +158,24 @@ sidecar's lifetime is owned by Electron, not the script.
 this launcher does **not** probe a readiness endpoint before returning: the sidecar
 picks its own free port and reports it on stdout *to Electron* (`sidecar.ts`), so the
 script never learns the URL to poll. The success signal a tester relies on is
-therefore **the window appearing**. If it comes up blank or never appears, the
-captured log — which includes the sidecar's port line, the `[startup]` timing line,
-and any backend stderr — is the single failure-diagnosis affordance. The script is
-fire-and-forget once the wrapper / `nohup` hand-off completes; it prints the log path
-and returns.
+therefore **the window appearing**. A sidecar that fails to start raises a native
+error dialog (`dialog.showErrorBox`, `main.ts` `bootstrap()` catch) — the primary
+failure signal a tester sees even on a detached launch. The captured log holds
+Electron's own stdout, including the `[startup]` timing line, as supplementary
+diagnosis.
+
+Note a real limit, surfaced in the plan review: `sidecar.ts` spawns the backend with
+`stdio: ["ignore", "pipe", "pipe"]` and consumes those pipes internally
+(`readPortFromStdout` buffers stdout; `stderrTail` buffers stderr), so the **sidecar's
+own port line and backend stderr do not reach this log** — only what Electron's main
+process writes to its stdout does. The error dialog covers the common
+sidecar-startup-failure case; a *blank window with a healthy sidecar* (e.g. a `wwwroot`
+serving bug) is the gap, and the publish-physical-`wwwroot` approach (§5) is what makes
+that case unlikely. An optional `main.ts`/`sidecar.ts` change to forward the sidecar
+child's stdout/stderr to Electron's stdout (so the log captures them) is recorded as a
+follow-up in §11 — it touches desktop source beyond the scripts-only scope and is not
+required for the tester signal above. The script is fire-and-forget once the wrapper /
+`nohup` hand-off completes; it prints the log path and returns.
 
 ## 7. Lifecycle and teardown
 
@@ -273,3 +286,8 @@ existing backstop; the launcher adds no new supervision.
 - Detached **web** launch parity (the issue's note re: `serve-detached.ps1`) — not
   pursued here.
 - Committing/fetching prebuilt per-OS binaries (separate, heavier decision).
+- **Forwarding the sidecar child's stdout/stderr to Electron's stdout** (a small
+  `sidecar.ts` tee) so the launcher's captured log carries the sidecar port line and
+  backend stderr, not just the `[startup]` line. Improves the blank-window diagnosis
+  case; touches desktop source beyond this slice's scripts-only scope. Pursue only if
+  the error-dialog + `[startup]`-log signal proves insufficient in practice.
