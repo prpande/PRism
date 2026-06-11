@@ -505,6 +505,7 @@ Lift the **current `InlineCommentComposer` body** (the canonical copy) into a ho
 // useDraftComposer.test.tsx
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
+import type { KeyboardEvent } from 'react';
 import { useDraftComposer } from './useDraftComposer';
 import * as draftApi from '../../../api/draft';
 import type { ComposerAnchor } from '../../../hooks/useComposerAutoSave';
@@ -586,7 +587,10 @@ describe('useDraftComposer', () => {
     await act(async () => {
       result.current.editor.handleKeyDown({
         metaKey: true, key: 'Enter', preventDefault: () => {},
-      } as unknown as React.KeyboardEvent<HTMLTextAreaElement>);
+      } as unknown as KeyboardEvent<HTMLTextAreaElement>);
+      // Submit IIFE chain is 3 awaits deep (flush → performSave → sendPatch);
+      // drain three microtasks, matching the existing settle() helper.
+      await Promise.resolve();
       await Promise.resolve();
       await Promise.resolve();
     });
