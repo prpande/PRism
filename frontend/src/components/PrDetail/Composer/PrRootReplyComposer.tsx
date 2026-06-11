@@ -12,6 +12,7 @@ import { ComposerMarkdownPreview } from './ComposerMarkdownPreview';
 import { PrRootBodyEditor } from './PrRootBodyEditor';
 import type { PrReference } from '../../../api/types';
 import type { ComposerOwnerKey } from '../../../hooks/useDraftSession';
+import { matchComposerKey } from './matchComposerKey';
 
 type AutosaveControl = { flush: () => Promise<string | null>; badge: ComposerSaveBadge };
 
@@ -136,20 +137,15 @@ export function PrRootReplyComposer({
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
-    if ((e.metaKey || e.ctrlKey) && e.shiftKey && (e.key === 'P' || e.key === 'p')) {
-      e.preventDefault();
+    const shortcut = matchComposerKey(e);
+    if (shortcut === null) return;
+    e.preventDefault();
+    if (shortcut === 'toggle-preview') {
       setPreviewMode((p) => !p);
-      return;
-    }
-    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
-      e.preventDefault();
+    } else if (shortcut === 'submit') {
       if (!postDisabled) void handlePost();
-      return;
-    }
-    if (e.key === 'Escape') {
-      e.preventDefault();
+    } else if (shortcut === 'escape') {
       handleDiscardClick();
-      return;
     }
   };
 
