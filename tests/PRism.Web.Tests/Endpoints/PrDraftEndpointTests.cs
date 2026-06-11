@@ -145,6 +145,23 @@ public class PrDraftEndpointTests : IClassFixture<PRismWebApplicationFactory>
     }
 
     [Fact]
+    public async Task NewDraftComment_path_with_empty_segment_is_rejected()
+    {
+        var client = ClientWithTab();
+        // "src//foo.cs" contains an empty segment between the two slashes.
+        // main's IsCanonicalFilePath uses substring matching ("/../", "/./") and does NOT
+        // reject empty segments — accepted on main. The shared PathValidation.Canonicalize
+        // splits on '/' and rejects any zero-length segment, so this must return 422.
+        var patch = NewCommentPatch(filePath: "src//foo.cs");
+
+        var resp = await client.PutAsJsonAsync("/api/pr/acme/api/123/draft", patch);
+
+        resp.StatusCode.Should().Be(HttpStatusCode.UnprocessableEntity);
+        (await resp.Content.ReadFromJsonAsync<System.Text.Json.JsonElement>())
+            .GetProperty("error").GetString().Should().Be("file-path-invalid");
+    }
+
+    [Fact]
     public async Task OverrideStale_against_non_stale_draft_returns_400_not_stale()
     {
         var client = ClientWithTab();

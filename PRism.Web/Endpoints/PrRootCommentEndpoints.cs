@@ -58,9 +58,8 @@ internal static class PrRootCommentEndpoints
         var sessionKey = prRef.ToString();
 
         // --- Authorization (same broader-than-spec authz as /submit; spec T10 § 6.2) ---
-        if (!activePrCache.IsSubscribed(prRef))
-            return Results.Json(new SubmitErrorDto("unauthorized", "Subscribe to this PR before posting a comment."),
-                statusCode: StatusCodes.Status401Unauthorized);
+        if (RequireSubscribed.Check(activePrCache, prRef, "Subscribe to this PR before posting a comment.") is { } notSubscribed)
+            return notSubscribed;
 
         // --- Per-PR lock (TimeSpan.Zero → non-blocking; 409 on contention) ---
         // NOT `await using` — TryAcquireAsync returns null on lock contention (→ 409 below), and
@@ -98,7 +97,7 @@ internal static class PrRootCommentEndpoints
         var appState = await stateStore.LoadAsync(ct).ConfigureAwait(false);
         if (!appState.Reviews.Sessions.TryGetValue(sessionKey, out var session))
             return Results.Json(new SubmitErrorDto("no-session", "No draft session for this PR."),
-                statusCode: StatusCodes.Status400BadRequest);
+                statusCode: StatusCodes.Status404NotFound);
 
         // Find the PR-root draft via the canonical predicate (#324 — DraftComment.IsPrRoot,
         // FilePath-only; a draft with no file path is the PR-root regardless of LineNumber).
@@ -146,7 +145,7 @@ internal static class PrRootCommentEndpoints
         catch (HttpRequestException hre)
         {
             s_rootCommentFailed(loggerFactory.CreateLogger(typeof(PrRootCommentEndpoints).FullName!), sessionKey, hre);
-            return Results.Json(MapGithubError(hre), statusCode: StatusCodes.Status502BadGateway);
+            return GitHubErrorMapper.ToResult(hre);
         }
 #pragma warning disable CA1031  // catch-all so a rare GitHub SDK exception (non-HTTP) still surfaces a 502 instead of a bare 500
         catch (Exception ex)
@@ -170,7 +169,7 @@ internal static class PrRootCommentEndpoints
                     ? d with { PostedCommentId = created.Id, PostedBodySnapshot = rootDraft.BodyMarkdown }
                     : d)
                 .ToList();
-            return WithSession(state, sessionKey, s with { DraftComments = updatedComments });
+            return state.WithSession(sessionKey, s with { DraftComments = updatedComments });
         }, ct).ConfigureAwait(false);
 
         await DeleteDraftAsync(stateStore, sessionKey, rootDraft.Id, ct).ConfigureAwait(false);
@@ -192,34 +191,8 @@ internal static class PrRootCommentEndpoints
         {
             if (!state.Reviews.Sessions.TryGetValue(sessionKey, out var s)) return state;
             var remaining = s.DraftComments.Where(d => d.Id != draftId).ToList();
-            return WithSession(state, sessionKey, s with { DraftComments = remaining });
+            return state.WithSession(sessionKey, s with { DraftComments = remaining });
         }, ct).ConfigureAwait(false);
     }
 
-    private static AppState WithSession(AppState state, string sessionKey, ReviewSessionState session)
-    {
-        var sessions = new Dictionary<string, ReviewSessionState>(state.Reviews.Sessions) { [sessionKey] = session };
-        return state.WithDefaultReviews(state.Reviews with { Sessions = sessions });
-    }
-
-    // Maps an HttpRequestException to a SubmitErrorDto. The DTO MESSAGE is a STATIC, sanitized
-    // per-code string — NOT hre.Message. hre.Message can embed up to 512 bytes of GitHub's raw
-    // error RESPONSE BODY (see GitHubReviewService.IssueComments), so forwarding it to the browser
-    // would leak raw upstream error detail. The detailed hre is logged server-side via
-    // s_rootCommentFailed at the catch site before this maps the sanitized client response.
-    private static SubmitErrorDto MapGithubError(HttpRequestException hre)
-    {
-        var status = hre.StatusCode;
-        var (code, message) = status switch
-        {
-            System.Net.HttpStatusCode.Forbidden =>
-                ("github-forbidden", "GitHub rejected the request (forbidden). Check your token's permissions."),
-            System.Net.HttpStatusCode.Unauthorized =>
-                ("github-unauthorized", "GitHub authentication failed. Reconnect your account."),
-            System.Net.HttpStatusCode.UnprocessableEntity =>
-                ("github-validation-error", "GitHub rejected the request as invalid."),
-            _ => ("github-network-error", "Couldn't reach GitHub. Try again."),
-        };
-        return new SubmitErrorDto(code, message);
-    }
 }

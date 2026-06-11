@@ -176,16 +176,16 @@ public class PrSubmitDiscardEndpointTests
         loaded!.PendingReviewId.Should().Be("PRR_existing", "stamps must NOT be cleared on non-HTTP GitHub exception");
     }
 
-    // ── unauthorized → 401 ───────────────────────────────────────────────────
+    // ── unauthorized → 403 ───────────────────────────────────────────────────
 
     [Fact]
-    public async Task Discard_unauthorized_returns_401()
+    public async Task Discard_unauthorized_returns_403()
     {
         using var ctx = DiscardTestContext.Create(subscribeAll: false);
 
         var resp = await ctx.Discard(199);
 
-        resp.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+        resp.StatusCode.Should().Be(HttpStatusCode.Forbidden);
         var body = await resp.Content.ReadFromJsonAsync<JsonElement>(CamelCase);
         body.GetProperty("code").GetString().Should().Be("unauthorized");
     }
@@ -227,6 +227,11 @@ public class PrSubmitDiscardEndpointTests
         var loaded = await ctx.LoadSessionAsync("o", "r", 200);
         loaded!.PendingReviewId.Should().BeNull("discard clears the pending-review stamps");
     }
+
+    // Note: the foreign-pending-review discard → 204 contract is pinned by
+    // PrSubmitEndpointsTests.PostDiscard_TOCTOU_pass_deletes_pending_review_and_clears_session_returns_204
+    // (the pre-existing TOCTOU success test, flipped 200→204 in this PR). A duplicate test here
+    // was dropped to avoid redundant coverage of the same endpoint/path/assertions.
 
     // ── pipeline-cancellation-timeout → 504 ─────────────────────────────────
 

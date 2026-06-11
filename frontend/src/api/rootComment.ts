@@ -3,9 +3,9 @@ import type { PrReference } from './types';
 
 // Error codes that POST /api/pr/{ref}/root-comment/post can emit.
 // Reconciled against PrRootCommentEndpoints.cs (Task 10):
-//   - unauthorized       : 401, not subscribed
+//   - unauthorized       : 403, not subscribed
 //   - submit-in-progress : 409, lock contention with /submit
-//   - no-session         : 400, no draft session for this PR
+//   - no-session         : 404, no draft session for this PR
 //   - no-root-draft      : 400, no PR-root draft exists
 //   - body-too-large     : 400, draft body exceeds GitHub limit
 //   - already-posted-body-mismatch : 409, draft was edited after first post

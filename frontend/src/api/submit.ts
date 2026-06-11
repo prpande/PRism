@@ -122,7 +122,7 @@ export async function discardForeignPendingReview(
 
 // Error codes that POST /api/pr/{ref}/submit/discard (DiscardOwnPendingReviewAsync) can emit.
 // Reconciled against PrSubmitEndpoints.cs (Task 11):
-//   - unauthorized              : 401, not subscribed
+//   - unauthorized              : 403, not subscribed
 //   - pipeline-cancellation-timeout : 504, pipeline held lock beyond 30-second window
 //   - github-forbidden          : 502 via MapGithubError (403 from GitHub)
 //   - github-unauthorized       : 502 via MapGithubError (401 from GitHub)

@@ -224,19 +224,22 @@ public class PrCommentEndpointTests
         ctx.Submitter.ReviewCommentReplies.Should().BeEmpty("must not call GitHub when ParentThreadId is missing");
     }
 
-    // ── 7. Unauthorized → 401 ─────────────────────────────────────────────────
+    // ── 7. Unauthorized → 403 ─────────────────────────────────────────────────
 
     [Fact]
-    public async Task PostComment_unauthorized_returns_401()
+    public async Task PostComment_unauthorized_returns_403()
     {
         using var ctx = CommentTestContext.Create(subscribeAll: false);
         await ctx.SeedSessionAsync("o", "r", 8, SessionWithInlineDraft());
 
         var resp = await ctx.Post(8, "d1");
 
-        resp.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+        resp.StatusCode.Should().Be(HttpStatusCode.Forbidden);
         var body = await resp.Content.ReadFromJsonAsync<JsonElement>(CamelCase);
         body.GetProperty("code").GetString().Should().Be("unauthorized");
+        // The per-verb message is surfaced by the frontend (api/comment.ts maps payload.message);
+        // #319 moves the status 401->403 but must NOT change this user-visible text.
+        body.GetProperty("message").GetString().Should().Be("Subscribe to this PR before posting a comment.");
     }
 
     // ── 8. GitHub 5xx → 502 sanitized ────────────────────────────────────────

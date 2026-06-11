@@ -17,6 +17,7 @@ namespace PRism.Web.Endpoints;
 internal static class PrCommentEndpoints
 {
     private static readonly string[] FieldsTouched = { "draft-comments", "draft-replies" };
+    private static readonly string LoggerCategory = typeof(PrCommentEndpoints).FullName!;
     private static readonly Action<ILogger, string, Exception?> s_commentPostFailed =
         LoggerMessage.Define<string>(LogLevel.Warning, new EventId(1, "CommentPostFailed"),
             "POST /comment/post failed with a GitHub error for {SessionKey}");
@@ -40,9 +41,8 @@ internal static class PrCommentEndpoints
         var prRef = new PrReference(owner, repo, number);
         var sessionKey = prRef.ToString();
 
-        if (!activePrCache.IsSubscribed(prRef))
-            return Results.Json(new SubmitErrorDto("unauthorized", "Subscribe to this PR before posting a comment."),
-                statusCode: StatusCodes.Status401Unauthorized);
+        if (RequireSubscribed.Check(activePrCache, prRef, "Subscribe to this PR before posting a comment.") is { } notSubscribed)
+            return notSubscribed;
 
 #pragma warning disable CA2000
         var handle = await lockRegistry.TryAcquireAsync(prRef, TimeSpan.Zero, ct).ConfigureAwait(false);
@@ -84,9 +84,9 @@ internal static class PrCommentEndpoints
         CreatedReviewCommentResult created;
         try { created = await submitter.CreateReviewCommentAsync(prRef, request, ct).ConfigureAwait(false); }
         catch (OperationCanceledException) { throw; }
-        catch (HttpRequestException hre) { return GitHubError(hre, lf, sessionKey); }
+        catch (HttpRequestException hre) { s_commentPostFailed(lf.CreateLogger(LoggerCategory), sessionKey, hre); return GitHubErrorMapper.ToResult(hre); }
 #pragma warning disable CA1031
-        catch (Exception ex) { return GitHubError(ex, lf, sessionKey); }
+        catch (Exception ex) { s_commentPostFailed(lf.CreateLogger(LoggerCategory), sessionKey, ex); return GitHubErrorMapper.ToResult(ex); }
 #pragma warning restore CA1031
 
         await StampThenDeleteComment(store, sessionKey, draft.Id, created.Id, draft.BodyMarkdown, ct).ConfigureAwait(false);
@@ -107,9 +107,9 @@ internal static class PrCommentEndpoints
         CreatedReviewCommentResult created;
         try { created = await submitter.CreateReviewCommentReplyAsync(prRef, draft.ParentThreadId, draft.BodyMarkdown, ct).ConfigureAwait(false); }
         catch (OperationCanceledException) { throw; }
-        catch (HttpRequestException hre) { return GitHubError(hre, lf, sessionKey); }
+        catch (HttpRequestException hre) { s_commentPostFailed(lf.CreateLogger(LoggerCategory), sessionKey, hre); return GitHubErrorMapper.ToResult(hre); }
 #pragma warning disable CA1031
-        catch (Exception ex) { return GitHubError(ex, lf, sessionKey); }
+        catch (Exception ex) { s_commentPostFailed(lf.CreateLogger(LoggerCategory), sessionKey, ex); return GitHubErrorMapper.ToResult(ex); }
 #pragma warning restore CA1031
 
         await StampThenDeleteReply(store, sessionKey, draft.Id, created.Id, draft.BodyMarkdown, ct).ConfigureAwait(false);
@@ -125,19 +125,6 @@ internal static class PrCommentEndpoints
 
     private static IResult NoDraft() => Results.Json(new SubmitErrorDto("no-draft", "No matching draft for this PR."), statusCode: StatusCodes.Status400BadRequest);
     private static IResult BodyTooLarge() => Results.Json(new SubmitErrorDto("body-too-large", $"The comment body exceeds the GitHub limit of {PipelineMarker.GitHubReviewBodyMaxChars} characters."), statusCode: StatusCodes.Status400BadRequest);
-
-    private static IResult GitHubError(Exception ex, ILoggerFactory lf, string sessionKey)
-    {
-        s_commentPostFailed(lf.CreateLogger(typeof(PrCommentEndpoints).FullName!), sessionKey, ex);
-        var (code, message) = (ex as HttpRequestException)?.StatusCode switch
-        {
-            System.Net.HttpStatusCode.Forbidden => ("github-forbidden", "GitHub rejected the request (forbidden). Check your token's permissions."),
-            System.Net.HttpStatusCode.Unauthorized => ("github-unauthorized", "GitHub authentication failed. Reconnect your account."),
-            System.Net.HttpStatusCode.UnprocessableEntity => ("github-validation-error", "GitHub rejected the request as invalid."),
-            _ => ("github-network-error", "Couldn't reach GitHub. Try again."),
-        };
-        return Results.Json(new SubmitErrorDto(code, message), statusCode: StatusCodes.Status502BadGateway);
-    }
 
     private static async Task<IResult> AlreadyPostedAsync(IAppStateStore store, string sessionKey, string draftId,
         string body, string? snapshot, long postedId, PrReference prRef, IReviewEventBus bus, bool isReply, CancellationToken ct)
@@ -168,17 +155,12 @@ internal static class PrCommentEndpoints
         Func<ReviewSessionState, ReviewSessionState> stamp, Func<ReviewSessionState, ReviewSessionState> delete,
         CancellationToken ct)
     {
-        await store.UpdateAsync(state => state.Reviews.Sessions.TryGetValue(sessionKey, out var s) ? WithSession(state, sessionKey, stamp(s)) : state, ct).ConfigureAwait(false);
-        await store.UpdateAsync(state => state.Reviews.Sessions.TryGetValue(sessionKey, out var s) ? WithSession(state, sessionKey, delete(s)) : state, ct).ConfigureAwait(false);
+        await store.UpdateAsync(state => state.Reviews.Sessions.TryGetValue(sessionKey, out var s) ? state.WithSession(sessionKey, stamp(s)) : state, ct).ConfigureAwait(false);
+        await store.UpdateAsync(state => state.Reviews.Sessions.TryGetValue(sessionKey, out var s) ? state.WithSession(sessionKey, delete(s)) : state, ct).ConfigureAwait(false);
     }
     private static Task DeleteComment(IAppStateStore store, string sessionKey, string draftId, CancellationToken ct) =>
-        store.UpdateAsync(state => state.Reviews.Sessions.TryGetValue(sessionKey, out var s) ? WithSession(state, sessionKey, s with { DraftComments = s.DraftComments.Where(d => d.Id != draftId).ToList() }) : state, ct);
+        store.UpdateAsync(state => state.Reviews.Sessions.TryGetValue(sessionKey, out var s) ? state.WithSession(sessionKey, s with { DraftComments = s.DraftComments.Where(d => d.Id != draftId).ToList() }) : state, ct);
     private static Task DeleteReply(IAppStateStore store, string sessionKey, string draftId, CancellationToken ct) =>
-        store.UpdateAsync(state => state.Reviews.Sessions.TryGetValue(sessionKey, out var s) ? WithSession(state, sessionKey, s with { DraftReplies = s.DraftReplies.Where(r => r.Id != draftId).ToList() }) : state, ct);
+        store.UpdateAsync(state => state.Reviews.Sessions.TryGetValue(sessionKey, out var s) ? state.WithSession(sessionKey, s with { DraftReplies = s.DraftReplies.Where(r => r.Id != draftId).ToList() }) : state, ct);
 
-    private static AppState WithSession(AppState state, string sessionKey, ReviewSessionState session)
-    {
-        var sessions = new Dictionary<string, ReviewSessionState>(state.Reviews.Sessions) { [sessionKey] = session };
-        return state.WithDefaultReviews(state.Reviews with { Sessions = sessions });
-    }
 }

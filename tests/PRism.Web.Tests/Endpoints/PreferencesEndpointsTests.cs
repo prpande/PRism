@@ -233,4 +233,47 @@ public class PreferencesEndpointsTests
         var after = await client.GetFromJsonAsync<JsonElement>(new Uri("/api/preferences", UriKind.Relative));
         after.GetProperty("inbox").GetProperty("groupByRepo").GetBoolean().Should().BeFalse();
     }
+
+    // Task 6: /api/preferences POST with malformed JSON body must return 400 "invalid-json"
+    // (before the fix it returned 500 because JsonDocument.ParseAsync threw unhandled).
+    [Fact]
+    public async Task Preferences_malformed_body_returns_400_invalid_json()
+    {
+        using var factory = new PRismWebApplicationFactory();
+        var client = factory.CreateClient();
+        var origin = client.BaseAddress!.GetLeftPart(UriPartial.Authority);
+        using var req = new HttpRequestMessage(HttpMethod.Post, new Uri("/api/preferences", UriKind.Relative))
+        {
+            Content = new StringContent("{ not json", System.Text.Encoding.UTF8, "application/json"),
+        };
+        req.Headers.Add("Origin", origin);
+
+        var resp = await client.SendAsync(req);
+
+        resp.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        (await resp.Content.ReadFromJsonAsync<JsonElement>())
+            .GetProperty("error").GetString().Should().Be("invalid-json");
+    }
+
+    // Task 6 guard: a well-formed-but-non-object body (a JSON array) must keep returning the
+    // pre-existing 400 "body must be a JSON object" envelope after the HttpJson routing change —
+    // i.e. the NotObject branch was preserved, not collapsed into the new invalid-json branch.
+    [Fact]
+    public async Task Preferences_non_object_body_returns_400_not_object()
+    {
+        using var factory = new PRismWebApplicationFactory();
+        var client = factory.CreateClient();
+        var origin = client.BaseAddress!.GetLeftPart(UriPartial.Authority);
+        using var req = new HttpRequestMessage(HttpMethod.Post, new Uri("/api/preferences", UriKind.Relative))
+        {
+            Content = new StringContent("[1,2,3]", System.Text.Encoding.UTF8, "application/json"),
+        };
+        req.Headers.Add("Origin", origin);
+
+        var resp = await client.SendAsync(req);
+
+        resp.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        (await resp.Content.ReadFromJsonAsync<JsonElement>())
+            .GetProperty("error").GetString().Should().Be("body must be a JSON object");
+    }
 }

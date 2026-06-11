@@ -12,8 +12,6 @@ namespace PRism.Web.Endpoints;
 
 internal static class PrDraftEndpoints
 {
-    private static readonly Regex Sha40 = new("^[0-9a-f]{40}$", RegexOptions.Compiled);
-    private static readonly Regex Sha64 = new("^[0-9a-f]{64}$", RegexOptions.Compiled);
     private static readonly Regex ParentThreadId = new("^PRRT_[A-Za-z0-9_-]{1,128}$", RegexOptions.Compiled);
     private const int BodyMarkdownMaxChars = 8192;
 
@@ -78,22 +76,13 @@ internal static class PrDraftEndpoints
 
         var prRef = new PrReference(owner, repo, number);
         var refKey = prRef.ToString();
-        var sourceTabId = httpContext.Request.Headers["X-PRism-Tab-Id"].FirstOrDefault();
+        var sourceTabId = httpContext.Request.Headers[TabStamps.TabIdHeader].FirstOrDefault();
 
-        JsonDocument doc;
-        try
+        var read = await HttpJson.TryReadJsonObjectAsync(httpContext, ct).ConfigureAwait(false);
+        if (read.Error != JsonReadError.None)
+            return Results.BadRequest(new { error = "patch-body-missing" }); // both InvalidJson and NotObject -> same body (preserved)
+        using (var doc = read.Document!)
         {
-            doc = await JsonDocument.ParseAsync(httpContext.Request.Body, default, ct).ConfigureAwait(false);
-        }
-        catch (JsonException)
-        {
-            return Results.BadRequest(new { error = "patch-body-missing" });
-        }
-
-        using (doc)
-        {
-            if (doc.RootElement.ValueKind != JsonValueKind.Object)
-                return Results.BadRequest(new { error = "patch-body-missing" });
 
             // Resolve the single operation. "Real" ops: an object kind with an object value, a bool
             // kind with `true`, or a scalar kind with a non-null string. "Clear" ops: a scalar kind
@@ -154,13 +143,7 @@ internal static class PrDraftEndpoints
                 outcome = ApplyPatch(op.Kind, op.Value, operandPayload, session, cache, prRef);
 
                 if (outcome is PatchOutcome.Applied applied)
-                {
-                    var sessions = new Dictionary<string, ReviewSessionState>(state.Reviews.Sessions)
-                    {
-                        [refKey] = applied.Updated
-                    };
-                    return state.WithDefaultReviews(state.Reviews with { Sessions = sessions });
-                }
+                    return state.WithSession(refKey, applied.Updated);
                 return state;
             }, ct).ConfigureAwait(false);
 
@@ -462,9 +445,9 @@ internal static class PrDraftEndpoints
                         return Results.UnprocessableEntity(new { error = "body-too-large" });
                     if (string.IsNullOrEmpty(ndc.AnchoredSha))
                         return Results.BadRequest(new { error = "anchored-sha-missing" });
-                    if (!Sha40.IsMatch(ndc.AnchoredSha) && !Sha64.IsMatch(ndc.AnchoredSha))
+                    if (!SharedRegexes.Sha40().IsMatch(ndc.AnchoredSha) && !SharedRegexes.Sha64().IsMatch(ndc.AnchoredSha))
                         return Results.UnprocessableEntity(new { error = "sha-format-invalid" });
-                    if (!IsCanonicalFilePath(ndc.FilePath))
+                    if (PathValidation.Canonicalize(ndc.FilePath) is null)
                         return Results.UnprocessableEntity(new { error = "file-path-invalid" });
                     payload = ndc;
                     return null;
@@ -556,20 +539,6 @@ internal static class PrDraftEndpoints
             result = null!;
             return false;
         }
-    }
-
-    private static bool IsCanonicalFilePath(string path)
-    {
-        if (string.IsNullOrEmpty(path)) return false;
-        if (path.Length > 4096) return false;
-        if (path.Contains('\\', StringComparison.Ordinal) || path.Contains('\0', StringComparison.Ordinal)) return false;
-        if (path.StartsWith('/') || path.EndsWith('/')) return false;
-        if (path.Contains("/../", StringComparison.Ordinal) || path.StartsWith("../", StringComparison.Ordinal) || path.EndsWith("/..", StringComparison.Ordinal)) return false;
-        if (path.Contains("/./", StringComparison.Ordinal) || path.StartsWith("./", StringComparison.Ordinal) || path.EndsWith("/.", StringComparison.Ordinal)) return false;
-        foreach (var c in path)
-            if (c < 0x20 || (c >= 0x7F && c < 0xA0)) return false;
-        if (path != path.Normalize(System.Text.NormalizationForm.FormC)) return false;
-        return true;
     }
 
     // The canonical "no draft session yet" value — `PUT /draft` materialises one when a patch
