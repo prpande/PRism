@@ -27,17 +27,13 @@ public sealed partial class GitHubReviewService
         });
 
         using var http = _httpFactory.CreateClient("github");
+        using var content = new StringContent(payload, Encoding.UTF8, "application/json");
         using var resp = await SendGitHubAsync(http, HttpMethod.Post, url, ct,
-            content: new StringContent(payload, Encoding.UTF8, "application/json")).ConfigureAwait(false);
+            content: content).ConfigureAwait(false);
 
         if (!resp.IsSuccessStatusCode)
         {
-            string errorBody = string.Empty;
-            try { errorBody = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false); }
-            catch (OperationCanceledException) { throw; }
-#pragma warning disable CA1031
-            catch (Exception) { /* best-effort; original status is what matters */ }
-#pragma warning restore CA1031
+            var errorBody = await GitHubHttp.ReadErrorBodyBestEffortAsync(resp, ct).ConfigureAwait(false);
             throw new HttpRequestException(
                 $"GitHub review comment POST HTTP {(int)resp.StatusCode} {resp.ReasonPhrase}: {Truncate(errorBody, 512)}",
                 inner: null, statusCode: resp.StatusCode);

@@ -33,6 +33,27 @@ public sealed partial class GitHubReviewService : IReviewAuth, IPrDiscovery, IPr
     // refactor here flips the shape-drift test before it ships. `internal` (not public)
     // because the query string is an implementation detail of the GitHub adapter;
     // PRism.GitHub.Tests.Integration sees it via InternalsVisibleTo (csproj).
+    // #320 — shared timeline selection, composed byte-identically into PrDetailGraphQLQuery
+    // (with the pageInfo wrapper) and TimelineQuery (without it). Extracting brings the
+    // GetTimelineAsync copy under the byte-identity test (previously unprotected).
+    internal const string TimelineItemsArgs =
+        "timelineItems(first:100,itemTypes:[PULL_REQUEST_COMMIT,HEAD_REF_FORCE_PUSHED_EVENT,PULL_REQUEST_REVIEW])";
+    internal const string TimelineNodes =
+        "nodes{__typename " +
+        "... on PullRequestCommit{commit{oid committedDate message additions deletions}} " +
+        "... on HeadRefForcePushedEvent{beforeCommit{oid} afterCommit{oid} createdAt} " +
+        "... on PullRequestReview{submittedAt}" +
+        "}";
+
+    // Sibling timeline-only query issued by GetTimelineAsync. Internal const (was a method-local
+    // const) so the byte-identity test can pin it; same shared fragment as PrDetailGraphQLQuery,
+    // minus the pageInfo wrapper.
+    internal const string TimelineQuery = "query($owner:String!,$repo:String!,$number:Int!){" +
+        "repository(owner:$owner,name:$repo){pullRequest(number:$number){" +
+        "comments(first:100){nodes{author{login} createdAt}}" +
+        TimelineItemsArgs + "{" + TimelineNodes + "}" +
+        "}}}";
+
     internal const string PrDetailGraphQLQuery = "query($owner:String!,$repo:String!,$number:Int!){" +
         "repository(owner:$owner,name:$repo){pullRequest(number:$number){" +
         "title body url state isDraft mergeable mergeStateStatus " +
@@ -41,12 +62,7 @@ public sealed partial class GitHubReviewService : IReviewAuth, IPrDiscovery, IPr
         "comments(first:100){pageInfo{hasNextPage endCursor} nodes{databaseId author{login avatarUrl} createdAt body}}" +
         "reviewThreads(first:100){pageInfo{hasNextPage endCursor} nodes{id path line isResolved " +
         "comments(first:100){nodes{id databaseId author{login avatarUrl} createdAt body lastEditedAt}}}}" +
-        "timelineItems(first:100,itemTypes:[PULL_REQUEST_COMMIT,HEAD_REF_FORCE_PUSHED_EVENT,PULL_REQUEST_REVIEW]){" +
-        "pageInfo{hasNextPage endCursor} nodes{__typename " +
-        "... on PullRequestCommit{commit{oid committedDate message additions deletions}} " +
-        "... on HeadRefForcePushedEvent{beforeCommit{oid} afterCommit{oid} createdAt} " +
-        "... on PullRequestReview{submittedAt}" +
-        "}}" +
+        TimelineItemsArgs + "{pageInfo{hasNextPage endCursor} " + TimelineNodes + "}" +
         "}}}";
 
     private readonly IHttpClientFactory _httpFactory;
@@ -76,9 +92,7 @@ public sealed partial class GitHubReviewService : IReviewAuth, IPrDiscovery, IPr
 
         using var http = _httpFactory.CreateClient("github");
         using var req = new HttpRequestMessage(HttpMethod.Get, "user");
-        req.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
-        req.Headers.UserAgent.ParseAdd("PRism/0.1");
-        req.Headers.Accept.ParseAdd("application/vnd.github+json");
+        GitHubHttp.ApplyHeaders(req, http, token);
         if (skipCredentialHealth) req.Options.Set(GitHubAuthHealthHandler.SkipHealthKey, true);
 
         try
@@ -217,9 +231,7 @@ public sealed partial class GitHubReviewService : IReviewAuth, IPrDiscovery, IPr
         var url = $"search/issues?q={Uri.EscapeDataString(query)}&per_page=1";
         using var http = _httpFactory.CreateClient("github");
         using var req = new HttpRequestMessage(HttpMethod.Get, url);
-        req.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
-        req.Headers.UserAgent.ParseAdd("PRism/0.1");
-        req.Headers.Accept.ParseAdd("application/vnd.github+json");
+        GitHubHttp.ApplyHeaders(req, http, token);
         if (skipCredentialHealth) req.Options.Set(GitHubAuthHealthHandler.SkipHealthKey, true);
 
         using var resp = await http.SendAsync(req, ct).ConfigureAwait(false);
@@ -347,17 +359,7 @@ public sealed partial class GitHubReviewService : IReviewAuth, IPrDiscovery, IPr
         // Independent GraphQL fetch — does NOT call GetPrDetailAsync. The two methods share
         // parsing helpers but each issues its own round-trip; siblings rather than parent-child
         // makes their failure modes independent. Spec § 6.4 / plan Step 3.4.
-        const string query = "query($owner:String!,$repo:String!,$number:Int!){" +
-            "repository(owner:$owner,name:$repo){pullRequest(number:$number){" +
-            "comments(first:100){nodes{author{login} createdAt}}" +
-            "timelineItems(first:100,itemTypes:[PULL_REQUEST_COMMIT,HEAD_REF_FORCE_PUSHED_EVENT,PULL_REQUEST_REVIEW]){" +
-            "nodes{__typename " +
-            "... on PullRequestCommit{commit{oid committedDate message additions deletions}} " +
-            "... on HeadRefForcePushedEvent{beforeCommit{oid} afterCommit{oid} createdAt} " +
-            "... on PullRequestReview{submittedAt}" +
-            "}}" +
-            "}}}";
-        var raw = await PostGraphQLAsync(query, new { owner = reference.Owner, repo = reference.Repo, number = reference.Number }, ct).ConfigureAwait(false);
+        var raw = await PostGraphQLAsync(TimelineQuery, new { owner = reference.Owner, repo = reference.Repo, number = reference.Number }, ct).ConfigureAwait(false);
 
         using var doc = JsonDocument.Parse(raw);
         // Surface execution-level GraphQL errors as an exception when no usable data
@@ -388,10 +390,9 @@ public sealed partial class GitHubReviewService : IReviewAuth, IPrDiscovery, IPr
         // those commits' ChangedFiles=null). Above SkipJaccardAboveCommitCount, skip
         // entirely (FileJaccardMultiplier returns neutral 1.0 when ChangedFiles is null).
         const int SkipAbove = 100;
-        const int ConcurrencyCap = 8;
         IReadOnlyList<ClusteringCommit> commits = rawCommits.Count > SkipAbove
             ? rawCommits
-            : await FetchPerCommitChangedFilesAsync(reference, rawCommits, ConcurrencyCap, ct).ConfigureAwait(false);
+            : await FetchPerCommitChangedFilesAsync(reference, rawCommits, GitHubHttp.ConcurrencyCap, ct).ConfigureAwait(false);
 
         return new ClusteringInput(commits, forcePushes, reviewEvents, authorComments);
     }
@@ -411,16 +412,11 @@ public sealed partial class GitHubReviewService : IReviewAuth, IPrDiscovery, IPr
 
         var token = await _readToken().ConfigureAwait(false);
         using var http = _httpFactory.CreateClient("github");
-        using var req = new HttpRequestMessage(HttpMethod.Get, url);
-        if (!string.IsNullOrEmpty(token))
-            req.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
-        req.Headers.UserAgent.ParseAdd("PRism/0.1");
         // The raw media type returns the file body directly rather than a JSON envelope —
         // matches what the diff pane needs for word-diff and markdown rendering. Note that
         // the standard +json Accept does NOT apply here (we want the file body verbatim).
-        req.Headers.Accept.ParseAdd("application/vnd.github.raw");
-
-        using var resp = await http.SendAsync(req, ct).ConfigureAwait(false);
+        using var resp = await GitHubHttp.SendAsync(http, HttpMethod.Get, url, token, ct,
+            accept: "application/vnd.github.raw").ConfigureAwait(false);
         if (resp.StatusCode == HttpStatusCode.NotFound)
             return new FileContentResult(FileContentStatus.NotFound, null, 0);
         resp.EnsureSuccessStatusCode();
@@ -453,13 +449,7 @@ public sealed partial class GitHubReviewService : IReviewAuth, IPrDiscovery, IPr
 
         var token = await _readToken().ConfigureAwait(false);
         using var http = _httpFactory.CreateClient("github");
-        using var req = new HttpRequestMessage(HttpMethod.Get, url);
-        if (!string.IsNullOrEmpty(token))
-            req.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
-        req.Headers.UserAgent.ParseAdd("PRism/0.1");
-        req.Headers.Accept.ParseAdd("application/vnd.github+json");
-
-        using var resp = await http.SendAsync(req, ct).ConfigureAwait(false);
+        using var resp = await GitHubHttp.SendAsync(http, HttpMethod.Get, url, token, ct).ConfigureAwait(false);
         if (resp.StatusCode == HttpStatusCode.NotFound)
             return null;
         resp.EnsureSuccessStatusCode();
@@ -555,32 +545,19 @@ public sealed partial class GitHubReviewService : IReviewAuth, IPrDiscovery, IPr
     private static bool TryParseLastPage(HttpResponseMessage resp, out int lastPage)
     {
         lastPage = 0;
-        if (!resp.Headers.TryGetValues("Link", out var values)) return false;
-        foreach (var raw in values)
+        // #320 — one Link parser (GitHubLinkHeader); the &page= extraction stays here because
+        // it is a rel="last"-specific concern, not part of Link parsing.
+        if (!GitHubLinkHeader.TryGetRel(resp, "last", out var absolute)) return false;
+        if (!Uri.TryCreate(absolute, UriKind.Absolute, out var u)) return false;
+        foreach (var kv in u.Query.TrimStart('?').Split('&'))
         {
-            foreach (var part in raw.Split(','))
+            var eq = kv.IndexOf('=', StringComparison.Ordinal);
+            if (eq <= 0) continue;
+            if (string.Equals(kv[..eq], "page", StringComparison.Ordinal) &&
+                int.TryParse(kv[(eq + 1)..], System.Globalization.CultureInfo.InvariantCulture, out var n))
             {
-                var trimmed = part.Trim();
-                if (!trimmed.Contains("rel=\"last\"", StringComparison.Ordinal)) continue;
-                var lt = trimmed.IndexOf('<', StringComparison.Ordinal);
-                var gt = trimmed.IndexOf('>', StringComparison.Ordinal);
-                if (lt < 0 || gt <= lt) continue;
-                var absolute = trimmed[(lt + 1)..gt];
-                if (!Uri.TryCreate(absolute, UriKind.Absolute, out var u)) continue;
-                var query = u.Query.TrimStart('?');
-                foreach (var kv in query.Split('&'))
-                {
-                    var eq = kv.IndexOf('=', StringComparison.Ordinal);
-                    if (eq <= 0) continue;
-                    var key = kv[..eq];
-                    var value = kv[(eq + 1)..];
-                    if (string.Equals(key, "page", StringComparison.Ordinal) &&
-                        int.TryParse(value, System.Globalization.CultureInfo.InvariantCulture, out var n))
-                    {
-                        lastPage = n;
-                        return true;
-                    }
-                }
+                lastPage = n;
+                return true;
             }
         }
         return false;
@@ -634,7 +611,10 @@ public sealed partial class GitHubReviewService : IReviewAuth, IPrDiscovery, IPr
             using var doc = JsonDocument.Parse(body);
             collected.AddRange(ParseFileChanges(doc.RootElement));
 
-            var nextUrl = ExtractNextLink(resp);
+            // #320 — pass the ABSOLUTE next URL straight through (GitHub-returned, same host).
+            // On github.com this is wire-identical to the old relative-path strip; on GHES it
+            // avoids re-resolving against BaseAddress (which doubled the /api/v3/ prefix → 404).
+            string? nextUrl = GitHubLinkHeader.TryGetRel(resp, "next", out var next) ? next : null;
             pageCount++;
             // If we hit the page cap and GitHub still has a Link rel=next, log so
             // operators can distinguish "page-cap truncation" from "server-side soft
@@ -716,29 +696,6 @@ public sealed partial class GitHubReviewService : IReviewAuth, IPrDiscovery, IPr
         return result;
     }
 
-    private static string? ExtractNextLink(HttpResponseMessage resp)
-    {
-        if (!resp.Headers.TryGetValues("Link", out var values)) return null;
-        // Link: <https://api.github.com/...>; rel="next", <...>; rel="last"
-        foreach (var raw in values)
-        {
-            foreach (var part in raw.Split(','))
-            {
-                var trimmed = part.Trim();
-                if (!trimmed.Contains("rel=\"next\"", StringComparison.Ordinal)) continue;
-                var lt = trimmed.IndexOf('<', StringComparison.Ordinal);
-                var gt = trimmed.IndexOf('>', StringComparison.Ordinal);
-                if (lt < 0 || gt <= lt) continue;
-                var absolute = trimmed[(lt + 1)..gt];
-                // Strip the leading scheme+host so the HttpClient.BaseAddress prefix is reused.
-                if (Uri.TryCreate(absolute, UriKind.Absolute, out var u))
-                    return u.PathAndQuery.TrimStart('/');
-                return absolute;
-            }
-        }
-        return null;
-    }
-
     // Instance-level helper that attaches the Bearer token alongside the standard
     // headers — without this, every REST call goes out anonymously, which 404s on
     // private repos and burns through the 60/hr unauthenticated rate limit on public
@@ -752,15 +709,7 @@ public sealed partial class GitHubReviewService : IReviewAuth, IPrDiscovery, IPr
     private async Task<HttpResponseMessage> SendGitHubAsync(HttpClient http, HttpMethod method, string url, CancellationToken ct, HttpContent? content = null)
     {
         var token = await _readToken().ConfigureAwait(false);
-        using var req = new HttpRequestMessage(method, url);
-        if (!string.IsNullOrEmpty(token))
-            req.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
-        req.Headers.UserAgent.ParseAdd("PRism/0.1");
-        req.Headers.Accept.ParseAdd("application/vnd.github+json");
-        req.Headers.TryAddWithoutValidation("X-GitHub-Api-Version", "2022-11-28");
-        if (content is not null)
-            req.Content = content;
-        return await http.SendAsync(req, ct).ConfigureAwait(false);
+        return await GitHubHttp.SendAsync(http, method, url, token, ct, content).ConfigureAwait(false);
     }
 
     private sealed record PullMeta(string BaseSha, string HeadSha, int ChangedFiles);
@@ -793,40 +742,20 @@ public sealed partial class GitHubReviewService : IReviewAuth, IPrDiscovery, IPr
         // GraphQL endpoint is `<host>/api/graphql` (no /v3); resolving against BaseAddress
         // would 404 on every GraphQL call against GHES.
         var endpoint = HostUrlResolver.GraphQlEndpoint(_host);
-        using var req = new HttpRequestMessage(HttpMethod.Post, endpoint)
-        {
-            Content = new StringContent(payload, System.Text.Encoding.UTF8, "application/json"),
-        };
-        if (!string.IsNullOrEmpty(token))
-            req.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
-        req.Headers.UserAgent.ParseAdd("PRism/0.1");
-        req.Headers.Accept.ParseAdd("application/vnd.github+json");
-
-        using var resp = await http.SendAsync(req, ct).ConfigureAwait(false);
+        // apiVersion:false — the REST version header is meaningless to the GraphQL endpoint;
+        // suppressing it keeps this request byte-identical to its pre-#320 form. The submit
+        // pipeline rides this method (PostSubmitGraphQLAsync wraps it), so byte-identity here
+        // preserves the B2 submit transport.
+        using var content = new StringContent(payload, System.Text.Encoding.UTF8, "application/json");
+        using var resp = await GitHubHttp.SendAsync(
+            http, HttpMethod.Post, endpoint.ToString(), token, ct,
+            content: content, apiVersion: false).ConfigureAwait(false);
         if (!resp.IsSuccessStatusCode)
         {
-            // EnsureSuccessStatusCode throws HttpRequestException with the status code
-            // on non-2xx but DISCARDS the response body — for GitHub that body usually
-            // carries the actual reason ({"message": "Bad credentials", "documentation_url":
-            // "..."} for 401, abuse / rate-limit details for 403, etc.). Read it first
-            // so the caller's exception message includes the actionable detail.
-            string body = string.Empty;
-            try
-            {
-                body = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
-            }
-            catch (OperationCanceledException)
-            {
-                // Caller cancellation / shutdown must propagate — matches the
-                // convention in SubmitPipeline.cs and ViewerLoginHydrator.cs.
-                throw;
-            }
-#pragma warning disable CA1031 // best-effort body read; original status is what matters most
-            catch (Exception)
-            {
-                // ignored — fall through with empty body
-            }
-#pragma warning restore CA1031
+            // GitHub's error body carries the actionable reason ({"message":"Bad credentials",…}
+            // for 401, abuse/rate-limit details for 403, etc.); read it (best-effort) so the
+            // exception message and the transport-failure log include it.
+            string body = await GitHubHttp.ReadErrorBodyBestEffortAsync(resp, ct).ConfigureAwait(false);
             s_graphqlTransportFailed(_log, (int)resp.StatusCode, resp.ReasonPhrase ?? "", Truncate(body, 1024), null);
             throw new HttpRequestException(
                 $"GitHub GraphQL HTTP {(int)resp.StatusCode} {resp.ReasonPhrase}: {Truncate(body, 512)}",
@@ -1000,6 +929,19 @@ public sealed partial class GitHubReviewService : IReviewAuth, IPrDiscovery, IPr
         return true;
     }
 
+    // #320 — (login, avatarUrl) from an `author{login avatarUrl}` node; ("", null) when the
+    // author is absent/non-object. Matches the prior inline extractions exactly: login is read
+    // without a ValueKind check (GitHub always returns a string), avatar only when it's a string.
+    private static (string Login, string? AvatarUrl) ReadActor(JsonElement node)
+    {
+        if (!node.TryGetProperty("author", out var a) || a.ValueKind != JsonValueKind.Object)
+            return ("", null);
+        var login = a.TryGetProperty("login", out var l) ? l.GetString() ?? "" : "";
+        var avatar = a.TryGetProperty("avatarUrl", out var av) && av.ValueKind == JsonValueKind.String
+            ? av.GetString() : null;
+        return (login, avatar);
+    }
+
     private static Pr ParsePr(JsonElement pull, PrReference reference)
     {
         string GetStr(string name) =>
@@ -1008,16 +950,7 @@ public sealed partial class GitHubReviewService : IReviewAuth, IPrDiscovery, IPr
         DateTimeOffset GetDate(string name) =>
             pull.TryGetProperty(name, out var el) && el.ValueKind != JsonValueKind.Null
                 ? el.GetDateTimeOffset() : default;
-        string Author()
-        {
-            if (!pull.TryGetProperty("author", out var a) || a.ValueKind != JsonValueKind.Object) return "";
-            return a.TryGetProperty("login", out var l) ? l.GetString() ?? "" : "";
-        }
-        string? AvatarUrl()
-        {
-            if (!pull.TryGetProperty("author", out var a) || a.ValueKind != JsonValueKind.Object) return null;
-            return a.TryGetProperty("avatarUrl", out var av) && av.ValueKind == JsonValueKind.String ? av.GetString() : null;
-        }
+        var (author, avatarUrl) = ReadActor(pull);
         string? HtmlUrl()
         {
             var url = GetStr("url");
@@ -1047,7 +980,7 @@ public sealed partial class GitHubReviewService : IReviewAuth, IPrDiscovery, IPr
             reference,
             Title: GetStr("title"),
             Body: GetStr("body"),
-            Author: Author(),
+            Author: author,
             State: state,
             HeadSha: GetStr("headRefOid"),
             BaseSha: GetStr("baseRefOid"),
@@ -1060,7 +993,7 @@ public sealed partial class GitHubReviewService : IReviewAuth, IPrDiscovery, IPr
             OpenedAt: GetDate("createdAt"),
             MergedAt: mergedAt,
             ClosedAt: closedAt,
-            AvatarUrl: AvatarUrl(),
+            AvatarUrl: avatarUrl,
             HtmlUrl: HtmlUrl());
     }
 
@@ -1075,12 +1008,7 @@ public sealed partial class GitHubReviewService : IReviewAuth, IPrDiscovery, IPr
         foreach (var node in nodes.EnumerateArray())
         {
             var id = node.TryGetProperty("databaseId", out var db) ? db.GetInt64() : 0L;
-            var hasAuthor = node.TryGetProperty("author", out var a) && a.ValueKind == JsonValueKind.Object;
-            var author = hasAuthor
-                ? (a.TryGetProperty("login", out var l) ? l.GetString() ?? "" : "")
-                : "";
-            var avatar = hasAuthor && a.TryGetProperty("avatarUrl", out var av) && av.ValueKind == JsonValueKind.String
-                ? av.GetString() : null;
+            var (author, avatar) = ReadActor(node);
             var ts = node.TryGetProperty("createdAt", out var ca) ? ca.GetDateTimeOffset() : default;
             var body = node.TryGetProperty("body", out var b) ? b.GetString() ?? "" : "";
             result.Add(new IssueCommentDto(id, author, ts, body, avatar));
@@ -1112,12 +1040,7 @@ public sealed partial class GitHubReviewService : IReviewAuth, IPrDiscovery, IPr
                     var cid = cn.TryGetProperty("id", out var idEl) ? idEl.GetString() ?? "" : "";
                     long? cDatabaseId = cn.TryGetProperty("databaseId", out var dbEl) && dbEl.ValueKind == JsonValueKind.Number
                         ? dbEl.GetInt64() : null;
-                    var hasCauthor = cn.TryGetProperty("author", out var ca) && ca.ValueKind == JsonValueKind.Object;
-                    var cauthor = hasCauthor
-                        ? (ca.TryGetProperty("login", out var cl) ? cl.GetString() ?? "" : "")
-                        : "";
-                    var cavatar = hasCauthor && ca.TryGetProperty("avatarUrl", out var cav) && cav.ValueKind == JsonValueKind.String
-                        ? cav.GetString() : null;
+                    var (cauthor, cavatar) = ReadActor(cn);
                     var cts = cn.TryGetProperty("createdAt", out var cca) ? cca.GetDateTimeOffset() : default;
                     var cbody = cn.TryGetProperty("body", out var cb) ? cb.GetString() ?? "" : "";
                     DateTimeOffset? edited = null;

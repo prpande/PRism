@@ -3,7 +3,6 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
 using System.Net.Http;
-using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 using System.Threading;
@@ -54,16 +53,10 @@ public sealed class GitHubPrTimelineReader : IPrTimelineReader
             // (`<host>/api/v3/` on GHES), which would 404 for GraphQL.
             var endpoint = HostUrlResolver.GraphQlEndpoint(_readHost());
             var payload = JsonSerializer.Serialize(new { query = BuildQuery(targets) });
-            using var req = new HttpRequestMessage(HttpMethod.Post, endpoint)
-            {
-                Content = new StringContent(payload, Encoding.UTF8, "application/json"),
-            };
-            if (!string.IsNullOrEmpty(token))
-                req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
-            req.Headers.UserAgent.ParseAdd("PRism/0.1");
-            req.Headers.Accept.ParseAdd("application/vnd.github+json");
-
-            using var resp = await http.SendAsync(req, ct).ConfigureAwait(false);
+            using var content = new StringContent(payload, Encoding.UTF8, "application/json");
+            using var resp = await GitHubHttp.SendAsync(
+                http, HttpMethod.Post, endpoint.ToString(), token, ct,
+                content: content, apiVersion: false).ConfigureAwait(false);
             if (!resp.IsSuccessStatusCode) return result;            // degrade, don't throw
 
             using var stream = await resp.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
