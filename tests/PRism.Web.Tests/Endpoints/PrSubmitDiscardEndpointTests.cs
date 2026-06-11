@@ -228,6 +228,37 @@ public class PrSubmitDiscardEndpointTests
         loaded!.PendingReviewId.Should().BeNull("discard clears the pending-review stamps");
     }
 
+    // ── foreign-pending-review discard → 204 (matches own-discard twin) ─────
+
+    [Fact]
+    public async Task DiscardForeignPendingReview_returns_204()
+    {
+        // Uses SubmitEndpointsTestContext (AllSubscribedActivePrCache + TestReviewSubmitter)
+        // so the TOCTOU re-fetch (FindOwnPendingReviewAsync) returns the expected snapshot and
+        // DeletePendingReviewAsync succeeds, exercising the happy-path success return.
+        using var ctx = SubmitEndpointsTestContext.Create();
+        ctx.Submitter.OwnPendingReview = new OwnPendingReviewSnapshot(
+            "PRR_foreign_x", "sha1", DateTimeOffset.UtcNow,
+            Array.Empty<PendingReviewThreadSnapshot>());
+        await ctx.SeedSessionAsync("o", "r", 501,
+            SubmitEndpointsTestContext.ValidSession() with
+            {
+                PendingReviewId = "PRR_foreign_x",
+                PendingReviewCommitOid = "sha1",
+            });
+        using var client = ctx.CreateClient();
+
+        var resp = await client.PostAsJsonAsync(
+            "/api/pr/o/r/501/submit/foreign-pending-review/discard",
+            new { pullRequestReviewId = "PRR_foreign_x" });
+
+        resp.StatusCode.Should().Be(HttpStatusCode.NoContent); // red on main: 200 OK
+        ctx.Submitter.DeletedPendingReviews.Should().Contain("PRR_foreign_x");
+        var session = await ctx.LoadSessionAsync("o", "r", 501);
+        session!.PendingReviewId.Should().BeNull("foreign-discard clears the pending-review id");
+        session.PendingReviewCommitOid.Should().BeNull("foreign-discard clears the commit oid");
+    }
+
     // ── pipeline-cancellation-timeout → 504 ─────────────────────────────────
 
     [Fact]

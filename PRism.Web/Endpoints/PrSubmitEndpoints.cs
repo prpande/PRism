@@ -556,7 +556,7 @@ internal static class PrSubmitEndpoints
         }, ct).ConfigureAwait(false);
 
         bus.Publish(new StateChanged(prRef, PendingReviewFields, SourceTabId: null));
-        return Results.Ok();
+        return Results.NoContent();
     }
 
     // ------------------------------------------------------------------ helpers
