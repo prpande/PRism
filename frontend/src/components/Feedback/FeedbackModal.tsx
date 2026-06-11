@@ -173,9 +173,9 @@ export function FeedbackModal({
         document.querySelector<HTMLElement>(fallbackRef.current)?.focus();
     };
     // Run once on mount/unmount; the fallback selector is read via fallbackRef so
-    // the empty dep array is intentional. (No exhaustive-deps suppression: the
-    // react-hooks plugin is not wired into this project's flat eslint config, and
-    // a stale disable directive for it errors as "rule not found".)
+    // the empty dep array is intentional and exhaustive-deps-clean — the effect
+    // closes over only refs, which react-hooks treats as stable. (#331 wired the
+    // plugin; no disable directive is needed because there is no violation here.)
   }, []);
 
   // ── Move focus to the primary action after leaving idle/in-flight ──
@@ -212,6 +212,7 @@ export function FeedbackModal({
     };
     document.addEventListener('keydown', handleKey);
     return () => document.removeEventListener('keydown', handleKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- lists requestClose's exact reactive closure deps {onClose, dirty, modalState.kind} rather than the per-render requestClose function (#331)
   }, [onClose, dirty, modalState.kind]);
 
   const onScrimPointerDown = (e: PointerEvent) => {

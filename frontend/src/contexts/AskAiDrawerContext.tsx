@@ -178,6 +178,7 @@ export function AskAiDrawerProvider({ children }: { children: ReactNode }) {
   // on every Map mutation, which is the consumer-visible re-render trigger.
   const value = useMemo<AskAiDrawerContextValue>(
     () => ({ isOpen, cycleIndex, toggle, close, getThread, setInput, sendMessage, clearAll }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `threads` is an intentional memo-bust key: it re-creates the value on Map mutation (the consumer-visible re-render trigger), though it isn't read in the value object (#331)
     [isOpen, cycleIndex, threads, toggle, close, getThread, setInput, sendMessage, clearAll],
   );
 

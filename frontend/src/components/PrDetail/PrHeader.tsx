@@ -225,6 +225,7 @@ export function PrHeader({
     // `onSessionRefetch` is intentionally omitted — it's re-created each render
     // by PrDetailPage; including it would re-run the refetch every render while
     // in `success`. `submit.clearLastResume` is stable (useCallback([])).
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- onSessionRefetch is re-created each render by PrDetailPage; including it would re-refetch every render while parked in `success` (see comment above). #327 / #331
   }, [submit.state.kind, submit.clearLastResume]);
 
   // Dev-only signal: if a loaded PR (title present) has no htmlUrl, the escape-

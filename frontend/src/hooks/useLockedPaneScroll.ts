@@ -106,5 +106,6 @@ export function useLockedPaneScroll(
       body.style.removeProperty('--diff-hscroll');
     };
     // `deps` lets the caller re-measure when the rendered diff content changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- caller-supplied `...deps` re-measure key; a spread element can't be statically verified (#331)
   }, [enabled, bodyRef, scrollbarRef, spacerRef, ...deps]);
 }

@@ -39,11 +39,10 @@ export function PrTabHost() {
   const activeKey = route && route.valid ? prRefKey(route.ref) : null;
   // Register the active PR as an open tab on navigation. Keyed by the primitive
   // activeKey (not the freshly-constructed `route` object) so it fires once per
-  // PR change, not every render. addTab is idempotent on prRefKey. ESLint's
-  // react-hooks plugin is not enabled in this config, so no disable directive is
-  // needed for the intentionally-narrow dep array.
+  // PR change, not every render. addTab is idempotent on prRefKey.
   useEffect(() => {
     if (route && route.valid) addTab(route.ref, null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on the primitive activeKey, not the freshly-constructed `route` object (which changes identity every render) (#331)
   }, [addTab, activeKey]);
   // On a cold direct load of a /pr/... URL (refresh, deep link), openTabs is
   // still empty on first paint — the addTab effect above runs post-render.
