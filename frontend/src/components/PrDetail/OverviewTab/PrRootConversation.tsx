@@ -84,6 +84,7 @@ function PrRootConversationActions({
     if (!existingPrRootDraft) return;
     setDraftId(existingPrRootDraft.id);
     setComposerOpen(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on existingPrRootDraft?.id; re-syncs only when the draft id changes, not on every object identity change (#331)
   }, [existingPrRootDraft?.id]);
 
   const handleReplyClick = () => setComposerOpen(true);

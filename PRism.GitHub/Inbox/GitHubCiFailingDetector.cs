@@ -1,31 +1,39 @@
 using System.Collections.Concurrent;
-using System.Net.Http.Headers;
 using System.Text.Json;
 using PRism.Core.Contracts;
 using PRism.Core.Inbox;
+using PRism.Core.Time;
 
 namespace PRism.GitHub.Inbox;
 
 public sealed class GitHubCiFailingDetector : ICiFailingDetector
 {
-    private const int ConcurrencyCap = 8;
+    // A cached terminal status re-validates after this TTL via the injected clock, so a same-SHA
+    // "Re-run failed jobs" auto-recovers without a manual Refresh. Pending is already never cached
+    // (#355); the TTL governs the terminal Passing/Failing/None entries uniformly. (#361)
+    private static readonly TimeSpan TerminalTtl = TimeSpan.FromMinutes(2);
     private readonly IHttpClientFactory _httpFactory;
     private readonly Func<Task<string?>> _readToken;
-    private readonly ConcurrentDictionary<(PrReference, string), CiStatus> _cache = new();
+    private readonly IClock _clock;
+    private readonly ConcurrentDictionary<(PrReference, string), CacheEntry> _cache = new();
 
-    public GitHubCiFailingDetector(IHttpClientFactory httpFactory, Func<Task<string?>> readToken)
+    private readonly record struct CacheEntry(CiStatus Status, DateTime CachedAtUtc);
+
+    public GitHubCiFailingDetector(
+        IHttpClientFactory httpFactory, Func<Task<string?>> readToken, IClock clock)
     {
         _httpFactory = httpFactory;
         _readToken = readToken;
+        _clock = clock;
     }
 
     public async Task<CiDetectResult> DetectAsync(
-        IReadOnlyList<RawPrInboxItem> items, CancellationToken ct)
+        IReadOnlyList<RawPrInboxItem> items, CancellationToken ct, bool forceReprobe = false)
     {
         ArgumentNullException.ThrowIfNull(items);
-        if (items.Count == 0) return new CiDetectResult(Array.Empty<(RawPrInboxItem, CiStatus)>(), true);
+        if (items.Count == 0) { _cache.Clear(); return new CiDetectResult(Array.Empty<(RawPrInboxItem, CiStatus)>(), true); }
         var token = await _readToken().ConfigureAwait(false);
-        using var sem = new SemaphoreSlim(ConcurrencyCap);
+        using var sem = new SemaphoreSlim(GitHubHttp.ConcurrencyCap);
 
         var done = await Task.WhenAll(items.Select(async c =>
         {
@@ -34,21 +42,50 @@ public sealed class GitHubCiFailingDetector : ICiFailingDetector
             {
                 if (string.IsNullOrEmpty(c.HeadSha)) return (Item: c, Ci: CiStatus.None, Degraded: false);
                 var key = (c.Reference, c.HeadSha);
-                if (_cache.TryGetValue(key, out var cached)) return (Item: c, Ci: cached, Degraded: false);
+                // forceReprobe (the manual "Refresh now" path) skips the cache read so an
+                // unchanged head SHA re-reads CI; it still writes the fresh result below. (#355)
+                // A cached entry older than TerminalTtl is treated as a miss → re-probe, so a
+                // same-SHA CI re-run auto-recovers within one TTL window. (#361)
+                if (!forceReprobe
+                    && _cache.TryGetValue(key, out var entry)
+                    && _clock.UtcNow - entry.CachedAtUtc <= TerminalTtl)
+                    return (Item: c, Ci: entry.Status, Degraded: false);
 
                 var (ci, degraded) = await ProbeAsync(c.Reference, c.HeadSha, token, ct).ConfigureAwait(false);
-                // Only cache a result built from complete, successful reads. A DEGRADED
-                // result (a non-2xx from Checks/Status — a fine-grained 403 or a transient
-                // 5xx) is NOT cached, so the next tick re-probes: a transient failure
-                // recovers when GitHub heals, and a fine-grained 403 re-probes cheaply
-                // until the token is replaced. Caching None here would pin it until the
-                // head SHA changes — contradicting the "recovers next tick" contract. (#213)
-                if (!degraded) _cache[key] = ci;
+                // Cache only a complete, successful, NON-TRANSIENT read. A DEGRADED result
+                // (a non-2xx from Checks/Status — a fine-grained 403 or a transient 5xx) is
+                // NOT cached, so the next tick re-probes: a transient failure recovers when
+                // GitHub heals, and a fine-grained 403 re-probes cheaply until the token is
+                // replaced. Caching a degraded None would pin it until the head SHA changes —
+                // contradicting the "recovers next tick" contract. (#213)
+                //
+                // PENDING joins the never-cache set: a clean (non-degraded) Pending is still
+                // transient. Caching it pinned the CI dot under that head SHA — so checks
+                // finishing on an UNCHANGED head never advanced the dot, and a manual Refresh
+                // re-hit the same pinned Pending. Re-probe Pending every sweep (exactly as a
+                // degraded read does) until it goes terminal, then cache the terminal. (#355)
+                if (!degraded && ci != CiStatus.Pending)
+                {
+                    _cache[key] = new CacheEntry(ci, _clock.UtcNow);
+                }
+                else if (forceReprobe && !degraded && ci == CiStatus.Pending)
+                {
+                    // A forced reprobe (manual Refresh) that observes a CLEAN Pending on a key
+                    // that may still hold a STALE terminal — the same-SHA "Re-run failed jobs"
+                    // case — must EVICT that terminal. Lever 1 alone only declines to OVERWRITE
+                    // it, so the next NON-forced sweep would read the cached terminal and flip
+                    // the dot back after a single render. Evicting lets normal sweeps re-probe
+                    // (Lever 1 keeps Pending uncached) until CI goes terminal again, then re-cache.
+                    // Gated on !degraded so a transient blip doesn't drop a still-valid terminal
+                    // (see forceReprobe_degraded_leaves_existing_cached_terminal). (#355, Copilot review)
+                    _cache.TryRemove(key, out _);
+                }
                 return (Item: c, Ci: ci, Degraded: degraded);
             }
             finally { sem.Release(); }
         })).ConfigureAwait(false);
 
+        InboxCacheEviction.PruneAbsent(_cache, items.Select(i => i.Reference).ToHashSet());
         var anyDegraded = Array.Exists(done, t => t.Degraded);
         return new CiDetectResult(
             done.Select(t => (t.Item, t.Ci)).ToList(),
@@ -100,19 +137,14 @@ public sealed class GitHubCiFailingDetector : ICiFailingDetector
         // GitHub paginates /check-runs when a PR has > per_page entries (monorepo
         // matrix builds routinely cross 100). Follow the rel="next" link until
         // exhausted, aggregating classification across all pages.
-        Uri? nextUri = null;
+        string? nextUrl = null;
         var initialUrl = $"repos/{pr.Owner}/{pr.Repo}/commits/{sha}/check-runs?per_page=100";
 
         for (var page = 0; page < MaxCheckRunPages; page++)
         {
-            using var resp = nextUri is null
-                ? await SendAsync(initialUrl, token, ct).ConfigureAwait(false)
-                : await SendAsync(nextUri, token, ct).ConfigureAwait(false);
+            using var resp = await SendAsync(nextUrl ?? initialUrl, token, ct).ConfigureAwait(false);
             if (resp.StatusCode == System.Net.HttpStatusCode.NotFound) return (CiStatus.None, false);
-            if (resp.StatusCode == System.Net.HttpStatusCode.TooManyRequests)
-                throw new RateLimitExceededException(
-                    "GitHub rate-limited (429); orchestrator should skip this tick.",
-                    resp.Headers.RetryAfter?.Delta);
+            GitHubHttp.ThrowIfRateLimited(resp);
             // Fine-grained PATs can't call the Checks API (GitHub returns 403). Degrade
             // to "no CI signal" rather than throwing. A throw propagates through
             // DetectAsync into InboxRefreshOrchestrator.RefreshAsync (no catch) and out to
@@ -179,8 +211,8 @@ public sealed class GitHubCiFailingDetector : ICiFailingDetector
                 // call tracked in #305, not an oversight. #264
             }
 
-            nextUri = TryGetNextLink(resp);
-            if (nextUri is null) break;
+            nextUrl = GitHubLinkHeader.TryGetRel(resp, "next", out var n) ? n : null;
+            if (nextUrl is null) break;
         }
 
         // A successful run with nothing failing/pending → Passing. Only conclusion=="success"
@@ -192,50 +224,12 @@ public sealed class GitHubCiFailingDetector : ICiFailingDetector
                 : anySuccess ? CiStatus.Passing : CiStatus.None, false);
     }
 
-    // Parses the GitHub Link response header and returns the URL whose attributes
-    // include rel="next", or null if no such link exists. Standard format:
-    //   <url1>; rel="next", <url2>; rel="last"
-    // Node IDs / URLs are treated as opaque — we hand the absolute URL straight
-    // back to HttpClient without parsing or rewriting.
-    private static Uri? TryGetNextLink(HttpResponseMessage resp)
-    {
-        if (!resp.Headers.TryGetValues("Link", out var values)) return null;
-        foreach (var header in values)
-        {
-            foreach (var part in header.Split(','))
-            {
-                var segments = part.Split(';');
-                if (segments.Length < 2) continue;
-                var urlSegment = segments[0].Trim();
-                if (!urlSegment.StartsWith('<') || !urlSegment.EndsWith('>')) continue;
-                var hasNext = false;
-                for (var i = 1; i < segments.Length; i++)
-                {
-                    var attr = segments[i].Trim();
-                    if (attr.Equals("rel=\"next\"", StringComparison.Ordinal)
-                        || attr.Equals("rel=next", StringComparison.Ordinal))
-                    {
-                        hasNext = true;
-                        break;
-                    }
-                }
-                if (!hasNext) continue;
-                var url = urlSegment[1..^1];
-                if (Uri.TryCreate(url, UriKind.Absolute, out var uri)) return uri;
-            }
-        }
-        return null;
-    }
-
     private async Task<(CiStatus Status, bool Degraded)> FetchCombinedStatusAsync(PrReference pr, string sha, string? token, CancellationToken ct)
     {
         var url = $"repos/{pr.Owner}/{pr.Repo}/commits/{sha}/status";
         using var resp = await SendAsync(url, token, ct).ConfigureAwait(false);
         if (resp.StatusCode == System.Net.HttpStatusCode.NotFound) return (CiStatus.None, false);
-        if (resp.StatusCode == System.Net.HttpStatusCode.TooManyRequests)
-            throw new RateLimitExceededException(
-                "GitHub rate-limited (429); orchestrator should skip this tick.",
-                resp.Headers.RetryAfter?.Delta);
+        GitHubHttp.ThrowIfRateLimited(resp);
         // Same graceful degradation as FetchChecksAsync (#213): a single non-2xx read is
         // degraded → None-but-not-cached, so it re-probes next tick.
         if (!resp.IsSuccessStatusCode) return (CiStatus.None, true);
@@ -279,25 +273,9 @@ public sealed class GitHubCiFailingDetector : ICiFailingDetector
         return hasStatuses || hasCount;
     }
 
-    private Task<HttpResponseMessage> SendAsync(string url, string? token, CancellationToken ct)
-        => SendCoreAsync(new HttpRequestMessage(HttpMethod.Get, url), token, ct);
-
-    // Pagination Link headers from GitHub are absolute URLs; HttpClient.SendAsync
-    // accepts an absolute Uri on the request even when the underlying client has
-    // a BaseAddress, so we hand the URL through unmodified.
-    private Task<HttpResponseMessage> SendAsync(Uri url, string? token, CancellationToken ct)
-        => SendCoreAsync(new HttpRequestMessage(HttpMethod.Get, url), token, ct);
-
-    private async Task<HttpResponseMessage> SendCoreAsync(HttpRequestMessage req, string? token, CancellationToken ct)
+    private async Task<HttpResponseMessage> SendAsync(string url, string? token, CancellationToken ct)
     {
         using var http = _httpFactory.CreateClient("github");
-        using (req)
-        {
-            if (!string.IsNullOrEmpty(token))
-                req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
-            req.Headers.UserAgent.ParseAdd("PRism/0.1");
-            req.Headers.Accept.ParseAdd("application/vnd.github+json");
-            return await http.SendAsync(req, ct).ConfigureAwait(false);
-        }
+        return await GitHubHttp.SendAsync(http, HttpMethod.Get, url, token, ct).ConfigureAwait(false);
     }
 }

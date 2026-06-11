@@ -76,6 +76,12 @@ internal sealed class FakeReviewBackingStore
     // POST /test/seed-tree-files; cleared by Reset. Touches no production surface.
     public List<string> ExtraTreeFiles { get; } = new();
 
+    // #285 e2e-only: when true, FakeSectionQueryRunner returns the scenario PR in the
+    // "review-requested" section so the inbox is non-empty. Default OFF so existing
+    // parity-baseline specs keep their empty inbox and baselines don't shift. Toggled
+    // ON by POST /test/seed-inbox (which also fires RefreshAsync), reset by Reset().
+    public bool InboxSeeded { get; private set; }
+
     public FakeReviewBackingStore()
     {
         // Initial-state assignments happen inside Reset(); ctor stays a thin delegate.
@@ -129,7 +135,16 @@ internal sealed class FakeReviewBackingStore
             Iterations.Add(new IterationDto(3, Sha2, Sha3, new List<CommitDto> { Commits[2] }, true));
 
             ExtraTreeFiles.Clear();
+            InboxSeeded = false;
         }
+    }
+
+    // #285 e2e-only. Sets InboxSeeded so FakeSectionQueryRunner returns the scenario PR.
+    // Called by POST /test/seed-inbox; Reset() clears it so a prior seeded test doesn't
+    // leak its PR into subsequent specs.
+    public void SeedInbox()
+    {
+        lock (Gate) { InboxSeeded = true; }
     }
 
     // Appends a new iteration (head shifts from current to newHeadSha) with the supplied

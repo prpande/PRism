@@ -37,6 +37,7 @@ export function useAiSummary(
     return () => {
       cancelled = true;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- deps are prRef's stable primitive fields; the prRef object is a fresh literal each render (#331)
   }, [prRef.owner, prRef.repo, prRef.number, enabled, subscribed]);
 
   return state;

@@ -1,6 +1,5 @@
 using System.Globalization;
 using System.Net;
-using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 using PRism.Core.Feedback;
@@ -10,8 +9,8 @@ namespace PRism.GitHub.Feedback;
 // Creates a feedback issue in the public prpande/PRism-feedback repo using the
 // user's PAT. Targets api.github.com via its own named client (NOT the host-scoped
 // "github" client) — the feedback repo lives on github.com unconditionally (§4.1).
-// Headers inlined (plan deviation #2). No logging of PAT or GitHub bodies (Octokit
-// source-hygiene): error bodies are not read on the CannotCreate path.
+// Headers go through GitHubHttp.SendAsync (#320). No logging of PAT or GitHub bodies
+// (Octokit source-hygiene): error bodies are not read on the CannotCreate path.
 public sealed class GitHubFeedbackSubmitter : IFeedbackSubmitter
 {
     public const string ClientName = "github.com";
@@ -56,17 +55,10 @@ public sealed class GitHubFeedbackSubmitter : IFeedbackSubmitter
 
         var token = await _readToken().ConfigureAwait(false);
         using var http = _httpFactory.CreateClient(ClientName);
-        using var req = new HttpRequestMessage(HttpMethod.Post, $"repos/{FeedbackRepo.Slug}/issues")
-        {
-            Content = new StringContent(payload, Encoding.UTF8, "application/json"),
-        };
-        if (!string.IsNullOrEmpty(token))
-            req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
-        req.Headers.UserAgent.ParseAdd("PRism/0.1");
-        req.Headers.Accept.ParseAdd("application/vnd.github+json");
-        req.Headers.TryAddWithoutValidation("X-GitHub-Api-Version", "2022-11-28");
-
-        using var resp = await http.SendAsync(req, ct).ConfigureAwait(false);
+        var url = $"repos/{FeedbackRepo.Slug}/issues";
+        using var requestContent = new StringContent(payload, Encoding.UTF8, "application/json");
+        using var resp = await GitHubHttp.SendAsync(
+            http, HttpMethod.Post, url, token, ct, content: requestContent).ConfigureAwait(false);
 
         // 401 (expired/revoked PAT), 403 (scope/permission/rate-limit), 404
         // (fine-grained can't see repo), 422 (validation/missing-label) all degrade

@@ -289,7 +289,9 @@ for (const theme of ['light', 'dark'] as const) {
       await expect(page.getByText('Docs sweep')).toBeHidden();
 
       // Summary status reflects the live match count.
-      await expect(page.getByRole('status')).toContainText(/showing 1 of 5 PRs/i);
+      await expect(page.getByRole('status').filter({ hasText: /showing/i })).toContainText(
+        /showing 1 of 5 PRs/i,
+      );
     });
 
     test('CI facet filters failing across sections; emptied sections hide then re-reveal EXPANDED', async ({
@@ -388,7 +390,9 @@ for (const theme of ['light', 'dark'] as const) {
       await expect(page.getByText('Refactor auth flow')).toBeVisible({ timeout: 30_000 });
 
       await page.getByRole('searchbox', { name: /filter inbox, or paste a pr url/i }).fill('a');
-      await expect(page.getByRole('status')).toContainText(/CI status may be incomplete/i);
+      await expect(page.getByRole('status').filter({ hasText: /CI status/i })).toContainText(
+        /CI status may be incomplete/i,
+      );
     });
   });
 }

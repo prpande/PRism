@@ -3,6 +3,7 @@ using System.Text;
 using FluentAssertions;
 using PRism.Core.Contracts;
 using PRism.Core.Inbox;
+using PRism.Core.Time;
 using PRism.GitHub.Inbox;
 using PRism.GitHub.Tests.TestHelpers;
 using Xunit;
@@ -26,9 +27,10 @@ public sealed class GitHubCiFailingDetectorTests
         Content = new StringContent(body, Encoding.UTF8, "application/json"),
     };
 
-    private static GitHubCiFailingDetector BuildSut(FakeHttpMessageHandler handler) =>
+    private static GitHubCiFailingDetector BuildSut(FakeHttpMessageHandler handler, IClock? clock = null) =>
         new(new FakeHttpClientFactory(handler, new Uri("https://api.github.com/")),
-            () => Task.FromResult<string?>("t"));
+            () => Task.FromResult<string?>("t"),
+            clock ?? new MutableClock());
 
     private static FakeHttpMessageHandler RouterHandler(string checkRunsBody, string statusBody)
         => new(req =>
@@ -720,5 +722,261 @@ public sealed class GitHubCiFailingDetectorTests
 
         result.Items.Should().HaveCount(1);
         result.Items[0].Ci.Should().Be(CiStatus.None);
+    }
+
+    [Fact]
+    public async Task Pending_is_not_cached_and_advances_to_terminal_next_sweep()
+    {
+        // #355 Lever 1: a clean (non-degraded) Pending must NOT be pinned. Same (ref, headSha):
+        // sweep 1 reads in-progress (Pending), sweep 2 reads passing → sweep 2 must reflect Passing.
+        // On main the cached Pending pins and sweep 2 still returns Pending (RED).
+        var finished = false;
+        var handler = new FakeHttpMessageHandler(req =>
+        {
+            if (req.RequestUri!.AbsoluteUri.Contains("/check-runs", StringComparison.Ordinal))
+                return Respond(HttpStatusCode.OK, finished ? AllPassingCheckRuns : InProgressCheckRun);
+            return Respond(HttpStatusCode.OK, SuccessNoLegacyStatus);
+        });
+        var sut = BuildSut(handler);
+
+        var first = await sut.DetectAsync([Raw(1)], default);
+        first.Items[0].Ci.Should().Be(CiStatus.Pending);
+
+        finished = true;
+        var second = await sut.DetectAsync([Raw(1)], default);
+        second.Items[0].Ci.Should().Be(CiStatus.Passing,
+            "a clean Pending must not be cached — the next sweep re-probes and sees the terminal status");
+    }
+
+    [Fact]
+    public async Task Pending_reprobes_http_each_sweep()
+    {
+        // A Pending sweep must issue HTTP again next sweep (not served from cache).
+        var requestCount = 0;
+        var handler = new FakeHttpMessageHandler(req =>
+        {
+            Interlocked.Increment(ref requestCount);
+            if (req.RequestUri!.AbsoluteUri.Contains("/check-runs", StringComparison.Ordinal))
+                return Respond(HttpStatusCode.OK, InProgressCheckRun);
+            return Respond(HttpStatusCode.OK, RegisteredPendingStatus);
+        });
+        var sut = BuildSut(handler);
+
+        var candidate = Raw(1, "sha-A");
+        await sut.DetectAsync([candidate], default);
+        var afterFirst = requestCount;
+        await sut.DetectAsync([candidate], default);
+
+        afterFirst.Should().Be(2);
+        requestCount.Should().Be(4, "a Pending result must re-probe next sweep, not hit the cache");
+    }
+
+    [Fact]
+    public async Task forceReprobe_bypasses_cache_read_and_refreshes_value()
+    {
+        // #355 Lever 2: a normal call caches Passing; a forceReprobe call ignores the cache and
+        // re-reads (now Failing) for the SAME sha, then WRITES the fresh value so a subsequent
+        // normal call returns Failing with no new HTTP.
+        var failing = false;
+        var requestCount = 0;
+        var handler = new FakeHttpMessageHandler(req =>
+        {
+            Interlocked.Increment(ref requestCount);
+            if (req.RequestUri!.AbsoluteUri.Contains("/check-runs", StringComparison.Ordinal))
+                return Respond(HttpStatusCode.OK, failing ? FailingCheckRun : AllPassingCheckRuns);
+            return Respond(HttpStatusCode.OK, SuccessNoLegacyStatus);
+        });
+        var sut = BuildSut(handler);
+        var candidate = Raw(1, "sha-A");
+
+        var first = await sut.DetectAsync([candidate], default);
+        first.Items[0].Ci.Should().Be(CiStatus.Passing);
+        var afterFirst = requestCount; // 2
+
+        failing = true;
+        var forced = await sut.DetectAsync([candidate], default, forceReprobe: true);
+        forced.Items[0].Ci.Should().Be(CiStatus.Failing, "forceReprobe must bypass the cached Passing");
+        requestCount.Should().Be(afterFirst + 2, "forceReprobe re-probes both sources");
+
+        var afterForced = requestCount;
+        var third = await sut.DetectAsync([candidate], default); // normal, no force
+        third.Items[0].Ci.Should().Be(CiStatus.Failing, "the forced reprobe refreshed the cached value");
+        requestCount.Should().Be(afterForced, "the refreshed terminal is now served from cache");
+    }
+
+    [Fact]
+    public async Task forceReprobe_does_not_cache_pending()
+    {
+        // forceReprobe still honors Lever 1: a forced reprobe returning Pending is not pinned.
+        var requestCount = 0;
+        var handler = new FakeHttpMessageHandler(req =>
+        {
+            Interlocked.Increment(ref requestCount);
+            if (req.RequestUri!.AbsoluteUri.Contains("/check-runs", StringComparison.Ordinal))
+                return Respond(HttpStatusCode.OK, InProgressCheckRun);
+            return Respond(HttpStatusCode.OK, RegisteredPendingStatus);
+        });
+        var sut = BuildSut(handler);
+        var candidate = Raw(1, "sha-A");
+
+        var forced = await sut.DetectAsync([candidate], default, forceReprobe: true);
+        forced.Items[0].Ci.Should().Be(CiStatus.Pending);
+        var afterForced = requestCount;
+
+        var normal = await sut.DetectAsync([candidate], default);
+        normal.Items[0].Ci.Should().Be(CiStatus.Pending);
+        requestCount.Should().Be(afterForced + 2, "a forced Pending was not cached — the next sweep re-probes");
+    }
+
+    [Fact]
+    public async Task forceReprobe_degraded_leaves_existing_cached_terminal()
+    {
+        // A forced reprobe that degrades (5xx) writes nothing and does NOT evict the prior
+        // cached terminal — a transient blip is not evidence the terminal is wrong.
+        var degrade = false;
+        var handler = new FakeHttpMessageHandler(req =>
+        {
+            if (req.RequestUri!.AbsoluteUri.Contains("/check-runs", StringComparison.Ordinal))
+                return degrade
+                    ? Respond(HttpStatusCode.ServiceUnavailable, "{}")
+                    : Respond(HttpStatusCode.OK, AllPassingCheckRuns);
+            return Respond(HttpStatusCode.OK, SuccessNoLegacyStatus);
+        });
+        var sut = BuildSut(handler);
+        var candidate = Raw(1, "sha-A");
+
+        var first = await sut.DetectAsync([candidate], default);
+        first.Items[0].Ci.Should().Be(CiStatus.Passing);
+
+        degrade = true;
+        var forced = await sut.DetectAsync([candidate], default, forceReprobe: true);
+        forced.Items[0].Ci.Should().Be(CiStatus.None, "the forced reprobe degraded this sweep");
+
+        degrade = false;
+        var normal = await sut.DetectAsync([candidate], default);
+        normal.Items[0].Ci.Should().Be(CiStatus.Passing,
+            "the degraded forced reprobe did not evict the prior cached terminal");
+    }
+
+    [Fact]
+    public async Task forceReprobe_nondegraded_pending_evicts_stale_cached_terminal()
+    {
+        // #355 (Copilot review): a forced reprobe that observes a CLEAN (non-degraded) Pending
+        // on a key that still holds a STALE terminal (the same-SHA "Re-run failed jobs" case)
+        // must EVICT that terminal. Otherwise Lever 1's "don't cache Pending" leaves the old
+        // terminal in place, and the very next NON-forced sweep reads it and flips the dot back
+        // after a single render — defeating Lever 2 for the re-run path. With the key evicted,
+        // normal sweeps re-probe (Lever 1) until CI goes terminal again, then re-cache.
+        // Contrast forceReprobe_degraded_leaves_existing_cached_terminal: a DEGRADED forced
+        // reprobe must NOT evict (a transient blip is not evidence the terminal is wrong).
+        var phase = "passing"; // passing → pending (re-run started) → passing (re-run finished)
+        var requestCount = 0;
+        var handler = new FakeHttpMessageHandler(req =>
+        {
+            Interlocked.Increment(ref requestCount);
+            if (req.RequestUri!.AbsoluteUri.Contains("/check-runs", StringComparison.Ordinal))
+                return Respond(HttpStatusCode.OK, phase == "pending" ? InProgressCheckRun : AllPassingCheckRuns);
+            return Respond(HttpStatusCode.OK, SuccessNoLegacyStatus);
+        });
+        var sut = BuildSut(handler);
+        var candidate = Raw(1, "sha-A");
+
+        // 1) A normal sweep caches the terminal Passing under (ref, sha-A).
+        var first = await sut.DetectAsync([candidate], default);
+        first.Items[0].Ci.Should().Be(CiStatus.Passing);
+
+        // 2) Same-SHA CI re-run: a forced reprobe (manual Refresh) sees Pending and must
+        //    evict the stale cached Passing.
+        phase = "pending";
+        var forced = await sut.DetectAsync([candidate], default, forceReprobe: true);
+        forced.Items[0].Ci.Should().Be(CiStatus.Pending, "the forced reprobe sees the re-run in progress");
+        var afterForced = requestCount;
+
+        // 3) A NORMAL (non-forced) sweep must re-probe — proving the stale Passing was evicted,
+        //    not served from the cache — and reflect the live Pending. On main (no eviction)
+        //    this returns the cached Passing with zero new HTTP (RED).
+        var normal = await sut.DetectAsync([candidate], default);
+        normal.Items[0].Ci.Should().Be(CiStatus.Pending,
+            "the stale cached terminal was evicted, so the normal sweep re-probes and sees Pending");
+        requestCount.Should().Be(afterForced + 2,
+            "eviction forces the next normal sweep to re-probe both sources, not hit the stale cache");
+
+        // 4) When the re-run finishes, a normal sweep advances to terminal and re-caches it.
+        phase = "passing";
+        var healed = await sut.DetectAsync([candidate], default);
+        healed.Items[0].Ci.Should().Be(CiStatus.Passing, "Lever 1 re-probes Pending each sweep until terminal");
+    }
+
+    [Fact]
+    public async Task Evicts_absent_pr_cache_entry_observed_on_reinclusion()
+    {
+        // Count check-runs probes per PR. Frozen default clock ⇒ TTL never expires,
+        // so a tick-3 re-probe is attributable to eviction alone, not TTL.
+        var perPr = new Dictionary<string, int>();
+        var handler = new FakeHttpMessageHandler(req =>
+        {
+            var path = req.RequestUri!.AbsolutePath;
+            if (path.Contains("/check-runs", StringComparison.Ordinal))
+            {
+                perPr[path] = perPr.TryGetValue(path, out var v) ? v + 1 : 1;
+                return Respond(HttpStatusCode.OK, FailingCheckRun);
+            }
+            return Respond(HttpStatusCode.OK, SuccessNoLegacyStatus);
+        });
+        var sut = BuildSut(handler);
+
+        var pr1 = Raw(1, "head1"); var pr2 = Raw(2, "head2");
+        await sut.DetectAsync([pr1, pr2], default);
+        await sut.DetectAsync([pr1], default);
+        await sut.DetectAsync([pr1, pr2], default);
+
+        perPr["/repos/acme/api/commits/head1/check-runs"].Should().Be(1);
+        perPr["/repos/acme/api/commits/head2/check-runs"].Should().Be(2);
+    }
+
+    [Fact]
+    public async Task Terminal_status_within_TTL_is_served_from_cache_without_reprobe()
+    {
+        var clock = new MutableClock();
+        var requestCount = 0;
+        var handler = new FakeHttpMessageHandler(req =>
+        {
+            Interlocked.Increment(ref requestCount);
+            return req.RequestUri!.AbsoluteUri.Contains("/check-runs", StringComparison.Ordinal)
+                ? Respond(HttpStatusCode.OK, FailingCheckRun)
+                : Respond(HttpStatusCode.OK, SuccessNoLegacyStatus);
+        });
+        var sut = BuildSut(handler, clock);
+
+        var pr = Raw(1, "headX");
+        await sut.DetectAsync([pr], default);
+        var first = requestCount;
+        clock.Advance(TimeSpan.FromSeconds(30)); // still within the 2-min TTL
+        await sut.DetectAsync([pr], default);
+
+        requestCount.Should().Be(first, "a terminal status within the TTL is served from cache");
+    }
+
+    [Fact]
+    public async Task Terminal_status_past_TTL_is_reprobed()
+    {
+        var clock = new MutableClock();
+        var checkRunsBody = FailingCheckRun;
+        var handler = new FakeHttpMessageHandler(req =>
+            req.RequestUri!.AbsoluteUri.Contains("/check-runs", StringComparison.Ordinal)
+                ? Respond(HttpStatusCode.OK, checkRunsBody)
+                : Respond(HttpStatusCode.OK, SuccessNoLegacyStatus));
+        var sut = BuildSut(handler, clock);
+
+        var pr = Raw(1, "headX");
+        var r1 = await sut.DetectAsync([pr], default);
+        r1.Items[0].Ci.Should().Be(CiStatus.Failing);
+
+        // Same SHA "re-run": CI flips to in-progress. Advance past the TTL → re-probe picks it up.
+        checkRunsBody = InProgressCheckRun;
+        clock.Advance(TimeSpan.FromMinutes(3));
+        var r2 = await sut.DetectAsync([pr], default);
+
+        r2.Items[0].Ci.Should().Be(CiStatus.Pending, "past the TTL the same-SHA re-run is re-probed");
     }
 }

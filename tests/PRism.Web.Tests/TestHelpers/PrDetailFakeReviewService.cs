@@ -34,8 +34,14 @@ public sealed class PrDetailFakeReviewService : IReviewAuth, IPrDiscovery, IPrRe
     public Task<ActivePrPollSnapshot> PollActivePrAsync(PrReference reference, CancellationToken ct)
         => Task.FromResult(PollResponses.TryGetValue(reference, out var v) ? v : DefaultPollResponse);
 
+    // #344: lets endpoint tests drive the RefreshAsync throw-before-commit path (a GitHub 429
+    // surfaces as a plain HttpRequestException, NOT RateLimitExceededException, on the PR-detail reader).
+    public Func<PrReference, CancellationToken, Task<PrDetailDto?>>? GetPrDetailAsyncOverride { get; set; }
+
     public Task<PrDetailDto?> GetPrDetailAsync(PrReference reference, CancellationToken ct)
-        => Task.FromResult(DetailResponses.TryGetValue(reference, out var v) ? v : DefaultDetailResponse);
+        => GetPrDetailAsyncOverride is not null
+            ? GetPrDetailAsyncOverride(reference, ct)
+            : Task.FromResult(DetailResponses.TryGetValue(reference, out var v) ? v : DefaultDetailResponse);
 
     public Task<ClusteringInput> GetTimelineAsync(PrReference reference, CancellationToken ct)
         => Task.FromResult(TimelineResponses.TryGetValue(reference, out var v) ? v : DefaultTimelineResponse);
@@ -64,7 +70,7 @@ public sealed class PrDetailFakeReviewService : IReviewAuth, IPrDiscovery, IPrRe
         => Task.FromResult<CommitInfo?>(new CommitInfo(sha));
 
     // Methods PR-detail tests don't exercise.
-    public Task<AuthValidationResult> ValidateCredentialsAsync(CancellationToken ct) =>
+    public Task<AuthValidationResult> ValidateCredentialsAsync(CancellationToken ct, bool skipCredentialHealth = false) =>
         Task.FromResult(new AuthValidationResult(true, "tester", new[] { "repo" }, null, null));
     public Task<InboxSection[]> GetInboxAsync(CancellationToken ct) => Task.FromResult(Array.Empty<InboxSection>());
     public bool TryParsePrUrl(string url, out PrReference? reference) { reference = null; return false; }

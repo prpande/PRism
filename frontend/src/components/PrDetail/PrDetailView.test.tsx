@@ -10,8 +10,16 @@ import {
 import { AskAiDrawerProvider } from '../../contexts/AskAiDrawerContext';
 import { ToastProvider } from '../Toast/useToast';
 import type { PrDetailDto, PrReference } from '../../api/types';
+import { prRefKey } from '../../api/types';
 import type { PrTabId } from './PrSubTabStrip';
 import { PrDetailView } from './PrDetailView';
+import * as prDetailApi from '../../api/prDetail';
+
+// #344 — observe the usePrDetail.reload() that the refresh hook fires. The
+// usePrDetail mock is fully stubbed (no getPrDetail spy), so a hoisted, stable
+// reload mock is the only way to assert the post-refresh re-GET. Declared via
+// vi.hoisted so it exists before the vi.mock factory below references it.
+const { reloadMock } = vi.hoisted(() => ({ reloadMock: vi.fn() }));
 
 // ---------------------------------------------------------------------------
 // PrDetailView depends on the same data/SSE hooks PrDetailPageInner did. We
@@ -53,7 +61,7 @@ vi.mock('../../hooks/usePrDetail', () => ({
     data: PR_DETAIL,
     isLoading: false,
     error: null,
-    reload: vi.fn(),
+    reload: reloadMock,
   }),
 }));
 
@@ -200,6 +208,52 @@ describe('PrDetailView', () => {
     const header = screen.getByTestId('pr-header');
     expect(header.querySelector('[data-testid="avatar"]')).not.toBeNull();
     expect(header.textContent).toContain('alice');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Task 8 (#344) — manual Refresh wiring. The header Refresh button drives the
+// real usePrDetailRefresh hook (the ONLY refresh hook not mocked here), which
+// posts /refresh via the spied refreshPrDetail and then fires usePrDetail.reload
+// (the hoisted reloadMock). usePrDetail is fully stubbed, so we assert on the
+// spy + reloadMock rather than a getPrDetail call.
+// ---------------------------------------------------------------------------
+describe('PrDetailView — manual Refresh wiring (Task 8 / #344)', () => {
+  const PR = { owner: 'acme', repo: 'api', number: 7 };
+
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    reloadMock.mockClear();
+  });
+
+  test('clicking Refresh posts /refresh then reloads the detail', async () => {
+    const refreshSpy = vi.spyOn(prDetailApi, 'refreshPrDetail').mockResolvedValue(undefined);
+
+    renderPrDetailView({ prRef: PR });
+
+    await userEvent.click(screen.getByTestId('pr-refresh-button'));
+
+    await waitFor(() => expect(refreshSpy).toHaveBeenCalledTimes(1));
+    expect(refreshSpy).toHaveBeenCalledWith(PR, expect.any(AbortSignal));
+    await waitFor(() => expect(reloadMock).toHaveBeenCalled());
+  });
+
+  test('shows the per-tab loading bar during an in-flight refresh (initial load already settled)', async () => {
+    // Never-resolving refresh → isRefreshing stays true while isLoading is
+    // already false. Proves the LoadingBar `active={active && (isLoading ||
+    // prRefresh.isRefreshing)}` term is wired (guards the `|| isRefreshing`).
+    vi.spyOn(prDetailApi, 'refreshPrDetail').mockImplementation(() => new Promise<void>(() => {}));
+
+    renderPrDetailView({ prRef: PR });
+
+    await userEvent.click(screen.getByTestId('pr-refresh-button'));
+
+    await waitFor(() =>
+      expect(screen.getByTestId(`pr-loading-bar:${prRefKey(PR)}`)).toHaveAttribute(
+        'data-active',
+        'true',
+      ),
+    );
   });
 });
 

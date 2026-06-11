@@ -159,6 +159,50 @@ public class PrDetailLoaderTests
     }
 
     [Fact]
+    public async Task LoadAsync_evicts_snapshot_after_RootCommentPostedBusEvent()
+    {
+        // #353: a posted PR-root comment is a GitHub issue comment — it does NOT change the
+        // head SHA, so the (prRef, headSha, generation) cache key alone would re-serve the
+        // stale pre-post snapshot on the SSE-driven reload. The loader subscribes to
+        // RootCommentPostedBusEvent and evicts the PR's snapshot immediately, so the reload
+        // re-fetches fresh detail instead of waiting for the ActivePrPoller's CommentCountChanged.
+        var review = new FakePrDetailReviewService();
+        review.DefaultPollResponse = new ActivePrPollSnapshot("head1", "MERGEABLE", "OPEN", 0, 0);
+        review.DefaultDetailResponse = MakeDetail(headSha: "head1");
+        review.DefaultTimelineResponse = MakeTimeline(5);
+        var bus = new ReviewEventBus();
+        var loader = MakeLoader(review, bus: bus);
+
+        await loader.LoadAsync(Pr1, CancellationToken.None);
+        loader.TryGetCachedSnapshot(Pr1).Should().NotBeNull();
+
+        bus.Publish(new RootCommentPostedBusEvent(Pr1, 0L));
+
+        loader.TryGetCachedSnapshot(Pr1).Should()
+            .BeNull("a posted root comment must evict the snapshot so the reload re-fetches fresh detail");
+    }
+
+    [Fact]
+    public async Task RootCommentPostedBusEvent_for_other_prRef_does_not_evict_this_snapshot()
+    {
+        // Eviction is scoped to evt.PrRef — a root comment posted on a different PR must not
+        // drop this PR's cached snapshot (which would 422 /file & /viewed for no reason).
+        var review = new FakePrDetailReviewService();
+        review.DefaultPollResponse = new ActivePrPollSnapshot("head1", "MERGEABLE", "OPEN", 0, 0);
+        review.DefaultDetailResponse = MakeDetail(headSha: "head1");
+        review.DefaultTimelineResponse = MakeTimeline(5);
+        var bus = new ReviewEventBus();
+        var loader = MakeLoader(review, bus: bus);
+
+        await loader.LoadAsync(Pr1, CancellationToken.None);
+
+        bus.Publish(new RootCommentPostedBusEvent(new PrReference("owner", "repo", 2), 0L));
+
+        loader.TryGetCachedSnapshot(Pr1).Should()
+            .NotBeNull("a different PR's root-comment post must not evict this PR's snapshot");
+    }
+
+    [Fact]
     public async Task LoadAsync_does_not_evict_snapshot_on_no_op_ActivePrUpdated_event()
     {
         // #116 / PR #150 review: the poller's first poll on a quiet PR publishes an
@@ -454,6 +498,75 @@ public class PrDetailLoaderTests
         var loaded = await loader.LoadAsync(Pr1, CancellationToken.None);
 
         loader.TryGetCachedSnapshot(Pr1).Should().BeSameAs(loaded);
+    }
+
+    // #344 — RefreshAsync force-fresh cache bypass.
+
+    [Fact]
+    public async Task RefreshAsync_force_refetches_even_on_warm_cache_with_unchanged_head()
+    {
+        var calls = new List<string>();
+        var review = new FakePrDetailReviewService(calls);
+        review.DefaultDetailResponse = MakeDetail(headSha: "head1");
+        review.DefaultTimelineResponse = MakeTimeline(1);
+        var loader = MakeLoader(review);
+
+        // Prime the cache (snapshot A) at head1.
+        var first = await loader.LoadAsync(Pr1, CancellationToken.None);
+        first.Should().NotBeNull();
+        calls.Count(c => c == "GetPrDetail").Should().Be(1, "cold load fetches once");
+
+        // Force refresh — head SHA is unchanged, so a plain reload would be a cache hit.
+        var refreshed = await loader.RefreshAsync(Pr1, CancellationToken.None);
+
+        refreshed.Should().NotBeNull();
+        calls.Count(c => c == "GetPrDetail").Should().Be(2, "RefreshAsync re-fetches despite the warm cache");
+        loader.TryGetCachedSnapshot(Pr1).Should().BeSameAs(refreshed, "the fresh snapshot replaced the cached one");
+        refreshed.Should().NotBeSameAs(first, "force-fresh composes and commits a new snapshot");
+    }
+
+    [Fact]
+    public async Task RefreshAsync_returns_null_when_detail_is_gone()
+    {
+        var review = new FakePrDetailReviewService();
+        review.DefaultDetailResponse = null;
+        var loader = MakeLoader(review);
+
+        var result = await loader.RefreshAsync(Pr1, CancellationToken.None);
+
+        result.Should().BeNull("GetPrDetail null => PR not found => endpoint maps 404");
+    }
+
+    [Fact]
+    public async Task RefreshAsync_returns_uncached_when_generation_bumps_midflight()
+    {
+        var review = new FakePrDetailReviewService();
+        review.DefaultDetailResponse = MakeDetail(headSha: "head1");
+        review.DefaultTimelineResponse = MakeTimeline(1);     // ≥1 commit so the clusterer runs
+        var configStore = new FakeConfigStore();
+        // Cluster() runs inside ComposeSnapshotAsync (after the detail fetch, before the cache
+        // commit). Firing Changed there bumps the loader's generation via OnConfigChanged ->
+        // InvalidateAll, so RefreshAsync's generation re-check returns the snapshot uncached.
+        var clusterer = new InvalidatingClusterer(configStore);
+        var loader = MakeLoader(review, clusterer: clusterer, configStore: configStore);
+
+        var snapshot = await loader.RefreshAsync(Pr1, CancellationToken.None);
+
+        snapshot.Should().NotBeNull("caller still gets fresh data");
+        loader.TryGetCachedSnapshot(Pr1).Should().BeNull("a generation bump mid-flight leaves the result uncached");
+    }
+
+    // Fires the config store's Changed event from inside Cluster() to simulate a hot-reload
+    // landing mid-compose; returns null (=> ClusteringQuality.Low), which is irrelevant to the test.
+    private sealed class InvalidatingClusterer : IIterationClusteringStrategy
+    {
+        private readonly FakeConfigStore _configStore;
+        public InvalidatingClusterer(FakeConfigStore configStore) => _configStore = configStore;
+        public IReadOnlyList<IterationCluster>? Cluster(ClusteringInput input, IterationClusteringCoefficients coefficients)
+        {
+            _configStore.RaiseChanged();
+            return null;
+        }
     }
 }
 

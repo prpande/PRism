@@ -131,7 +131,7 @@ describe('SubmitDialog', () => {
     expect(screen.getByRole('button', { name: /confirm submit/i })).toBeDisabled();
   });
 
-  it('clicking Confirm fires onSubmit with the PascalCase verdict', async () => {
+  it('clicking Confirm fires onSubmit with the kebab-case verdict', async () => {
     const onSubmit = vi.fn();
     render(
       <SubmitDialog
@@ -141,7 +141,7 @@ describe('SubmitDialog', () => {
     await act(async () => {
       fireEvent.click(screen.getByRole('button', { name: /confirm submit/i }));
     });
-    expect(onSubmit).toHaveBeenCalledWith('RequestChanges');
+    expect(onSubmit).toHaveBeenCalledWith('request-changes');
   });
 
   it('changing the verdict picker calls onVerdictChange with the kebab value', () => {

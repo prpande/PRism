@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useStreamHealth } from '../../hooks/useStreamHealth';
-import styles from './StreamHealthSnackbar.module.css';
+import { Snackbar } from '../Snackbar';
 
 export function StreamHealthSnackbar() {
   const { healthy, retry } = useStreamHealth();
@@ -16,19 +16,13 @@ export function StreamHealthSnackbar() {
   if (healthy || dismissed) return null;
 
   return (
-    <div className={styles.snackbar} role="status" aria-live="polite">
-      <span className={styles.message}>Connection lost — reconnecting</span>
-      <button type="button" className={styles.retry} onClick={retry}>
-        Retry now
-      </button>
-      <button
-        type="button"
-        className={styles.dismiss}
-        aria-label="Dismiss"
-        onClick={() => setDismissed(true)}
-      >
-        ×
-      </button>
-    </div>
+    <Snackbar
+      tone="warning"
+      message="Connection lost — reconnecting"
+      action={{ label: 'Retry now', onClick: retry }}
+      onDismiss={() => setDismissed(true)}
+      role="status"
+      ariaLive="polite"
+    />
   );
 }

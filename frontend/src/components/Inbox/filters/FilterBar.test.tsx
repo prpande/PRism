@@ -37,7 +37,15 @@ it('CI trigger shows the failing count when unselected', () => {
   render(
     <MemoryRouter>
       <OpenTabsProvider>
-        <FilterBar sections={secs} initialSort="updated" ciProbeComplete onState={onState} />
+        <FilterBar
+          sections={secs}
+          initialSort="updated"
+          ciProbeComplete
+          onState={onState}
+          refresh={vi.fn()}
+          isRefreshing={false}
+          justRefreshed={false}
+        />
       </OpenTabsProvider>
     </MemoryRouter>,
   );
@@ -48,7 +56,15 @@ it('sort control is an accessible combobox named "Sort" with no visible "Sort:" 
   render(
     <MemoryRouter>
       <OpenTabsProvider>
-        <FilterBar sections={secs} initialSort="updated" ciProbeComplete onState={onState} />
+        <FilterBar
+          sections={secs}
+          initialSort="updated"
+          ciProbeComplete
+          onState={onState}
+          refresh={vi.fn()}
+          isRefreshing={false}
+          justRefreshed={false}
+        />
       </OpenTabsProvider>
     </MemoryRouter>,
   );

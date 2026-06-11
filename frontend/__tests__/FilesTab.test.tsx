@@ -1,5 +1,6 @@
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
+import { jsonResponse } from './helpers/http';
 import { MemoryRouter, Routes, Route, Outlet } from 'react-router-dom';
 import { FilesTab } from '../src/components/PrDetail/FilesTab/FilesTab';
 import { PrDetailContextProvider } from '../src/components/PrDetail/prDetailContext';
@@ -201,13 +202,6 @@ function mockWholeFileFetch(opts: {
   }) as unknown as typeof fetch;
 }
 
-function jsonResponse(data: unknown, status = 200): Response {
-  return new Response(JSON.stringify(data), {
-    status,
-    headers: { 'Content-Type': 'application/json' },
-  });
-}
-
 function Wrapper({ prDetail }: { prDetail: PrDetailDto }) {
   // Mirrors the host's ownership of the draft session. FilesTab reads
   // prRef/prDetail/session/readOnly from the PrDetail context (Task 2); the
@@ -241,10 +235,6 @@ function renderFilesTab(prDetail: PrDetailDto = minimalPrDetail) {
     </MemoryRouter>,
   );
 }
-
-beforeEach(() => {
-  vi.spyOn(document, 'cookie', 'get').mockReturnValue('');
-});
 
 afterEach(() => {
   vi.restoreAllMocks();

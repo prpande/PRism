@@ -2,6 +2,8 @@
 
 A focused, keyboard-first PR review tool for engineers who want to triage and review pull requests faster than they can in github.com. Local-first (talks to GitHub directly via a personal access token), single-app surface, AI-augmented but AI-optional.
 
+> **Historical reference.** This prototype predates implementation. The production app has since shipped (V1, in React + Vite + TypeScript — see the [Releases page](https://github.com/prpande/PRism/releases)), so the "pick a stack / recreate this UI" framing below is the original handoff brief, not a current task. The folder is retained as the visual/interaction source of truth and the parity baseline — see [`.ai/docs/design-handoff.md`](../../.ai/docs/design-handoff.md).
+
 ## About these files
 
 The HTML/CSS/JSX bundle in this folder is a **design reference**, not production code. It's an interactive prototype built with React via inline Babel transpilation — perfectly fine for design-review purposes, *not* what you ship.

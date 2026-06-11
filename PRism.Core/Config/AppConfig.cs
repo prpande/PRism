@@ -59,9 +59,14 @@ public sealed record InboxConfig(
     bool ShowActivityRail = false,
     // #219 user toggle to switch the Inbox between grouped-by-repo (default) and flat
     // rendering. A pure frontend-render preference — it does NOT reshape the backend
-    // feed. Appended LAST as a trailing-defaulted param so the positional
+    // feed. A trailing-defaulted param so the positional
     // `new InboxConfig(true, …, 14)` default construction stays valid.
-    bool GroupByRepo = true);
+    bool GroupByRepo = true,
+    // #137 additive extra bot logins for the activity rail, comma-separated, matched
+    // case-insensitively on top of the built-in `Copilot` baseline and the `[bot]`
+    // suffix. Default empty. Settings UI tracked separately in #316. Appended LAST so
+    // the positional `new InboxConfig(true, …, 14)` default construction stays valid.
+    string KnownBots = "");
 public sealed record InboxSectionsConfig(
     bool ReviewRequested,
     bool AwaitingAuthor,

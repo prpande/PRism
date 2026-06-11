@@ -98,7 +98,7 @@ public class AuthReplaceEndpointTests
     {
         private readonly Func<Task<AuthValidationResult>> _validate;
         public StubReviewAuth(Func<Task<AuthValidationResult>> validate) { _validate = validate; }
-        public Task<AuthValidationResult> ValidateCredentialsAsync(CancellationToken ct) => _validate();
+        public Task<AuthValidationResult> ValidateCredentialsAsync(CancellationToken ct, bool skipCredentialHealth = false) => _validate();
     }
 
     private static async Task SeedPriorLoginAsync(HarnessFactory f, string login)

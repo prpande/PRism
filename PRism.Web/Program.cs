@@ -81,6 +81,11 @@ builder.Services.AddPrismClaudeCode(
 builder.Services.AddPrismAi();
 builder.Services.AddPrismWeb();
 builder.Services.AddSingleton<SessionTokenProvider>();
+// TimeProvider is an ActivityProvider ctor dependency (clock for cache TTL + the
+// notifications "since" window). Not registered elsewhere, so register the system
+// clock here; a missing registration would throw "Unable to resolve service" at
+// startup when the generic IActivityProvider registration below is built.
+builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddSingleton<PRism.Core.Activity.IActivityProvider, PRism.Core.Activity.ActivityProvider>();
 
 // Test environment: opt-in swap GitHubReviewService → the split fakes so Playwright
@@ -103,6 +108,7 @@ if (builder.Environment.IsEnvironment("Test")
     foreach (var serviceType in new[]
              {
                  typeof(IReviewAuth), typeof(IPrDiscovery), typeof(IPrReader), typeof(IReviewSubmitter),
+                 typeof(PRism.Core.Inbox.ISectionQueryRunner), typeof(PRism.Core.Inbox.IPrEnricher), typeof(PRism.Core.Inbox.ICiFailingDetector),
              })
     {
         // RemoveAll (vs. removing the first match) in case any of these were registered
@@ -114,6 +120,9 @@ if (builder.Environment.IsEnvironment("Test")
     builder.Services.AddSingleton<IPrDiscovery, FakePrDiscovery>();
     builder.Services.AddSingleton<IPrReader, FakePrReader>();
     builder.Services.AddSingleton<IReviewSubmitter, FakeReviewSubmitter>();
+    builder.Services.AddSingleton<PRism.Core.Inbox.ISectionQueryRunner, FakeSectionQueryRunner>();
+    builder.Services.AddSingleton<PRism.Core.Inbox.IPrEnricher, FakePrEnricher>();
+    builder.Services.AddSingleton<PRism.Core.Inbox.ICiFailingDetector, FakeCiFailingDetector>();
     builder.Services.RemoveAll<PRism.Core.Activity.IActivityProvider>();
     builder.Services.AddSingleton<PRism.Core.Activity.IActivityProvider, PRism.Web.TestHooks.FakeActivityProvider>();
 }
@@ -268,6 +277,9 @@ app.UseWhen(
         // rejecting any legitimate request.
         if (HttpMethods.IsPost(method) && path.StartsWithSegments("/api/feedback", StringComparison.Ordinal))
             return true;
+        // #311 — POST /api/inbox/refresh has NO request body, so it is intentionally absent
+        // from this allow-list (nothing to amplify / cap). Listed here so the omission is a
+        // recorded decision, not an oversight.
         if (!path.StartsWithSegments("/api/pr", StringComparison.Ordinal)) return false;
         var value = path.Value!;
         if (HttpMethods.IsPut(method) && value.EndsWith("/draft", StringComparison.Ordinal)) return true;
@@ -331,6 +343,7 @@ app.MapActivity();
 app.MapPrDetail();
 app.MapPrDraftEndpoints();
 app.MapPrReloadEndpoints();
+app.MapPrRefreshEndpoints();
 app.MapPrSubmitEndpoints();
 app.MapPrRootCommentEndpoints();
 app.MapPrCommentEndpoints();

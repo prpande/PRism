@@ -75,6 +75,13 @@ async function request<T>(
     if (resp.status === 401) {
       window.dispatchEvent(new CustomEvent('prism-auth-rejected'));
     }
+    // #312: cue useAuth to re-read the credential-health latch. Suppress it when
+    // the failing request IS /api/auth/state — the listener's only job is to refetch
+    // that endpoint, so re-dispatching on its own failure would schedule a needless
+    // refetch every debounce window.
+    if (!path.startsWith('/api/auth/state')) {
+      window.dispatchEvent(new CustomEvent('prism-request-failed'));
+    }
     throw new ApiError(resp.status, requestId, parsed);
   }
   if (resp.status === 204) return undefined as unknown as T;

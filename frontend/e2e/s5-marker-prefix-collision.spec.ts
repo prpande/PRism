@@ -56,7 +56,7 @@ test('S5 marker-prefix collision — a body carrying the PRism client-id marker 
   // up `unsaved` (not `rejected` — see the DEVIATION note above).
   await textarea.fill('before <!-- prism:client-id:fake --> after');
 
-  await expect(composerBadge(page)).toHaveText('unsaved', { timeout: 10_000 });
+  await expect(composerBadge(page)).toHaveText('Unsaved', { timeout: 10_000 });
 
   // The body was rejected server-side: nothing persisted. Reload the page and
   // confirm the Drafts tab is empty (the count chip only renders for a real

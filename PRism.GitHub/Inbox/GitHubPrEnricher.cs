@@ -1,6 +1,5 @@
 using System.Collections.Concurrent;
 using System.Net;
-using System.Net.Http.Headers;
 using System.Text.Json;
 using PRism.Core.Contracts;
 using PRism.Core.Inbox;
@@ -9,7 +8,6 @@ namespace PRism.GitHub.Inbox;
 
 public sealed class GitHubPrEnricher : IPrEnricher
 {
-    private const int ConcurrencyCap = 8;
     private readonly IHttpClientFactory _httpFactory;
     private readonly Func<Task<string?>> _readToken;
     private readonly ConcurrentDictionary<(PrReference, DateTimeOffset), RawPrInboxItem> _cache = new();
@@ -24,9 +22,9 @@ public sealed class GitHubPrEnricher : IPrEnricher
         IReadOnlyList<RawPrInboxItem> items, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(items);
-        if (items.Count == 0) return Array.Empty<RawPrInboxItem>();
+        if (items.Count == 0) { _cache.Clear(); return Array.Empty<RawPrInboxItem>(); }
         var token = await _readToken().ConfigureAwait(false);
-        using var sem = new SemaphoreSlim(ConcurrencyCap);
+        using var sem = new SemaphoreSlim(GitHubHttp.ConcurrencyCap);
 
         var done = await Task.WhenAll(items.Select(async raw =>
         {
@@ -42,6 +40,7 @@ public sealed class GitHubPrEnricher : IPrEnricher
             finally { sem.Release(); }
         })).ConfigureAwait(false);
 
+        InboxCacheEviction.PruneAbsent(_cache, items.Select(i => i.Reference).ToHashSet());
         return done.Where(p => p != null).Select(p => p!).ToList();
     }
 
@@ -49,56 +48,59 @@ public sealed class GitHubPrEnricher : IPrEnricher
     {
         var url = $"repos/{raw.Reference.Owner}/{raw.Reference.Repo}/pulls/{raw.Reference.Number}";
         using var http = _httpFactory.CreateClient("github");
-        using var req = new HttpRequestMessage(HttpMethod.Get, url);
-        if (!string.IsNullOrEmpty(token))
-            req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
-        req.Headers.UserAgent.ParseAdd("PRism/0.1");
-        req.Headers.Accept.ParseAdd("application/vnd.github+json");
-
-        using var resp = await http.SendAsync(req, ct).ConfigureAwait(false);
+        using var resp = await GitHubHttp.SendAsync(http, HttpMethod.Get, url, token, ct).ConfigureAwait(false);
         if (resp.StatusCode == HttpStatusCode.NotFound) return null;
-        if (resp.StatusCode == HttpStatusCode.TooManyRequests)
-            throw new RateLimitExceededException(
-                "GitHub rate-limited (429); orchestrator should skip this tick.",
-                resp.Headers.RetryAfter?.Delta);
+        GitHubHttp.ThrowIfRateLimited(resp);
         resp.EnsureSuccessStatusCode();
 
         var body = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
-        using var doc = JsonDocument.Parse(body);
-        var head = doc.RootElement.GetProperty("head").GetProperty("sha").GetString() ?? "";
-        var additions = doc.RootElement.TryGetProperty("additions", out var a) ? a.GetInt32() : 0;
-        var deletions = doc.RootElement.TryGetProperty("deletions", out var d) ? d.GetInt32() : 0;
-        var commits = doc.RootElement.TryGetProperty("commits", out var c) ? c.GetInt32() : 1;
-        // pulls/{n} response does NOT have pushed_at at root. The closest field is
-        // head.repo.pushed_at (the head branch's repo last-push timestamp). If that is
-        // also missing (very rare; only on closed PRs whose head ref was deleted),
-        // fall back to updated_at — the field is informational in S2; v2 / S3 may
-        // query commits/{sha} for the precise head-commit timestamp if needed.
-        DateTimeOffset pushedAt = raw.UpdatedAt;
-        if (doc.RootElement.TryGetProperty("head", out var headEl) &&
-            headEl.TryGetProperty("repo", out var headRepo) &&
-            headRepo.ValueKind == System.Text.Json.JsonValueKind.Object &&
-            headRepo.TryGetProperty("pushed_at", out var pushedAtProp) &&
-            pushedAtProp.ValueKind == System.Text.Json.JsonValueKind.String)
+        // The HTTP send / EnsureSuccessStatusCode / body read above stay OUTSIDE this try so a
+        // transient transport failure still propagates and aborts the tick (the poller retries the
+        // whole snapshot). Here we isolate a malformed *payload* per-PR: one poisoned PR detail
+        // returns null (the caller drops nulls), it does not abort the enrich tick. No logger is
+        // added — a silent null-drop matches the enricher's existing 404 → null behavior. (#322)
+        try
         {
-            pushedAt = pushedAtProp.GetDateTimeOffset();
+            using var doc = JsonDocument.Parse(body);
+            var head = doc.RootElement.GetProperty("head").GetProperty("sha").GetString() ?? "";
+            var additions = doc.RootElement.TryGetProperty("additions", out var a) ? a.GetInt32() : 0;
+            var deletions = doc.RootElement.TryGetProperty("deletions", out var d) ? d.GetInt32() : 0;
+            var commits = doc.RootElement.TryGetProperty("commits", out var c) ? c.GetInt32() : 1;
+            // pulls/{n} response does NOT have pushed_at at root. The closest field is
+            // head.repo.pushed_at (the head branch's repo last-push timestamp). If that is
+            // also missing (very rare; only on closed PRs whose head ref was deleted),
+            // fall back to updated_at — the field is informational in S2; v2 / S3 may
+            // query commits/{sha} for the precise head-commit timestamp if needed.
+            DateTimeOffset pushedAt = raw.UpdatedAt;
+            if (doc.RootElement.TryGetProperty("head", out var headEl) &&
+                headEl.TryGetProperty("repo", out var headRepo) &&
+                headRepo.ValueKind == System.Text.Json.JsonValueKind.Object &&
+                headRepo.TryGetProperty("pushed_at", out var pushedAtProp) &&
+                pushedAtProp.ValueKind == System.Text.Json.JsonValueKind.String)
+            {
+                pushedAt = pushedAtProp.GetDateTimeOffset();
+            }
+
+            DateTimeOffset? mergedAt = null;
+            if (doc.RootElement.TryGetProperty("merged_at", out var mAt) &&
+                mAt.ValueKind == JsonValueKind.String)
+                mergedAt = mAt.GetDateTimeOffset();
+
+            DateTimeOffset? closedAt = null;
+            if (doc.RootElement.TryGetProperty("closed_at", out var cAt) &&
+                cAt.ValueKind == JsonValueKind.String)
+                closedAt = cAt.GetDateTimeOffset();
+
+            return raw with
+            {
+                HeadSha = head, Additions = additions, Deletions = deletions,
+                IterationNumberApprox = commits, PushedAt = pushedAt,
+                MergedAt = mergedAt, ClosedAt = closedAt,
+            };
         }
-
-        DateTimeOffset? mergedAt = null;
-        if (doc.RootElement.TryGetProperty("merged_at", out var mAt) &&
-            mAt.ValueKind == JsonValueKind.String)
-            mergedAt = mAt.GetDateTimeOffset();
-
-        DateTimeOffset? closedAt = null;
-        if (doc.RootElement.TryGetProperty("closed_at", out var cAt) &&
-            cAt.ValueKind == JsonValueKind.String)
-            closedAt = cAt.GetDateTimeOffset();
-
-        return raw with
+        catch (Exception ex) when (InboxJsonGuard.IsMalformedItem(ex))
         {
-            HeadSha = head, Additions = additions, Deletions = deletions,
-            IterationNumberApprox = commits, PushedAt = pushedAt,
-            MergedAt = mergedAt, ClosedAt = closedAt,
-        };
+            return null; // one malformed PR detail skips that PR; caller drops nulls
+        }
     }
 }

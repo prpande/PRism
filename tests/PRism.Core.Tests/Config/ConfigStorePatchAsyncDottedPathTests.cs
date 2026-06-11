@@ -536,6 +536,20 @@ public class ConfigStorePatchAsyncDottedPathTests
         await act.Should().ThrowAsync<ConfigPatchException>().WithMessage("*inbox.sectionOrder*");
     }
 
+    // #137: inbox.knownBots is a free-form string scalar (additive activity-rail bot
+    // logins, comma-separated). Unlike sectionOrder there is no permutation constraint —
+    // any string patches through (trimmed) and persists.
+    [Fact]
+    public async Task Patch_sets_known_bots()
+    {
+        var store = new ConfigStore(Directory.CreateTempSubdirectory().FullName);
+        await store.InitAsync(CancellationToken.None);
+        await store.PatchAsync(
+            new Dictionary<string, object?> { ["inbox.knownBots"] = "acme-ci, security-scanner" },
+            CancellationToken.None);
+        store.Current.Inbox.KnownBots.Should().Be("acme-ci, security-scanner");
+    }
+
     // Non-string value (number/null/bool) is rejected by the per-key type check.
     [Fact]
     public async Task Patch_rejects_nonstring_section_order()

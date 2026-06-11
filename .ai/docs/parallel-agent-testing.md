@@ -23,6 +23,25 @@ what gives each agent a **private `frontend/` build and `PRism.Web/wwwroot`** �
 `run.ps1` from the *same* checkout would clobber each other's build output. So:
 never run two sessions from the same checkout; give each its own worktree.
 
+## Worktree `node_modules` (junction hazards)
+
+A worktree's `frontend/node_modules` is often a junction into the primary
+checkout's, not a real copy. Two hazards follow:
+
+- **Empty target → tests silently can't run.** A fresh worktree that was never
+  `npm install`'d (or whose junction target is empty) has no vitest / Playwright /
+  `tsc`. Runs appear to "pass" while nothing executed — a common source of
+  fabricated "tests green" claims, especially from subagents. Before trusting a
+  frontend test result in a worktree, confirm the binary exists
+  (`Test-Path frontend/node_modules/vitest/vitest.mjs`) and re-run it yourself; if
+  missing, `npm ci` in the **primary** `frontend/` (the junction target).
+- **Cleanup can empty the primary's deps.** `git worktree remove --force` can
+  follow a live junction and empty the *primary* checkout's `node_modules` — the
+  only real copy. Before removing a worktree, confirm the junction is actually
+  unlinked (`fsutil reparsepoint query <wt>\frontend\node_modules` errors when the
+  reparse point is gone); a populated-target check alone doesn't prove it. The
+  always-safe repair if it happens is `npm ci` in the primary `frontend/`.
+
 ## Pick your port + dataDir
 
 Assign by worktree index `N = 0, 1, 2, …`:

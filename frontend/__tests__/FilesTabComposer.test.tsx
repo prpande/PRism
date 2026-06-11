@@ -199,7 +199,6 @@ function renderFilesTab() {
 }
 
 beforeEach(() => {
-  vi.spyOn(document, 'cookie', 'get').mockReturnValue('');
   __resetTabIdForTest();
 });
 

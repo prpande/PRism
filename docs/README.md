@@ -2,7 +2,7 @@
 
 PRism is a local-first, single-user PR review tool that runs as a web app on the reviewer's own machine. It reads from GitHub, lets the reviewer compose a complete review locally (drafts, replies, verdict, summary), and finalizes everything together via a GitHub *pending review* — invisible to others until the user clicks Submit, then revealed at once. v2 layers AI augmentation on top via Claude (using the user's Claude subscription).
 
-This directory contains the full specification for the PoC and the prioritized backlog for v2 and beyond.
+This directory contains the specification for PRism's core review experience — designed as a proof of concept and now built and shipped as V1 (unsigned pre-release builds on the [Releases page](https://github.com/prpande/PRism/releases)) — plus the prioritized backlog for v2 (AI augmentation, under active development on the `V2` branch) and beyond. The spec corpus keeps **PoC** as the historical term for that first single-user build; see [§ Conventions](#conventions-used-in-these-docs).
 
 ---
 

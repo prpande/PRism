@@ -46,6 +46,10 @@ public sealed class ConfigStore : IConfigStore, IDisposable
             ["inbox.sections.recently-closed"]   = ConfigFieldType.Bool,
             ["inbox.defaultSort"]                = ConfigFieldType.String,
             ["inbox.sectionOrder"]               = ConfigFieldType.String,
+            // #137 additive activity-rail extra bot logins (comma-separated, free-form —
+            // no permutation constraint, unlike sectionOrder). Config/API-configurable;
+            // Settings UI deferred to #316. Apply-switch arm lives in PatchAsync below.
+            ["inbox.knownBots"]                  = ConfigFieldType.String,
             // #283 dedicated non-AI flag gating the activity rail (default OFF). #137 wired
             // the rail to real /api/activity data + a Settings toggle. Apply-switch arm below.
             ["inbox.showActivityRail"]           = ConfigFieldType.Bool,
@@ -228,6 +232,8 @@ public sealed class ConfigStore : IConfigStore, IDisposable
                     _current with { Inbox = _current.Inbox with { DefaultSort = (string)value! } },
                 "inbox.sectionOrder" =>
                     _current with { Inbox = _current.Inbox with { SectionOrder = (string)value! } },
+                "inbox.knownBots" =>
+                    _current with { Inbox = _current.Inbox with { KnownBots = ((string?)value ?? "").Trim() } },
                 "inbox.showActivityRail" =>
                     _current with { Inbox = _current.Inbox with { ShowActivityRail = (bool)value! } },
                 "inbox.groupByRepo" =>
