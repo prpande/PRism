@@ -38,7 +38,7 @@ PRism ships frontend+backend as one unit (desktop bundle / single web serve). Th
 
 ### Backend — `PRism.Web` (strict kebab exact-match — Option B, settled at gate)
 
-Why not the shared converter: `JsonSerializerOptionsFactory.Api` registers `new JsonStringEnumConverter(new KebabCaseJsonNamingPolicy())` — the two-arg ctor, so `allowIntegerValues` defaults `true`, and `JsonStringEnumConverter` matches enum member names case-insensitively regardless of `PropertyNameCaseInsensitive=false`. Empirically (net10.0) it accepts `RequestChanges`, `requestChanges`, `APPROVE`, and `"0"/"1"/"2"`. That violates AC#1 ("accept exactly") and widens the B2 submit input surface. So the parse is an explicit kebab allowlist that rejects everything else.
+Why not the shared converter: `JsonSerializerOptionsFactory.Api` registers `new JsonStringEnumConverter(new KebabCaseJsonNamingPolicy())` — the two-arg ctor, so `allowIntegerValues` defaults `true`, and `JsonStringEnumConverter` matches enum member names case-insensitively regardless of `PropertyNameCaseInsensitive=false`. Empirically (net10.0) it accepts `RequestChanges`, `requestChanges`, `APPROVE`, and the numeric-ordinal **string tokens** `"0"/"1"/"2"` (and, on the draft path's raw `JsonElement`, the JSON numbers `0/1/2`). That violates AC#1 ("accept exactly") and widens the B2 submit input surface. So the parse is an explicit kebab allowlist that rejects everything else.
 
 **`PrSubmitEndpoints.TryParseVerdict` (`:564-573`)** — replace the PascalCase switch with the canonical kebab switch:
 

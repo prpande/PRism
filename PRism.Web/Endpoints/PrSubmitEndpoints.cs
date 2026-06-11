@@ -561,11 +561,12 @@ internal static class PrSubmitEndpoints
 
     // ------------------------------------------------------------------ helpers
 
-    // Canonical kebab-case verdict parse — the single wire form (#318). Exact ordinal match:
-    // legacy PascalCase/camelCase ("RequestChanges"/"requestChanges"), numeric ordinals ("1"),
-    // and null all reject. The shared JsonStringEnumConverter is deliberately NOT used here — it
-    // matches enum names case-insensitively and accepts integer ordinals, so it cannot enforce
-    // the exact-kebab cutover this endpoint's contract promises.
+    // Canonical kebab-case verdict parse — the single wire form (#318). Exact-string match:
+    // legacy PascalCase/camelCase ("RequestChanges"/"requestChanges"), numeric-ordinal tokens
+    // (the string "1"), and null all reject. The shared JsonStringEnumConverter is deliberately
+    // NOT used here — it matches enum names case-insensitively AND (with allowIntegerValues, the
+    // default) accepts both the JSON number 1 and the string token "1" as ordinal 1 (verified on
+    // net10.0), so it cannot enforce the exact-kebab cutover this endpoint's contract promises.
     private static bool TryParseVerdict(string? s, out SubmitEvent verdict)
     {
         verdict = s switch
