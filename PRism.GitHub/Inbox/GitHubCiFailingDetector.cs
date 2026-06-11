@@ -3,27 +3,37 @@ using System.Net.Http.Headers;
 using System.Text.Json;
 using PRism.Core.Contracts;
 using PRism.Core.Inbox;
+using PRism.Core.Time;
 
 namespace PRism.GitHub.Inbox;
 
 public sealed class GitHubCiFailingDetector : ICiFailingDetector
 {
     private const int ConcurrencyCap = 8;
+    // A cached terminal status re-validates after this TTL via the injected clock, so a same-SHA
+    // "Re-run failed jobs" auto-recovers without a manual Refresh. Pending is already never cached
+    // (#355); the TTL governs the terminal Passing/Failing/None entries uniformly. (#361)
+    private static readonly TimeSpan TerminalTtl = TimeSpan.FromMinutes(2);
     private readonly IHttpClientFactory _httpFactory;
     private readonly Func<Task<string?>> _readToken;
-    private readonly ConcurrentDictionary<(PrReference, string), CiStatus> _cache = new();
+    private readonly IClock _clock;
+    private readonly ConcurrentDictionary<(PrReference, string), CacheEntry> _cache = new();
 
-    public GitHubCiFailingDetector(IHttpClientFactory httpFactory, Func<Task<string?>> readToken)
+    private readonly record struct CacheEntry(CiStatus Status, DateTime CachedAtUtc);
+
+    public GitHubCiFailingDetector(
+        IHttpClientFactory httpFactory, Func<Task<string?>> readToken, IClock clock)
     {
         _httpFactory = httpFactory;
         _readToken = readToken;
+        _clock = clock;
     }
 
     public async Task<CiDetectResult> DetectAsync(
         IReadOnlyList<RawPrInboxItem> items, CancellationToken ct, bool forceReprobe = false)
     {
         ArgumentNullException.ThrowIfNull(items);
-        if (items.Count == 0) return new CiDetectResult(Array.Empty<(RawPrInboxItem, CiStatus)>(), true);
+        if (items.Count == 0) { _cache.Clear(); return new CiDetectResult(Array.Empty<(RawPrInboxItem, CiStatus)>(), true); }
         var token = await _readToken().ConfigureAwait(false);
         using var sem = new SemaphoreSlim(ConcurrencyCap);
 
@@ -36,8 +46,12 @@ public sealed class GitHubCiFailingDetector : ICiFailingDetector
                 var key = (c.Reference, c.HeadSha);
                 // forceReprobe (the manual "Refresh now" path) skips the cache read so an
                 // unchanged head SHA re-reads CI; it still writes the fresh result below. (#355)
-                if (!forceReprobe && _cache.TryGetValue(key, out var cached))
-                    return (Item: c, Ci: cached, Degraded: false);
+                // A cached entry older than TerminalTtl is treated as a miss → re-probe, so a
+                // same-SHA CI re-run auto-recovers within one TTL window. (#361)
+                if (!forceReprobe
+                    && _cache.TryGetValue(key, out var entry)
+                    && _clock.UtcNow - entry.CachedAtUtc <= TerminalTtl)
+                    return (Item: c, Ci: entry.Status, Degraded: false);
 
                 var (ci, degraded) = await ProbeAsync(c.Reference, c.HeadSha, token, ct).ConfigureAwait(false);
                 // Cache only a complete, successful, NON-TRANSIENT read. A DEGRADED result
@@ -54,7 +68,7 @@ public sealed class GitHubCiFailingDetector : ICiFailingDetector
                 // degraded read does) until it goes terminal, then cache the terminal. (#355)
                 if (!degraded && ci != CiStatus.Pending)
                 {
-                    _cache[key] = ci;
+                    _cache[key] = new CacheEntry(ci, _clock.UtcNow);
                 }
                 else if (forceReprobe && !degraded && ci == CiStatus.Pending)
                 {
@@ -73,6 +87,7 @@ public sealed class GitHubCiFailingDetector : ICiFailingDetector
             finally { sem.Release(); }
         })).ConfigureAwait(false);
 
+        InboxCacheEviction.PruneAbsent(_cache, items.Select(i => i.Reference).ToHashSet());
         var anyDegraded = Array.Exists(done, t => t.Degraded);
         return new CiDetectResult(
             done.Select(t => (t.Item, t.Ci)).ToList(),
@@ -203,7 +218,7 @@ public sealed class GitHubCiFailingDetector : ICiFailingDetector
                 // call tracked in #305, not an oversight. #264
             }
 
-            nextUri = TryGetNextLink(resp);
+            nextUri = GitHubLinkHeader.TryGetNext(resp);
             if (nextUri is null) break;
         }
 
@@ -214,41 +229,6 @@ public sealed class GitHubCiFailingDetector : ICiFailingDetector
             : anyPending
                 ? CiStatus.Pending
                 : anySuccess ? CiStatus.Passing : CiStatus.None, false);
-    }
-
-    // Parses the GitHub Link response header and returns the URL whose attributes
-    // include rel="next", or null if no such link exists. Standard format:
-    //   <url1>; rel="next", <url2>; rel="last"
-    // Node IDs / URLs are treated as opaque — we hand the absolute URL straight
-    // back to HttpClient without parsing or rewriting.
-    private static Uri? TryGetNextLink(HttpResponseMessage resp)
-    {
-        if (!resp.Headers.TryGetValues("Link", out var values)) return null;
-        foreach (var header in values)
-        {
-            foreach (var part in header.Split(','))
-            {
-                var segments = part.Split(';');
-                if (segments.Length < 2) continue;
-                var urlSegment = segments[0].Trim();
-                if (!urlSegment.StartsWith('<') || !urlSegment.EndsWith('>')) continue;
-                var hasNext = false;
-                for (var i = 1; i < segments.Length; i++)
-                {
-                    var attr = segments[i].Trim();
-                    if (attr.Equals("rel=\"next\"", StringComparison.Ordinal)
-                        || attr.Equals("rel=next", StringComparison.Ordinal))
-                    {
-                        hasNext = true;
-                        break;
-                    }
-                }
-                if (!hasNext) continue;
-                var url = urlSegment[1..^1];
-                if (Uri.TryCreate(url, UriKind.Absolute, out var uri)) return uri;
-            }
-        }
-        return null;
     }
 
     private async Task<(CiStatus Status, bool Degraded)> FetchCombinedStatusAsync(PrReference pr, string sha, string? token, CancellationToken ct)
