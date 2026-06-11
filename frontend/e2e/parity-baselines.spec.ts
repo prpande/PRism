@@ -254,6 +254,32 @@ test.describe('parity baselines — PR Detail', () => {
     await expect(diff).toHaveScreenshot('pr-detail-files-diff.png', SCREENSHOT_OPTS);
   });
 
+  test('pr-detail-inline-composer', async ({ page }) => {
+    await page.setViewportSize(VIEWPORT);
+    await page.route('**/fonts.googleapis.com/**', (route) => route.abort());
+    await page.route('**/fonts.gstatic.com/**', (route) => route.abort());
+    await setupAndOpenHandoffParityFixture(page);
+    await resetAiPreview(page);
+    await page.goto('/pr/acme/api/123/files');
+    await page.locator('[data-testid="files-tab-tree-row"][data-path="src/Calc.cs"]').click();
+    const diff = page.locator('[data-testid="files-tab-diff"]');
+    await diff.waitFor();
+    await diff.locator('tr.diff-line--insert').nth(7).waitFor();
+    // Open the inline composer (the diff renders an "add comment on line N"
+    // affordance per line — see pr-detail-single-comment.spec.ts).
+    await page
+      .getByRole('button', { name: /add comment on line/i })
+      .first()
+      .click();
+    const composer = page.getByTestId('inline-comment-composer');
+    await expect(composer).toBeVisible();
+    await composer
+      .getByRole('textbox')
+      .fill('Pull the retry budget into a const so it is testable.');
+    await page.addStyleTag({ content: KILL_ANIMATIONS_CSS });
+    await expect(composer).toHaveScreenshot('pr-detail-inline-composer.png', SCREENSHOT_OPTS);
+  });
+
   test('split mode uses 4-column <tr> layout; unified collapses to 3-column layout', async ({
     page,
   }) => {

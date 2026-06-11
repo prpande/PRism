@@ -1,5 +1,6 @@
 import '@testing-library/jest-dom/vitest';
 import { configure } from '@testing-library/react';
+import { beforeEach, vi } from 'vitest';
 
 // #234: raise Testing Library's async-util timeout above the 1000ms default.
 // Under full-suite parallel CPU contention, waitFor/findBy on a mocked-fetch
@@ -10,6 +11,19 @@ import { configure } from '@testing-library/react';
 // maxed-out wait surfaces its own assertion error rather than a generic test
 // timeout.
 configure({ asyncUtilTimeout: 8000 });
+
+// Default the document.cookie getter to empty for every test (#332). jsdom
+// already returns '' by default, so this is a defensive guard that a dozen
+// fetch-mock specs each used to re-declare in their own beforeEach. Tests that
+// need a specific cookie (api-client.test.tsx's X-PRism-Session echo) override
+// the return value with their own spy, which wins over this default.
+beforeEach(() => {
+  // Guard for the node-environment specs (playwright-config / e2e-origin smoke
+  // tests via `@vitest-environment node`) where `document` is absent.
+  if (typeof document !== 'undefined') {
+    vi.spyOn(document, 'cookie', 'get').mockReturnValue('');
+  }
+});
 
 if (typeof window !== 'undefined' && typeof window.matchMedia !== 'function') {
   Object.defineProperty(window, 'matchMedia', {

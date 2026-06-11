@@ -1,16 +1,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { postRootComment } from '../src/api/rootComment';
 import type { PrReference } from '../src/api/types';
+import { jsonResponse } from './helpers/http';
 
 const ref: PrReference = { owner: 'octocat', repo: 'hello', number: 42 };
 const PR_PATH = '/api/pr/octocat/hello/42';
-
-function jsonResponse(status: number, body: unknown): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { 'Content-Type': 'application/json' },
-  });
-}
 
 function emptyResponse(status: number): Response {
   return new Response(null, { status });
@@ -43,11 +37,14 @@ describe('postRootComment', () => {
 
   it('maps 409 already-posted-body-mismatch with postedCommentId payload', async () => {
     fetchMock.mockResolvedValueOnce(
-      jsonResponse(409, {
-        code: 'already-posted-body-mismatch',
-        message: 'The draft body was edited after it was first posted.',
-        postedCommentId: 12345,
-      }),
+      jsonResponse(
+        {
+          code: 'already-posted-body-mismatch',
+          message: 'The draft body was edited after it was first posted.',
+          postedCommentId: 12345,
+        },
+        409,
+      ),
     );
     const result = await postRootComment(ref);
     expect(result).toEqual({
@@ -60,10 +57,13 @@ describe('postRootComment', () => {
 
   it('maps 502 github-forbidden error', async () => {
     fetchMock.mockResolvedValueOnce(
-      jsonResponse(502, {
-        code: 'github-forbidden',
-        message: 'GitHub returned 403 Forbidden.',
-      }),
+      jsonResponse(
+        {
+          code: 'github-forbidden',
+          message: 'GitHub returned 403 Forbidden.',
+        },
+        502,
+      ),
     );
     const result = await postRootComment(ref);
     expect(result).toEqual({
@@ -76,10 +76,13 @@ describe('postRootComment', () => {
 
   it('maps 401 to unauthorized', async () => {
     fetchMock.mockResolvedValueOnce(
-      jsonResponse(401, {
-        code: 'unauthorized',
-        message: 'Subscribe to this PR before posting a comment.',
-      }),
+      jsonResponse(
+        {
+          code: 'unauthorized',
+          message: 'Subscribe to this PR before posting a comment.',
+        },
+        401,
+      ),
     );
     const result = await postRootComment(ref);
     expect(result).toEqual({
