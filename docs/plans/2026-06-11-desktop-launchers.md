@@ -10,7 +10,7 @@
 
 **Spec:** `docs/specs/2026-06-11-desktop-launchers-design.md`
 
-**Testing model:** The PowerShell script is structured as pure, dot-sourceable functions behind a main-guard (mirroring `scripts/serve-detached.ps1`). Pure functions are unit-tested by dot-sourcing into `scripts/run-desktop.Tests.ps1` (a plain assertion harness — the repo has no Pester suite and only Pester 3.4.0 is present). The integration glue (WMI spawn, `electron .` launch, `nohup`) is verified by the owner end-to-end on Windows; the macOS script is verified by a macOS tester (it cannot run on the Windows dev machine).
+**Testing model:** Both scripts are structured as pure, sourceable functions behind a run-guard (mirroring `scripts/serve-detached.ps1`). The PowerShell helpers are unit-tested by dot-sourcing into `scripts/run-desktop.Tests.ps1`; the Bash helpers (SDK-major parse, arch→RID map, remediation) by `scripts/run-desktop.bash-tests.sh` — both plain assertion harnesses (the repo has no Pester suite; only Pester 3.4.0 is present). **Both harnesses run on the Windows dev machine** (the bash one via Git Bash/WSL), so logic/syntax bugs in either script are caught locally. What stays unverifiable on Windows is the **macOS runtime**: the detached `electron .` window, `nohup`/`disown` survival on macOS, Gatekeeper-on-first-run, and the real `arm64` host — a macOS tester confirms that half. The Windows integration glue (WMI spawn, `electron .`, builds) is owner-verified end-to-end.
 
 ---
 
@@ -20,7 +20,8 @@
 |------|----------------|
 | `scripts/run-desktop.ps1` (create) | Windows launcher: pure helper functions + `Invoke-Main` orchestration behind a dot-source guard. |
 | `scripts/run-desktop.Tests.ps1` (create) | Dot-source assertion harness for the pure functions in `run-desktop.ps1`. |
-| `scripts/run-desktop.sh` (create) | macOS launcher: parallel pipeline in Bash; `nohup`+`disown` detach. Tester-verified. |
+| `scripts/run-desktop.sh` (create) | macOS launcher: sourceable pure helpers + `main()` behind a source-guard; `nohup`+`disown` detach. Runtime tester-verified. |
+| `scripts/run-desktop.bash-tests.sh` (create) | Bash assertion harness for `run-desktop.sh`'s pure helpers (SDK-major parse, arch→RID, remediation). Runs in Git Bash/WSL. |
 | `desktop/.gitignore` (modify) | Add `.dev-sidecar/` (dev publish dir, kept separate from packaging `sidecar/`). |
 | `desktop/README.md` (create) | Document both launchers, prerequisites, the macOS Gatekeeper remedy, and the deferred `run.ps1 -Mode Desktop` relationship. |
 
@@ -627,16 +628,17 @@ git commit -m "feat(#306): assemble run-desktop.ps1 main orchestration (prefligh
 
 ---
 
-### Task 8: macOS launcher (run-desktop.sh)
+### Task 8: macOS launcher (run-desktop.sh) + bash logic tests
 
 **Files:**
 - Create: `scripts/run-desktop.sh`
+- Create: `scripts/run-desktop.bash-tests.sh`
 
-Parallel pipeline in Bash. **Cannot be run on the Windows dev machine** — verified by a macOS tester (Task 10). Keep it behaviorally aligned with `run-desktop.ps1`.
+The macOS **runtime** (detached `electron .`, `nohup`+`disown` survival on macOS, Gatekeeper, the real `arm64` host) **cannot be exercised on the Windows dev machine** — that half is verified by a macOS tester (Task 10). But the script's **pure shell logic** (SDK-major parse, arch→RID map, remediation text) is factored into sourceable functions and unit-tested via a bash harness that runs fine in Git Bash or WSL on Windows. That catches logic/syntax bugs locally so the Mac tester only has to confirm runtime behavior. Keep the script behaviorally aligned with `run-desktop.ps1`.
 
-- [ ] **Step 1: Create the script**
+- [ ] **Step 1: Create the script (sourceable helpers + main-guard)**
 
-Create `scripts/run-desktop.sh`:
+Create `scripts/run-desktop.sh`. Note the structure: pure helpers have **no side effects at source time**; all the executable flow lives in `main()`, run only when the file is executed directly (so the test harness can `source` it without launching anything).
 
 ```bash
 #!/usr/bin/env bash
@@ -650,24 +652,9 @@ Create `scripts/run-desktop.sh`:
 # Usage:
 #   ./scripts/run-desktop.sh            # build + launch
 #   ./scripts/run-desktop.sh --skip-build
-set -euo pipefail
 
-SKIP_BUILD=0
-[[ "${1:-}" == "--skip-build" ]] && SKIP_BUILD=1
+# ---- pure helpers (sourceable; no side effects at source time) ----
 
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-DESKTOP_DIR="$REPO_ROOT/desktop"
-PUBLISH_DIR="$DESKTOP_DIR/.dev-sidecar"
-# .NET's Environment.SpecialFolder.LocalApplicationData resolves to ~/.local/share on
-# macOS (XDG), which is where the sidecar's DataDirectoryResolver self-resolves the
-# store — match it so the log/pidfile sit beside the real data dir (NOT
-# ~/Library/Application Support, which the app never uses).
-DATA_DIR="${PRISM_DATA_DIR:-$HOME/.local/share/PRism}"
-LOG="$DATA_DIR/run-desktop.log"
-PIDFILE="$DATA_DIR/run-desktop.pid"
-mkdir -p "$DATA_DIR"
-
-# --- preflight: Node + npm presence, .NET SDK major >= 10 ---
 node_remediation() {
   cat >&2 <<'EOF'
 Node.js / npm was not found on PATH.
@@ -676,6 +663,7 @@ Node.js / npm was not found on PATH.
 After installing, open a new terminal so PATH refreshes, then re-run this script.
 EOF
 }
+
 dotnet_remediation() {
   cat >&2 <<EOF
 A .NET 10 SDK is required to publish the PRism sidecar (the solution targets net10.0).
@@ -686,83 +674,177 @@ After installing, open a new terminal so PATH refreshes, then re-run this script
 EOF
 }
 
-command -v node  >/dev/null 2>&1 || { node_remediation;   exit 1; }
-command -v npm   >/dev/null 2>&1 || { node_remediation;   exit 1; }
-command -v dotnet >/dev/null 2>&1 || { dotnet_remediation; exit 1; }
+# Read `dotnet --list-sdks`-style lines on stdin; echo the highest major (e.g.
+# "10.0.100 [..]" -> 10), or nothing if no version line is present.
+dotnet_sdk_max_major() {
+  sed -n 's/^\([0-9][0-9]*\)\..*/\1/p' | sort -n | tail -1
+}
 
-# Highest installed SDK major from `dotnet --list-sdks` ("10.0.100 [..]" -> 10).
-MAX_SDK_MAJOR="$(dotnet --list-sdks | sed -n 's/^\([0-9][0-9]*\)\..*/\1/p' | sort -n | tail -1)"
-if [[ -z "${MAX_SDK_MAJOR:-}" || "$MAX_SDK_MAJOR" -lt 10 ]]; then
-  dotnet_remediation "Found SDK major: ${MAX_SDK_MAJOR:-none}."
-  exit 1
-fi
+# Map a `uname -m` arch to the sidecar RID. Echo the RID, or return 1 (unsupported).
+rid_for_arch() {
+  case "$1" in
+    arm64)  echo "osx-arm64" ;;
+    x86_64) echo "osx-x64" ;;
+    *) return 1 ;;
+  esac
+}
 
-# --- single-instance short-circuit BEFORE the slow build ---
-if [[ -f "$PIDFILE" ]]; then
-  EXISTING_PID="$(cat "$PIDFILE" 2>/dev/null || true)"
-  if [[ -n "$EXISTING_PID" ]] && kill -0 "$EXISTING_PID" 2>/dev/null; then
-    echo "PRism desktop is already running (pid $EXISTING_PID). Close the window first; a re-run would just refocus it. Nothing rebuilt." >&2
-    exit 0
+main() {
+  set -euo pipefail
+
+  local skip_build=0
+  [[ "${1:-}" == "--skip-build" ]] && skip_build=1
+
+  local repo_root desktop_dir publish_dir data_dir log pidfile
+  repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+  desktop_dir="$repo_root/desktop"
+  publish_dir="$desktop_dir/.dev-sidecar"
+  # .NET's Environment.SpecialFolder.LocalApplicationData resolves to ~/.local/share on
+  # macOS (XDG) — where the sidecar's DataDirectoryResolver self-resolves the store. Match
+  # it so the log/pidfile sit beside the real data dir (NOT ~/Library/Application Support,
+  # which the app never uses).
+  data_dir="${PRISM_DATA_DIR:-$HOME/.local/share/PRism}"
+  log="$data_dir/run-desktop.log"
+  pidfile="$data_dir/run-desktop.pid"
+  mkdir -p "$data_dir"
+
+  # --- preflight: Node + npm presence, .NET SDK major >= 10 ---
+  command -v node   >/dev/null 2>&1 || { node_remediation;   exit 1; }
+  command -v npm    >/dev/null 2>&1 || { node_remediation;   exit 1; }
+  command -v dotnet >/dev/null 2>&1 || { dotnet_remediation; exit 1; }
+
+  local max_major
+  max_major="$(dotnet --list-sdks | dotnet_sdk_max_major)"
+  if [[ -z "$max_major" || "$max_major" -lt 10 ]]; then
+    dotnet_remediation "Found SDK major: ${max_major:-none}."
+    exit 1
   fi
+
+  # --- single-instance short-circuit BEFORE the slow build ---
+  if [[ -f "$pidfile" ]]; then
+    local existing_pid
+    existing_pid="$(cat "$pidfile" 2>/dev/null || true)"
+    if [[ -n "$existing_pid" ]] && kill -0 "$existing_pid" 2>/dev/null; then
+      echo "PRism desktop is already running (pid $existing_pid). Close the window first; a re-run would just refocus it. Nothing rebuilt." >&2
+      exit 0
+    fi
+  fi
+
+  # --- host RID from arch ---
+  local rid
+  if ! rid="$(rid_for_arch "$(uname -m)")"; then
+    echo "Unsupported macOS arch: $(uname -m)" >&2
+    exit 1
+  fi
+
+  if [[ "$skip_build" -eq 0 ]]; then
+    # 1. Frontend SPA -> PRism.Web/wwwroot
+    ( cd "$repo_root/frontend" && npm ci && npm run build )
+    # 2. Sidecar: clean publish dir, framework-dependent host-RID publish
+    rm -rf "$publish_dir"
+    dotnet publish "$repo_root/PRism.Web/PRism.Web.csproj" \
+      -c Release -r "$rid" --self-contained false -o "$publish_dir"
+    # 3. Electron TS -> desktop/dist/main.js
+    ( cd "$desktop_dir" && npm ci && npm run build )
+  fi
+
+  # 4. Resolve apphost + electron; both must exist.
+  local sidecar electron
+  sidecar="$publish_dir/PRism.Web"
+  electron="$desktop_dir/node_modules/.bin/electron"
+  [[ -f "$sidecar" ]]  || { echo "Sidecar not found at $sidecar. Run without --skip-build." >&2; exit 1; }
+  [[ -x "$electron" ]] || { echo "Electron not found at $electron. Run without --skip-build so 'npm ci' installs it." >&2; exit 1; }
+
+  # 5. Launch detached. nohup ignores SIGHUP; disown drops the job so closing
+  #    Terminal doesn't kill Electron (or the sidecar it owns).
+  echo "=== run-desktop launch @ $(date -u +%Y-%m-%dT%H:%M:%SZ) ===" >>"$log"
+  (
+    cd "$desktop_dir"
+    export PRISM_SIDECAR_BINARY="$sidecar"
+    nohup "$electron" . >>"$log" 2>&1 &
+    echo $! >"$pidfile"
+    disown
+  )
+
+  echo "PRism desktop launching (detached). The window should appear shortly."
+  echo "  If the sidecar fails to start, Electron shows an error dialog; for more, see: $log"
+  echo "  Close the window to stop (the sidecar shuts down with it)."
+  echo "  Gatekeeper note: if macOS blocks Electron on first run, right-click the app and choose Open,"
+  echo "  or run: xattr -dr com.apple.quarantine \"$desktop_dir/node_modules/electron\""
+}
+
+# Run main only when executed directly, not when sourced by the test harness.
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+  main "$@"
 fi
-
-# --- host RID from arch ---
-case "$(uname -m)" in
-  arm64)  RID="osx-arm64" ;;
-  x86_64) RID="osx-x64" ;;
-  *) echo "Unsupported macOS arch: $(uname -m)" >&2; exit 1 ;;
-esac
-
-if [[ "$SKIP_BUILD" -eq 0 ]]; then
-  # 1. Frontend SPA -> PRism.Web/wwwroot
-  ( cd "$REPO_ROOT/frontend" && npm ci && npm run build )
-  # 2. Sidecar: clean publish dir, framework-dependent host-RID publish
-  rm -rf "$PUBLISH_DIR"
-  dotnet publish "$REPO_ROOT/PRism.Web/PRism.Web.csproj" \
-    -c Release -r "$RID" --self-contained false -o "$PUBLISH_DIR"
-  # 3. Electron TS -> desktop/dist/main.js
-  ( cd "$DESKTOP_DIR" && npm ci && npm run build )
-fi
-
-# 4. Resolve apphost + electron; both must exist.
-SIDECAR="$PUBLISH_DIR/PRism.Web"
-ELECTRON="$DESKTOP_DIR/node_modules/.bin/electron"
-[[ -f "$SIDECAR" ]]  || { echo "Sidecar not found at $SIDECAR. Run without --skip-build." >&2; exit 1; }
-[[ -x "$ELECTRON" ]] || { echo "Electron not found at $ELECTRON. Run without --skip-build so 'npm ci' installs it." >&2; exit 1; }
-
-# 5. Launch detached. nohup ignores SIGHUP; disown drops the job so closing
-#    Terminal doesn't kill Electron (or the sidecar it owns).
-echo "=== run-desktop launch @ $(date -u +%Y-%m-%dT%H:%M:%SZ) ===" >>"$LOG"
-(
-  cd "$DESKTOP_DIR"
-  export PRISM_SIDECAR_BINARY="$SIDECAR"
-  nohup "$ELECTRON" . >>"$LOG" 2>&1 &
-  echo $! >"$PIDFILE"
-  disown
-)
-
-echo "PRism desktop launching (detached). The window should appear shortly."
-echo "  If it stays blank or never appears, inspect: $LOG"
-echo "  Close the window to stop (the sidecar shuts down with it)."
-echo "  Gatekeeper note: if macOS blocks Electron on first run, right-click the app and choose Open,"
-echo "  or run: xattr -dr com.apple.quarantine \"$DESKTOP_DIR/node_modules/electron\""
 ```
 
-- [ ] **Step 2: Make it executable and shellcheck it (if available)**
+- [ ] **Step 2: Create the bash test harness**
+
+Create `scripts/run-desktop.bash-tests.sh`:
+
+```bash
+#!/usr/bin/env bash
+# Unit tests for run-desktop.sh's pure helpers. Sources the script (the main-guard
+# keeps main() from running) and asserts. Runs anywhere bash runs — Git Bash or WSL
+# on Windows is fine. Run: bash scripts/run-desktop.bash-tests.sh
+set -uo pipefail
+
+HARNESS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=./run-desktop.sh
+source "$HARNESS_DIR/run-desktop.sh"
+
+fails=0
+assert_eq() {  # expected actual msg
+  if [[ "$1" == "$2" ]]; then echo "  PASS: $3"; else echo "  FAIL: $3 (expected '$1', got '$2')"; fails=$((fails + 1)); fi
+}
+assert_match() {  # text pattern msg
+  if echo "$1" | grep -qE "$2"; then echo "  PASS: $3"; else echo "  FAIL: $3 (pattern '$2' not found)"; fails=$((fails + 1)); fi
+}
+
+echo "run-desktop.sh unit tests"
+
+# dotnet_sdk_max_major
+assert_eq "10" "$(printf '8.0.404 [x]\n10.0.100 [y]\n' | dotnet_sdk_max_major)" "max major across 8 and 10 is 10"
+assert_eq ""   "$(printf 'garbage line\n'              | dotnet_sdk_max_major)" "no version line -> empty"
+
+# rid_for_arch (this is the key macOS branch we can't reach via real uname on Windows)
+assert_eq "osx-arm64" "$(rid_for_arch arm64)"  "arm64 -> osx-arm64"
+assert_eq "osx-x64"   "$(rid_for_arch x86_64)" "x86_64 -> osx-x64"
+if rid_for_arch ppc64 >/dev/null 2>&1; then
+  echo "  FAIL: unsupported arch should return nonzero"; fails=$((fails + 1))
+else
+  echo "  PASS: unsupported arch returns nonzero"
+fi
+
+# remediation text
+assert_match "$(node_remediation 2>&1)"   "brew install node" "node remediation names brew"
+assert_match "$(dotnet_remediation 2>&1)" "\.NET 10"          "dotnet remediation references .NET 10"
+
+if [[ "$fails" -gt 0 ]]; then echo "$fails test(s) failed"; exit 1; fi
+echo "All tests passed"
+```
+
+- [ ] **Step 3: Run the harness (Git Bash or WSL on Windows)**
+
+Run: `bash scripts/run-desktop.bash-tests.sh`
+Expected: every assertion PASS; final `All tests passed`, exit 0. This validates the SDK-major parse, the `arm64`/`x86_64`→RID mapping, the unsupported-arch guard, and the remediation copy — without a Mac.
+
+- [ ] **Step 4: Static checks**
 
 Run:
 ```bash
-chmod +x scripts/run-desktop.sh
-command -v shellcheck >/dev/null 2>&1 && shellcheck scripts/run-desktop.sh || echo "shellcheck not installed — skipping static check"
+bash -n scripts/run-desktop.sh && bash -n scripts/run-desktop.bash-tests.sh
+command -v shellcheck >/dev/null 2>&1 && shellcheck scripts/run-desktop.sh scripts/run-desktop.bash-tests.sh || echo "shellcheck not installed — skipping (bash -n still ran)"
 ```
-Expected: `chmod` succeeds; shellcheck reports no errors (or the skip message). Note: on Windows the chmod is a no-op; set the exec bit via git in Step 3.
+Expected: `bash -n` reports no syntax errors; shellcheck reports no errors (or the skip message).
 
-- [ ] **Step 3: Mark executable in git and commit**
+- [ ] **Step 5: Mark executable in git and commit**
 
 ```bash
-git add scripts/run-desktop.sh
-git update-index --chmod=+x scripts/run-desktop.sh
-git commit -m "feat(#306): macOS run-desktop.sh launcher (tester-verified)"
+git add scripts/run-desktop.sh scripts/run-desktop.bash-tests.sh
+git update-index --chmod=+x scripts/run-desktop.sh scripts/run-desktop.bash-tests.sh
+git commit -m "feat(#306): macOS run-desktop.sh launcher + bash logic tests (runtime tester-verified)"
 ```
 
 ---
@@ -851,10 +933,16 @@ git commit -m "docs(#306): desktop/README.md — launcher usage + prerequisites"
 
 **Files:** none (verification task)
 
-- [ ] **Step 1: Run the unit harness one final time**
+- [ ] **Step 1: Run both unit harnesses one final time**
 
-Run: `pwsh -File scripts/run-desktop.Tests.ps1`
-Expected: `All tests passed`, exit 0.
+Run:
+```bash
+pwsh -File scripts/run-desktop.Tests.ps1
+bash scripts/run-desktop.bash-tests.sh   # Git Bash or WSL
+```
+Expected: both print `All tests passed`, exit 0. The bash harness validates the
+`arm64`/`x86_64`→RID mapping and SDK-major parse locally even though the macOS *runtime*
+can't be exercised here.
 
 - [ ] **Step 2: Preflight-miss check (simulated)**
 
@@ -874,7 +962,9 @@ Run: `scripts\run-desktop.ps1`
 Expected: preflight passes; frontend build, `dotnet publish`, desktop build all
 succeed; the terminal returns to a prompt; the **PRism desktop window appears** with
 the SPA loaded (not blank). Confirm `run-desktop.log` in `%LOCALAPPDATA%\PRism` exists
-and contains the sidecar port line + `[startup]` line.
+and contains the `[startup]` line (the sidecar's own port line/stderr are not in this
+log — they're consumed by Electron's spawn pipes; a sidecar-start failure instead
+raises Electron's error dialog).
 
 - [ ] **Step 4: Detach + teardown checks**
 
@@ -903,6 +993,6 @@ git commit -m "chore(#306): verification fixups for run-desktop launchers"
 ## Self-Review Notes
 
 - **Spec coverage:** preflight+remediation (Tasks 2–3, 7), framework-dependent host-RID publish with clean dir (Task 7/8), `.dev-sidecar` gitignore + separation (Task 1), WMI wrapper env+log (Tasks 5, 7), macOS nohup+disown (Task 8), single-instance guard (Tasks 6, 7/8), success-signal/log (Tasks 7–9), `-SkipBuild` (Tasks 1, 7, 8), Gatekeeper documented-not-baked (Tasks 8, 9), macOS merge-stance (Task 10), README (Task 9). All §10 acceptance criteria map to a task.
-- **Type/name consistency:** `Get-DotnetSdkMajors`, `Test-HasDotnetSdkAtLeast`, `Get-HostRid`, `Get-SidecarApphostPath`, `New-DesktopLauncherWrapper`, `Get-LauncherPidfilePath`, `Write-LauncherPidfile`, `Test-LauncherAlreadyRunning`, `Invoke-Preflight`, `Invoke-Main` — names used identically across definition, tests, and callers.
-- **Known constraint:** unit tests cover pure functions only; WMI/electron/nohup glue is verified manually (Task 10) — there is no automated harness for detached process launch in this repo, matching the `serve-detached.ps1` precedent.
+- **Type/name consistency:** PowerShell — `Get-DotnetSdkMajors`, `Test-HasDotnetSdkAtLeast`, `Get-HostRid`, `Get-SidecarApphostPath`, `New-DesktopLauncherWrapper`, `Get-LauncherPidfilePath`, `Write-LauncherPidfile`, `Test-LauncherAlreadyRunning`, `Invoke-Preflight`, `Invoke-Main`; Bash — `node_remediation`, `dotnet_remediation`, `dotnet_sdk_max_major`, `rid_for_arch`, `main` — names used identically across definition, tests, and callers.
+- **Known constraint:** unit tests cover pure functions only (both PowerShell and Bash helpers, runnable on Windows); the detached-launch glue (WMI/`electron`/`nohup`) is verified manually — Windows by the owner (Task 10), macOS *runtime* by a tester. No automated harness for detached process launch exists in this repo, matching the `serve-detached.ps1` precedent.
 ```
