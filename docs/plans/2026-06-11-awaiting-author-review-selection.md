@@ -6,7 +6,7 @@
 
 **Architecture:** Single private-method change inside `GitHubAwaitingAuthorFilter.FetchLastReviewShaAsync`. Eligibility gates a review on a non-empty `commit_id` **and** a `JsonValueKind.String` `submitted_at` (so JSON-null PENDING drafts are a clean `continue`, not a thrown-and-caught malformed item). Selection tracks a running `(DateTimeOffset? bestSubmittedAt, string? best)` and replaces on strictly-greater timestamp via an explicit null-guard (`bestSubmittedAt is null || submittedAt > bestSubmittedAt.Value`). No interface, caller, pagination, cache, or error-path change.
 
-**Tech Stack:** C# / .NET 10, `System.Text.Json` (`JsonElement`), xUnit + FluentAssertions + Moq, existing test helpers (`FakeHttpMessageHandler`, `FakeHttpClientFactory`, `PaginatedFakeHandler`).
+**Tech Stack:** C# / .NET 10, `System.Text.Json` (`JsonElement`), xUnit + FluentAssertions, existing test helpers (`FakeHttpMessageHandler`, `FakeHttpClientFactory`, `PaginatedFakeHandler`) + a new `CapturingLogger<T>`.
 
 **Spec:** `docs/specs/2026-06-11-awaiting-author-review-selection-design.md`
 
@@ -283,6 +283,8 @@ namespace PRism.GitHub.Tests.TestHelpers;
 /// </summary>
 internal sealed class CapturingLogger<T> : ILogger<T>
 {
+    private readonly object _gate = new();
+
     public List<(LogLevel Level, string Message)> Entries { get; } = new();
 
     public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
@@ -292,7 +294,11 @@ internal sealed class CapturingLogger<T> : ILogger<T>
     public void Log<TState>(
         LogLevel logLevel, EventId eventId, TState state,
         Exception? exception, Func<TState, Exception?, string> formatter)
-        => Entries.Add((logLevel, formatter(state, exception)));
+    {
+        // The SUT probes candidates concurrently (Task.WhenAll up to ConcurrencyCap), so
+        // guard the shared list — read Entries only after the awaited FilterAsync completes.
+        lock (_gate) Entries.Add((logLevel, formatter(state, exception)));
+    }
 }
 ```
 
@@ -474,7 +480,7 @@ git commit -m "test(#367): cover cross-page submitted_at-max and malformed-times
 | AC3 JSON-null submitted_at excluded, no-log | Task 4 (test 3) |
 | AC4 malformed timestamp skipped, no abort | Task 5 (test 5) |
 | AC5 no collateral change / existing tests green | Tasks 1 (pre-position) + 4/5 (Step verifications) |
-| Test-harness prerequisite (BuildSut logger overload + Moq) | Task 4 (Step 1) |
+| Test-harness prerequisite (BuildSut logger overload + `CapturingLogger<T>`) | Task 4 (Steps 1–2) |
 | Fixture realism (ascending submitted_at) | Task 1 |
 | Page-cap × submitted_at-max equivalence | preserved by Task 2 (best persists across pages; cap unchanged) |
 | Out-of-scope: interface/callers/pagination/cache/404/429/cancellation untouched | no task touches them (verified by full-suite runs) |
