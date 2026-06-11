@@ -1,0 +1,60 @@
+import { it, expect, vi } from 'vitest';
+import { render, screen } from '@testing-library/react';
+import { DraftListItem } from './DraftListItem';
+import type { DraftLike } from '../draftKinds';
+
+vi.mock('../../../api/draft', () => ({ sendPatch: vi.fn() }));
+
+const prRef = { owner: 'acme', repo: 'api', number: 123 };
+
+const fileDraft: DraftLike = {
+  kind: 'comment',
+  data: {
+    id: 'd1',
+    filePath: 'src/Calc.cs',
+    lineNumber: 42,
+    side: 'right',
+    anchoredSha: 'abc',
+    anchoredLineContent: 'x',
+    bodyMarkdown: 'B'.repeat(200),
+    status: 'draft',
+    isOverriddenStale: false,
+    postedCommentId: null,
+  },
+};
+
+const rootDraft: DraftLike = {
+  kind: 'comment',
+  data: { ...fileDraft.data, id: 'd2', filePath: null, lineNumber: null, bodyMarkdown: 'root body' },
+};
+
+const noop = () => {};
+
+it('renders the full body, not an 80-char clamp', () => {
+  render(<DraftListItem prRef={prRef} draft={fileDraft} onEdit={noop} onMutated={noop} />);
+  expect(screen.getByText('B'.repeat(200))).toBeInTheDocument();
+});
+
+it('shows file · line for a file-anchored draft', () => {
+  render(<DraftListItem prRef={prRef} draft={fileDraft} onEdit={noop} onMutated={noop} />);
+  expect(screen.getByText(/src\/Calc\.cs/)).toBeInTheDocument();
+  expect(screen.getByText(/line 42/)).toBeInTheDocument();
+});
+
+it('shows chip-only band (no file/line) for a PR-root draft', () => {
+  render(<DraftListItem prRef={prRef} draft={rootDraft} onEdit={noop} onMutated={noop} />);
+  expect(screen.queryByText(/line/)).toBeNull();
+  expect(screen.getByText('Draft')).toBeInTheDocument();
+});
+
+it('footer shows Edit + Discard; readOnly hides the footer', () => {
+  const { rerender } = render(
+    <DraftListItem prRef={prRef} draft={fileDraft} onEdit={noop} onMutated={noop} />,
+  );
+  expect(screen.getByRole('button', { name: 'Edit' })).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Discard' })).toBeInTheDocument();
+  rerender(
+    <DraftListItem prRef={prRef} draft={fileDraft} onEdit={noop} onMutated={noop} readOnly />,
+  );
+  expect(screen.queryByRole('button', { name: 'Edit' })).toBeNull();
+});

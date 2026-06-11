@@ -18,7 +18,12 @@ interface DraftListItemProps {
   readOnly?: boolean;
 }
 
-const PREVIEW_CHARS = 80;
+const MODAL_PREVIEW_CHARS = 80;
+
+function modalPreview(body: string): string {
+  if (body.length <= MODAL_PREVIEW_CHARS) return body;
+  return body.slice(0, MODAL_PREVIEW_CHARS).trimEnd() + '…';
+}
 
 function statusLabel(d: DraftLike): { text: string; modifier: string } {
   const status: DraftStatus = d.data.status;
@@ -32,10 +37,6 @@ function statusLabel(d: DraftLike): { text: string; modifier: string } {
   return { text: 'Draft', modifier: 'draft' };
 }
 
-function previewBody(body: string): string {
-  if (body.length <= PREVIEW_CHARS) return body;
-  return body.slice(0, PREVIEW_CHARS).trimEnd() + '…';
-}
 
 export function DraftListItem({
   prRef,
@@ -85,18 +86,23 @@ export function DraftListItem({
 
   return (
     <div className={`draft-list-item ${styles.draftListItem}`}>
-      <div className={`draft-list-item-header row gap-2 ${styles.draftListItemHeader}`}>
+      <div className={`draft-list-item-header ${styles.draftBand}`}>
         <span className={`chip chip-status-${status.modifier}`}>{status.text}</span>
         {isOverridden && <span className="chip chip-override">User-overridden (was Stale)</span>}
-        {draft.kind === 'comment' && draft.data.lineNumber != null && (
-          <span className="muted-2">line {draft.data.lineNumber}</span>
+        {draft.kind === 'comment' && draft.data.filePath != null && (
+          <span className={styles.fileref}>
+            {draft.data.filePath}
+            {draft.data.lineNumber != null && (
+              <span className={styles.fileRefLine}> · line {draft.data.lineNumber}</span>
+            )}
+          </span>
         )}
       </div>
-      <div className={`draft-list-item-preview ${styles.draftListItemPreview}`}>
-        <MarkdownRenderer source={previewBody(body)} />
+      <div className={`draft-list-item-preview ${styles.draftBody}`}>
+        <MarkdownRenderer source={body} />
       </div>
       {!readOnly && (
-        <div className={`draft-list-item-actions row gap-2 ${styles.draftListItemActions}`}>
+        <div className={`draft-list-item-actions ${styles.draftFooter}`}>
           <button
             type="button"
             className="btn btn-secondary btn-sm"
@@ -111,20 +117,18 @@ export function DraftListItem({
             onClick={requestDelete}
             disabled={deleting}
           >
-            Delete
+            Discard
           </button>
         </div>
       )}
 
-      {/* readOnly: the Delete button (Modal's only trigger) is gated above, so
-          confirmOpen stays false and this Modal is unreachable while readOnly. */}
       <Modal
         open={confirmOpen}
         title="Discard this draft?"
         defaultFocus="cancel"
         onClose={() => setConfirmOpen(false)}
       >
-        <p className="muted">{previewBody(body)}</p>
+        <p className="muted">{modalPreview(body)}</p>
         <div className="modal-actions row gap-2">
           <button
             type="button"
