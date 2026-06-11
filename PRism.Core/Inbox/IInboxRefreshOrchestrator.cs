@@ -4,7 +4,13 @@ public interface IInboxRefreshOrchestrator
 {
     InboxSnapshot? Current { get; }
     Task<bool> WaitForFirstSnapshotAsync(TimeSpan timeout, CancellationToken ct);
-    Task RefreshAsync(CancellationToken ct);
+
+    /// <summary>
+    /// Pulls a fresh inbox snapshot. <paramref name="hardRefresh"/> = true forces a live-CI
+    /// re-read bypassing the (ref, headSha) cache (the manual "Refresh now" path, #355); the
+    /// background poll and cold-start pass false to keep the cheap cached path.
+    /// </summary>
+    Task RefreshAsync(CancellationToken ct, bool hardRefresh = false);
 
     /// <summary>
     /// Fires a single background refresh exactly once per orchestrator lifetime. Subsequent
