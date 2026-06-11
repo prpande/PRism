@@ -19,6 +19,7 @@ export function makePrDetailContextValue(
     prDetail: {} as PrDetailContextValue['prDetail'],
     draftSession: {} as PrDetailContextValue['draftSession'],
     readOnly: false,
+    subscribed: false,
     onSelectSubTab: vi.fn(),
     ...overrides,
   };

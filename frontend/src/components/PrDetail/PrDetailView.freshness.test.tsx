@@ -368,6 +368,7 @@ describe('FilesTab — stale selected file resets to first after refetch (OQ5)',
         clearOutOfBandToast: vi.fn(),
       } as unknown as PrDetailContextValue['draftSession'],
       readOnly: false,
+      subscribed: false,
       onSelectSubTab: vi.fn(),
     };
   }

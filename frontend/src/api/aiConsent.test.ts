@@ -3,8 +3,8 @@ import { getEgressDisclosure, postAiConsent } from './aiConsent';
 import type { EgressDisclosure } from './aiConsent';
 
 const { getMock, postMock } = vi.hoisted(() => ({
-  getMock: vi.fn<[string], Promise<EgressDisclosure>>(),
-  postMock: vi.fn<[string, unknown?], Promise<void>>(),
+  getMock: vi.fn<(path: string) => Promise<EgressDisclosure>>(),
+  postMock: vi.fn<(path: string, body?: unknown) => Promise<void>>(),
 }));
 
 vi.mock('./client', async (orig) => {

@@ -4,7 +4,7 @@ import { ApiError } from './client';
 import type { PrSummary } from './types';
 
 const { getMock } = vi.hoisted(() => ({
-  getMock: vi.fn<[string], Promise<PrSummary | undefined>>(),
+  getMock: vi.fn<(path: string) => Promise<PrSummary | undefined>>(),
 }));
 
 vi.mock('./client', async (orig) => {
