@@ -207,15 +207,14 @@ stays valid. This is test-realism maintenance, not a semantics change to those c
 (`GitHubAwaitingAuthorFilterTests.cs:16-18`) is 2-arg and injects no logger, so the SUT
 runs under `NullLogger` and emits nothing observable. The SUT ctor already accepts an
 optional `ILogger<GitHubAwaitingAuthorFilter>` (`GitHubAwaitingAuthorFilter.cs:21-29`), so
-add a `BuildSut` overload that passes one in. Capture/assert via **Moq** (already a package
-ref in `PRism.GitHub.Tests`): `Mock<ILogger<GitHubAwaitingAuthorFilter>>`, then
-`logger.Verify(l => l.Log(LogLevel.Debug, It.IsAny<EventId>(), It.IsAny<It.IsAnyType>(),
-It.IsAny<Exception?>(), It.IsAny<Func<It.IsAnyType, Exception?, string>>()), Times.Never)`
-to assert `ReviewItemSkipped` did **not** fire. (`ReviewItemSkipped` is the source-gen
-`LoggerMessage` at `GitHubAwaitingAuthorFilter.cs:132-134`, `LogLevel.Debug`; the
-source-gen path lowers to that generic `ILogger.Log` overload, so the `Times.Never` verify
-must target it.) Do **not** depend on `PRism.Web.Tests`' `ListLoggerProvider` — it is in a
-different, unreferenced test project.
+add a `BuildSut` overload that passes one in. For the capture, add a small list-backed
+`CapturingLogger<T>` test helper (an `ILogger<T>` that records each rendered message;
+`IsEnabled` returns `true` so the `Debug` message fires) and assert its entries contain no
+`"malformed JSON shape"` message. This is preferred over a Moq source-gen
+`ILogger.Log<TState>` verify, which is finicky and has no precedent in this test project.
+(`ReviewItemSkipped` is the source-gen `LoggerMessage` at
+`GitHubAwaitingAuthorFilter.cs:132-134`, `LogLevel.Debug`.) Do **not** depend on
+`PRism.Web.Tests`' `ListLoggerProvider` — it is in a different, unreferenced test project.
 
 **New tests** (all in `GitHubAwaitingAuthorFilterTests`):
 

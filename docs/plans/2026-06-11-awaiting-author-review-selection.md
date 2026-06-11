@@ -18,8 +18,9 @@
 |------|----------------|--------|
 | `PRism.GitHub/Inbox/GitHubAwaitingAuthorFilter.cs` | The filter; `FetchLastReviewShaAsync` selection logic + its doc comment | Modify (Tasks 2, 4) |
 | `tests/PRism.GitHub.Tests/Inbox/GitHubAwaitingAuthorFilterTests.cs` | All unit tests + fixtures + `BuildSut` | Modify (Tasks 1–5) |
+| `tests/PRism.GitHub.Tests/TestHelpers/CapturingLogger.cs` | List-backed `ILogger<T>` for asserting which log entries the SUT emitted | Create (Task 4) |
 
-No new files. No production dependencies added.
+One new test-only helper. No production dependencies added.
 
 ---
 
@@ -50,7 +51,7 @@ foreach (var review in doc.RootElement.EnumerateArray())
 
 ## Task 1: Fixture-realism pre-position (no implementation change)
 
-Add `submitted_at` to every fixture so reviews are eligible under the new rule, **while the old implementation still passes** (the old rule ignores `submitted_at`). This isolates the fixture churn from the behavior change.
+Add `submitted_at` to every fixture so reviews are eligible under the new rule, **while the old implementation still passes** (the old rule ignores `submitted_at`). This isolates the fixture churn from the behavior change. The `submitted_at` values are deliberately **ascending in array/page order**, so the max-by-`submitted_at` review is the same one the old array-last rule picks — that equivalence is what keeps every assertion valid, and Step 3 confirms it by running the suite green before any implementation change.
 
 **Files:**
 - Test: `tests/PRism.GitHub.Tests/Inbox/GitHubAwaitingAuthorFilterTests.cs`
@@ -193,7 +194,7 @@ Replace the per-review loop body (lines 98–111) with:
         }
 ```
 
-Update the method's doc comment (currently lines 64–70) to describe the new rule:
+**Replace** the method's doc comment (currently lines 64–70) — its present text says "The selection rule (last non-null viewer commit_id) is unchanged here — null-commit_id 'latest review' selection is a tracked follow-up," which this slice now resolves, so that sentence must go. Swap the whole block for:
 
 ```csharp
     // GitHub returns reviews paginated at per_page=100 with no documented sort order. Rather
@@ -267,13 +268,40 @@ git commit -m "test(#367): pin null-commit_id-latest fall-back (decision A)"
 - Test: `tests/PRism.GitHub.Tests/Inbox/GitHubAwaitingAuthorFilterTests.cs`
 - Modify: `PRism.GitHub/Inbox/GitHubAwaitingAuthorFilter.cs` (the `submitted_at` eligibility line)
 
-- [ ] **Step 1: Add the test usings + a logger-injecting `BuildSut` overload**
+- [ ] **Step 1: Create the `CapturingLogger<T>` test helper**
 
-At the top of `GitHubAwaitingAuthorFilterTests.cs`, add:
+Create `tests/PRism.GitHub.Tests/TestHelpers/CapturingLogger.cs`. A list-backed logger is deterministic and avoids the finicky Moq source-gen `ILogger.Log<TState>` verify (which has no precedent in this repo). `IsEnabled` returns `true` so the source-gen `Debug` message actually fires (and is captured) in the pre-guard red state.
 
 ```csharp
 using Microsoft.Extensions.Logging;
-using Moq;
+
+namespace PRism.GitHub.Tests.TestHelpers;
+
+/// <summary>
+/// Minimal list-backed <see cref="ILogger{T}"/> for asserting which log entries the SUT
+/// emitted (or did not). Captures the rendered message and level of every Log call.
+/// </summary>
+internal sealed class CapturingLogger<T> : ILogger<T>
+{
+    public List<(LogLevel Level, string Message)> Entries { get; } = new();
+
+    public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+    public bool IsEnabled(LogLevel logLevel) => true;
+
+    public void Log<TState>(
+        LogLevel logLevel, EventId eventId, TState state,
+        Exception? exception, Func<TState, Exception?, string> formatter)
+        => Entries.Add((logLevel, formatter(state, exception)));
+}
+```
+
+- [ ] **Step 2: Add the test using + a logger-injecting `BuildSut` overload**
+
+At the top of `GitHubAwaitingAuthorFilterTests.cs`, add (only this one — no Moq):
+
+```csharp
+using Microsoft.Extensions.Logging;
 ```
 
 Add a second `BuildSut` next to the existing one:
@@ -285,7 +313,7 @@ private static GitHubAwaitingAuthorFilter BuildSut(
         () => Task.FromResult<string?>("t"), log);
 ```
 
-- [ ] **Step 2: Write the failing test (pending JSON-null + no malformed-log)**
+- [ ] **Step 3: Write the failing test (pending JSON-null + no malformed-log)**
 
 ```csharp
 [Fact]
@@ -295,8 +323,9 @@ public async Task Pending_review_with_null_submitted_at_is_skipped_cleanly_no_ma
     // review with commit_id null would be skipped at the commit_id gate before the kind
     // check). Its submitted_at is a literal JSON null. It must be excluded by the ValueKind
     // gate as a normal `continue` — NOT thrown-and-caught as a malformed item. best falls
-    // back to "old" != head ⇒ PR included; and no ReviewItemSkipped log is emitted.
-    var log = new Mock<ILogger<GitHubAwaitingAuthorFilter>>();
+    // back to "old" != head ⇒ PR included; and no ReviewItemSkipped ("malformed JSON shape")
+    // log is emitted.
+    var log = new CapturingLogger<GitHubAwaitingAuthorFilter>();
     var body = $$"""
         [
           { "user": { "login": "{{ViewerLogin}}" }, "commit_id": "old",  "submitted_at": "2020-01-01T00:00:00Z" },
@@ -304,29 +333,25 @@ public async Task Pending_review_with_null_submitted_at_is_skipped_cleanly_no_ma
         ]
         """;
     var handler = new FakeHttpMessageHandler(_ => Respond(HttpStatusCode.OK, body));
-    var sut = BuildSut(handler, log.Object);
+    var sut = BuildSut(handler, log);
 
     var result = await sut.FilterAsync(ViewerLogin, [Raw(1, "head")], default);
 
     result.Should().ContainSingle("pending review skipped; best falls back to 'old' != head");
-    log.Verify(
-        l => l.Log(
-            It.IsAny<LogLevel>(),
-            It.IsAny<EventId>(),
-            It.IsAny<It.IsAnyType>(),
-            It.IsAny<Exception>(),
-            (Func<It.IsAnyType, Exception?, string>)It.IsAny<object>()),
-        Times.Never,
+    log.Entries.Should().NotContain(
+        e => e.Message.Contains("malformed JSON shape", StringComparison.Ordinal),
         "a JSON-null submitted_at must be a clean skip, not a malformed-item log");
 }
 ```
 
-- [ ] **Step 3: Run it — expect FAIL on the no-log assertion**
+(The `ReviewItemSkipped` message template is `"GitHub review item skipped (malformed JSON shape) for {Owner}/{Repo}#{Number}"`, so matching on the literal `"malformed JSON shape"` pins exactly that log.)
+
+- [ ] **Step 4: Run it — expect FAIL on the no-log assertion**
 
 Run: `dotnet test tests/PRism.GitHub.Tests/PRism.GitHub.Tests.csproj -c Release --filter "FullyQualifiedName~Pending_review_with_null_submitted_at_is_skipped_cleanly_no_malformed_log"`
-Expected: FAIL — without the kind-guard, `submitted_at` is present (null-kind), `GetDateTimeOffset()` throws `InvalidOperationException`, the guard catches it and `Log.ReviewItemSkipped` fires, so `Times.Never` fails. (The `ContainSingle` part already passes.)
+Expected: FAIL — without the kind-guard, `submitted_at` is present (null-kind), `GetDateTimeOffset()` throws `InvalidOperationException`, the guard catches it and `Log.ReviewItemSkipped` fires, so `Entries` contains a "malformed JSON shape" message and `NotContain` fails. (The `ContainSingle` part already passes.) The fixture is a single non-paginated page, so `ReviewPagesCapped` never fires — the only reachable log is `ReviewItemSkipped`.
 
-- [ ] **Step 4: Add the `JsonValueKind.String` guard**
+- [ ] **Step 5: Add the `JsonValueKind.String` guard**
 
 In `GitHubAwaitingAuthorFilter.cs`, change the `submitted_at` eligibility line (added in Task 2) from:
 
@@ -345,15 +370,15 @@ to:
                     sa.ValueKind != JsonValueKind.String) continue;
 ```
 
-- [ ] **Step 5: Run the new test + the full filter class**
+- [ ] **Step 6: Run the new test + the full filter class**
 
 Run: `dotnet test tests/PRism.GitHub.Tests/PRism.GitHub.Tests.csproj -c Release --filter "FullyQualifiedName~GitHubAwaitingAuthorFilterTests"`
 Expected: PASS — the kind-guard makes the pending review a clean `continue`; no log; all prior tests still green.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
-git add PRism.GitHub/Inbox/GitHubAwaitingAuthorFilter.cs tests/PRism.GitHub.Tests/Inbox/GitHubAwaitingAuthorFilterTests.cs
+git add PRism.GitHub/Inbox/GitHubAwaitingAuthorFilter.cs tests/PRism.GitHub.Tests/Inbox/GitHubAwaitingAuthorFilterTests.cs tests/PRism.GitHub.Tests/TestHelpers/CapturingLogger.cs
 git commit -m "fix(#367): gate submitted_at on JsonValueKind.String so pending drafts skip cleanly"
 ```
 
@@ -460,4 +485,4 @@ No gaps.
 
 **Type/name consistency:** `best` (`string?`) and `bestSubmittedAt` (`DateTimeOffset?`) are introduced together in Task 2 and used identically in Task 4. `BuildSut(handler)` and the new `BuildSut(handler, log)` overload are both referenced after their definitions. Test method names are unique. `ReviewsResponse`'s new optional `submittedAt` parameter is backward-compatible with all existing two-arg callers.
 
-**Note on the Moq source-gen verify (Task 4):** `Log.ReviewItemSkipped` lowers to the generic `ILogger.Log(LogLevel, EventId, TState, Exception?, Func<TState, Exception?, string>)` overload, so the `Times.Never` verify must target that signature with `It.IsAnyType` / the `(Func<It.IsAnyType, Exception?, string>)It.IsAny<object>()` cast — this is the established Moq pattern for asserting a source-generated logger message did not fire.
+**Note on the no-log assertion (Task 4):** rather than a Moq source-gen `ILogger.Log<TState>` verify (finicky, no repo precedent, and the form is easy to get subtly wrong), Task 4 injects a `CapturingLogger<T>` — a list-backed `ILogger<T>` that records each rendered message — and asserts `Entries` contains no `"malformed JSON shape"` message. This is deterministic and reads plainly. `CapturingLogger.IsEnabled` returns `true` so the source-gen `Debug` `ReviewItemSkipped` actually fires (and is captured) in the pre-guard red state; the Task 4 fixture is a single non-paginated page, so `ReviewPagesCapped` never fires and the only reachable log is the one under test.
