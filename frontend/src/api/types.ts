@@ -304,10 +304,9 @@ export interface DiffDto {
 
 export type DraftStatus = 'draft' | 'moved' | 'stale';
 
-// GET /api/pr/{ref}/draft serializes the C# DraftVerdict enum via
-// JsonStringEnumConverter + KebabCaseJsonNamingPolicy, so RequestChanges
-// arrives as 'request-changes'. PUT input accepts the camelCase form
-// ('requestChanges'); api/draft.ts:serializePatch translates before sending.
+// Kebab-case is the single canonical verdict wire form (#318): GET /draft,
+// PUT /draft, and POST /submit all speak it. The C# DraftVerdict / SubmitEvent
+// enums serialize via JsonStringEnumConverter + KebabCaseJsonNamingPolicy.
 export type DraftVerdict = 'approve' | 'request-changes' | 'comment';
 
 export type DraftVerdictStatus = 'draft' | 'needs-reconfirm';
@@ -496,11 +495,6 @@ export interface RootCommentPostedEvent {
 }
 
 // S5 PR4 — submit-pipeline frontend types.
-
-// POST /api/pr/{ref}/submit body verdict is PascalCase (the C# Verdict enum
-// name), distinct from the kebab-case DraftVerdict the session/PUT-draft path
-// uses. api/submit.ts:verdictToSubmitWire bridges DraftVerdict → Verdict.
-export type Verdict = 'Approve' | 'RequestChanges' | 'Comment';
 
 // IPreSubmitValidator result (spec § 14.1). PoC's NoopPreSubmitValidator
 // returns []; under aiPreview the slot renders frontend-side canned data.

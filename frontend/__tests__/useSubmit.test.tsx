@@ -65,10 +65,10 @@ describe('useSubmit', () => {
   it('submit() transitions idle → in-flight after the POST resolves', async () => {
     const { result } = renderHook(() => useSubmit(ref));
     await act(async () => {
-      await result.current.submit('Comment');
+      await result.current.submit('comment');
     });
     expect(result.current.state).toEqual({ kind: 'in-flight', steps: [] });
-    expect(submitReviewMock).toHaveBeenCalledWith(ref, 'Comment');
+    expect(submitReviewMock).toHaveBeenCalledWith(ref, 'comment');
   });
 
   it('submit() that throws returns the hook to idle and rethrows', async () => {
@@ -76,7 +76,7 @@ describe('useSubmit', () => {
     submitReviewMock.mockRejectedValueOnce(err);
     const { result } = renderHook(() => useSubmit(ref));
     await act(async () => {
-      await expect(result.current.submit('Comment')).rejects.toThrow('busy');
+      await expect(result.current.submit('comment')).rejects.toThrow('busy');
     });
     expect(result.current.state.kind).toBe('idle');
   });
@@ -84,7 +84,7 @@ describe('useSubmit', () => {
   it('submit-progress events upsert the steps array (advance + replace by step)', async () => {
     const { result } = renderHook(() => useSubmit(ref));
     await act(async () => {
-      await result.current.submit('Comment');
+      await result.current.submit('comment');
     });
     act(() =>
       emit('submit-progress', {
@@ -115,7 +115,7 @@ describe('useSubmit', () => {
   it('Finalize Succeeded transitions to success', async () => {
     const { result } = renderHook(() => useSubmit(ref));
     await act(async () => {
-      await result.current.submit('Approve');
+      await result.current.submit('approve');
     });
     act(() =>
       emit('submit-progress', {
@@ -133,7 +133,7 @@ describe('useSubmit', () => {
   it('a Failed step transitions to failed and captures the error message', async () => {
     const { result } = renderHook(() => useSubmit(ref));
     await act(async () => {
-      await result.current.submit('Approve');
+      await result.current.submit('approve');
     });
     act(() =>
       emit('submit-progress', {
@@ -154,7 +154,7 @@ describe('useSubmit', () => {
   it('submit-foreign-pending-review transitions to foreign-pending-review-prompt with the snapshot', async () => {
     const { result } = renderHook(() => useSubmit(ref));
     await act(async () => {
-      await result.current.submit('Comment');
+      await result.current.submit('comment');
     });
     const snapshot = {
       prRef: PR_REF,
@@ -173,7 +173,7 @@ describe('useSubmit', () => {
   it('submit-stale-commit-oid transitions to stale-commit-oid', async () => {
     const { result } = renderHook(() => useSubmit(ref));
     await act(async () => {
-      await result.current.submit('Comment');
+      await result.current.submit('comment');
     });
     act(() => emit('submit-stale-commit-oid', { prRef: PR_REF, orphanCommitOid: 'stale' }));
     expect(result.current.state).toEqual({ kind: 'stale-commit-oid', orphanCommitOid: 'stale' });
@@ -182,7 +182,7 @@ describe('useSubmit', () => {
   it('retry() re-fires the POST with the last-confirmed verdict', async () => {
     const { result } = renderHook(() => useSubmit(ref));
     await act(async () => {
-      await result.current.submit('RequestChanges');
+      await result.current.submit('request-changes');
     });
     act(() =>
       emit('submit-progress', {
@@ -198,7 +198,7 @@ describe('useSubmit', () => {
     await act(async () => {
       await result.current.retry();
     });
-    expect(submitReviewMock).toHaveBeenCalledWith(ref, 'RequestChanges');
+    expect(submitReviewMock).toHaveBeenCalledWith(ref, 'request-changes');
     // retry carries the prior failed-run steps forward (so the dialog re-enters
     // Phase B immediately instead of flashing the "checking…" row).
     const s = result.current.state;
@@ -211,7 +211,7 @@ describe('useSubmit', () => {
   it('retry from failed past Phase A keeps BeginPendingReview ✓ in the carried steps', async () => {
     const { result } = renderHook(() => useSubmit(ref));
     await act(async () => {
-      await result.current.submit('Comment');
+      await result.current.submit('comment');
     });
     act(() =>
       emit('submit-progress', {
@@ -251,7 +251,7 @@ describe('useSubmit', () => {
     const { result } = renderHook(() => useSubmit(ref));
     let submitPromise!: Promise<void>;
     act(() => {
-      submitPromise = result.current.submit('Comment');
+      submitPromise = result.current.submit('comment');
     });
     // POST still pending; the fire-and-forget pipeline finishes and fans out.
     expect(result.current.state.kind).toBe('in-flight');
@@ -277,7 +277,7 @@ describe('useSubmit', () => {
   it('ignores events for a different prRef', async () => {
     const { result } = renderHook(() => useSubmit(ref));
     await act(async () => {
-      await result.current.submit('Comment');
+      await result.current.submit('comment');
     });
     act(() =>
       emit('submit-progress', {
@@ -312,7 +312,7 @@ describe('useSubmit', () => {
   it('reset() returns to idle', async () => {
     const { result } = renderHook(() => useSubmit(ref));
     await act(async () => {
-      await result.current.submit('Comment');
+      await result.current.submit('comment');
     });
     act(() => result.current.reset());
     expect(result.current.state).toEqual({ kind: 'idle' });
@@ -341,7 +341,7 @@ describe('useSubmit', () => {
   it('resumeForeignPendingReview captures Snapshot A→B + hasResolvedImports into lastResume', async () => {
     const { result } = renderHook(() => useSubmit(ref));
     await act(async () => {
-      await result.current.submit('Comment');
+      await result.current.submit('comment');
     });
     act(() => emitForeignPrompt(2, 1));
     resumeForeignMock.mockResolvedValueOnce({
@@ -378,7 +378,7 @@ describe('useSubmit', () => {
   it('resumeForeignPendingReview ignores a re-entrant call while one is in flight (double-click guard)', async () => {
     const { result } = renderHook(() => useSubmit(ref));
     await act(async () => {
-      await result.current.submit('Comment');
+      await result.current.submit('comment');
     });
     act(() => emitForeignPrompt());
     let release!: () => void;
@@ -399,7 +399,7 @@ describe('useSubmit', () => {
   it('resumeForeignPendingReview 409 (TOCTOU) re-throws and resets to idle (no stuck prompt)', async () => {
     const { result } = renderHook(() => useSubmit(ref));
     await act(async () => {
-      await result.current.submit('Comment');
+      await result.current.submit('comment');
     });
     act(() => emitForeignPrompt());
     resumeForeignMock.mockRejectedValueOnce(
@@ -417,7 +417,7 @@ describe('useSubmit', () => {
   it('discardForeignPendingReview 409 (TOCTOU) re-throws and resets to idle', async () => {
     const { result } = renderHook(() => useSubmit(ref));
     await act(async () => {
-      await result.current.submit('Comment');
+      await result.current.submit('comment');
     });
     act(() => emitForeignPrompt());
     discardForeignMock.mockRejectedValueOnce(

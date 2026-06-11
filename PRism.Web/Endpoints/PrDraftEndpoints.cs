@@ -230,7 +230,7 @@ internal static class PrDraftEndpoints
                         : value.GetString() switch
                         {
                             "approve" => DraftVerdict.Approve,
-                            "requestChanges" => DraftVerdict.RequestChanges,
+                            "request-changes" => DraftVerdict.RequestChanges,
                             "comment" => DraftVerdict.Comment,
                             _ => throw new InvalidOperationException("verdict already validated"),
                         };
@@ -528,8 +528,10 @@ internal static class PrDraftEndpoints
             case "draftVerdict":
                 {
                     if (value.ValueKind == JsonValueKind.Null) return null;  // explicit clear is valid
+                    // Canonical kebab-case only (#318). Non-string tokens (e.g. a JSON integer
+                    // ordinal) are coerced to null by the ValueKind guard and rejected.
                     var verdict = value.ValueKind == JsonValueKind.String ? value.GetString() : null;
-                    if (verdict is not "approve" and not "requestChanges" and not "comment")
+                    if (verdict is not "approve" and not "request-changes" and not "comment")
                         return Results.BadRequest(new { error = "verdict-invalid" });
                     return null;
                 }

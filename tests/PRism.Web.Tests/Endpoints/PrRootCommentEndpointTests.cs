@@ -215,7 +215,7 @@ public class PrRootCommentEndpointTests
         await ctx.SeedSessionAsync("o", "r", 25, SubmitEndpointsTestContext.ValidSession());
 
         using var submitClient = ctx.CreateClient(tabId: "tab-test");
-        var submitResp = await submitClient.PostAsJsonAsync("/api/pr/o/r/25/submit", new { verdict = "Comment" });
+        var submitResp = await submitClient.PostAsJsonAsync("/api/pr/o/r/25/submit", new { verdict = "comment" });
         submitResp.StatusCode.Should().Be(HttpStatusCode.OK, "submit must start and hold the lock");
 
         // Immediately POST /root-comment/post — the lock is held → must get 409.
