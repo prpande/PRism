@@ -65,6 +65,12 @@ internal static class GitHubHttp
     // `accept` overrides AcceptJson; `apiVersion:false` suppresses the version header
     // (GraphQL POSTs, which the REST version header does not apply to). The caller owns
     // disposal of the returned response (matches the previous SendGitHubAsync contract).
+    //
+    // Disposal of `content`: this method assigns `content` to the request and disposes the
+    // request before returning, so the passed-in HttpContent is disposed here too. Callers
+    // that also wrap `content` in their own `using` (the common pattern, for the
+    // exception-path case) double-dispose it — which is safe, HttpContent.Dispose is
+    // idempotent in the BCL. Do NOT reuse a `content` instance across two SendAsync calls.
     internal static async Task<HttpResponseMessage> SendAsync(
         HttpClient http, HttpMethod method, string url, string? token, CancellationToken ct,
         HttpContent? content = null, string? accept = null, bool apiVersion = true)
