@@ -4,8 +4,11 @@
 # (the repo has none; only Pester 3.4.0 ships). Run: pwsh -File scripts/run-desktop.Tests.ps1
 $ErrorActionPreference = 'Stop'
 
-# Dot-source the script under test. The main-guard (InvocationName -eq '.') keeps
-# Invoke-Main from running on import.
+# Dot-source the script under test. When dot-sourced, $MyInvocation.InvocationName is
+# '.', so the script's main-guard (-ne '.') is false and Invoke-Main does NOT run.
+# Note: dot-sourcing also runs run-desktop.ps1's param([switch]$SkipBuild) block in
+# THIS scope, resetting $SkipBuild to $false — harmless here (the harness never reads
+# it), but don't rely on a $SkipBuild value surviving the dot-source.
 . (Join-Path $PSScriptRoot 'run-desktop.ps1')
 
 $script:Failures = 0
