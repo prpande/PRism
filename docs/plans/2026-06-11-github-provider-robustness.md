@@ -16,7 +16,7 @@
 - `PaginatedFakeHandler().RouteJson(pathPrefix, page1, page2, …)` emits `Link rel="next"` between pages and 500s on over-call; `CallCountFor(pathPrefix)` returns the page index reached.
 - `RecordingHttpMessageHandler(HttpStatusCode, body)` exposes `RequestCount`, `RequestPaths`, `RequestBodies`, `RequestMethods`.
 - `PRism.GitHub.Tests` already has `InternalsVisibleTo` for `PRism.GitHub` internals.
-- Endpoint tests (`PRism.Web.Tests`): `CommentTestContext.Create()`, `ctx.SeedSessionAsync(o,r,n,session)`, `ctx.Post(n, draftId)`, `ctx.Submitter.InjectReviewCommentFailure(ex)`; root: `PrRootCommentEndpointTests` uses `ctx.Submitter.InjectFailure(ex)`. Both assert `body.GetProperty("code").GetString() == "github-network-error"`.
+- Endpoint tests (`PRism.Web.Tests`): inline uses `CommentTestContext.Create()`, `ctx.SeedSessionAsync(o,r,n,session)`, `ctx.Post(n, draftId)`, `ctx.Submitter.InjectReviewCommentFailure(ex)`; root uses `RootCommentTestContext.Create()`, `SessionWithRootDraft()`, `ctx.Post(n)`, `ctx.Submitter.InjectFailure(ex)`. **Important:** the existing failure tests assert *different* codes depending on the injected `HttpRequestException` — the inline test injects a network error → `github-network-error`; the root test injects a 403 → `github-forbidden`. A non-`HttpRequestException` (our `GitHubRestContractException`) falls to each endpoint's `catch (Exception)` catch-all → **`github-network-error` (502/BadGateway) in BOTH**. So the new contract-exception tests assert `github-network-error`, which matches the inline file's existing failure test but NOT the root file's 403 test.
 
 **Build/test commands** (run one at a time, foreground, timeout ≥ 300000ms):
 - GitHub tests: `dotnet test tests/PRism.GitHub.Tests/PRism.GitHub.Tests.csproj --filter "<name>"`
@@ -522,19 +522,24 @@ Append to `tests/PRism.Web.Tests/Endpoints/PrCommentEndpointTests.cs` (inside th
 ```
 > Note: assert the **same** status/code the existing `HttpRequestException` injection test asserts. If that test asserts a status other than `BadGateway`, match it exactly — the point is equivalence, not a specific code.
 
-Append the analogous test to `tests/PRism.Web.Tests/Endpoints/PrRootCommentEndpointTests.cs`, using that file's `ctx.Submitter.InjectFailure(...)` shape and its existing assertion (502 / `github-network-error`):
+Append the analogous test to `tests/PRism.Web.Tests/Endpoints/PrRootCommentEndpointTests.cs`. Do **not** copy the existing 403 test's assertions — that test asserts `github-forbidden`, which only applies to an `HttpRequestException` carrying 403. A `GitHubRestContractException` is not an `HttpRequestException`, so it falls to the endpoint's `catch (Exception)` catch-all → `github-network-error`. Use the `RootCommentTestContext` / `SessionWithRootDraft` shape from that file:
 ```csharp
     [Fact]
-    public async Task PostRootComment_contract_exception_maps_to_same_github_error_as_http_failure()
+    public async Task PostRootComment_contract_exception_maps_to_502_github_network_error()
     {
-        // Mirror the existing InjectFailure(HttpRequestException) test's setup + assertions,
-        // substituting a GitHubRestContractException — the catch-all must yield the same response.
-        // (Copy the existing test body; swap the injected exception type.)
-        // ctx.Submitter.InjectFailure(new PRism.GitHub.GitHubRestContractException("missing 'id'"));
-        // ... assert identical status + code as the HttpRequestException case ...
+        using var ctx = RootCommentTestContext.Create();
+        await ctx.SeedSessionAsync("o", "r", 24, SessionWithRootDraft());
+        ctx.Submitter.InjectFailure(new PRism.GitHub.GitHubRestContractException("missing 'id'"));
+
+        var resp = await ctx.Post(24);
+
+        resp.StatusCode.Should().Be(HttpStatusCode.BadGateway);
+        var body = await resp.Content.ReadFromJsonAsync<JsonElement>(CamelCase);
+        // Not an HttpRequestException ⇒ the catch-all yields github-network-error,
+        // NOT the 403 path's github-forbidden.
+        body.GetProperty("code").GetString().Should().Be("github-network-error");
     }
 ```
-> Replace the commented body by copying the existing `InjectFailure(new HttpRequestException(...))` test in that file verbatim and changing only the injected exception type. (The existing test is the authoritative shape for the context/session/assert.)
 
 - [ ] **Step 6: Run the endpoint tests to verify they pass (no production change needed)**
 
@@ -762,6 +767,8 @@ Evict cache keys for PRs absent from the current snapshot; clear on an empty tic
 - Test: `tests/PRism.GitHub.Tests/Inbox/GitHubCiFailingDetectorTests.cs`
 
 - [ ] **Step 1: Write failing 3-tick eviction tests**
+
+> All three test files already have a `BuildSut(...)` helper and the `Raw(...)`/`Respond(...)` fixtures used below — these tests *append* to existing files, they do not redefine the helper. The detector's `BuildSut(handler)` keeps working here unchanged; Task 6 later adds an optional `IClock?` param (defaulted), so `BuildSut(handler)` still compiles. The eviction tests key request counts on `req.RequestUri.AbsolutePath` (query-stripped), and the non-paginated `FakeHttpMessageHandler` emits no `Link` header — so even after Task 5's pagination rewrite the filter's walk stays single-page and these counts remain stable.
 
 Append to `tests/PRism.GitHub.Tests/Inbox/GitHubAwaitingAuthorFilterTests.cs`:
 ```csharp
@@ -1307,10 +1314,27 @@ In `PRism.GitHub/ServiceCollectionExtensions.cs`:
 Run: `dotnet test tests/PRism.GitHub.Tests/PRism.GitHub.Tests.csproj --filter "FullyQualifiedName~GitHubCiFailingDetectorTests"`
 Expected: PASS (TTL within → cached; past TTL → re-probe to Pending; forceReprobe + eviction + all prior tests green).
 
-- [ ] **Step 7: Verify DI resolves (registration test)**
+- [ ] **Step 7: Add a DI-resolution test that actually exercises the `IClock` wiring**
+
+`ServiceRegistrationTests` builds the provider **without** `ValidateOnBuild`, and its existing test only resolves `IGitHubCredentialHealth` — so the `ICiFailingDetector` factory lambda (which calls `sp.GetRequiredService<IClock>()`) never runs, and a missing `IClock` registration would NOT be caught. Add a test that forces the lambda to execute. Append to `tests/PRism.GitHub.Tests/ServiceRegistrationTests.cs`:
+```csharp
+    [Fact]
+    public void Resolves_ci_failing_detector_with_clock_dependency()
+    {
+        var services = new ServiceCollection();
+        services.AddSingleton<IConfigStore>(/* the same stub the existing test uses */ null!);
+        // ^ Use whatever IConfigStore / ITokenStore stubs the existing RegistersCredentialHealthSingleton
+        //   test already wires up; AddPrismGitHub needs them. Mirror that setup exactly.
+        services.AddPrismGitHub();
+        using var sp = services.BuildServiceProvider();
+
+        sp.GetRequiredService<PRism.Core.Inbox.ICiFailingDetector>().Should().NotBeNull();
+    }
+```
+> Read the existing `RegistersCredentialHealthSingleton` test first and replicate its exact service-stub setup (it already registers whatever `AddPrismGitHub` requires). The key assertion is that resolving `ICiFailingDetector` runs the factory lambda → `GetRequiredService<IClock>()` → would throw if `TryAddSingleton<IClock, SystemClock>()` were omitted.
 
 Run: `dotnet test tests/PRism.GitHub.Tests/PRism.GitHub.Tests.csproj --filter "FullyQualifiedName~ServiceRegistrationTests"`
-Expected: PASS (the container still builds `ICiFailingDetector` with the new `IClock` dependency).
+Expected: PASS (the detector resolves; `IClock`→`SystemClock` is wired). Sanity-check: temporarily commenting out the `TryAddSingleton<IClock, SystemClock>()` line makes THIS test fail (`Unable to resolve IClock`) — proving it guards the wiring.
 
 - [ ] **Step 8: Commit**
 
