@@ -177,6 +177,7 @@ export function PrRootReplyComposer({
           registerOpenComposer={registerOpenComposer}
           ownerKey="reply-composer"
           readOnly={readOnly || postInFlight}
+          showBadge={false}
           onBodyChange={handleBodyChange}
           onAutosaveControl={handleAutosaveControl}
           onDraftLost={handleDraftLost}
