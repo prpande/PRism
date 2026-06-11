@@ -1,10 +1,10 @@
-/* DraftListItem — production-only card-row. Visual language derived from
-   handoff `.stale-row` (chips at top, body in middle, actions at bottom).
-   Mounted as children of .draftsTabFileGroup.
+/* DraftListItem — production-only card-row. Reuses the CommentCard shell
+   (composes: card / body) with a draft-native band (chip + file·line) and an
+   Edit/Discard footer (#354). Mounted as children of .draftsTabFileGroup.
 
    Also authors the two single-consumer chip variants per D47 (the literal
    classes are emitted via dynamic interpolation `chip-status-${status.modifier}`
-   at DraftListItem.tsx:81; literal-class-and-module pattern means the literal
+   in DraftListItem.tsx; literal-class-and-module pattern means the literal
    in JSX continues to compose AND the .module.css rule applies via Vite's
    CSS-modules injection order). */
 
