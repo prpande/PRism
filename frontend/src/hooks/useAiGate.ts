@@ -3,8 +3,8 @@ import { useCapabilities } from './useCapabilities';
 import { usePreferences } from './usePreferences';
 
 // PR9b-ai-gating § 3.1. Centralizes the `capabilities[key] && aiPreview`
-// expression that was previously duplicated across 4 sites (and missing
-// the capability check on AskAiButton). 9 consumers after this PR ships.
+// expression that was previously duplicated across several AI-gated call
+// sites.
 //
 // Today the two factors are coupled on the wire — CapabilitiesEndpoints.cs:13
 // returns AllOn xor AllOff from AiPreviewState.IsOn, and PreferencesEndpoints
