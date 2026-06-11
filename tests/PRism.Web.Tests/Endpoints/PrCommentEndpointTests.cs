@@ -237,6 +237,9 @@ public class PrCommentEndpointTests
         resp.StatusCode.Should().Be(HttpStatusCode.Forbidden);
         var body = await resp.Content.ReadFromJsonAsync<JsonElement>(CamelCase);
         body.GetProperty("code").GetString().Should().Be("unauthorized");
+        // The per-verb message is surfaced by the frontend (api/comment.ts maps payload.message);
+        // #319 moves the status 401->403 but must NOT change this user-visible text.
+        body.GetProperty("message").GetString().Should().Be("Subscribe to this PR before posting a comment.");
     }
 
     // ── 8. GitHub 5xx → 502 sanitized ────────────────────────────────────────

@@ -41,7 +41,7 @@ internal static class PrCommentEndpoints
         var prRef = new PrReference(owner, repo, number);
         var sessionKey = prRef.ToString();
 
-        if (RequireSubscribed.Check(activePrCache, prRef) is { } notSubscribed)
+        if (RequireSubscribed.Check(activePrCache, prRef, "Subscribe to this PR before posting a comment.") is { } notSubscribed)
             return notSubscribed;
 
 #pragma warning disable CA2000

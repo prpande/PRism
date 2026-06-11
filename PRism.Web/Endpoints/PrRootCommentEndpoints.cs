@@ -58,7 +58,7 @@ internal static class PrRootCommentEndpoints
         var sessionKey = prRef.ToString();
 
         // --- Authorization (same broader-than-spec authz as /submit; spec T10 § 6.2) ---
-        if (RequireSubscribed.Check(activePrCache, prRef) is { } notSubscribed)
+        if (RequireSubscribed.Check(activePrCache, prRef, "Subscribe to this PR before posting a comment.") is { } notSubscribed)
             return notSubscribed;
 
         // --- Per-PR lock (TimeSpan.Zero → non-blocking; 409 on contention) ---

@@ -43,7 +43,7 @@ internal static class PrDraftsDiscardAllEndpoint
     {
         var prRef = new PrReference(owner, repo, number);
         var sessionKey = prRef.ToString();
-        if (RequireSubscribed.Check(activePrCache, prRef) is { } notSubscribed)
+        if (RequireSubscribed.Check(activePrCache, prRef, "Subscribe to this PR before discarding.") is { } notSubscribed)
             return notSubscribed;
 
         string? pendingToDelete = null;

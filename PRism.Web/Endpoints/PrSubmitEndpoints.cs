@@ -106,7 +106,7 @@ internal static class PrSubmitEndpoints
         var prRef = new PrReference(owner, repo, number);
         var sessionKey = prRef.ToString();
 
-        if (RequireSubscribed.Check(activePrCache, prRef) is { } notSubscribed)
+        if (RequireSubscribed.Check(activePrCache, prRef, "Subscribe to this PR before submitting.") is { } notSubscribed)
             return notSubscribed;
 
         if (!TryParseVerdict(request?.Verdict, out var verdict))
@@ -305,7 +305,7 @@ internal static class PrSubmitEndpoints
         var prRef = new PrReference(owner, repo, number);
         var sessionKey = prRef.ToString();
 
-        if (RequireSubscribed.Check(activePrCache, prRef) is { } notSubscribed)
+        if (RequireSubscribed.Check(activePrCache, prRef, "Subscribe to this PR before discarding.") is { } notSubscribed)
             return notSubscribed;
 
         // Signal cancellation to any in-flight pipeline for this PR. Idempotent — no-op if nothing
@@ -415,7 +415,7 @@ internal static class PrSubmitEndpoints
     {
         var prRef = new PrReference(owner, repo, number);
         var sessionKey = prRef.ToString();
-        if (RequireSubscribed.Check(activePrCache, prRef) is { } notSubscribed)
+        if (RequireSubscribed.Check(activePrCache, prRef, "Subscribe to this PR before resuming.") is { } notSubscribed)
             return notSubscribed;
         if (string.IsNullOrEmpty(request?.PullRequestReviewId))
             return Results.Json(new SubmitErrorDto("pull-request-review-id-missing", "pullRequestReviewId is required."), statusCode: StatusCodes.Status400BadRequest);
@@ -520,7 +520,7 @@ internal static class PrSubmitEndpoints
     {
         var prRef = new PrReference(owner, repo, number);
         var sessionKey = prRef.ToString();
-        if (RequireSubscribed.Check(activePrCache, prRef) is { } notSubscribed)
+        if (RequireSubscribed.Check(activePrCache, prRef, "Subscribe to this PR before discarding.") is { } notSubscribed)
             return notSubscribed;
         if (string.IsNullOrEmpty(request?.PullRequestReviewId))
             return Results.Json(new SubmitErrorDto("pull-request-review-id-missing", "pullRequestReviewId is required."), statusCode: StatusCodes.Status400BadRequest);
