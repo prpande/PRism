@@ -203,7 +203,7 @@ public sealed class GitHubCiFailingDetector : ICiFailingDetector
                 // call tracked in #305, not an oversight. #264
             }
 
-            nextUri = TryGetNextLink(resp);
+            nextUri = GitHubLinkHeader.TryGetNext(resp);
             if (nextUri is null) break;
         }
 
@@ -214,41 +214,6 @@ public sealed class GitHubCiFailingDetector : ICiFailingDetector
             : anyPending
                 ? CiStatus.Pending
                 : anySuccess ? CiStatus.Passing : CiStatus.None, false);
-    }
-
-    // Parses the GitHub Link response header and returns the URL whose attributes
-    // include rel="next", or null if no such link exists. Standard format:
-    //   <url1>; rel="next", <url2>; rel="last"
-    // Node IDs / URLs are treated as opaque — we hand the absolute URL straight
-    // back to HttpClient without parsing or rewriting.
-    private static Uri? TryGetNextLink(HttpResponseMessage resp)
-    {
-        if (!resp.Headers.TryGetValues("Link", out var values)) return null;
-        foreach (var header in values)
-        {
-            foreach (var part in header.Split(','))
-            {
-                var segments = part.Split(';');
-                if (segments.Length < 2) continue;
-                var urlSegment = segments[0].Trim();
-                if (!urlSegment.StartsWith('<') || !urlSegment.EndsWith('>')) continue;
-                var hasNext = false;
-                for (var i = 1; i < segments.Length; i++)
-                {
-                    var attr = segments[i].Trim();
-                    if (attr.Equals("rel=\"next\"", StringComparison.Ordinal)
-                        || attr.Equals("rel=next", StringComparison.Ordinal))
-                    {
-                        hasNext = true;
-                        break;
-                    }
-                }
-                if (!hasNext) continue;
-                var url = urlSegment[1..^1];
-                if (Uri.TryCreate(url, UriKind.Absolute, out var uri)) return uri;
-            }
-        }
-        return null;
     }
 
     private async Task<(CiStatus Status, bool Degraded)> FetchCombinedStatusAsync(PrReference pr, string sha, string? token, CancellationToken ct)
