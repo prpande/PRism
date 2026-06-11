@@ -76,8 +76,7 @@ public sealed partial class GitHubAwaitingAuthorFilter : IAwaitingAuthorFilter
         var initialUrl = $"repos/{pr.Owner}/{pr.Repo}/pulls/{pr.Number}/reviews?per_page=100";
         using var http = _httpFactory.CreateClient("github");
 
-        var page = 0;
-        for (; page < MaxReviewPages; page++)
+        for (var page = 0; page < MaxReviewPages; page++)
         {
             var requestUri = nextUri ?? new Uri(initialUrl, UriKind.Relative);
             using var req = new HttpRequestMessage(HttpMethod.Get, requestUri);
@@ -115,7 +114,10 @@ public sealed partial class GitHubAwaitingAuthorFilter : IAwaitingAuthorFilter
             if (nextUri is null) break;
         }
 
-        if (page >= MaxReviewPages && nextUri is not null)
+        // A non-null nextUri after the loop means we stopped at the page cap with more pages
+        // pending — the only non-break exit (the break fires only when nextUri is null). So the
+        // most-recent review may be truncated; signal it rather than silently wrong-shaping.
+        if (nextUri is not null)
             Log.ReviewPagesCapped(_log, pr.Owner, pr.Repo, pr.Number, MaxReviewPages);
 
         return best;
