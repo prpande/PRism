@@ -127,7 +127,7 @@ internal static partial class PrDetailEndpoints
                 // toast for the wire-up regression case without conflating it with PR-detail
                 // staleness. Allowlist is the same [a-zA-Z0-9_-]{1,64} regex used everywhere a
                 // tab id reaches the server (spec § 3).
-                var tabId = httpContext.Request.Headers["X-PRism-Tab-Id"].FirstOrDefault();
+                var tabId = httpContext.Request.Headers[TabStamps.TabIdHeader].FirstOrDefault();
                 if (string.IsNullOrEmpty(tabId) || !TabIdAllowlistRegex().IsMatch(tabId))
                     return Results.Problem(type: "/viewed/tab-id-missing", statusCode: 422);
 
@@ -148,13 +148,7 @@ internal static partial class PrDetailEndpoints
                         // Write the caller's tab stamp; cap at N=8 entries by evicting the
                         // oldest StampedAtUtc. The cap protects against state.json bloat if a
                         // misbehaving extension or test fixture keeps minting fresh tab ids.
-                        var tabStamps = session.TabStamps.ToDictionary(kv => kv.Key, kv => kv.Value);
-                        tabStamps[tabId] = new TabStamp(body.HeadSha, DateTime.UtcNow);
-                        if (tabStamps.Count > 8)
-                        {
-                            var oldest = tabStamps.MinBy(kv => kv.Value.StampedAtUtc).Key;
-                            tabStamps.Remove(oldest);
-                        }
+                        var tabStamps = TabStamps.Write(session.TabStamps, tabId, body.HeadSha, DateTime.UtcNow);
 
                         // Session-flat LastSeenCommentId is the inbox unread-badge anchor;
                         // monotone guard prevents a stale per-tab value from rewinding the

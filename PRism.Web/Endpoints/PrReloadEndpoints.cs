@@ -56,7 +56,7 @@ internal static class PrReloadEndpoints
 
         var prRef = new PrReference(owner, repo, number);
         var refKey = prRef.ToString();
-        var sourceTabId = httpContext.Request.Headers["X-PRism-Tab-Id"].FirstOrDefault();
+        var sourceTabId = httpContext.Request.Headers[TabStamps.TabIdHeader].FirstOrDefault();
 
         // Tab id validation (spec § 3) — reload is a write site and must reject missing /
         // out-of-allowlist tab ids before any state mutation. Distinct /reload/tab-id-missing
@@ -162,13 +162,7 @@ internal static class PrReloadEndpoints
                 // Per-tab stamp write — sourceTabId was validated against TabIdAllowlistRegex
                 // at the top of PostReload, so it's safe to use as a state-store key. N=8 cap
                 // mirrors the mark-viewed write site (spec § 5.2): eviction by oldest stamp.
-                var tabStamps = current.TabStamps.ToDictionary(kv => kv.Key, kv => kv.Value);
-                tabStamps[sourceTabId] = new TabStamp(request.HeadSha, DateTime.UtcNow);
-                if (tabStamps.Count > 8)
-                {
-                    var oldest = tabStamps.MinBy(kv => kv.Value.StampedAtUtc).Key;
-                    tabStamps.Remove(oldest);
-                }
+                var tabStamps = TabStamps.Write(current.TabStamps, sourceTabId, request.HeadSha, DateTime.UtcNow);
                 var updated = current with
                 {
                     DraftComments = updatedDrafts,

@@ -76,7 +76,7 @@ internal static class PrDraftEndpoints
 
         var prRef = new PrReference(owner, repo, number);
         var refKey = prRef.ToString();
-        var sourceTabId = httpContext.Request.Headers["X-PRism-Tab-Id"].FirstOrDefault();
+        var sourceTabId = httpContext.Request.Headers[TabStamps.TabIdHeader].FirstOrDefault();
 
         JsonDocument doc;
         try

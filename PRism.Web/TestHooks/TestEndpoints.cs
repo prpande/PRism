@@ -288,13 +288,7 @@ internal static class TestEndpoints
                 var session = state.Reviews.Sessions.GetValueOrDefault(key)
                     ?? PrDraftEndpoints.NewEmptySession();
                 var sessions = state.Reviews.Sessions.ToDictionary(kv => kv.Key, kv => kv.Value);
-                var tabStamps = session.TabStamps.ToDictionary(kv => kv.Key, kv => kv.Value);
-                tabStamps[req.TabId] = new TabStamp(headSha, DateTime.UtcNow);
-                if (tabStamps.Count > 8)
-                {
-                    var oldest = tabStamps.MinBy(kv => kv.Value.StampedAtUtc).Key;
-                    tabStamps.Remove(oldest);
-                }
+                var tabStamps = TabStamps.Write(session.TabStamps, req.TabId, headSha, DateTime.UtcNow);
                 sessions[key] = session with { TabStamps = tabStamps };
                 return state.WithDefaultReviews(state.Reviews with { Sessions = sessions });
             }, CancellationToken.None).ConfigureAwait(false);
