@@ -160,8 +160,9 @@ internal static class PrReloadEndpoints
                     : current.DraftVerdictStatus;
 
                 // Per-tab stamp write — sourceTabId was validated against TabIdAllowlistRegex
-                // at the top of PostReload, so it's safe to use as a state-store key. N=8 cap
-                // mirrors the mark-viewed write site (spec § 5.2): eviction by oldest stamp.
+                // at the top of PostReload, so it's safe to use as a state-store key. The
+                // TabStamps.MaxTabStamps cap mirrors the mark-viewed write site (spec § 5.2):
+                // eviction by oldest stamp.
                 var tabStamps = TabStamps.Write(current.TabStamps, sourceTabId, request.HeadSha, DateTime.UtcNow);
                 var updated = current with
                 {

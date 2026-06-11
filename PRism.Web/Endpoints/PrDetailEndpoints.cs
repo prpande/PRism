@@ -145,9 +145,10 @@ internal static partial class PrDetailEndpoints
                     {
                         var session = state.Reviews.Sessions.GetValueOrDefault(key) ?? PrDraftEndpoints.NewEmptySession();
 
-                        // Write the caller's tab stamp; cap at N=8 entries by evicting the
-                        // oldest StampedAtUtc. The cap protects against state.json bloat if a
-                        // misbehaving extension or test fixture keeps minting fresh tab ids.
+                        // Write the caller's tab stamp; TabStamps.Write caps at
+                        // TabStamps.MaxTabStamps entries by evicting the oldest StampedAtUtc. The
+                        // cap protects against state.json bloat if a misbehaving extension or test
+                        // fixture keeps minting fresh tab ids.
                         var tabStamps = TabStamps.Write(session.TabStamps, tabId, body.HeadSha, DateTime.UtcNow);
 
                         // Session-flat LastSeenCommentId is the inbox unread-badge anchor;

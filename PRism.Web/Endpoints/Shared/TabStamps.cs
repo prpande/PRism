@@ -7,8 +7,9 @@ internal static class TabStamps
     internal const string TabIdHeader = "X-PRism-Tab-Id";
     internal const int MaxTabStamps = 8;
 
-    /// <summary>Returns a new stamp dictionary with tabId set to (headSha, nowUtc),
-    /// evicting the oldest entries while over the cap.</summary>
+    /// <summary>Returns a new stamp dictionary (the input is not mutated) with tabId set to
+    /// (headSha, nowUtc), evicting the oldest <see cref="TabStamp.StampedAtUtc"/> entries while
+    /// over the <see cref="MaxTabStamps"/> cap.</summary>
     internal static Dictionary<string, TabStamp> Write(
         IReadOnlyDictionary<string, TabStamp> existing, string tabId, string headSha, DateTime nowUtc)
     {
