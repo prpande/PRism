@@ -1,14 +1,24 @@
+import { useEffect, useRef, useState } from 'react';
 import { usePreferences } from '../../../hooks/usePreferences';
 import {
   applyThemeToDocument,
   applyDensityToDocument,
   applyContentScaleToDocument,
 } from '../../../utils/applyTheme';
-import type { Accent, ContentScale, Density, Theme } from '../../../api/types';
+import type { Accent, AiMode, ContentScale, Density, Theme } from '../../../api/types';
 import { FontSizeSlider, SCALE_ORDER } from '../../controls/FontSizeSlider';
 import { SegmentedControl } from '../../controls/SegmentedControl';
 import { AccentSwatches } from '../../controls/AccentSwatches';
+import { getEgressDisclosure } from '../../../api/aiConsent';
+import { EgressConsentModal } from '../EgressConsentModal';
 import pane from './Pane.module.css';
+
+const AI_MODES = [
+  { value: 'off' as AiMode, label: 'Off' },
+  { value: 'preview' as AiMode, label: 'Preview' },
+  { value: 'live' as AiMode, label: 'Live' },
+];
+const AI_MODE_LABELS: Record<AiMode, string> = { off: 'Off', preview: 'Preview', live: 'Live' };
 
 const THEMES = [
   { value: 'system' as Theme, label: 'System' },
@@ -22,6 +32,34 @@ const DENSITIES = [
 
 export function AppearancePane() {
   const { preferences, set } = usePreferences();
+  // The AI-mode group's wrapper, so focus queries scope to its radios only
+  // (the page has several SegmentedControls, all rendering `role="radio"`).
+  const aiGroupRef = useRef<HTMLDivElement | null>(null);
+  // The segment to focus once the consent modal closes. Set on Accept/Decline,
+  // consumed by the effect below AFTER the Modal restores its own focus.
+  const focusTargetRef = useRef<AiMode | null>(null);
+  // In-flight egress-disclosure fetch for a pending Live flip; aborted if the
+  // user picks Off/Preview before it resolves.
+  const abortRef = useRef<AbortController | null>(null);
+  const [pendingLive, setPendingLive] = useState(false);
+  const [modalOpen, setModalOpen] = useState(false);
+
+  // Move focus to the intended segment once the modal has closed. Keyed on
+  // `modalOpen`: when it flips to false the Modal (a child) runs its focus-
+  // restoration cleanup first, then this parent effect runs and wins — so the
+  // segment, not the modal's previously-focused trigger, ends up focused.
+  useEffect(() => {
+    if (modalOpen) return;
+    const target = focusTargetRef.current;
+    if (!target) return;
+    focusTargetRef.current = null;
+    const label = AI_MODE_LABELS[target];
+    const radios = aiGroupRef.current?.querySelectorAll<HTMLButtonElement>('[role="radio"]');
+    radios?.forEach((r) => {
+      if (r.textContent === label) r.focus();
+    });
+  }, [modalOpen]);
+
   if (!preferences) return null;
 
   const onTheme = (value: Theme) => {
@@ -53,18 +91,58 @@ export function AppearancePane() {
     applyContentScaleToDocument(value);
     void set('contentScale', value).catch(() => applyContentScaleToDocument(prior));
   };
-  // A `live` config (not user-selectable in P0) is shown as Preview-selected.
-  const aiModeShown: 'off' | 'preview' =
-    preferences.ui.aiMode === 'live' ? 'preview' : preferences.ui.aiMode;
-  // The AI gates derive from this shared preference (useCapabilities), so the
-  // selector propagates reactively. usePreferences.set reverts its own state on a
-  // failed POST (+ error toast); no DOM side-effect to roll back here.
-  const onAiMode = (next: 'off' | 'preview') => {
+  // The committed AI mode drives both the selector and the AI gates (the gates
+  // derive from this shared preference via useCapabilities, so selecting a mode
+  // propagates reactively). usePreferences.set reverts its own state on a failed
+  // POST (+ error toast); no DOM side-effect to roll back here.
+  const resolvedMode: AiMode = preferences.ui.aiMode;
+
+  const onAiMode = (next: AiMode) => {
     // SegmentedControl fires onChange even when the already-selected segment is
-    // clicked. Guard the no-op so clicking the shown Preview on a live config does
-    // not POST ui.ai.mode='preview' and silently downgrade it.
-    if (next === aiModeShown) return;
-    void set('ui.ai.mode', next).catch(() => {});
+    // clicked. Guard the no-op — but only when there's no Live flip in flight,
+    // so a second click on the already-committed mode while a pending Live fetch
+    // is running still cancels that pending flip below.
+    if (next === resolvedMode && !pendingLive) return;
+    if (next !== 'live') {
+      // Off/Preview commit immediately and cancel any in-flight Live intercept.
+      abortRef.current?.abort();
+      setPendingLive(false);
+      void set('ui.ai.mode', next).catch(() => {});
+      return;
+    }
+    // next === 'live' → intercept before committing. Do NOT POST and do NOT let
+    // the control advance to Live: fetch the disclosure, and either short-circuit
+    // (already consented) or open the consent modal.
+    setPendingLive(true);
+    const ac = new AbortController();
+    abortRef.current = ac;
+    getEgressDisclosure()
+      .then((d) => {
+        if (ac.signal.aborted) return;
+        if (d.alreadyConsented) {
+          setPendingLive(false);
+          void set('ui.ai.mode', 'live').catch(() => {});
+        } else {
+          setModalOpen(true);
+        }
+      })
+      .catch(() => {
+        // Fail closed: an unreachable disclosure leaves the mode unchanged.
+        if (!ac.signal.aborted) setPendingLive(false);
+      });
+  };
+
+  const onModalAccept = () => {
+    setModalOpen(false);
+    setPendingLive(false);
+    focusTargetRef.current = 'live'; // focus the Live segment once the modal closes
+    void set('ui.ai.mode', 'live').catch(() => {});
+  };
+  const onModalDecline = () => {
+    setModalOpen(false);
+    setPendingLive(false);
+    // Return focus to the segment that was selected when Live was intercepted.
+    focusTargetRef.current = resolvedMode;
   };
 
   return (
@@ -127,22 +205,23 @@ export function AppearancePane() {
         <div>
           <div className={pane.label}>AI mode</div>
           <div className={pane.help} id="ai-mode-help">
-            Off · no AI. Preview · sample output, clearly labeled.
+            Off · no AI. Preview · sample output, clearly labeled. Live · real AI, sends PR content
+            to the provider.
           </div>
         </div>
-        <div className={pane.spring}>
+        <div className={pane.spring} ref={aiGroupRef}>
           <SegmentedControl
             label="AI mode"
             describedById="ai-mode-help"
-            options={[
-              { value: 'off', label: 'Off' },
-              { value: 'preview', label: 'Preview' },
-            ]}
-            value={aiModeShown}
+            options={AI_MODES}
+            // Always the committed mode — NEVER `pendingLive`. The control must
+            // not visually advance to Live until consent commits the preference.
+            value={resolvedMode}
             onChange={onAiMode}
           />
         </div>
       </div>
+      <EgressConsentModal open={modalOpen} onAccept={onModalAccept} onDecline={onModalDecline} />
     </section>
   );
 }
