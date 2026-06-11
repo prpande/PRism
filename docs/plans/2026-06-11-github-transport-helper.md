@@ -52,7 +52,7 @@ Create `tests/PRism.GitHub.Tests/GitHubHttpTests.cs`:
 ```csharp
 using System.Net;
 using System.Net.Http.Headers;
-using PRism.Core.Contracts; // RateLimitExceededException
+using PRism.Core.Inbox; // RateLimitExceededException
 using Xunit;
 
 namespace PRism.GitHub.Tests;
@@ -179,10 +179,40 @@ public class GitHubHttpTests
         { Content = new StringContent("boom") };
         Assert.Equal("boom", await GitHubHttp.ReadErrorBodyBestEffortAsync(resp, CancellationToken.None));
     }
+
+    [Fact]
+    public async Task SendAsync_off_host_with_null_base_address_throws()
+    {
+        var h = new CapturingHandler();
+        using var http = new HttpClient(h); // no BaseAddress
+        await Assert.ThrowsAsync<HttpRequestException>(() =>
+            GitHubHttp.SendAsync(http, HttpMethod.Get, "https://api.github.com/x", "tok", CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task SendAsync_same_host_different_port_with_token_throws()
+    {
+        var h = new CapturingHandler();
+        using var http = Client(h); // BaseAddress https://api.github.com/ (port 443)
+        await Assert.ThrowsAsync<HttpRequestException>(() =>
+            GitHubHttp.SendAsync(http, HttpMethod.Get, "https://api.github.com:8080/x", "tok", CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task SendAsync_passes_absolute_ghes_url_through_without_doubling_prefix()
+    {
+        // Proves the §4.2 GHES fix: passing the absolute Link URL avoids the /api/v3/api/v3/
+        // doubling that re-resolving a relative path against BaseAddress would cause.
+        var h = new CapturingHandler();
+        using var http = Client(h, "https://ghe.corp.example/api/v3/");
+        const string abs = "https://ghe.corp.example/api/v3/repos/o/r/pulls/1/files?page=2";
+        using var _ = await GitHubHttp.SendAsync(http, HttpMethod.Get, abs, "tok", CancellationToken.None);
+        Assert.Equal(abs, h.Last!.RequestUri!.ToString());
+    }
 }
 ```
 
-> Confirm `RateLimitExceededException` lives in `PRism.Core.Contracts` and exposes a `RetryAfter` (`TimeSpan?`) property — open `PRism.Core.Contracts` and adjust the `using` / property name if it differs. (It is thrown today from `GitHubCiFailingDetector.cs:137` as `new RateLimitExceededException(message, resp.Headers.RetryAfter?.Delta)`.)
+> `RateLimitExceededException` is in **`PRism.Core.Inbox`** (`PRism.Core/Inbox/RateLimitExceededException.cs`), NOT `PRism.Core.Contracts` — verified. It exposes `public TimeSpan? RetryAfter { get; }` and a `(string, TimeSpan?)` ctor. The other throwers (`GitHubCiFailingDetector.cs` etc.) import both namespaces; `GitHubHttp` only needs `PRism.Core.Inbox`.
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
@@ -196,7 +226,7 @@ Create `PRism.GitHub/GitHubHttp.cs`:
 ```csharp
 using System.Net;
 using System.Net.Http.Headers;
-using PRism.Core.Contracts;
+using PRism.Core.Inbox; // RateLimitExceededException
 
 namespace PRism.GitHub;
 
@@ -227,13 +257,25 @@ internal static class GitHubHttp
     {
         if (!string.IsNullOrEmpty(token))
         {
-            var uri = req.RequestUri;
-            if (uri is not null && uri.IsAbsoluteUri && http.BaseAddress is not null
-                && !uri.Host.Equals(http.BaseAddress.Host, StringComparison.OrdinalIgnoreCase))
+            // Fail CLOSED: a credentialed request must have a URI we can validate.
+            var uri = req.RequestUri
+                ?? throw new HttpRequestException("Cannot attach GitHub credentials to a request with no RequestUri.");
+            if (uri.IsAbsoluteUri)
             {
-                throw new HttpRequestException(
-                    $"Refusing to attach GitHub credentials to off-host URL (request host '{uri.Host}', client host '{http.BaseAddress.Host}').");
+                if (http.BaseAddress is null)
+                    throw new HttpRequestException(
+                        "Cannot attach GitHub credentials: the HttpClient has no BaseAddress to validate the request host against.");
+                // Compare host AND port. Uri.Host strips the port, so a crafted `host:8080`
+                // Link URL — or an http:// downgrade (default port 80 vs the https
+                // BaseAddress's 443) — must be caught here, not just a different hostname.
+                if (!uri.Host.Equals(http.BaseAddress.Host, StringComparison.OrdinalIgnoreCase)
+                    || uri.Port != http.BaseAddress.Port)
+                {
+                    throw new HttpRequestException(
+                        $"Refusing to attach GitHub credentials to off-host URL (request authority '{uri.Authority}', client authority '{http.BaseAddress.Authority}').");
+                }
             }
+            // A relative URI resolves against the trusted BaseAddress — safe to credential.
             req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
         }
         req.Headers.UserAgent.ParseAdd(UserAgent);
@@ -909,12 +951,28 @@ git commit -m "refactor(#320): route Inbox readers through GitHubHttp (headers, 
 
 - [ ] **Step 1: Activity readers**
 
-For each of the four (read first), replace the inline `req` + 3 header lines + `http.SendAsync`
-with `GitHubHttp.SendAsync(http, HttpMethod.Get, url, token, ct)`. They currently omit
+Three of the four — `GitHubReceivedEventsReader`, `GitHubNotificationsReader`,
+`GitHubWatchedReposReader` — are plain **GET REST** calls. For each (read first), replace the
+inline `req` + 3 header lines + `http.SendAsync` with
+`GitHubHttp.SendAsync(http, HttpMethod.Get, url, token, ct)`. They currently omit
 `X-GitHub-Api-Version`; routing through the helper adds it (intended AC#2). If any reader
 paginates via Link, migrate it to `GitHubLinkHeader.TryGetRel(resp, "next", out var n)` and
 pass the absolute `n` string to the next `SendAsync`. Preserve each reader's token cadence
 (resolve where it resolves today, pass the resolved value).
+
+> **`GitHubPrTimelineReader` is the exception — it is a GraphQL POST, not a GET.** It posts a
+> `StringContent` payload to the absolute `HostUrlResolver.GraphQlEndpoint(...)` and
+> deliberately omits the version header. Route it like `PostGraphQLAsync` (Task 5 Step 4):
+> `GitHubHttp.SendAsync(http, HttpMethod.Post, endpoint.ToString(), token, ct, content: new StringContent(payload, System.Text.Encoding.UTF8, "application/json"), apiVersion: false)`.
+> The off-host guard passes because the GraphQL endpoint host == the client's `BaseAddress`
+> host. Do NOT use the GET-REST recipe on it.
+
+> **Do NOT add `GitHubHttp.ThrowIfRateLimited` to the Activity readers.** Unlike the Inbox
+> readers (Task 7), the activity surface has no orchestrator backoff loop and intentionally
+> **degrades** (not throws) on every non-success, including 429 — e.g.
+> `GitHubReceivedEventsReader` returns `Degraded: true`. Keep each reader's existing
+> `if (!resp.IsSuccessStatusCode) return …Degraded: true;` block exactly as-is; only the
+> header construction changes.
 
 - [ ] **Step 2: Feedback submitter**
 
@@ -959,6 +1017,15 @@ Confirm these symbols no longer exist in production code (search each; expect 0 
 
 Run: `Get-ChildItem PRism.GitHub -Recurse -Filter *.cs | Select-String -Pattern 'ExtractNextLink|TryGetNextLink|const int ConcurrencyCap'`
 Expected: no matches.
+
+- [ ] **Step 2b: AC#2 / AC#4 — covered by earlier tasks**
+
+No new command — confirm the coverage exists: **AC#2** (all REST calls send
+`X-GitHub-Api-Version`) is pinned by `GitHubHttpTests.SendAsync_attaches_standard_headers_and_version`
+(Task 1) and exercised by the migrated readers' suites (Tasks 5/7/8) in Step 3's full run.
+**AC#4** (GraphQL byte-identical) is pinned by `GraphQlByteIdentityTests`
+(`PrDetailGraphQLQuery_is_byte_identical`, `TimelineQuery_is_byte_identical`) plus the
+submit-path transport test (Task 3) and integration test 7g. Both go green in Step 3.
 
 - [ ] **Step 3: AC#5 — full Release suite, zero warnings**
 
