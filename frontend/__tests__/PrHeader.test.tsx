@@ -37,8 +37,8 @@ vi.mock('../src/hooks/usePreferences', () => ({
   }),
 }));
 
-// Real SubmitConflictError + verdictToSubmitWire kept; only the network call is
-// stubbed so the catch in PrHeader runs against a real thrown error type.
+// Real SubmitConflictError kept; only the network call is stubbed so the catch
+// in PrHeader runs against a real thrown error type.
 vi.mock('../src/api/submit', async () => {
   const actual = await vi.importActual<typeof import('../src/api/submit')>('../src/api/submit');
   return {

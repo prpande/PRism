@@ -67,9 +67,26 @@ public class PrDraftEndpointsVerdictClearTests : IClassFixture<PRismWebApplicati
     }
 
     [Fact]
-    public async Task PutDraft_unknown_verdict_value_returns_400()
+    public async Task PutDraft_kebab_request_changes_is_accepted_and_round_trips()
     {
-        var resp = await PutRawAsync(Client(), "/api/pr/o/r/4/draft", """{"draftVerdict":"request-changes"}""");
+        var c = Client();
+        const string url = "/api/pr/o/r/3/draft";
+        (await c.PutAsJsonAsync(url, new { draftVerdict = "request-changes" })).StatusCode.Should().Be(HttpStatusCode.OK);
+        (await GetDraftAsync(c, url))!.DraftVerdict.Should().Be(DraftVerdict.RequestChanges);
+    }
+
+    [Theory]
+    // Legacy camelCase / PascalCase are rejected post-#318 (kebab is the single canonical form).
+    [InlineData("""{"draftVerdict":"requestChanges"}""")]
+    [InlineData("""{"draftVerdict":"RequestChanges"}""")]
+    [InlineData("""{"draftVerdict":"Approve"}""")]
+    [InlineData("""{"draftVerdict":"bogus"}""")]
+    // A JSON-integer operand is rejected by the ValueKind==String guard — the converter is not
+    // used, so numeric enum ordinals never sneak in.
+    [InlineData("""{"draftVerdict":1}""")]
+    public async Task PutDraft_non_kebab_verdict_value_returns_400(string body)
+    {
+        var resp = await PutRawAsync(Client(), "/api/pr/o/r/4/draft", body);
         resp.StatusCode.Should().Be(HttpStatusCode.BadRequest);
     }
 }

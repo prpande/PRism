@@ -102,11 +102,11 @@ describe('serializePatch — wire shape per patch kind', () => {
     expect(wire).toEqual({ draftVerdict: 'comment' });
   });
 
-  it('draftVerdict — request-changes translates to camelCase requestChanges', () => {
-    // Wire-shape asymmetry: PUT input takes camelCase but GET response renders
-    // kebab-case. Frontend canonical type is the GET shape; serializer translates.
+  it('draftVerdict — request-changes crosses the wire as kebab-case (#318)', () => {
+    // Single canonical wire form: PUT input, GET response, and the frontend type
+    // all speak kebab-case — no translation (#318).
     const wire = serializePatch({ kind: 'draftVerdict', payload: 'request-changes' });
-    expect(wire).toEqual({ draftVerdict: 'requestChanges' });
+    expect(wire).toEqual({ draftVerdict: 'request-changes' });
   });
 
   it('draftVerdict — null payload serializes to a present-null clear (spec § 10)', () => {
