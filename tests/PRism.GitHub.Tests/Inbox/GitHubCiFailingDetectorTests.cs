@@ -904,4 +904,31 @@ public sealed class GitHubCiFailingDetectorTests
         var healed = await sut.DetectAsync([candidate], default);
         healed.Items[0].Ci.Should().Be(CiStatus.Passing, "Lever 1 re-probes Pending each sweep until terminal");
     }
+
+    [Fact]
+    public async Task Evicts_absent_pr_cache_entry_observed_on_reinclusion()
+    {
+        // Count check-runs probes per PR. Frozen default clock ⇒ TTL never expires,
+        // so a tick-3 re-probe is attributable to eviction alone, not TTL.
+        var perPr = new Dictionary<string, int>();
+        var handler = new FakeHttpMessageHandler(req =>
+        {
+            var path = req.RequestUri!.AbsolutePath;
+            if (path.Contains("/check-runs", StringComparison.Ordinal))
+            {
+                perPr[path] = perPr.TryGetValue(path, out var v) ? v + 1 : 1;
+                return Respond(HttpStatusCode.OK, FailingCheckRun);
+            }
+            return Respond(HttpStatusCode.OK, SuccessNoLegacyStatus);
+        });
+        var sut = BuildSut(handler);
+
+        var pr1 = Raw(1, "head1"); var pr2 = Raw(2, "head2");
+        await sut.DetectAsync([pr1, pr2], default);
+        await sut.DetectAsync([pr1], default);
+        await sut.DetectAsync([pr1, pr2], default);
+
+        perPr["/repos/acme/api/commits/head1/check-runs"].Should().Be(1);
+        perPr["/repos/acme/api/commits/head2/check-runs"].Should().Be(2);
+    }
 }

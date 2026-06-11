@@ -234,4 +234,46 @@ public sealed class GitHubAwaitingAuthorFilterTests
         maxObserved.Should().BeLessThanOrEqualTo(8,
             "the SemaphoreSlim cap of 8 must hold under load");
     }
+
+    [Fact]
+    public async Task Evicts_absent_pr_cache_entry_observed_on_reinclusion()
+    {
+        // 3-tick: {1,2} populate → {1} only (evicts 2) → {1,2} again ⇒ PR2 re-probed.
+        var perUrl = new Dictionary<string, int>();
+        var handler = new FakeHttpMessageHandler(req =>
+        {
+            var key = req.RequestUri!.AbsolutePath;
+            perUrl[key] = perUrl.TryGetValue(key, out var v) ? v + 1 : 1;
+            return Respond(HttpStatusCode.OK, ReviewsResponse(ViewerLogin, "old"));
+        });
+        var sut = BuildSut(handler);
+
+        var pr1 = Raw(1, "head1"); var pr2 = Raw(2, "head2");
+        await sut.FilterAsync(ViewerLogin, [pr1, pr2], default);   // tick 1: 1 req each
+        await sut.FilterAsync(ViewerLogin, [pr1], default);        // tick 2: pr1 cached, evict pr2
+        await sut.FilterAsync(ViewerLogin, [pr1, pr2], default);   // tick 3: pr2 re-probed
+
+        perUrl["/repos/acme/api/pulls/1/reviews"].Should().Be(1, "PR1 stayed cached across all ticks");
+        perUrl["/repos/acme/api/pulls/2/reviews"].Should().Be(2, "PR2 was evicted in tick 2, re-probed in tick 3");
+    }
+
+    [Fact]
+    public async Task Empty_tick_clears_cache()
+    {
+        var perUrl = new Dictionary<string, int>();
+        var handler = new FakeHttpMessageHandler(req =>
+        {
+            var key = req.RequestUri!.AbsolutePath;
+            perUrl[key] = perUrl.TryGetValue(key, out var v) ? v + 1 : 1;
+            return Respond(HttpStatusCode.OK, ReviewsResponse(ViewerLogin, "old"));
+        });
+        var sut = BuildSut(handler);
+
+        var pr1 = Raw(1, "head1");
+        await sut.FilterAsync(ViewerLogin, [pr1], default);  // populate
+        await sut.FilterAsync(ViewerLogin, [], default);     // empty → clear
+        await sut.FilterAsync(ViewerLogin, [pr1], default);  // re-probe (cache was cleared)
+
+        perUrl["/repos/acme/api/pulls/1/reviews"].Should().Be(2);
+    }
 }

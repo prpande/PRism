@@ -23,7 +23,7 @@ public sealed class GitHubCiFailingDetector : ICiFailingDetector
         IReadOnlyList<RawPrInboxItem> items, CancellationToken ct, bool forceReprobe = false)
     {
         ArgumentNullException.ThrowIfNull(items);
-        if (items.Count == 0) return new CiDetectResult(Array.Empty<(RawPrInboxItem, CiStatus)>(), true);
+        if (items.Count == 0) { _cache.Clear(); return new CiDetectResult(Array.Empty<(RawPrInboxItem, CiStatus)>(), true); }
         var token = await _readToken().ConfigureAwait(false);
         using var sem = new SemaphoreSlim(ConcurrencyCap);
 
@@ -73,6 +73,7 @@ public sealed class GitHubCiFailingDetector : ICiFailingDetector
             finally { sem.Release(); }
         })).ConfigureAwait(false);
 
+        InboxCacheEviction.PruneAbsent(_cache, items.Select(i => i.Reference).ToHashSet());
         var anyDegraded = Array.Exists(done, t => t.Degraded);
         return new CiDetectResult(
             done.Select(t => (t.Item, t.Ci)).ToList(),

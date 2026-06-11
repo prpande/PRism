@@ -289,4 +289,28 @@ public sealed class GitHubPrEnricherTests
 
         await act.Should().ThrowAsync<HttpRequestException>();
     }
+
+    [Fact]
+    public async Task Evicts_absent_pr_cache_entry_observed_on_reinclusion()
+    {
+        // Hold UpdatedAt constant across ticks so a re-probe can only be explained by eviction
+        // (not a changed cache key (Reference, UpdatedAt)).
+        var fixedTs = new DateTimeOffset(2026, 5, 6, 10, 0, 0, TimeSpan.Zero);
+        var perUrl = new Dictionary<string, int>();
+        var handler = new FakeHttpMessageHandler(req =>
+        {
+            var key = req.RequestUri!.AbsolutePath;
+            perUrl[key] = perUrl.TryGetValue(key, out var v) ? v + 1 : 1;
+            return Respond(HttpStatusCode.OK, PullsResponse);
+        });
+        var sut = BuildSut(handler);
+
+        var pr1 = Raw(1, fixedTs); var pr2 = Raw(2, fixedTs);
+        await sut.EnrichAsync([pr1, pr2], default);
+        await sut.EnrichAsync([pr1], default);
+        await sut.EnrichAsync([pr1, pr2], default);
+
+        perUrl["/repos/acme/api/pulls/1"].Should().Be(1);
+        perUrl["/repos/acme/api/pulls/2"].Should().Be(2);
+    }
 }

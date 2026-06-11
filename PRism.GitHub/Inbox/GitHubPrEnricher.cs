@@ -24,7 +24,7 @@ public sealed class GitHubPrEnricher : IPrEnricher
         IReadOnlyList<RawPrInboxItem> items, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(items);
-        if (items.Count == 0) return Array.Empty<RawPrInboxItem>();
+        if (items.Count == 0) { _cache.Clear(); return Array.Empty<RawPrInboxItem>(); }
         var token = await _readToken().ConfigureAwait(false);
         using var sem = new SemaphoreSlim(ConcurrencyCap);
 
@@ -42,6 +42,7 @@ public sealed class GitHubPrEnricher : IPrEnricher
             finally { sem.Release(); }
         })).ConfigureAwait(false);
 
+        InboxCacheEviction.PruneAbsent(_cache, items.Select(i => i.Reference).ToHashSet());
         return done.Where(p => p != null).Select(p => p!).ToList();
     }
 

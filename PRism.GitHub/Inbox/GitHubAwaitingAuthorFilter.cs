@@ -24,7 +24,7 @@ public sealed class GitHubAwaitingAuthorFilter : IAwaitingAuthorFilter
         string viewerLogin, IReadOnlyList<RawPrInboxItem> candidates, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(candidates);
-        if (candidates.Count == 0) return Array.Empty<RawPrInboxItem>();
+        if (candidates.Count == 0) { _lastReviewShaCache.Clear(); return Array.Empty<RawPrInboxItem>(); }
         var token = await _readToken().ConfigureAwait(false);
         using var sem = new SemaphoreSlim(ConcurrencyCap);
 
@@ -49,6 +49,7 @@ public sealed class GitHubAwaitingAuthorFilter : IAwaitingAuthorFilter
             finally { sem.Release(); }
         })).ConfigureAwait(false);
 
+        InboxCacheEviction.PruneAbsent(_lastReviewShaCache, candidates.Select(c => c.Reference).ToHashSet());
         return probed.Where(p => p != null).Select(p => p!).ToList();
     }
 
