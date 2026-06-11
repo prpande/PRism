@@ -33,7 +33,15 @@ internal static class GitHubLinkHeader
                 }
                 if (!matched) continue;
 
-                url = urlSegment[1..^1];
+                // Only surface a well-formed ABSOLUTE URL. Callers either send it (a malformed
+                // value handed to `new HttpRequestMessage` would throw UriFormatException out of
+                // the caller — e.g. aborting the whole inbox tick, violating the CI detector's
+                // "never block the inbox" contract) or parse its query. Mirrors the per-parser
+                // Uri.TryCreate guard the prior parsers had, so a malformed Link value is a clean
+                // miss (pagination stops), not a throw.
+                var candidate = urlSegment[1..^1];
+                if (!Uri.TryCreate(candidate, UriKind.Absolute, out _)) continue;
+                url = candidate;
                 return true;
             }
         }
