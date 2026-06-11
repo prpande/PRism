@@ -46,7 +46,7 @@ public class PrSubmitEndpointsTests
         await ctx.SeedSessionAsync("o", "r", 1, SubmitEndpointsTestContext.ValidSession());
         using var client = ctx.CreateClient();
 
-        var resp = await client.PostAsJsonAsync("/api/pr/o/r/1/submit", new { verdict = "Comment" });
+        var resp = await client.PostAsJsonAsync("/api/pr/o/r/1/submit", new { verdict = "comment" });
 
         resp.StatusCode.Should().Be(HttpStatusCode.OK);
         var body = await resp.Content.ReadFromJsonAsync<JsonElement>(CamelCase);
@@ -79,7 +79,7 @@ public class PrSubmitEndpointsTests
         await ctx.SeedSessionAsync("o", "r", 2, session);
         using var client = ctx.CreateClient();
 
-        var resp = await client.PostAsJsonAsync("/api/pr/o/r/2/submit", new { verdict = "Comment" });
+        var resp = await client.PostAsJsonAsync("/api/pr/o/r/2/submit", new { verdict = "comment" });
 
         resp.StatusCode.Should().Be(HttpStatusCode.BadRequest);
         (await resp.Content.ReadFromJsonAsync<JsonElement>(CamelCase)).GetProperty("code").GetString().Should().Be("stale-drafts");
@@ -100,7 +100,7 @@ public class PrSubmitEndpointsTests
         await ctx.SeedSessionAsync("o", "r", 12, session);
         using var client = ctx.CreateClient();
 
-        var resp = await client.PostAsJsonAsync("/api/pr/o/r/12/submit", new { verdict = "Comment" });
+        var resp = await client.PostAsJsonAsync("/api/pr/o/r/12/submit", new { verdict = "comment" });
 
         resp.StatusCode.Should().Be(HttpStatusCode.OK);
         (await resp.Content.ReadFromJsonAsync<JsonElement>(CamelCase)).GetProperty("outcome").GetString().Should().Be("started");
@@ -114,7 +114,7 @@ public class PrSubmitEndpointsTests
         await ctx.SeedSessionAsync("o", "r", 3, SubmitEndpointsTestContext.ValidSession() with { DraftVerdictStatus = DraftVerdictStatus.NeedsReconfirm });
         using var client = ctx.CreateClient();
 
-        var resp = await client.PostAsJsonAsync("/api/pr/o/r/3/submit", new { verdict = "Comment" });
+        var resp = await client.PostAsJsonAsync("/api/pr/o/r/3/submit", new { verdict = "comment" });
 
         resp.StatusCode.Should().Be(HttpStatusCode.BadRequest);
         (await resp.Content.ReadFromJsonAsync<JsonElement>(CamelCase)).GetProperty("code").GetString().Should().Be("verdict-needs-reconfirm");
@@ -127,7 +127,7 @@ public class PrSubmitEndpointsTests
         await ctx.SeedSessionAsync("o", "r", 4, SubmitEndpointsTestContext.EmptySession());
         using var client = ctx.CreateClient();
 
-        var resp = await client.PostAsJsonAsync("/api/pr/o/r/4/submit", new { verdict = "Comment" });
+        var resp = await client.PostAsJsonAsync("/api/pr/o/r/4/submit", new { verdict = "comment" });
 
         resp.StatusCode.Should().Be(HttpStatusCode.BadRequest);
         (await resp.Content.ReadFromJsonAsync<JsonElement>(CamelCase)).GetProperty("code").GetString().Should().Be("no-content");
@@ -141,7 +141,7 @@ public class PrSubmitEndpointsTests
         await ctx.SeedSessionAsync("o", "r", 5, SubmitEndpointsTestContext.ValidSession("head1"));
         using var client = ctx.CreateClient();
 
-        var resp = await client.PostAsJsonAsync("/api/pr/o/r/5/submit", new { verdict = "Comment" });
+        var resp = await client.PostAsJsonAsync("/api/pr/o/r/5/submit", new { verdict = "comment" });
 
         resp.StatusCode.Should().Be(HttpStatusCode.BadRequest);
         (await resp.Content.ReadFromJsonAsync<JsonElement>(CamelCase)).GetProperty("code").GetString().Should().Be("head-sha-drift");
@@ -159,7 +159,7 @@ public class PrSubmitEndpointsTests
         await ctx.SeedSessionAsync("o", "r", 52, SubmitEndpointsTestContext.ValidSession("head-stale"));
         using var client = ctx.CreateClient();
 
-        await client.PostAsJsonAsync("/api/pr/o/r/52/submit", new { verdict = "Comment" });
+        await client.PostAsJsonAsync("/api/pr/o/r/52/submit", new { verdict = "comment" });
 
         ctx.Logs.Records.Should().Contain(r =>
             r.Level == LogLevel.Information &&
@@ -183,7 +183,7 @@ public class PrSubmitEndpointsTests
         await ctx.SeedSessionAsync("o", "r", 50, session);
         using var client = ctx.CreateClient();
 
-        var resp = await client.PostAsJsonAsync("/api/pr/o/r/50/submit", new { verdict = "Comment" });
+        var resp = await client.PostAsJsonAsync("/api/pr/o/r/50/submit", new { verdict = "comment" });
 
         resp.StatusCode.Should().Be(HttpStatusCode.BadRequest);
         var body = await resp.Content.ReadFromJsonAsync<JsonElement>(CamelCase);
@@ -217,7 +217,7 @@ public class PrSubmitEndpointsTests
         await ctx.SeedSessionAsync("o", "r", 51, session);
         using var client = ctx.CreateClient();
 
-        await client.PostAsJsonAsync("/api/pr/o/r/51/submit", new { verdict = "Comment" });
+        await client.PostAsJsonAsync("/api/pr/o/r/51/submit", new { verdict = "comment" });
 
         ctx.Logs.Records.Should().Contain(r =>
             r.Level == LogLevel.Warning &&
@@ -243,7 +243,7 @@ public class PrSubmitEndpointsTests
         // null-or-empty guard short-circuits the DefaultRequestHeaders.Add call).
         using var client = ctx.CreateClient(tabId: null);
 
-        var resp = await client.PostAsJsonAsync("/api/pr/o/r/55/submit", new { verdict = "Comment" });
+        var resp = await client.PostAsJsonAsync("/api/pr/o/r/55/submit", new { verdict = "comment" });
 
         resp.StatusCode.Should().Be(HttpStatusCode.UnprocessableEntity);
         var body = await resp.Content.ReadFromJsonAsync<JsonElement>(CamelCase);
@@ -271,7 +271,7 @@ public class PrSubmitEndpointsTests
         // Tab B submits — no stamp under tab-B.
         using var client = ctx.CreateClient(tabId: "tab-B");
 
-        var resp = await client.PostAsJsonAsync("/api/pr/o/r/56/submit", new { verdict = "Comment" });
+        var resp = await client.PostAsJsonAsync("/api/pr/o/r/56/submit", new { verdict = "comment" });
 
         resp.StatusCode.Should().Be(HttpStatusCode.BadRequest);
         var body = await resp.Content.ReadFromJsonAsync<JsonElement>(CamelCase);
@@ -284,19 +284,27 @@ public class PrSubmitEndpointsTests
         using var ctx = SubmitEndpointsTestContext.Create();
         using var client = ctx.CreateClient();
 
-        var resp = await client.PostAsJsonAsync("/api/pr/o/r/6/submit", new { verdict = "Comment" });
+        var resp = await client.PostAsJsonAsync("/api/pr/o/r/6/submit", new { verdict = "comment" });
 
         resp.StatusCode.Should().Be(HttpStatusCode.BadRequest);
         (await resp.Content.ReadFromJsonAsync<JsonElement>(CamelCase)).GetProperty("code").GetString().Should().Be("no-session");
     }
 
-    [Fact]
-    public async Task PostSubmit_invalid_verdict_returns_400()
+    [Theory]
+    [InlineData("Bogus")]
+    [InlineData("RequestChanges")] // legacy PascalCase — rejected post-#318 cutover
+    [InlineData("requestChanges")] // legacy camelCase — rejected
+    [InlineData("Comment")]        // PascalCase — rejected (kebab "comment" is canonical)
+    [InlineData("Approve")]        // PascalCase — rejected
+    [InlineData("1")]              // numeric ordinal — not accepted (converter not used)
+    [InlineData("0")]
+    [InlineData("")]
+    public async Task PostSubmit_non_kebab_verdict_returns_400_verdict_invalid(string verdict)
     {
         using var ctx = SubmitEndpointsTestContext.Create();
         using var client = ctx.CreateClient();
 
-        var resp = await client.PostAsJsonAsync("/api/pr/o/r/7/submit", new { verdict = "Bogus" });
+        var resp = await client.PostAsJsonAsync("/api/pr/o/r/7/submit", new { verdict });
 
         resp.StatusCode.Should().Be(HttpStatusCode.BadRequest);
         (await resp.Content.ReadFromJsonAsync<JsonElement>(CamelCase)).GetProperty("code").GetString().Should().Be("verdict-invalid");
@@ -310,10 +318,10 @@ public class PrSubmitEndpointsTests
         await ctx.SeedSessionAsync("o", "r", 8, SubmitEndpointsTestContext.ValidSession());
         using var client = ctx.CreateClient();
 
-        var first = await client.PostAsJsonAsync("/api/pr/o/r/8/submit", new { verdict = "Comment" });
+        var first = await client.PostAsJsonAsync("/api/pr/o/r/8/submit", new { verdict = "comment" });
         first.StatusCode.Should().Be(HttpStatusCode.OK);  // lock acquired synchronously before the fire-and-forget dispatch
 
-        var second = await client.PostAsJsonAsync("/api/pr/o/r/8/submit", new { verdict = "Comment" });
+        var second = await client.PostAsJsonAsync("/api/pr/o/r/8/submit", new { verdict = "comment" });
         second.StatusCode.Should().Be(HttpStatusCode.Conflict);
         (await second.Content.ReadFromJsonAsync<JsonElement>(CamelCase)).GetProperty("code").GetString().Should().Be("submit-in-progress");
     }
@@ -338,7 +346,7 @@ public class PrSubmitEndpointsTests
         await ctx.SeedSessionAsync("o", "r", 10, SubmitEndpointsTestContext.ValidSession());
         using var client = ctx.CreateClient();
 
-        var resp = await client.PostAsJsonAsync("/api/pr/o/r/10/submit", new { verdict = "Comment" });
+        var resp = await client.PostAsJsonAsync("/api/pr/o/r/10/submit", new { verdict = "comment" });
         resp.StatusCode.Should().Be(HttpStatusCode.OK);
 
         await TestPoll.UntilAsync(() => ctx.Bus.Published.OfType<SubmitForeignPendingReviewBusEvent>().Any(), PipelineWait);

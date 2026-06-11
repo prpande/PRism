@@ -110,7 +110,7 @@ internal static class PrSubmitEndpoints
             return Results.Json(new SubmitErrorDto("unauthorized", "Subscribe to this PR before submitting."), statusCode: StatusCodes.Status401Unauthorized);
 
         if (!TryParseVerdict(request?.Verdict, out var verdict))
-            return Results.Json(new SubmitErrorDto("verdict-invalid", "verdict must be Approve, RequestChanges, or Comment."), statusCode: StatusCodes.Status400BadRequest);
+            return Results.Json(new SubmitErrorDto("verdict-invalid", "verdict must be approve, request-changes, or comment."), statusCode: StatusCodes.Status400BadRequest);
 
         // Tab id validation (spec § 3 + § 5.5) — the caller's tab is the principal for the
         // head-sha drift gate below. Surface a distinct "tab-id-missing" 422 (vs the 400
@@ -561,15 +561,21 @@ internal static class PrSubmitEndpoints
 
     // ------------------------------------------------------------------ helpers
 
+    // Canonical kebab-case verdict parse — the single wire form (#318). Exact ordinal match:
+    // legacy PascalCase/camelCase ("RequestChanges"/"requestChanges"), numeric ordinals ("1"),
+    // and null all reject. The shared JsonStringEnumConverter is deliberately NOT used here — it
+    // matches enum names case-insensitively and accepts integer ordinals, so it cannot enforce
+    // the exact-kebab cutover this endpoint's contract promises.
     private static bool TryParseVerdict(string? s, out SubmitEvent verdict)
     {
-        switch (s)
+        verdict = s switch
         {
-            case "Approve": verdict = SubmitEvent.Approve; return true;
-            case "RequestChanges": verdict = SubmitEvent.RequestChanges; return true;
-            case "Comment": verdict = SubmitEvent.Comment; return true;
-            default: verdict = SubmitEvent.Comment; return false;
-        }
+            "approve" => SubmitEvent.Approve,
+            "request-changes" => SubmitEvent.RequestChanges,
+            "comment" => SubmitEvent.Comment,
+            _ => default,
+        };
+        return s is "approve" or "request-changes" or "comment";
     }
 
     // Slices line `t.LineNumber` (1-indexed) out of the file content at OriginalCommitOid for use

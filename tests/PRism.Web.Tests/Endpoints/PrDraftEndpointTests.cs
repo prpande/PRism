@@ -272,11 +272,11 @@ public class PrDraftEndpointTests : IClassFixture<PRismWebApplicationFactory>
     public async Task PutDraft_unknown_verdict_returns_400_not_500()
     {
         var client = ClientWithTab();
-        // "request-changes" (kebab-case) is a common client-side typo. Wire shape is
-        // camelCase "requestChanges". The pre-fix code threw ArgumentException inside
-        // ApplyPatch's switch default → 500. ValidatePatch now rejects unknown values at
-        // the boundary with 400.
-        var resp = await client.PutAsJsonAsync("/api/pr/acme/api/901/draft", SinglePatch(draftVerdict: "request-changes"));
+        // Post-#318 the wire shape is kebab-case "request-changes"; the legacy camelCase
+        // "requestChanges" is now a common client-side typo. ValidatePatch rejects unknown
+        // values at the boundary with 400 (the pre-fix code threw ArgumentException inside
+        // ApplyPatch's switch default → 500).
+        var resp = await client.PutAsJsonAsync("/api/pr/acme/api/901/draft", SinglePatch(draftVerdict: "requestChanges"));
         resp.StatusCode.Should().Be(HttpStatusCode.BadRequest);
     }
 
