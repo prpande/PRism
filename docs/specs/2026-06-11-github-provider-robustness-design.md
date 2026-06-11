@@ -94,6 +94,12 @@ PRism.GitHub/
   GitHubReviewService.IssueComments.cs  (EDIT) 2× throw → GitHubRestContractException
 ```
 
+**Multi-unit files.** Two files are touched by more than one unit — coordinate the edits into a single
+change per file rather than two passes:
+- `GitHubAwaitingAuthorFilter.cs` — U1 (eviction), U2 (Link-walk + ILogger), U4 (per-item JSON guard).
+- `GitHubCiFailingDetector.cs` — U1 (eviction), U2 (swap to shared `GitHubLinkHeader`), U5 (IClock + TTL).
+  The `IClock` ctor parameter is introduced by U5; U1's eviction call needs no ctor change.
+
 ---
 
 ## Unit U1 — Bound the three inbox caches (AC1)
@@ -141,7 +147,10 @@ internal static class InboxCacheEviction
 prune runs on the calling thread after `Task.WhenAll` completes, so it never races the per-item writes.
 
 **Call-site pattern** (each of the three classes):
-- On the empty-items early return, replace `return …;` with `{ _cache.Clear(); return …; }`.
+- On the empty-items early return, replace `return …;` with `{ _cache.Clear(); return …; }`. The guard
+  variable differs by class: `GitHubPrEnricher`/`GitHubCiFailingDetector` use `if (items.Count == 0)`;
+  `GitHubAwaitingAuthorFilter` uses `if (candidates.Count == 0)` — patch *that* line in the filter, not
+  an `items`-named one.
 - After `Task.WhenAll(...)`, before building the result, compute the live set and prune:
   ```csharp
   InboxCacheEviction.PruneAbsent(_cache, items.Select(i => i.Reference).ToHashSet());
@@ -152,13 +161,20 @@ prune runs on the calling thread after `Task.WhenAll` completes, so it never rac
 `GitHubAwaitingAuthorFilter.cs`, `GitHubCiFailingDetector.cs`.
 
 **Tests** (one per class, in the respective `*Tests`):
-- Tick 1 with PRs {A, B} populates 2 cache entries; tick 2 with {A} only leaves A's entry, B evicted.
-- Empty-items tick clears a previously-populated cache.
-- Asserting cache contents: the caches are `private`. Prefer a behavioural assertion — drive a second
-  tick for a now-absent PR with a probe double that would *change* the answer, and assert the reader
-  re-probes (cache miss) rather than returning the stale cached value. Where a behavioural assert is
-  impractical, add an `internal` count accessor guarded by `InternalsVisibleTo` (the GitHub test
-  project already has access) rather than reflection.
+- **Eviction is only observable on re-inclusion** — a PR absent from a tick is never entered into the
+  reader's loop, so a 2-tick test cannot distinguish "evicted" from "never re-queried." Use a **3-tick**
+  sequence with a request-counting probe double (the filter/detector tests already count requests via the
+  fake handler):
+  1. Tick 1 with PRs {A, B} → both probed once (2 requests), cache populated.
+  2. Tick 2 with {A} only → A served from cache (0 new requests); the prune evicts B's key.
+  3. Tick 3 with {A, B} again → A still cached (0 new request for A), **B re-probed** (1 new request).
+     B's re-probe in tick 3 is the proof that tick 2 evicted it; without eviction B would still be cached.
+  Hold each PR's second key component **constant across ticks** (`UpdatedAt` for the enricher, `HeadSha`
+  for filter/detector) so a re-probe can only be explained by eviction, not by a changed cache key.
+- Empty-items tick clears a previously-populated cache: populate via tick 1 {A}, then an empty tick, then
+  tick {A} again → A re-probed (proving `Clear()` ran).
+- If a behavioural assert is impractical for a given class, fall back to an `internal` count accessor
+  guarded by `InternalsVisibleTo` (the GitHub test project already has access) rather than reflection.
 
 ---
 
@@ -170,6 +186,24 @@ prune runs on the calling thread after `Task.WhenAll` completes, so it never rac
 (mirrors `MaxCheckRunPages`); if the cap is hit with more pages pending, **log a warning** so the
 truncation is explicit, never silent. To reuse the existing Link parser instead of copy-pasting it,
 extract it into a shared helper.
+
+**Scope of this fix — pagination only (known residual).** U2 corrects *which pages are read*; it does
+**not** change *which review is selected* within the pages. The retained selection rule
+(`if (sha != null) best = sha`) carries two pre-existing properties this unit deliberately does not
+re-open:
+- **Null `commit_id` on the latest review.** A viewer review with `commit_id: null` (e.g. a still-PENDING
+  review) is skipped, so `best` falls back to the most recent *non-null* review SHA. This is the existing
+  behavior and is arguably correct (an unsubmitted review has no head to compare against), but it means
+  "last non-null viewer `commit_id`" is not strictly "the latest viewer review." Selection semantics are
+  **out of scope** for AC2 (pagination) and are tracked as a follow-up issue; do not change them here.
+- **Ordering is empirical.** "Last in the array = most recent" relies on GitHub returning reviews in
+  ascending order, which the endpoint does not document as a contract (no `sort`/`direction` params). In
+  practice the order is by monotonic review `id`; the page-cap warning is the safety net. The existing
+  CI-detector walk relies on the same Link-following assumption, so this introduces no new risk.
+
+So the AC2 claim is precisely "pagination is correct (Link-walk) — never silently wrong-shaped," not
+"review selection is now provably correct." The Problem statement's "can mis-classify" is resolved *for
+the >100-review case*; the null-`commit_id` selection edge is a separate, pre-existing concern.
 
 **Shared helper** — `PRism.GitHub/GitHubLinkHeader.cs` (extracted verbatim from the CI detector's
 private `TryGetNextLink`, made `internal static`):
@@ -363,6 +397,13 @@ No caller branches on `HttpRequestException.StatusCode == OK`, so nothing depend
 - Same two for `CreateIssueCommentAsync`.
 - A genuine non-2xx (e.g. 422) still throws `HttpRequestException` with `StatusCode == 422` (regression
   guard that the real-error path is untouched).
+- **Endpoint behavior-equivalence (locks the caller-impact claim).** Drive the endpoint handler, not just
+  the service method: with a faked `IReviewSubmitter` whose `CreateReviewCommentAsync` throws
+  `GitHubRestContractException`, assert `PrCommentEndpoints` returns the same response shape/status the old
+  `HttpRequestException(OK)` produced (`github-network-error` / its mapped status). Repeat for
+  `PrRootCommentEndpoints` + `CreateIssueCommentAsync` (502). This converts the "pre-PR grep" check into an
+  executable regression so a future catch-block change can't silently break the contract. Also run the grep
+  (`catch (HttpRequestException`) across the solution and record the consumer set in `## Proof`.
 
 ---
 
@@ -391,27 +432,41 @@ internal static class InboxJsonGuard
     public static bool IsMalformedItem(Exception ex) =>
         ex is KeyNotFoundException     // GetProperty on a missing key
            or InvalidOperationException // wrong JsonValueKind (GetString/GetInt32/EnumerateArray)
-           or FormatException           // GetDateTimeOffset on a bad string
+           or FormatException           // parse failures, e.g. GetDateTimeOffset on a bad string
            or JsonException;            // JsonDocument.Parse on a non-JSON body
 }
 ```
 
 `OperationCanceledException` and `RateLimitExceededException` are deliberately absent → they propagate.
 
+**Body-level vs item-level failures (intentional boundary).** Only *item* mapping is wrapped. A
+*body-level* shape failure — `JsonDocument.Parse` on a non-JSON body, or `EnumerateArray()` on a 2xx body
+that is a JSON object rather than an array — stays **outside** the per-item try and propagates, isolated
+one level up (the section's per-section catch, or the per-PR path). That is deliberate: a whole-response
+shape failure is not "one poisoned item," and treating it as one would silently blank a response that is
+genuinely malformed at the top level.
+
 **Site 4a — `GitHubSectionQueryRunner.SearchAsync`** (the `items[]` foreach): wrap the per-item
-mapping body in `try { … result.Add(…); } catch (Exception ex) when (InboxJsonGuard.IsMalformedItem(ex)) { Log.ItemSkipped(_log, ex, …); continue; }`.
-The section-level `JsonDocument.Parse(body)` stays outside the loop — a non-JSON *search* response is
-a section-level failure already isolated by `QueryAllAsync`'s per-section catch. Add an `ItemSkipped`
-(Debug) `LoggerMessage`.
+mapping body in `try { … result.Add(…); } catch (Exception ex) when (InboxJsonGuard.IsMalformedItem(ex)) { Log.ItemSkipped(_log, ex); continue; }`.
+The section-level `JsonDocument.Parse(body)` and `items[]` `EnumerateArray()` stay outside the loop — a
+non-JSON/non-array *search* response is a section-level failure already isolated by `QueryAllAsync`'s
+per-section catch. Add an `ItemSkipped(ILogger, Exception)` (Debug) `LoggerMessage` (the exception
+message carries the offending key/kind — no extra context needed for a Debug line; the runner already
+has `_log`).
 
 **Site 4b — `GitHubPrEnricher.FetchAsync`:** the HTTP send + `EnsureSuccessStatusCode()` + body read
 stay outside any new try (transient HTTP errors must still propagate to abort the tick). Wrap from
 `JsonDocument.Parse(body)` through the `return raw with { … }` in
 `try { … } catch (Exception ex) when (InboxJsonGuard.IsMalformedItem(ex)) { return null; }` so a
-malformed PR detail skips that PR (the enricher already drops nulls). Add a skip log.
+malformed PR detail skips that PR. **No log is added** — the enricher has no `ILogger` today, and adding
+one (ctor + `partial` + DI) for a Debug line is out of scope; a silent `null`-drop matches the enricher's
+existing behavior on a 404 (it already returns `null` and the caller drops it). Observability can be a
+trivial follow-up if wanted.
 
 **Site 4c — `GitHubAwaitingAuthorFilter.FetchLastReviewShaAsync`:** per-review-item try/catch inside
-the page loop (shown in U2). One malformed review is skipped; the scan continues.
+the page loop (shown in U2, logging `Log.ReviewItemSkipped`). One malformed review is skipped; the scan
+continues. The page-level `JsonDocument.Parse`/`EnumerateArray()` stay outside the per-item try per the
+boundary above.
 
 **Files:** Create `Inbox/InboxJsonGuard.cs`. Edit `GitHubSectionQueryRunner.cs`, `GitHubPrEnricher.cs`,
 `GitHubAwaitingAuthorFilter.cs`.
@@ -480,13 +535,31 @@ the active-PR poller) does not collide.
 U5's per-entry timestamp lives in that value. One cache-shape change (`CiStatus` → `CacheEntry`) serves
 U5, and U1's prune operates on keys — no conflict.
 
-**Files:** Edit `GitHubCiFailingDetector.cs`, `ServiceCollectionExtensions.cs`.
+**Files:** Edit `GitHubCiFailingDetector.cs`, `ServiceCollectionExtensions.cs`, **and the detector test
+file(s)** — making `IClock` a required ctor param breaks every existing 2-arg construction. The detector
+tests build the SUT through a `BuildSut(handler)` helper referenced ~37×; update that **single** helper to
+thread a clock (one edit fixes all call sites), e.g.:
+```csharp
+private static GitHubCiFailingDetector BuildSut(FakeHttpMessageHandler handler, IClock? clock = null) =>
+    new(new FakeHttpClientFactory(handler), () => Task.FromResult<string?>("t"), clock ?? new MutableClock());
+```
+TTL tests pass an explicit `MutableClock` they advance; all existing tests get a fresh default clock and
+keep compiling. (The required-param shape is kept deliberately over an `IClock? clock = null`
+default-to-`new SystemClock()` ctor overload — a required param keeps the DI contract explicit and avoids a
+hidden production default; the cost is the one-line `BuildSut` edit above.)
 
 **Test clock:** the existing `TestClock` lives in `tests/PRism.Core.Tests/TestHelpers`; the GitHub test
-project should not take a cross-test-project dependency for it. Add a minimal mutable clock local to the
-GitHub test project (or reuse one if it already exists — verify first):
+project references `PRism.Core` but **not** `PRism.Core.Tests`, so `TestClock` is inaccessible without a new
+cross-test-project reference (which we avoid). Add a minimal mutable clock local to the GitHub test project
+(or reuse one if it already exists — verify first):
 ```csharp
-internal sealed class MutableClock : IClock { public DateTime UtcNow { get; set; } = new(2026, 6, 11, 12, 0, 0, DateTimeKind.Utc); }
+namespace PRism.GitHub.Tests;
+
+internal sealed class MutableClock : IClock
+{
+    public DateTime UtcNow { get; set; } = new(2026, 6, 11, 12, 0, 0, DateTimeKind.Utc);
+    public void Advance(TimeSpan by) => UtcNow = UtcNow.Add(by);   // TTL tests advance past TerminalTtl
+}
 ```
 
 **Tests:**
@@ -503,12 +576,17 @@ internal sealed class MutableClock : IClock { public DateTime UtcNow { get; set;
 - **Behavioural change in the awaiting-author filter (U2).** Correcting pagination changes which PRs
   the filter keeps for PRs with >100 reviews. This is the intended fix; covered by the two-page test.
   PRs with ≤100 reviews are unaffected (single page, same result).
+- **U2 selection residual (out of scope, tracked).** U2 fixes pagination, not review *selection*: a
+  null-`commit_id` latest review still resolves to the prior non-null SHA, and the ascending-order
+  assumption is empirical, not a documented contract (see U2 "Scope of this fix"). No new risk vs today's
+  behavior; deferred to a follow-up issue rather than expanded into this slice.
 - **TTL probe-cost (U5).** A 2-minute TTL means each terminal PR re-probes at most once per 2 minutes
   per session — negligible against the existing per-tick check-runs/status calls, and bounded by inbox
   size. No rate-limit concern at realistic inbox sizes.
-- **Exception-type change reaching an unknown catch (U3).** Mitigated: both call sites have a catch-all
-  after the `HttpRequestException` catch; verified behaviour-equivalent. A repo-wide search for
-  `catch (HttpRequestException` consumers of these methods is part of the plan's pre-PR check.
+- **Exception-type change reaching an unknown catch (U3).** Mitigated three ways: both call sites have a
+  catch-all after the `HttpRequestException` catch (verified behaviour-equivalent); an endpoint-level
+  behavior-equivalence test (U3 Tests) locks the response shape; and a repo-wide `catch (HttpRequestException`
+  grep at pre-PR records the full consumer set in `## Proof`.
 - **Shared `IClock` registration (U5).** `TryAddSingleton` avoids a double-registration collision if a
   later change wires `IClock` at the composition root.
 
@@ -526,6 +604,9 @@ internal sealed class MutableClock : IClock { public DateTime UtcNow { get; set;
 
 - CI classification refinements — superseded runs, `action_required` modelling (#305).
 - Any change to the atomic-submit GraphQL pipeline (intentionally untouched; B2 surface).
+- **Reviews-selection semantics** — null-`commit_id` "latest review" handling and a sort-order-robust
+  selection (max `submitted_at` instead of array position). File a follow-up issue at PR time and link it
+  here; U2 corrects pagination only.
 
 ## Proof (to be filled at PR time)
 
