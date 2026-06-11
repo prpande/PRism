@@ -33,6 +33,27 @@ public sealed partial class GitHubReviewService : IReviewAuth, IPrDiscovery, IPr
     // refactor here flips the shape-drift test before it ships. `internal` (not public)
     // because the query string is an implementation detail of the GitHub adapter;
     // PRism.GitHub.Tests.Integration sees it via InternalsVisibleTo (csproj).
+    // #320 — shared timeline selection, composed byte-identically into PrDetailGraphQLQuery
+    // (with the pageInfo wrapper) and TimelineQuery (without it). Extracting brings the
+    // GetTimelineAsync copy under the byte-identity test (previously unprotected).
+    internal const string TimelineItemsArgs =
+        "timelineItems(first:100,itemTypes:[PULL_REQUEST_COMMIT,HEAD_REF_FORCE_PUSHED_EVENT,PULL_REQUEST_REVIEW])";
+    internal const string TimelineNodes =
+        "nodes{__typename " +
+        "... on PullRequestCommit{commit{oid committedDate message additions deletions}} " +
+        "... on HeadRefForcePushedEvent{beforeCommit{oid} afterCommit{oid} createdAt} " +
+        "... on PullRequestReview{submittedAt}" +
+        "}";
+
+    // Sibling timeline-only query issued by GetTimelineAsync. Internal const (was a method-local
+    // const) so the byte-identity test can pin it; same shared fragment as PrDetailGraphQLQuery,
+    // minus the pageInfo wrapper.
+    internal const string TimelineQuery = "query($owner:String!,$repo:String!,$number:Int!){" +
+        "repository(owner:$owner,name:$repo){pullRequest(number:$number){" +
+        "comments(first:100){nodes{author{login} createdAt}}" +
+        TimelineItemsArgs + "{" + TimelineNodes + "}" +
+        "}}}";
+
     internal const string PrDetailGraphQLQuery = "query($owner:String!,$repo:String!,$number:Int!){" +
         "repository(owner:$owner,name:$repo){pullRequest(number:$number){" +
         "title body url state isDraft mergeable mergeStateStatus " +
@@ -41,12 +62,7 @@ public sealed partial class GitHubReviewService : IReviewAuth, IPrDiscovery, IPr
         "comments(first:100){pageInfo{hasNextPage endCursor} nodes{databaseId author{login avatarUrl} createdAt body}}" +
         "reviewThreads(first:100){pageInfo{hasNextPage endCursor} nodes{id path line isResolved " +
         "comments(first:100){nodes{id databaseId author{login avatarUrl} createdAt body lastEditedAt}}}}" +
-        "timelineItems(first:100,itemTypes:[PULL_REQUEST_COMMIT,HEAD_REF_FORCE_PUSHED_EVENT,PULL_REQUEST_REVIEW]){" +
-        "pageInfo{hasNextPage endCursor} nodes{__typename " +
-        "... on PullRequestCommit{commit{oid committedDate message additions deletions}} " +
-        "... on HeadRefForcePushedEvent{beforeCommit{oid} afterCommit{oid} createdAt} " +
-        "... on PullRequestReview{submittedAt}" +
-        "}}" +
+        TimelineItemsArgs + "{pageInfo{hasNextPage endCursor} " + TimelineNodes + "}" +
         "}}}";
 
     private readonly IHttpClientFactory _httpFactory;
@@ -347,16 +363,7 @@ public sealed partial class GitHubReviewService : IReviewAuth, IPrDiscovery, IPr
         // Independent GraphQL fetch — does NOT call GetPrDetailAsync. The two methods share
         // parsing helpers but each issues its own round-trip; siblings rather than parent-child
         // makes their failure modes independent. Spec § 6.4 / plan Step 3.4.
-        const string query = "query($owner:String!,$repo:String!,$number:Int!){" +
-            "repository(owner:$owner,name:$repo){pullRequest(number:$number){" +
-            "comments(first:100){nodes{author{login} createdAt}}" +
-            "timelineItems(first:100,itemTypes:[PULL_REQUEST_COMMIT,HEAD_REF_FORCE_PUSHED_EVENT,PULL_REQUEST_REVIEW]){" +
-            "nodes{__typename " +
-            "... on PullRequestCommit{commit{oid committedDate message additions deletions}} " +
-            "... on HeadRefForcePushedEvent{beforeCommit{oid} afterCommit{oid} createdAt} " +
-            "... on PullRequestReview{submittedAt}" +
-            "}}" +
-            "}}}";
+        const string query = TimelineQuery;
         var raw = await PostGraphQLAsync(query, new { owner = reference.Owner, repo = reference.Repo, number = reference.Number }, ct).ConfigureAwait(false);
 
         using var doc = JsonDocument.Parse(raw);

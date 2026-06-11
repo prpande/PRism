@@ -32,6 +32,22 @@ public class GraphQlByteIdentityTests
     public void PrDetailGraphQLQuery_is_byte_identical()
         => Assert.Equal(ExpectedPrDetail, GitHubReviewService.PrDetailGraphQLQuery);
 
+    private const string ExpectedTimeline =
+        "query($owner:String!,$repo:String!,$number:Int!){" +
+        "repository(owner:$owner,name:$repo){pullRequest(number:$number){" +
+        "comments(first:100){nodes{author{login} createdAt}}" +
+        "timelineItems(first:100,itemTypes:[PULL_REQUEST_COMMIT,HEAD_REF_FORCE_PUSHED_EVENT,PULL_REQUEST_REVIEW]){" +
+        "nodes{__typename " +
+        "... on PullRequestCommit{commit{oid committedDate message additions deletions}} " +
+        "... on HeadRefForcePushedEvent{beforeCommit{oid} afterCommit{oid} createdAt} " +
+        "... on PullRequestReview{submittedAt}" +
+        "}}" +
+        "}}}";
+
+    [Fact]
+    public void TimelineQuery_is_byte_identical()
+        => Assert.Equal(ExpectedTimeline, GitHubReviewService.TimelineQuery);
+
     private sealed class CapturingHandler : HttpMessageHandler
     {
         public HttpRequestMessage? Last;
