@@ -112,7 +112,12 @@ describe('PrHeader mergeability chip', () => {
 
 describe('PrHeader refresh button', () => {
   it('renders the Refresh button in the actions cluster when not loading', () => {
-    renderHeader({ loading: false, onRefresh: () => {}, isRefreshing: false, justRefreshed: false });
+    renderHeader({
+      loading: false,
+      onRefresh: () => {},
+      isRefreshing: false,
+      justRefreshed: false,
+    });
     expect(screen.getByTestId('pr-refresh-button')).toBeInTheDocument();
   });
 
