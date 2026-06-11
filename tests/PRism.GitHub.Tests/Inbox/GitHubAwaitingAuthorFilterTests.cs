@@ -451,7 +451,7 @@ public sealed class GitHubAwaitingAuthorFilterTests
 
         var act = async () => await sut.FilterAsync(ViewerLogin, [Raw(1, "new")], default);
 
-        var result = await act.Should().NotThrowAsync();
-        result.Subject.Should().ContainSingle("malformed review skipped; best = 'old' != head");
+        var result = (await act.Should().NotThrowAsync()).Which;
+        result.Should().ContainSingle("malformed review skipped; best = 'old' != head");
     }
 }
