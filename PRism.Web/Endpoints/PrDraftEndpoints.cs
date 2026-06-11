@@ -453,7 +453,7 @@ internal static class PrDraftEndpoints
                         return Results.BadRequest(new { error = "anchored-sha-missing" });
                     if (!SharedRegexes.Sha40().IsMatch(ndc.AnchoredSha) && !SharedRegexes.Sha64().IsMatch(ndc.AnchoredSha))
                         return Results.UnprocessableEntity(new { error = "sha-format-invalid" });
-                    if (!IsCanonicalFilePath(ndc.FilePath))
+                    if (PathValidation.Canonicalize(ndc.FilePath) is null)
                         return Results.UnprocessableEntity(new { error = "file-path-invalid" });
                     payload = ndc;
                     return null;
@@ -545,20 +545,6 @@ internal static class PrDraftEndpoints
             result = null!;
             return false;
         }
-    }
-
-    private static bool IsCanonicalFilePath(string path)
-    {
-        if (string.IsNullOrEmpty(path)) return false;
-        if (path.Length > 4096) return false;
-        if (path.Contains('\\', StringComparison.Ordinal) || path.Contains('\0', StringComparison.Ordinal)) return false;
-        if (path.StartsWith('/') || path.EndsWith('/')) return false;
-        if (path.Contains("/../", StringComparison.Ordinal) || path.StartsWith("../", StringComparison.Ordinal) || path.EndsWith("/..", StringComparison.Ordinal)) return false;
-        if (path.Contains("/./", StringComparison.Ordinal) || path.StartsWith("./", StringComparison.Ordinal) || path.EndsWith("/.", StringComparison.Ordinal)) return false;
-        foreach (var c in path)
-            if (c < 0x20 || (c >= 0x7F && c < 0xA0)) return false;
-        if (path != path.Normalize(System.Text.NormalizationForm.FormC)) return false;
-        return true;
     }
 
     // The canonical "no draft session yet" value — `PUT /draft` materialises one when a patch
