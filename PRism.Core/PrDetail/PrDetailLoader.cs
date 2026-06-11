@@ -142,22 +142,7 @@ public sealed class PrDetailLoader : IDisposable
             return existing;
         }
 
-        var timeline = await _review.GetTimelineAsync(prRef, ct).ConfigureAwait(false);
-
-        var commitDtos = timeline.Commits
-            .Select(c => new CommitDto(c.Sha, c.Message, c.CommittedDate, c.Additions, c.Deletions))
-            .ToArray();
-        var commitShaSet = new HashSet<string>(timeline.Commits.Select(c => c.Sha), StringComparer.Ordinal);
-
-        var (quality, iterations) = DetermineQuality(timeline, commitShaSet);
-
-        var finalDetail = detail with
-        {
-            ClusteringQuality = quality,
-            Iterations = iterations,
-            Commits = commitDtos,
-        };
-        var snapshot = new PrDetailSnapshot(finalDetail, detail.Pr.HeadSha, generation);
+        var snapshot = await ComposeSnapshotAsync(prRef, detail, generation, ct).ConfigureAwait(false);
 
         // Re-check the generation before publishing into the cache. If `InvalidateAll` ran
         // between line 73 and here, our snapshot was computed against the now-stale generation
@@ -178,6 +163,63 @@ public sealed class PrDetailLoader : IDisposable
         var canonical = _snapshots.GetOrAdd(realKey, snapshot);
         _snapshotKeyByPrRef[prRef] = realKey;
         return canonical;
+    }
+
+    /// <summary>
+    /// Force-refreshes the snapshot for <paramref name="prRef"/>, bypassing the snapshot cache
+    /// (#344 manual Refresh). Re-fetches PR detail + timeline, re-clusters, and REPLACES the
+    /// cached snapshot (overwrite, not GetOrAdd) so a warm cache with an unchanged head SHA
+    /// still yields fresh data — the proactive analog of the inbox's hardRefresh.
+    /// Returns null when the PR no longer exists (GetPrDetail => null), mapped to 404 by the
+    /// endpoint. Lock-free by design: the two ConcurrentDictionary writes (snapshot map then
+    /// prRef->key sidecar) are individually atomic — not transactionally atomic as a pair — and
+    /// any interleave self-heals on the next LoadAsync (see spec § 3.1).
+    /// </summary>
+    public async Task<PrDetailSnapshot?> RefreshAsync(PrReference prRef, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(prRef);
+        var generation = Volatile.Read(ref _generation);
+        var detail = await _review.GetPrDetailAsync(prRef, ct).ConfigureAwait(false);
+        if (detail is null) return null;
+
+        var snapshot = await ComposeSnapshotAsync(prRef, detail, generation, ct).ConfigureAwait(false);
+
+        // If InvalidateAll ran mid-flight (config hot-reload), our snapshot is keyed to a stale
+        // generation — return it uncached. Mirrors LoadAsync's generation re-check.
+        if (Volatile.Read(ref _generation) != generation) return snapshot;
+
+        var realKey = CacheKey(prRef, detail.Pr.HeadSha, generation);
+        _snapshots[realKey] = snapshot;          // overwrite — force-fresh wins
+        _snapshotKeyByPrRef[prRef] = realKey;
+        return snapshot;
+    }
+
+    /// <summary>
+    /// Composes a <see cref="PrDetailSnapshot"/> from an already-fetched <paramref name="detail"/>:
+    /// fetches the timeline, runs clustering, and folds the results into the snapshot. Extracted
+    /// from <see cref="LoadAsync"/> (#344) so the force-fresh <see cref="RefreshAsync"/> path can
+    /// reuse the identical compose logic. Does NOT touch the cache — callers decide whether/how to
+    /// publish the returned snapshot.
+    /// </summary>
+    private async Task<PrDetailSnapshot> ComposeSnapshotAsync(
+        PrReference prRef, PrDetailDto detail, int generation, CancellationToken ct)
+    {
+        var timeline = await _review.GetTimelineAsync(prRef, ct).ConfigureAwait(false);
+
+        var commitDtos = timeline.Commits
+            .Select(c => new CommitDto(c.Sha, c.Message, c.CommittedDate, c.Additions, c.Deletions))
+            .ToArray();
+        var commitShaSet = new HashSet<string>(timeline.Commits.Select(c => c.Sha), StringComparer.Ordinal);
+
+        var (quality, iterations) = DetermineQuality(timeline, commitShaSet);
+
+        var finalDetail = detail with
+        {
+            ClusteringQuality = quality,
+            Iterations = iterations,
+            Commits = commitDtos,
+        };
+        return new PrDetailSnapshot(finalDetail, detail.Pr.HeadSha, generation);
     }
 
     /// <summary>
