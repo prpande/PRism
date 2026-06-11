@@ -962,10 +962,13 @@ pass the absolute `n` string to the next `SendAsync`. Preserve each reader's tok
 
 > **`GitHubPrTimelineReader` is the exception — it is a GraphQL POST, not a GET.** It posts a
 > `StringContent` payload to the absolute `HostUrlResolver.GraphQlEndpoint(...)` and
-> deliberately omits the version header. Route it like `PostGraphQLAsync` (Task 5 Step 4):
-> `GitHubHttp.SendAsync(http, HttpMethod.Post, endpoint.ToString(), token, ct, content: new StringContent(payload, System.Text.Encoding.UTF8, "application/json"), apiVersion: false)`.
-> The off-host guard passes because the GraphQL endpoint host == the client's `BaseAddress`
-> host. Do NOT use the GET-REST recipe on it.
+> deliberately omits the version header. Use the same `GitHubHttp.SendAsync` pattern as
+> `PostGraphQLAsync` (Task 5 Step 4) — an independent direct call, NOT a delegation. Build the
+> endpoint from this reader's own late-bound host accessor (it has **no `_host` field** — that
+> name is `GitHubReviewService`'s): `var endpoint = HostUrlResolver.GraphQlEndpoint(_readHost());`
+> then `GitHubHttp.SendAsync(http, HttpMethod.Post, endpoint.ToString(), token, ct, content: new StringContent(payload, System.Text.Encoding.UTF8, "application/json"), apiVersion: false)`,
+> keeping the reader's existing `payload` / `token` locals. The off-host guard passes because the
+> GraphQL endpoint host == the client's `BaseAddress` host. Do NOT use the GET-REST recipe on it.
 
 > **Do NOT add `GitHubHttp.ThrowIfRateLimited` to the Activity readers.** Unlike the Inbox
 > readers (Task 7), the activity surface has no orchestrator backoff loop and intentionally
@@ -1018,7 +1021,7 @@ Confirm these symbols no longer exist in production code (search each; expect 0 
 Run: `Get-ChildItem PRism.GitHub -Recurse -Filter *.cs | Select-String -Pattern 'ExtractNextLink|TryGetNextLink|const int ConcurrencyCap'`
 Expected: no matches.
 
-- [ ] **Step 2b: AC#2 / AC#4 — covered by earlier tasks**
+- [ ] **Step 3: AC#2 / AC#4 — covered by earlier tasks**
 
 No new command — confirm the coverage exists: **AC#2** (all REST calls send
 `X-GitHub-Api-Version`) is pinned by `GitHubHttpTests.SendAsync_attaches_standard_headers_and_version`
@@ -1027,18 +1030,18 @@ No new command — confirm the coverage exists: **AC#2** (all REST calls send
 (`PrDetailGraphQLQuery_is_byte_identical`, `TimelineQuery_is_byte_identical`) plus the
 submit-path transport test (Task 3) and integration test 7g. Both go green in Step 3.
 
-- [ ] **Step 3: AC#5 — full Release suite, zero warnings**
+- [ ] **Step 4: AC#5 — full Release suite, zero warnings**
 
 Run: `dotnet test --configuration Release` (from repo root — runs Core / Web / GitHub / Integration). Timeout ≥ 300000 ms; foreground; do not run any other build/test concurrently.
 Expected: PASS, **zero build warnings** (warnings are errors). Watch for unused-`using` errors (CS8019/IDE0005 are Hidden and won't fail the build, but remove obvious dead `using`s left by the migrations to keep the diff clean).
 
-- [ ] **Step 4: Lint/format (frontend untouched, but run the repo pre-push backend checks)**
+- [ ] **Step 5: Lint/format (frontend untouched, but run the repo pre-push backend checks)**
 
 Backend-only change — no frontend build needed. Run the repo's documented pre-push backend
 checklist (`.ai/docs/development-process.md`). Confirm `dotnet build --configuration Release`
 is warning-free.
 
-- [ ] **Step 5: Commit any cleanup**
+- [ ] **Step 6: Commit any cleanup**
 
 ```bash
 git add -A
