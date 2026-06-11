@@ -31,7 +31,7 @@ vi.mock('../hooks/useInboxRefresh', () => ({
   }),
 }));
 vi.mock('../components/Toast/useToast', () => ({ useToast: () => ({ show: vi.fn() }) }));
-vi.mock('../hooks/useAiGate', () => ({ useAiGate: () => false }));
+vi.mock('../hooks/useAiGate', () => ({ useAiGate: () => false, useIsSampleMode: () => false }));
 vi.mock('../hooks/useMediaQuery', () => ({ useMediaQuery: () => true })); // wide enough for the rail
 vi.mock('../hooks/usePreferences', () => ({
   usePreferences: () => ({

@@ -23,6 +23,7 @@ import { UnresolvedPanel } from './UnresolvedPanel';
 // reach for capabilities/preferences hooks we don't need here.
 vi.mock('../../../hooks/useAiGate', () => ({
   useAiGate: () => false,
+  useIsSampleMode: () => false,
 }));
 vi.mock('../../../hooks/useAiDraftSuggestions', () => ({
   useAiDraftSuggestions: () => null,

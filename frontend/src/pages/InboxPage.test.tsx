@@ -12,6 +12,7 @@ vi.mock('../hooks/useInboxUpdates', () => ({
 }));
 vi.mock('../hooks/useAiGate', () => ({
   useAiGate: () => false,
+  useIsSampleMode: () => false,
 }));
 
 import { InboxPage } from './InboxPage';
