@@ -37,3 +37,17 @@ it('renders exactly one composer-badge (footer only) on the Overview composer', 
   );
   expect(screen.getAllByTestId('composer-badge')).toHaveLength(1);
 });
+
+it('wraps the composer in the shared composer-frame', () => {
+  const { container } = render(
+    <PrRootReplyComposer
+      prRef={prRef}
+      prState="open"
+      draftId={null}
+      onDraftIdChange={() => {}}
+      registerOpenComposer={() => () => {}}
+      onClose={() => {}}
+    />,
+  );
+  expect(container.querySelector('.composer-frame')).not.toBeNull();
+});

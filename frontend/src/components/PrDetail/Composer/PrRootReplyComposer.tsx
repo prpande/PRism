@@ -156,7 +156,7 @@ export function PrRootReplyComposer({
       role="form"
       aria-label="Reply to this PR"
       data-composer="true"
-      className={styles.prRootReplyComposer}
+      className={`composer-frame ${styles.prRootReplyComposer}`}
       onKeyDown={handleKeyDown}
     >
       {/* Keep the editor mounted across Preview toggles so autosave continuity
