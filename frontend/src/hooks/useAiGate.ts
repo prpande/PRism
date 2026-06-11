@@ -3,8 +3,7 @@ import { useCapabilities } from './useCapabilities';
 import { usePreferences } from './usePreferences';
 
 // PR9b-ai-gating § 3.1 / PR3a. Centralizes the two-factor AI gate that was
-// previously duplicated across 4 sites (and missing the capability check on
-// AskAiButton). 9 consumers after this PR ships.
+// previously duplicated across several AI-gated call sites.
 //
 // The two factors: `capabilities[key]` (derived locally from `ui.aiMode` — see
 // useCapabilities) AND `ui.aiMode !== 'off'`. As of PR2 the backend resolves

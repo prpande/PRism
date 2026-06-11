@@ -424,6 +424,54 @@ public class PrDraftEndpointTests : IClassFixture<PRismWebApplicationFactory>
     }
 
     [Fact]
+    public async Task NewPrRootDraftComment_updates_a_half_null_root_in_place_not_creating_a_second_root()
+    {
+        // #324 — a half-null PR-root ghost `(FilePath: null, LineNumber: 5)` is PR-root by the
+        // canonical FilePath-only predicate. Authoring a summary must UPDATE it in place, not insert
+        // a second filePath-null draft. On origin/main the upsert looked up the root with the
+        // both-null predicate, missed the half-null ghost, and inserted a SECOND root — which
+        // ExtractPrRootBody's FirstOrDefault would then strand (silent drop). This is red-on-main.
+        const string prOwner = "acme";
+        const string prRepo = "api";
+        const int prNumber = 7324;
+        const string refKey = "acme/api/7324";
+
+        using var scope = _factory.Services.CreateScope();
+        var store = scope.ServiceProvider.GetRequiredService<IAppStateStore>();
+        await store.UpdateAsync(state =>
+        {
+            var ghost = new DraftComment(
+                Id: "half-null-ghost",
+                FilePath: null, LineNumber: 5, Side: "pr",
+                AnchoredSha: null, AnchoredLineContent: null,
+                BodyMarkdown: "ghost",
+                Status: DraftStatus.Draft, IsOverriddenStale: false);
+            var session = PrDraftEndpoints.NewEmptySession() with
+            {
+                DraftComments = new List<DraftComment> { ghost },
+            };
+            var sessions = new Dictionary<string, ReviewSessionState>(state.Reviews.Sessions, StringComparer.Ordinal)
+            {
+                [refKey] = session,
+            };
+            return state.WithDefaultReviews(state.Reviews with { Sessions = sessions });
+        }, CancellationToken.None);
+
+        var client = ClientWithTab();
+        var putResp = await client.PutAsJsonAsync($"/api/pr/{prOwner}/{prRepo}/{prNumber}/draft",
+            SinglePatch(newRoot: new NewPrRootDraftCommentPayload("real summary")));
+        putResp.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var getResp = await client.GetAsync(new Uri($"/api/pr/{prOwner}/{prRepo}/{prNumber}/draft", UriKind.Relative));
+        var session2 = await ReadApiJsonAsync<ReviewSessionDto>(getResp);
+        // Exactly one PR-root (filePath-null) draft survives — the ghost, updated in place.
+        session2!.DraftComments.Count(d => d.FilePath == null).Should().Be(1);
+        var root = session2.DraftComments.Single(d => d.FilePath == null);
+        root.BodyMarkdown.Should().Be("real summary");
+        root.Id.Should().Be("half-null-ghost");
+    }
+
+    [Fact]
     public async Task GetDraft_emits_postedCommentId_on_the_wire_and_keeps_postedBodySnapshot_server_side()
     {
         // Spec § 8: DraftCommentDto.postedCommentId crosses the wire; PostedBodySnapshot does not.
