@@ -124,7 +124,7 @@ export function AppearancePane() {
     setPendingLive(true);
     const ac = new AbortController();
     abortRef.current = ac;
-    getEgressDisclosure()
+    getEgressDisclosure(ac.signal)
       .then((d) => {
         if (ac.signal.aborted) return;
         if (d.alreadyConsented) {

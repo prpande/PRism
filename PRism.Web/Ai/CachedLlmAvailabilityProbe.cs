@@ -51,7 +51,10 @@ internal sealed class CachedLlmAvailabilityProbe : ILlmAvailabilityProbe, IDispo
             if (entry is not null && now - entry.At < _ttl) return entry.Value;
 
             var result = await _inner.ProbeAsync(ct).ConfigureAwait(false);
-            _entry = new CacheEntry(result, now);
+            // Stamp at probe COMPLETION, not the pre-await `now`: a multi-second CLI
+            // probe would otherwise shorten the effective TTL by its own latency and
+            // raise the subprocess spawn rate the cache exists to bound.
+            _entry = new CacheEntry(result, _clock.GetUtcNow());
             return result;
         }
         finally

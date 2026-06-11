@@ -7,8 +7,8 @@ export interface EgressDisclosure {
   alreadyConsented: boolean;
 }
 
-export function getEgressDisclosure(): Promise<EgressDisclosure> {
-  return apiClient.get<EgressDisclosure>('/api/ai/egress-disclosure');
+export function getEgressDisclosure(signal?: AbortSignal): Promise<EgressDisclosure> {
+  return apiClient.get<EgressDisclosure>('/api/ai/egress-disclosure', { signal });
 }
 
 export function postAiConsent(disclosureVersion: string): Promise<void> {

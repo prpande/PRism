@@ -55,7 +55,7 @@ internal sealed partial class ClaudeCodeSummarizer : IPrSummarizer
     {
         ArgumentNullException.ThrowIfNull(pr);
         var (diff, title, description, headSha) = await _resolveDiff(pr, ct).ConfigureAwait(false);
-        var key = $"{pr.PrId}#{headSha}"; // canonical form: "owner/repo#number" — PrId never contains '#'
+        var key = $"{pr.PrId}#{headSha}"; // "owner/repo#number#headSha" — PrId is "owner/repo#number"; headSha appended as a per-commit suffix
         if (_cache.TryGetValue(key, out var cached))
         {
             _interactionLog.Record(new AiInteractionRecord(
