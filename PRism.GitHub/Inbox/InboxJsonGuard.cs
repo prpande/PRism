@@ -15,5 +15,6 @@ internal static class InboxJsonGuard
         ex is KeyNotFoundException     // GetProperty on a missing key
            or InvalidOperationException // wrong JsonValueKind (GetString/GetInt32/EnumerateArray)
            or FormatException           // parse failures, e.g. GetDateTimeOffset on a bad string
+           or OverflowException         // GetInt32/GetInt64 on a numeric value out of the target range
            or JsonException;            // JsonDocument.Parse on a non-JSON body
 }

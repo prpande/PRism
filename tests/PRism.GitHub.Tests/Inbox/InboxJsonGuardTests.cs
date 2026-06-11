@@ -12,6 +12,7 @@ public sealed class InboxJsonGuardTests
     [InlineData(typeof(KeyNotFoundException))]
     [InlineData(typeof(InvalidOperationException))]
     [InlineData(typeof(FormatException))]
+    [InlineData(typeof(OverflowException))]
     public void Recognizes_malformed_item_exception_types(Type t)
         => InboxJsonGuard.IsMalformedItem((Exception)Activator.CreateInstance(t)!).Should().BeTrue();
 

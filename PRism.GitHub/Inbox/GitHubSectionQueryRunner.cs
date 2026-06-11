@@ -127,9 +127,9 @@ public sealed partial class GitHubSectionQueryRunner : ISectionQueryRunner
         var result = new List<RawPrInboxItem>();
         if (!doc.RootElement.TryGetProperty("items", out var items)) return result;
 
-        // The items[] EnumerateArray() above stays outside this try — a non-array body is a
-        // section-level failure isolated by QueryAllAsync's per-section catch. Here we isolate a
-        // single malformed *item* so one poisoned search result degrades that item, not the section. (#322)
+        // items.EnumerateArray() in the foreach below stays OUTSIDE this per-item try — a non-array
+        // body is a section-level failure isolated by QueryAllAsync's per-section catch. The try here
+        // isolates a single malformed *item* so one poisoned search result degrades that item, not the section. (#322)
         foreach (var item in items.EnumerateArray())
         {
             try
