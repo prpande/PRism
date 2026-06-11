@@ -1314,27 +1314,24 @@ In `PRism.GitHub/ServiceCollectionExtensions.cs`:
 Run: `dotnet test tests/PRism.GitHub.Tests/PRism.GitHub.Tests.csproj --filter "FullyQualifiedName~GitHubCiFailingDetectorTests"`
 Expected: PASS (TTL within → cached; past TTL → re-probe to Pending; forceReprobe + eviction + all prior tests green).
 
-- [ ] **Step 7: Add a DI-resolution test that actually exercises the `IClock` wiring**
+- [ ] **Step 7: Add a DI test guarding the `IClock` registration**
 
-`ServiceRegistrationTests` builds the provider **without** `ValidateOnBuild`, and its existing test only resolves `IGitHubCredentialHealth` — so the `ICiFailingDetector` factory lambda (which calls `sp.GetRequiredService<IClock>()`) never runs, and a missing `IClock` registration would NOT be caught. Add a test that forces the lambda to execute. Append to `tests/PRism.GitHub.Tests/ServiceRegistrationTests.cs`:
+The only runtime-failable part of the wiring is whether `TryAddSingleton<IClock, SystemClock>()` ran — the `ICiFailingDetector` factory passing the resolved clock to the ctor is compile-checked. Resolving the whole detector would need an 8-member `ITokenStore` stub (the factory resolves `ITokenStore` first) for no extra coverage. Assert the registration directly. The existing `RegistersCredentialHealthSingleton` test registers **no** stubs before `AddPrismGitHub()`, and resolving `IClock` needs none. Append to `tests/PRism.GitHub.Tests/ServiceRegistrationTests.cs`:
 ```csharp
     [Fact]
-    public void Resolves_ci_failing_detector_with_clock_dependency()
+    public void Registers_IClock_as_SystemClock()
     {
         var services = new ServiceCollection();
-        services.AddSingleton<IConfigStore>(/* the same stub the existing test uses */ null!);
-        // ^ Use whatever IConfigStore / ITokenStore stubs the existing RegistersCredentialHealthSingleton
-        //   test already wires up; AddPrismGitHub needs them. Mirror that setup exactly.
         services.AddPrismGitHub();
         using var sp = services.BuildServiceProvider();
 
-        sp.GetRequiredService<PRism.Core.Inbox.ICiFailingDetector>().Should().NotBeNull();
+        Assert.IsType<SystemClock>(sp.GetRequiredService<IClock>());
     }
 ```
-> Read the existing `RegistersCredentialHealthSingleton` test first and replicate its exact service-stub setup (it already registers whatever `AddPrismGitHub` requires). The key assertion is that resolving `ICiFailingDetector` runs the factory lambda → `GetRequiredService<IClock>()` → would throw if `TryAddSingleton<IClock, SystemClock>()` were omitted.
+Add `using PRism.Core.Time;` to the file (it already has `using PRism.Core.Auth;` and `using Microsoft.Extensions.DependencyInjection;`).
 
 Run: `dotnet test tests/PRism.GitHub.Tests/PRism.GitHub.Tests.csproj --filter "FullyQualifiedName~ServiceRegistrationTests"`
-Expected: PASS (the detector resolves; `IClock`→`SystemClock` is wired). Sanity-check: temporarily commenting out the `TryAddSingleton<IClock, SystemClock>()` line makes THIS test fail (`Unable to resolve IClock`) — proving it guards the wiring.
+Expected: PASS (`IClock`→`SystemClock` is wired). Negative control: temporarily commenting out the `TryAddSingleton<IClock, SystemClock>()` line makes THIS test fail with `Unable to resolve IClock` — proving it guards the wiring. (No `ITokenStore`/`IConfigStore` stub is involved, so the failure can only be the missing `IClock`.)
 
 - [ ] **Step 8: Commit**
 
