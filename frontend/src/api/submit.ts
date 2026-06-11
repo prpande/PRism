@@ -1,11 +1,6 @@
 import { apiClient, ApiError } from './client';
 import { TAB_ID_HEADER, getTabId } from './draft';
-import type {
-  DraftVerdict,
-  PrReference,
-  ResumeForeignPendingReviewResponse,
-  Verdict,
-} from './types';
+import type { DraftVerdict, PrReference, ResumeForeignPendingReviewResponse } from './types';
 
 // Known SubmitErrorDto.code values from PRism.Web/Endpoints. Kept in sync with
 // PrSubmitEndpoints.cs's pre-pipeline rejections + the foreign-pending-review
@@ -61,20 +56,6 @@ function tabIdHeaders(): { headers: Record<string, string> } {
   return { headers: { [TAB_ID_HEADER]: getTabId() } };
 }
 
-// PUT /draft speaks kebab-case ('request-changes'); POST /submit speaks the
-// PascalCase C# enum name. Bridge here so the verdict picker can stay on the
-// single canonical DraftVerdict shape everywhere else.
-export function verdictToSubmitWire(v: DraftVerdict): Verdict {
-  switch (v) {
-    case 'approve':
-      return 'Approve';
-    case 'request-changes':
-      return 'RequestChanges';
-    case 'comment':
-      return 'Comment';
-  }
-}
-
 function asConflict(e: unknown): SubmitConflictError | null {
   if (!(e instanceof ApiError)) return null;
   const body = e.body;
@@ -90,7 +71,7 @@ function asConflict(e: unknown): SubmitConflictError | null {
 
 export async function submitReview(
   prRef: PrReference,
-  verdict: Verdict,
+  verdict: DraftVerdict,
 ): Promise<{ outcome: 'started' }> {
   try {
     return await apiClient.post<{ outcome: 'started' }>(

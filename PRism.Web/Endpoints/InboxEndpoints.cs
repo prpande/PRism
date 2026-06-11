@@ -75,7 +75,9 @@ internal static class InboxEndpoints
             var before = orch.Current;   // reference identity of the committed snapshot
             try
             {
-                await orch.RefreshAsync(ct).ConfigureAwait(false);
+                // #355: manual Refresh forces a live-CI re-read (bypasses the (ref, headSha)
+                // cache) so an unchanged head SHA still re-reads CI.
+                await orch.RefreshAsync(ct, hardRefresh: true).ConfigureAwait(false);
                 return Results.Ok();      // pull settled; new snapshot committed
             }
             catch (RateLimitExceededException)

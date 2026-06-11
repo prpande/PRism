@@ -20,7 +20,7 @@ public sealed class GitHubCiFailingDetector : ICiFailingDetector
     }
 
     public async Task<CiDetectResult> DetectAsync(
-        IReadOnlyList<RawPrInboxItem> items, CancellationToken ct)
+        IReadOnlyList<RawPrInboxItem> items, CancellationToken ct, bool forceReprobe = false)
     {
         ArgumentNullException.ThrowIfNull(items);
         if (items.Count == 0) return new CiDetectResult(Array.Empty<(RawPrInboxItem, CiStatus)>(), true);
@@ -34,16 +34,40 @@ public sealed class GitHubCiFailingDetector : ICiFailingDetector
             {
                 if (string.IsNullOrEmpty(c.HeadSha)) return (Item: c, Ci: CiStatus.None, Degraded: false);
                 var key = (c.Reference, c.HeadSha);
-                if (_cache.TryGetValue(key, out var cached)) return (Item: c, Ci: cached, Degraded: false);
+                // forceReprobe (the manual "Refresh now" path) skips the cache read so an
+                // unchanged head SHA re-reads CI; it still writes the fresh result below. (#355)
+                if (!forceReprobe && _cache.TryGetValue(key, out var cached))
+                    return (Item: c, Ci: cached, Degraded: false);
 
                 var (ci, degraded) = await ProbeAsync(c.Reference, c.HeadSha, token, ct).ConfigureAwait(false);
-                // Only cache a result built from complete, successful reads. A DEGRADED
-                // result (a non-2xx from Checks/Status — a fine-grained 403 or a transient
-                // 5xx) is NOT cached, so the next tick re-probes: a transient failure
-                // recovers when GitHub heals, and a fine-grained 403 re-probes cheaply
-                // until the token is replaced. Caching None here would pin it until the
-                // head SHA changes — contradicting the "recovers next tick" contract. (#213)
-                if (!degraded) _cache[key] = ci;
+                // Cache only a complete, successful, NON-TRANSIENT read. A DEGRADED result
+                // (a non-2xx from Checks/Status — a fine-grained 403 or a transient 5xx) is
+                // NOT cached, so the next tick re-probes: a transient failure recovers when
+                // GitHub heals, and a fine-grained 403 re-probes cheaply until the token is
+                // replaced. Caching a degraded None would pin it until the head SHA changes —
+                // contradicting the "recovers next tick" contract. (#213)
+                //
+                // PENDING joins the never-cache set: a clean (non-degraded) Pending is still
+                // transient. Caching it pinned the CI dot under that head SHA — so checks
+                // finishing on an UNCHANGED head never advanced the dot, and a manual Refresh
+                // re-hit the same pinned Pending. Re-probe Pending every sweep (exactly as a
+                // degraded read does) until it goes terminal, then cache the terminal. (#355)
+                if (!degraded && ci != CiStatus.Pending)
+                {
+                    _cache[key] = ci;
+                }
+                else if (forceReprobe && !degraded && ci == CiStatus.Pending)
+                {
+                    // A forced reprobe (manual Refresh) that observes a CLEAN Pending on a key
+                    // that may still hold a STALE terminal — the same-SHA "Re-run failed jobs"
+                    // case — must EVICT that terminal. Lever 1 alone only declines to OVERWRITE
+                    // it, so the next NON-forced sweep would read the cached terminal and flip
+                    // the dot back after a single render. Evicting lets normal sweeps re-probe
+                    // (Lever 1 keeps Pending uncached) until CI goes terminal again, then re-cache.
+                    // Gated on !degraded so a transient blip doesn't drop a still-valid terminal
+                    // (see forceReprobe_degraded_leaves_existing_cached_terminal). (#355, Copilot review)
+                    _cache.TryRemove(key, out _);
+                }
                 return (Item: c, Ci: ci, Degraded: degraded);
             }
             finally { sem.Release(); }

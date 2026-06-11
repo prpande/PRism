@@ -210,7 +210,7 @@ public class PrSubmitDiscardEndpointTests
 
         // Fire submit — this returns 200 immediately (fire-and-forget); pipeline holds the lock.
         using var submitClient = ctx.CreateClient(tabId: "tab-test");
-        var submitResp = await submitClient.PostAsJsonAsync("/api/pr/o/r/200/submit", new { verdict = "Comment" });
+        var submitResp = await submitClient.PostAsJsonAsync("/api/pr/o/r/200/submit", new { verdict = "comment" });
         submitResp.StatusCode.Should().Be(HttpStatusCode.OK, "submit must start and hold the lock");
 
         // Stamp the PendingReviewId into the session so discard has something to clear.
