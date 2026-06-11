@@ -25,7 +25,13 @@ const fileDraft: DraftLike = {
 
 const rootDraft: DraftLike = {
   kind: 'comment',
-  data: { ...fileDraft.data, id: 'd2', filePath: null, lineNumber: null, bodyMarkdown: 'root body' },
+  data: {
+    ...fileDraft.data,
+    id: 'd2',
+    filePath: null,
+    lineNumber: null,
+    bodyMarkdown: 'root body',
+  },
 };
 
 const noop = () => {};

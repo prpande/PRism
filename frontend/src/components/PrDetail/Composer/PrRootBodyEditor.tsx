@@ -1,7 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import styles from './PrRootBodyEditor.module.css';
-import { useComposerAutoSave, badgeLabel, type ComposerSaveBadge } from '../../../hooks/useComposerAutoSave';
+import {
+  useComposerAutoSave,
+  badgeLabel,
+  type ComposerSaveBadge,
+} from '../../../hooks/useComposerAutoSave';
 import { Modal } from '../../Modal/Modal';
 import type { PrReference } from '../../../api/types';
 import type { ComposerOwnerKey } from '../../../hooks/useDraftSession';

@@ -37,7 +37,6 @@ function statusLabel(d: DraftLike): { text: string; modifier: string } {
   return { text: 'Draft', modifier: 'draft' };
 }
 
-
 export function DraftListItem({
   prRef,
   draft,
