@@ -3,6 +3,7 @@ using FluentAssertions;
 using PRism.AI.Contracts.Provider;
 using PRism.AI.Contracts.Seams;
 using PRism.Core.Ai;
+using PRism.Core.Config;
 using Xunit;
 
 namespace PRism.Core.Tests.Ai;
@@ -10,7 +11,7 @@ namespace PRism.Core.Tests.Ai;
 public sealed class AiCapabilityResolverConsentTests
 {
     private static AiCapabilityResolver WithSummarizer()
-        => new(new Dictionary<Type, object> { [typeof(IPrSummarizer)] = new object() });
+        => new(new Dictionary<Type, object> { [typeof(IPrSummarizer)] = new object() }, new AiFeatureState(AiFeaturesConfig.AllOn));
 
     [Fact]
     public void Live_Available_NoConsent_SummaryFalse_ReasonConsentRequired()

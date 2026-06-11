@@ -4,13 +4,15 @@ using FluentAssertions;
 using PRism.AI.Contracts.Provider;
 using PRism.AI.Contracts.Seams;
 using PRism.Core.Ai;
+using PRism.Core.Config;
 using Xunit;
 
 namespace PRism.Core.Tests.Ai;
 
 public sealed class AiCapabilityResolverTests
 {
-    private static readonly AiCapabilityResolver EmptyP0 = new(new Dictionary<Type, object>());
+    private static AiFeatureState AllFeaturesOn() => new(AiFeaturesConfig.AllOn);
+    private static readonly AiCapabilityResolver EmptyP0 = new(new Dictionary<Type, object>(), new AiFeatureState(AiFeaturesConfig.AllOn));
 
     [Fact]
     public void Off_all_flags_false_reason_none()
@@ -45,7 +47,7 @@ public sealed class AiCapabilityResolverTests
     [Fact]
     public void Live_with_a_registered_live_seam_and_available_lights_only_that_flag()
     {
-        var resolver = new AiCapabilityResolver(new Dictionary<Type, object> { [typeof(IPrSummarizer)] = new object() });
+        var resolver = new AiCapabilityResolver(new Dictionary<Type, object> { [typeof(IPrSummarizer)] = new object() }, AllFeaturesOn());
         var caps = resolver.Resolve(AiMode.Live, LlmAvailability.Ok, consented: true);
         caps.Summary.Should().BeTrue();
         caps.FileFocus.Should().BeFalse();
@@ -57,7 +59,7 @@ public sealed class AiCapabilityResolverTests
     {
         // Matches the codebase ThrowIfNull-in-ctor convention; a null from DI/misconfig must fail fast
         // rather than NRE later inside Resolve (PR #250 review).
-        Action act = () => _ = new AiCapabilityResolver(null!);
+        Action act = () => _ = new AiCapabilityResolver(null!, AllFeaturesOn());
         act.Should().Throw<ArgumentNullException>();
     }
 
@@ -70,12 +72,38 @@ public sealed class AiCapabilityResolverTests
         // seam light up together. A snapshot (e.g. realSeams.Keys.ToHashSet()) would freeze P0's empty
         // set and this test's post-construction addition would never be observed.
         var realSeams = new Dictionary<Type, object>();
-        var resolver = new AiCapabilityResolver(realSeams);
+        var resolver = new AiCapabilityResolver(realSeams, AllFeaturesOn());
 
         resolver.Resolve(AiMode.Live, LlmAvailability.Ok, consented: true).Summary.Should().BeFalse(); // empty: nothing live yet
 
         realSeams[typeof(IPrSummarizer)] = new object(); // P1 registers a real impl into the shared dict
 
         resolver.Resolve(AiMode.Live, LlmAvailability.Ok, consented: true).Summary.Should().BeTrue(); // resolver reflects it live
+    }
+
+    [Fact]
+    public void User_disabled_feature_forces_its_flag_false_in_Preview()
+    {
+        // Lockstep with AiSeamSelector (which returns Noop for a disabled feature even in Preview):
+        // a config-disabled feature must NOT report as an available capability. Other flags stay on.
+        var features = new AiFeatureState(new AiFeaturesConfig(
+            new Dictionary<string, bool> { ["summary"] = false }));
+        var resolver = new AiCapabilityResolver(new Dictionary<Type, object>(), features);
+
+        var caps = resolver.Resolve(AiMode.Preview, LlmAvailability.Ok, consented: true);
+
+        caps.Summary.Should().BeFalse();        // user-disabled → not available
+        caps.HunkAnnotations.Should().BeTrue(); // other features unaffected (fail-open on absent keys)
+    }
+
+    [Fact]
+    public void User_disabled_feature_forces_its_flag_false_in_Live_even_when_registered_and_available()
+    {
+        var features = new AiFeatureState(new AiFeaturesConfig(
+            new Dictionary<string, bool> { ["summary"] = false }));
+        var resolver = new AiCapabilityResolver(
+            new Dictionary<Type, object> { [typeof(IPrSummarizer)] = new object() }, features);
+
+        resolver.Resolve(AiMode.Live, LlmAvailability.Ok, consented: true).Summary.Should().BeFalse();
     }
 }

@@ -10,7 +10,9 @@ namespace PRism.Core.Ai;
 /// Projects (mode, availability, consented) → the 9 per-flag <see cref="AiCapabilities"/>
 /// (replacing the AllOn/AllOff binary). Off → all false; Preview → all true (Placeholder covers
 /// every seam); Live → a flag is true only when a real impl is registered for that seam AND the
-/// provider is available AND the user has consented to the current disclosure version. In P0 the
+/// provider is available AND the user has consented to the current disclosure version. Across ALL
+/// modes a flag is forced false when the user has disabled that feature (<c>ui.ai.features</c>),
+/// matching <see cref="AiSeamSelector"/> (which returns Noop for a disabled feature). In P0 the
 /// live-seam dictionary is empty, so Live yields all-false + the probe's reason.
 /// </summary>
 /// <remarks>
@@ -26,24 +28,35 @@ namespace PRism.Core.Ai;
 public sealed class AiCapabilityResolver
 {
     private readonly IReadOnlyDictionary<Type, object> _liveSeams;
+    private readonly AiFeatureState _features;
 
-    public AiCapabilityResolver(IReadOnlyDictionary<Type, object> liveSeams)
+    public AiCapabilityResolver(IReadOnlyDictionary<Type, object> liveSeams, AiFeatureState features)
     {
         ArgumentNullException.ThrowIfNull(liveSeams);
+        ArgumentNullException.ThrowIfNull(features);
         _liveSeams = liveSeams;
+        _features = features;
     }
 
     public AiCapabilities Resolve(AiMode mode, LlmAvailability liveAvailability, bool consented)
     {
         ArgumentNullException.ThrowIfNull(liveAvailability);
 
-        bool Capable(Type seam) => mode switch
+        bool Capable(Type seam)
         {
-            AiMode.Off => false,
-            AiMode.Preview => true,
-            AiMode.Live => _liveSeams.ContainsKey(seam) && liveAvailability.Available && consented,
-            _ => false,
-        };
+            // Mirror AiSeamSelector's per-feature gate: a user-disabled feature (ui.ai.features) is
+            // never "available" in ANY mode, so /api/capabilities stays in lockstep with the seam the
+            // selector actually resolves (which returns Noop for a disabled feature, even in Preview).
+            var featureKey = AiSeamFeatureKeys.ForSeam(seam);
+            if (featureKey is not null && !_features.IsEnabled(featureKey)) return false;
+            return mode switch
+            {
+                AiMode.Off => false,
+                AiMode.Preview => true,
+                AiMode.Live => _liveSeams.ContainsKey(seam) && liveAvailability.Available && consented,
+                _ => false,
+            };
+        }
 
         return new AiCapabilities(
             Summary: Capable(typeof(IPrSummarizer)),

@@ -108,7 +108,7 @@ internal static class ServiceCollectionExtensions
         // Pass the live dictionary BY REFERENCE (not a .Keys snapshot) — the resolver and the selector
         // (real: realSeams below) must read the same instance so P1's first real impl lights up both
         // the capability flag and the resolved seam together (PR #250 review).
-        services.AddSingleton(new AiCapabilityResolver(realSeams));
+        services.AddSingleton(sp => new AiCapabilityResolver(realSeams, sp.GetRequiredService<AiFeatureState>()));
         services.AddSingleton<IAiSeamSelector>(sp =>
         {
             // §1: populate realSeams before constructing the selector so both the capability
