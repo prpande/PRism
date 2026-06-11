@@ -855,4 +855,53 @@ public sealed class GitHubCiFailingDetectorTests
         normal.Items[0].Ci.Should().Be(CiStatus.Passing,
             "the degraded forced reprobe did not evict the prior cached terminal");
     }
+
+    [Fact]
+    public async Task forceReprobe_nondegraded_pending_evicts_stale_cached_terminal()
+    {
+        // #355 (Copilot review): a forced reprobe that observes a CLEAN (non-degraded) Pending
+        // on a key that still holds a STALE terminal (the same-SHA "Re-run failed jobs" case)
+        // must EVICT that terminal. Otherwise Lever 1's "don't cache Pending" leaves the old
+        // terminal in place, and the very next NON-forced sweep reads it and flips the dot back
+        // after a single render — defeating Lever 2 for the re-run path. With the key evicted,
+        // normal sweeps re-probe (Lever 1) until CI goes terminal again, then re-cache.
+        // Contrast forceReprobe_degraded_leaves_existing_cached_terminal: a DEGRADED forced
+        // reprobe must NOT evict (a transient blip is not evidence the terminal is wrong).
+        var phase = "passing"; // passing → pending (re-run started) → passing (re-run finished)
+        var requestCount = 0;
+        var handler = new FakeHttpMessageHandler(req =>
+        {
+            Interlocked.Increment(ref requestCount);
+            if (req.RequestUri!.AbsoluteUri.Contains("/check-runs", StringComparison.Ordinal))
+                return Respond(HttpStatusCode.OK, phase == "pending" ? InProgressCheckRun : AllPassingCheckRuns);
+            return Respond(HttpStatusCode.OK, SuccessNoLegacyStatus);
+        });
+        var sut = BuildSut(handler);
+        var candidate = Raw(1, "sha-A");
+
+        // 1) A normal sweep caches the terminal Passing under (ref, sha-A).
+        var first = await sut.DetectAsync([candidate], default);
+        first.Items[0].Ci.Should().Be(CiStatus.Passing);
+
+        // 2) Same-SHA CI re-run: a forced reprobe (manual Refresh) sees Pending and must
+        //    evict the stale cached Passing.
+        phase = "pending";
+        var forced = await sut.DetectAsync([candidate], default, forceReprobe: true);
+        forced.Items[0].Ci.Should().Be(CiStatus.Pending, "the forced reprobe sees the re-run in progress");
+        var afterForced = requestCount;
+
+        // 3) A NORMAL (non-forced) sweep must re-probe — proving the stale Passing was evicted,
+        //    not served from the cache — and reflect the live Pending. On main (no eviction)
+        //    this returns the cached Passing with zero new HTTP (RED).
+        var normal = await sut.DetectAsync([candidate], default);
+        normal.Items[0].Ci.Should().Be(CiStatus.Pending,
+            "the stale cached terminal was evicted, so the normal sweep re-probes and sees Pending");
+        requestCount.Should().Be(afterForced + 2,
+            "eviction forces the next normal sweep to re-probe both sources, not hit the stale cache");
+
+        // 4) When the re-run finishes, a normal sweep advances to terminal and re-caches it.
+        phase = "passing";
+        var healed = await sut.DetectAsync([candidate], default);
+        healed.Items[0].Ci.Should().Be(CiStatus.Passing, "Lever 1 re-probes Pending each sweep until terminal");
+    }
 }
