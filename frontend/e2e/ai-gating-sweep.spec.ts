@@ -224,8 +224,24 @@ async function setupMocks(page: import('@playwright/test').Page): Promise<{
     });
   });
 
-  await page.route('**/api/events', (route: Route) =>
-    route.fulfill({ status: 200, contentType: 'text/event-stream', body: ':heartbeat\n\n' }),
+  // Emit subscriber-assigned so subscriberId() resolves and useActivePrUpdates
+  // can POST /api/events/subscriptions. Without this frame, subscribed stays
+  // false and useAiSummary never fires (D111 gate added in T13).
+  await page.route('**/api/events', (route: Route) => {
+    if (route.request().method() === 'POST') {
+      return route.fulfill({ status: 200 });
+    }
+    return route.fulfill({
+      status: 200,
+      contentType: 'text/event-stream',
+      body: 'event: subscriber-assigned\ndata: {"subscriberId":"mock-sub-1"}\n\n',
+    });
+  });
+
+  // Subscription POST: useActivePrUpdates calls this after subscriberId()
+  // resolves. 204 → setSubscribed(true) → unlocks useAiSummary.
+  await page.route('**/api/events/subscriptions**', (route: Route) =>
+    route.fulfill({ status: 204 }),
   );
 
   await page.route('**/api/inbox', (route: Route) =>
