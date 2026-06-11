@@ -296,8 +296,8 @@ public class PrSubmitEndpointsTests
     [InlineData("requestChanges")] // legacy camelCase — rejected
     [InlineData("Comment")]        // PascalCase — rejected (kebab "comment" is canonical)
     [InlineData("Approve")]        // PascalCase — rejected
-    [InlineData("1")]              // string token "1": the shared converter would accept it as
-    [InlineData("0")]              // ordinal 1, but the strict switch (no converter) rejects it
+    [InlineData("1")]              // string tokens "1"/"0": the shared converter would accept these
+    [InlineData("0")]              // as ordinals 1/0, but the strict switch (no converter) rejects them
     [InlineData("")]
     public async Task PostSubmit_non_kebab_verdict_returns_400_verdict_invalid(string verdict)
     {

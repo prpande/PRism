@@ -60,7 +60,7 @@ Exact ordinal match — `RequestChanges`, `"1"`, `APPROVE`, null all return fals
 
 **`PrDraftEndpoints` draftVerdict** — the operand is a `JsonElement value`. Collapse the camelCase validate (`:528-535`) and the camelCase apply parse (`:226-236`) onto the same canonical kebab strings:
 - Validate path: `value.ValueKind == Null` → ok (explicit clear); else read `value.ValueKind == String ? value.GetString() : null` and reject (`BadRequest({ error = "verdict-invalid" })`) unless it is one of `approve` / `request-changes` / `comment`. The explicit `ValueKind == String` check **preserves** the current guard (`:531`) that blocks non-string tokens — a JSON integer `{value: 1}` stays rejected.
-- Apply path: replace the `GetString() switch { "approve" / "requestChanges" / "comment" }` with a switch on the same three **kebab** strings → `DraftVerdict`. Drop the `InvalidOperationException("verdict already validated")` arm (operand already validated to one of the three).
+- Apply path: replace the `GetString() switch { "approve" / "requestChanges" / "comment" }` with a switch on the same three **kebab** strings → `DraftVerdict`. Keep the `_ => throw InvalidOperationException("verdict already validated")` default arm as defensive code — it is unreachable because the validate path already rejected any non-kebab/non-null operand, but it documents the invariant and guards against a future caller that skips validation.
 
 Both paths now accept exactly the three kebab strings.
 
