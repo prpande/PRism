@@ -7,35 +7,12 @@ import * as draftApi from '../src/api/draft';
 import { __resetTabIdForTest } from '../src/api/draft';
 import type { PrReference } from '../src/api/types';
 import type { PrUpdatedEvent } from '../src/api/events';
-
-class FakeEventSource {
-  static instances: FakeEventSource[] = [];
-  static get instance(): FakeEventSource {
-    return FakeEventSource.instances[FakeEventSource.instances.length - 1]!;
-  }
-  listeners: Record<string, ((e: MessageEvent) => void)[]> = {};
-  closed = false;
-  url: string;
-  constructor(url: string) {
-    this.url = url;
-    FakeEventSource.instances.push(this);
-  }
-  addEventListener(type: string, cb: (e: MessageEvent) => void) {
-    (this.listeners[type] ??= []).push(cb);
-  }
-  close() {
-    this.closed = true;
-  }
-  dispatch(type: string, data: unknown) {
-    this.listeners[type]?.forEach((cb) => cb({ data: JSON.stringify(data) } as MessageEvent));
-  }
-}
+import { FakeEventSource, installFakeEventSource } from './helpers/fakeEventSource';
 
 const ref: PrReference = { owner: 'octocat', repo: 'hello', number: 42 };
 
 beforeEach(() => {
-  FakeEventSource.instances = [];
-  (globalThis as unknown as { EventSource: unknown }).EventSource = FakeEventSource;
+  installFakeEventSource();
   __resetTabIdForTest();
 });
 

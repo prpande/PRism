@@ -4,41 +4,13 @@ import type { ReactNode } from 'react';
 import { useActivePrUpdates } from '../src/hooks/useActivePrUpdates';
 import { EventStreamProvider } from '../src/hooks/useEventSource';
 import type { PrReference } from '../src/api/types';
+import { FakeEventSource, installFakeEventSource } from './helpers/fakeEventSource';
 
 const ref: PrReference = { owner: 'octocat', repo: 'hello', number: 42 };
 const refStr = 'octocat/hello/42';
 
-class FakeEventSource {
-  static instances: FakeEventSource[] = [];
-  static get instance(): FakeEventSource {
-    return FakeEventSource.instances[FakeEventSource.instances.length - 1]!;
-  }
-  listeners: Record<string, ((e: MessageEvent) => void)[]> = {};
-  closed = false;
-  url: string;
-  onerror: ((e: Event) => void) | null = null;
-  constructor(url: string) {
-    this.url = url;
-    FakeEventSource.instances.push(this);
-  }
-  addEventListener(type: string, cb: (e: MessageEvent) => void) {
-    (this.listeners[type] ??= []).push(cb);
-  }
-  close() {
-    this.closed = true;
-  }
-  dispatch(type: string, data: unknown) {
-    this.listeners[type]?.forEach((cb) => cb({ data: JSON.stringify(data) } as MessageEvent));
-  }
-  fireError() {
-    this.onerror?.(new Event('error'));
-  }
-}
-
 beforeEach(() => {
-  FakeEventSource.instances = [];
-  (globalThis as unknown as { EventSource: unknown }).EventSource = FakeEventSource;
-  vi.spyOn(document, 'cookie', 'get').mockReturnValue('');
+  installFakeEventSource();
 });
 
 afterEach(() => {

@@ -1,5 +1,6 @@
 import { renderHook, waitFor } from '@testing-library/react';
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
+import { jsonResponse } from './helpers/http';
 import { useFileDiff } from '../src/hooks/useFileDiff';
 import type { DiffDto, PrReference } from '../src/api/types';
 
@@ -18,17 +19,6 @@ const sampleDiff: DiffDto = {
   ],
   truncated: false,
 };
-
-function jsonResponse(data: unknown, status = 200): Response {
-  return new Response(JSON.stringify(data), {
-    status,
-    headers: { 'Content-Type': 'application/json' },
-  });
-}
-
-beforeEach(() => {
-  vi.spyOn(document, 'cookie', 'get').mockReturnValue('');
-});
 
 afterEach(() => {
   vi.restoreAllMocks();

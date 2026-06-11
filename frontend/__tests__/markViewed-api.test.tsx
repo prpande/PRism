@@ -1,13 +1,9 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import { postMarkViewed } from '../src/api/markViewed';
 import { ApiError } from '../src/api/client';
 import type { PrReference } from '../src/api/types';
 
 const ref: PrReference = { owner: 'octocat', repo: 'hello', number: 42 };
-
-beforeEach(() => {
-  vi.spyOn(document, 'cookie', 'get').mockReturnValue('');
-});
 
 afterEach(() => {
   vi.restoreAllMocks();
