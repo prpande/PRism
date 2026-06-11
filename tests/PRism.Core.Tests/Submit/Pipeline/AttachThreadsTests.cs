@@ -147,6 +147,38 @@ public class AttachThreadsTests
         Assert.Equal("This is the PR-level comment.", fake.GetPending(Ref)!.SummaryBody);
     }
 
+    // #324 — A half-null PR-root draft (FilePath null but LineNumber set) is PR-root by the
+    // canonical discriminator (no file ⇒ cannot be a line comment). It must ship as review.body,
+    // not silently vanish. On origin/main ExtractPrRootBody required BOTH fields null, so this body
+    // was dropped from the submitted review (the latent bug this issue fixes). Finalize is injected
+    // to fail so the pending review (and its SummaryBody) survive for inspection.
+    [Fact]
+    public async Task HalfNullPrRootDraft_ShippedAsReviewBody_NotSilentlyDropped()
+    {
+        var fake = new InMemoryReviewSubmitter();
+        fake.InjectFailure(nameof(IReviewSubmitter.FinalizePendingReviewAsync), new HttpRequestException("simulated"));
+        var halfNullRoot = new DraftComment(
+            Id: "d-root",
+            FilePath: null, LineNumber: 5, Side: "pr",
+            AnchoredSha: null, AnchoredLineContent: null,
+            BodyMarkdown: "ghost",
+            Status: DraftStatus.Draft, IsOverriddenStale: false);
+
+        var session = SessionFactory.With(headSha: "head1", drafts: new[] { halfNullRoot });
+        var store = new InMemoryAppStateStore();
+        store.SeedSession(SessionKey, session);
+        var pipeline = new SubmitPipeline(fake, store);
+
+        var outcome = await pipeline.SubmitAsync(Ref, session, SubmitEvent.Comment, "head1", NoopProgress.Instance, CancellationToken.None);
+
+        // The half-null draft is not attached as a thread (no file to anchor to)...
+        var failed = Assert.IsType<SubmitOutcome.Failed>(outcome);
+        Assert.Equal(SubmitStep.Finalize, failed.FailedStep);
+        Assert.Equal(0, fake.AttachThreadCallCount);
+        // ...and its body IS shipped as the review body, instead of vanishing.
+        Assert.Equal("ghost", fake.GetPending(Ref)!.SummaryBody);
+    }
+
     // Task 7 — ClearSubmittedSession clause 1: a Stale-and-not-overridden inline draft must survive
     // the submit. The normal (Draft-status) inline draft is consumed and removed; only the stale one
     // remains. Deleting clause 1 from the Where predicate would drop the stale draft → assertion fails.

@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using System.Diagnostics.CodeAnalysis;
 
 namespace PRism.Core.State;
 
@@ -73,7 +74,20 @@ public sealed record DraftComment(
                                // matches DraftThreadRequest's reserved-field pattern; pre-v4 entries
                                // and every non-pipeline call site leave it null)
     long? PostedCommentId = null,
-    string? PostedBodySnapshot = null);  // V7
+    string? PostedBodySnapshot = null)  // V7
+{
+    // #324 — the single canonical "is this the PR-root draft (the review summary, not a line
+    // comment)?" predicate. FilePath is the discriminator: a draft with no file path cannot be
+    // anchored to a line, so LineNumber is vestigial when FilePath is null (see
+    // DraftReconciliationPipeline's "FilePath is the only field that distinguishes them"). Every
+    // PR-root-identity site consumes this; the *attachability* guards (SubmitPipeline's thread
+    // filter, PrCommentEndpoints) are a different concern and intentionally check both fields.
+    // [MemberNotNullWhen(false, ...)] keeps the predicate flow-aware: a false result proves
+    // FilePath is non-null, so call sites that guard `if (draft.IsPrRoot) continue;` can deref
+    // FilePath afterward without a null-forgiving operator (as DraftReconciliationPipeline does).
+    [MemberNotNullWhen(false, nameof(FilePath))]
+    public bool IsPrRoot => FilePath is null;
+}
 
 public sealed record DraftReply(
     string Id,

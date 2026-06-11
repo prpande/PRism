@@ -245,7 +245,11 @@ internal static class AppStateMigrations
 
         var drafts = (session["draft-comments"] as JsonArray) ?? new JsonArray();
 
-        // Collect PR-root drafts (side == "pr" AND file-path == null).
+        // Collect PR-root drafts (side == "pr" AND file-path == null). #324 — this operates on raw
+        // JSON pre-deserialization, so it can't call the typed DraftComment.IsPrRoot (FilePath-only).
+        // It is a *superset-restriction* of IsPrRoot, not identical: line-number-agnostic (so no
+        // both-null over-specification) but additionally gated on side == "pr". The two agree on
+        // historical data only because every persisted PR-root row carries side == "pr".
         var prRoots = new List<JsonObject>();
         foreach (var n in drafts)
         {
