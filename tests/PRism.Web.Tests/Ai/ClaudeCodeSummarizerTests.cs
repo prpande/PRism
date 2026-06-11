@@ -1,7 +1,9 @@
+using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using FluentAssertions;
 using Microsoft.Extensions.Logging.Abstractions;
+using PRism.AI.Contracts.Observability;
 using PRism.AI.Contracts.Provider;
 using PRism.Core.Contracts;
 using PRism.Web.Ai;
@@ -35,14 +37,21 @@ public sealed class ClaudeCodeSummarizerTests
             => throw new InvalidOperationException("tracker-unavailable");
     }
 
+    private sealed class FakeAiInteractionLog : IAiInteractionLog
+    {
+        public List<AiInteractionRecord> Records { get; } = new();
+        public void Record(AiInteractionRecord record) => Records.Add(record);
+    }
+
     private static readonly PrReference Pr = new("o", "r", 1);
 
     // Test seam: the summarizer takes a Func that yields (diff, title, description, headSha) so the
     // test bypasses PrDetailLoader. Production wiring closes over PrDetailLoader (Task 9).
     private static ClaudeCodeSummarizer Build(ILlmProvider p, ITokenUsageTracker t,
-        string diff = "+ added line", string title = "Fix poller", string desc = "Body", string headSha = "abc123")
+        string diff = "+ added line", string title = "Fix poller", string desc = "Body", string headSha = "abc123",
+        IAiInteractionLog? log = null)
         => new(p, t, (_, _) => Task.FromResult((diff, title, desc, headSha)),
-            NullLogger<ClaudeCodeSummarizer>.Instance);
+            NullLogger<ClaudeCodeSummarizer>.Instance, log ?? new FakeAiInteractionLog());
 
     [Fact]
     public async Task Success_ParsesCategory_RecordsUsage()
@@ -97,6 +106,53 @@ public sealed class ClaudeCodeSummarizerTests
         var summary = await Build(p, new FakeTracker()).SummarizeAsync(Pr, CancellationToken.None);
         summary!.Category.Should().Be("");
         summary.Body.Should().Be("Body.");
+    }
+
+    [Fact]
+    public async Task Success_LogsOkInteraction_TaggedSummary_WithTokens()
+    {
+        var log = new FakeAiInteractionLog();
+        await Build(new FakeProvider(), new FakeTracker(), log: log).SummarizeAsync(Pr, CancellationToken.None);
+
+        log.Records.Should().ContainSingle();
+        var rec = log.Records[0];
+        rec.Component.Should().Be("summary", "the audit line must name which AI feature triggered the call");
+        rec.Outcome.Should().Be(AiInteractionOutcome.Ok);
+        rec.Egressed.Should().BeTrue();
+        rec.ProviderId.Should().Be("claude-code");
+        rec.InputTokens.Should().Be(100);
+        rec.OutputTokens.Should().Be(20);
+        rec.PromptChars.Should().BeGreaterThan(0);
+        rec.ResponseChars.Should().BeGreaterThan(0);
+    }
+
+    [Fact]
+    public async Task CacheHit_LogsCacheHitInteraction_NoEgress()
+    {
+        var log = new FakeAiInteractionLog();
+        var s = Build(new FakeProvider(), new FakeTracker(), log: log);
+        await s.SummarizeAsync(Pr, CancellationToken.None); // egress → Ok
+        await s.SummarizeAsync(Pr, CancellationToken.None); // served from cache → CacheHit
+
+        log.Records.Should().HaveCount(2);
+        log.Records[0].Outcome.Should().Be(AiInteractionOutcome.Ok);
+        log.Records[1].Outcome.Should().Be(AiInteractionOutcome.CacheHit);
+        log.Records[1].Egressed.Should().BeFalse("a cache hit never reaches the provider");
+    }
+
+    [Fact]
+    public async Task ProviderThrows_LogsProviderError_AndRethrows()
+    {
+        var log = new FakeAiInteractionLog();
+        var s = Build(new ThrowingProvider(), new FakeTracker(), log: log);
+
+        await FluentActions.Awaiting(() => s.SummarizeAsync(Pr, CancellationToken.None))
+            .Should().ThrowAsync<PRism.AI.ClaudeCode.LlmProviderException>();
+
+        log.Records.Should().ContainSingle();
+        log.Records[0].Outcome.Should().Be(AiInteractionOutcome.ProviderError);
+        log.Records[0].Egressed.Should().BeTrue("the provider was invoked before it failed");
+        log.Records[0].ErrorType.Should().Be(nameof(PRism.AI.ClaudeCode.LlmProviderException));
     }
 
     [Fact]

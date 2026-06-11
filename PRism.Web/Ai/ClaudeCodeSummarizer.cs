@@ -1,6 +1,8 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using Microsoft.Extensions.Logging;
 using PRism.AI.Contracts.Dtos;
+using PRism.AI.Contracts.Observability;
 using PRism.AI.Contracts.Provider;
 using PRism.AI.Contracts.Seams;
 using PRism.Core.Ai;
@@ -23,6 +25,7 @@ internal sealed partial class ClaudeCodeSummarizer : IPrSummarizer
 
     internal const string ClaudeProviderId = AiProviderIds.Claude;
     internal const string SummaryModel = "claude-sonnet-4-6"; // KTD-2 — tunable
+    private const string ComponentName = "summary"; // AI-audit component tag (matches the FE feature key)
 
     private const string SystemPromptV1 =
         "You summarize a GitHub pull request for a reviewer. Output, in order:\n" +
@@ -35,15 +38,17 @@ internal sealed partial class ClaudeCodeSummarizer : IPrSummarizer
     private readonly ITokenUsageTracker _tracker;
     private readonly DiffResolver _resolveDiff;
     private readonly ILogger<ClaudeCodeSummarizer> _logger;
+    private readonly IAiInteractionLog _interactionLog;
     private readonly ConcurrentDictionary<string, PrSummary> _cache = new();
 
     internal ClaudeCodeSummarizer(ILlmProvider provider, ITokenUsageTracker tracker, DiffResolver resolveDiff,
-        ILogger<ClaudeCodeSummarizer> logger)
+        ILogger<ClaudeCodeSummarizer> logger, IAiInteractionLog interactionLog)
     {
         _provider = provider;
         _tracker = tracker;
         _resolveDiff = resolveDiff;
         _logger = logger;
+        _interactionLog = interactionLog;
     }
 
     public async Task<PrSummary?> SummarizeAsync(PrReference pr, CancellationToken ct)
@@ -51,20 +56,50 @@ internal sealed partial class ClaudeCodeSummarizer : IPrSummarizer
         ArgumentNullException.ThrowIfNull(pr);
         var (diff, title, description, headSha) = await _resolveDiff(pr, ct).ConfigureAwait(false);
         var key = $"{pr.PrId}#{headSha}"; // canonical form: "owner/repo#number" — PrId never contains '#'
-        if (_cache.TryGetValue(key, out var cached)) return cached;
+        if (_cache.TryGetValue(key, out var cached))
+        {
+            _interactionLog.Record(new AiInteractionRecord(
+                ComponentName, ClaudeProviderId, SummaryModel, pr.PrId, headSha,
+                AiInteractionOutcome.CacheHit, Egressed: false));
+            return cached;
+        }
 
         var userContent =
             PromptSanitizer.WrapAsData(diff, "diff") + "\n" +
             PromptSanitizer.WrapAsData(title, "title") + "\n" +
             PromptSanitizer.WrapAsData(description, "description");
 
-        var result = await _provider
-            .CompleteAsync(new LlmRequest(SystemPromptV1, userContent, SummaryModel), ct)
-            .ConfigureAwait(false); // throws LlmProviderException on failure → not cached
+        var startTimestamp = Stopwatch.GetTimestamp();
+        LlmResult result;
+#pragma warning disable CA1031 // broad catch to AUDIT the failed egress, then rethrow (→ 503 at the endpoint). Cancellation is excluded so request aborts propagate untouched.
+        try
+        {
+            result = await _provider
+                .CompleteAsync(new LlmRequest(SystemPromptV1, userContent, SummaryModel), ct)
+                .ConfigureAwait(false); // throws LlmProviderException on failure → not cached
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _interactionLog.Record(new AiInteractionRecord(
+                ComponentName, ClaudeProviderId, SummaryModel, pr.PrId, headSha,
+                AiInteractionOutcome.ProviderError, Egressed: true,
+                LatencyMs: ElapsedMs(startTimestamp), PromptChars: userContent.Length,
+                ErrorType: ex.GetType().Name));
+            throw;
+        }
+#pragma warning restore CA1031
 
         var (body, category) = PrCategoryParser.Parse(result.Text);
         var summary = new PrSummary(body, category);
         _cache[key] = summary; // cache the successful result first — tracking is best-effort (spec §9)
+
+        _interactionLog.Record(new AiInteractionRecord(
+            ComponentName, ClaudeProviderId, SummaryModel, pr.PrId, headSha,
+            AiInteractionOutcome.Ok, Egressed: true,
+            LatencyMs: ElapsedMs(startTimestamp),
+            InputTokens: result.InputTokens, OutputTokens: result.OutputTokens,
+            CacheReadInputTokens: result.CacheReadInputTokens, EstimatedCostUsd: result.EstimatedCostUsd,
+            PromptChars: userContent.Length, ResponseChars: result.Text.Length));
 
 #pragma warning disable CA1031 // deliberate broad catch: budget-visibility tracking is non-fatal (spec §9). Cancellation is excluded so request aborts still propagate.
         try
@@ -85,6 +120,9 @@ internal sealed partial class ClaudeCodeSummarizer : IPrSummarizer
 
         return summary;
     }
+
+    private static long ElapsedMs(long startTimestamp) =>
+        (long)Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds;
 
     private static partial class Log
     {

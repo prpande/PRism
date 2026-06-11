@@ -1,9 +1,11 @@
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using PRism.AI.ClaudeCode;
 using PRism.AI.Contracts;
 using PRism.AI.Contracts.Noop;
+using PRism.AI.Contracts.Observability;
 using PRism.AI.Contracts.Provider;
 using PRism.AI.Contracts.Seams;
 using PRism.AI.Placeholder;
@@ -12,6 +14,7 @@ using PRism.Core.Contracts;
 using PRism.Core.Json;
 using PRism.Core.PrDetail;
 using PRism.Web.Ai;
+using PRism.Web.Logging;
 using PRism.Web.Sse;
 
 namespace PRism.Web.Composition;
@@ -41,6 +44,16 @@ internal static class ServiceCollectionExtensions
 
         services.AddNoopSeams();
         services.AddPlaceholderSeams();
+
+        // AI audit log (metadata only): one JSONL line per AI seam invocation, tagged with the
+        // triggering component, written to a dedicated ai-interactions.log in the logs dir. TryAdd so
+        // a test can substitute a fake. LogsPathInfo is registered in Program.cs before AddPrismAi, so
+        // the sink derives its file path from the same logs dir as the structured app log.
+        services.TryAddSingleton<IAiInteractionLog>(sp =>
+            new JsonlAiInteractionLog(
+                sp.GetRequiredService<LogsPathInfo>().Path,
+                TimeProvider.System,
+                sp.GetRequiredService<ILogger<JsonlAiInteractionLog>>()));
 
         // Wrap the ILlmAvailabilityProbe registered by AddPrismClaudeCode with a short-TTL
         // cache (KTD-6). Live mode is FE-reachable this slice; useCapabilities refetches on
@@ -87,7 +100,8 @@ internal static class ServiceCollectionExtensions
                 sp.GetRequiredService<ILlmProvider>(),
                 sp.GetRequiredService<ITokenUsageTracker>(),
                 resolve,
-                sp.GetRequiredService<ILogger<ClaudeCodeSummarizer>>());
+                sp.GetRequiredService<ILogger<ClaudeCodeSummarizer>>(),
+                sp.GetRequiredService<IAiInteractionLog>());
         });
 
         var realSeams = new Dictionary<Type, object>();   // P1: populated below with the first real impl

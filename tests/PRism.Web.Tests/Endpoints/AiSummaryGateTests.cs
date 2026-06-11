@@ -7,6 +7,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging.Abstractions;
 using PRism.AI.ClaudeCode;
+using PRism.AI.Contracts.Observability;
 using PRism.AI.Contracts.Provider;
 using PRism.Core.Ai;
 using PRism.Core.Config;
@@ -62,6 +63,12 @@ public sealed class AiSummaryGateTests
         public Task RecordAsync(TokenUsageRecord record, CancellationToken ct) => Task.CompletedTask;
     }
 
+    // No-op AI audit sink — these gate tests assert HTTP status mapping, not audit logging.
+    private sealed class NullAiInteractionLog : IAiInteractionLog
+    {
+        public void Record(AiInteractionRecord record) { }
+    }
+
     /// <summary>
     /// Per-test harness. Wires a stubbed ClaudeCodeSummarizer (no PrDetailLoader dependency)
     /// and a ConfigurableActivePrCache. Mirrors RootCommentTestContext's pattern so the
@@ -81,7 +88,8 @@ public sealed class AiSummaryGateTests
                 provider,
                 new NullTracker(),
                 (_, _) => Task.FromResult(("+ added", "Title", "Desc", "sha1")),
-                NullLogger<ClaudeCodeSummarizer>.Instance);
+                NullLogger<ClaudeCodeSummarizer>.Instance,
+                new NullAiInteractionLog());
 
             _base = new PRismWebApplicationFactory();
             _derived = _base.WithWebHostBuilder(b => b.ConfigureServices(s =>
