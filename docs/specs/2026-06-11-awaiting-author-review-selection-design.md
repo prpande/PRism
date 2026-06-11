@@ -37,6 +37,13 @@ properties remain:
 Neither is a regression — this is the same selection behavior as before #322. This slice
 makes the selection **deliberate and ordering-robust**.
 
+**Why now.** No user-visible misfire is on record today: GitHub's de-facto ascending
+order makes the ordering property empirically inert and the null-`commit_id` case rare.
+This is low-cost robustness — it converts an empirical, undocumented dependency on
+GitHub's return order into a contractual `submitted_at`-max rule, removing a latent
+correctness cliff (a future GitHub ordering change, or a downstream change that relies on
+this selection) before it can bite. It also lands cleanly while the #322 context is warm.
+
 ## Key insight
 
 On the GitHub REST API, a review's `submitted_at` is non-null **exactly when** the
@@ -44,20 +51,38 @@ review has been submitted. A PENDING review (the viewer's own unsubmitted draft)
 `submitted_at: null`, and that pending draft is precisely the null-`commit_id` case
 property (1) names. So a single eligibility gate resolves both halves of the issue.
 
+Note the JSON shape: a pending review emits `submitted_at` as a JSON `null` — the
+property is *present* with `JsonValueKind.Null`, not absent. The eligibility check must
+therefore test the **value kind** (`JsonValueKind.String`), not merely
+`TryGetProperty`-presence. Calling `GetDateTimeOffset()` on a null-kind element throws
+`InvalidOperationException`; relying on that throw to exclude pending reviews would
+(a) route a normal draft through the malformed-item `catch` and log it every tick as
+"malformed JSON shape," and (b) conflate a routine pending review with corrupt JSON. The
+codebase already established the correct guard for exactly this trap —
+`GitHubReviewService.cs:909-918` checks `ValueKind != JsonValueKind.String` before
+`GetDateTimeOffset()` — and this slice mirrors it.
+
 ## Decision (R1) — selection rule
 
 Replace the array-position-trusting selection with a `submitted_at`-max selection over
 **submitted reviews that carry a head**:
 
 > Among the viewer's reviews (case-insensitive `user.login` match), consider only those
-> with **both `submitted_at` and `commit_id` non-null**. Select the review with the
-> **maximum `submitted_at`**; its `commit_id` is the "last reviewed head." If no review
-> is eligible (across all walked pages), the result is `null`.
+> with a **string-kind `submitted_at`** (a real timestamp — excludes JSON-null pending
+> drafts and absent fields) **and a non-null, non-empty `commit_id`**. Select the review
+> with the **maximum `submitted_at`**; its `commit_id` is the "last reviewed head." If no
+> review is eligible (across all walked pages), the result is `null`.
 
 - **Resolves property 2 (ordering):** selection is by `submitted_at`-max, independent of
   array position — within a page and across pages. The #322 cross-page Link-walk stays;
   the running `best` is compared by timestamp across everything seen rather than
   overwritten by encounter order.
+- **Page-cap interaction (unchanged correctness).** The #322 10-page cap is preserved.
+  When a PR exceeds the cap, the genuinely-latest review (page 11+) is never fetched —
+  but because GitHub returns reviews ascending, `submitted_at`-max over the fetched
+  pages 1–10 selects the **same** review the old array-last rule would have, so
+  truncation is no *more* wrong than today, and the `ReviewPagesCapped` warning still
+  fires unchanged.
 - **Resolves property 1 (null `commit_id`):** a pending draft (`submitted_at: null`) is
   excluded by the gate, so the rule falls back to the latest *submitted* review with a
   head. This is **decision A** of the issue ("fall back to prior non-null"), which the
@@ -66,10 +91,15 @@ Replace the array-position-trusting selection with a `submitted_at`-max selectio
 ### Tie-break (R1a)
 
 `best` is replaced only when a candidate's `submitted_at` is **strictly greater** than
-the current best's. On an exact-timestamp tie the earlier-selected entry is retained
-(deterministic for a given input). Two submitted reviews sharing a second-precision
-`submitted_at` essentially never occurs, and either head is equally valid when it does;
-no review-`id` tie-break is introduced.
+the current best's. On an exact-timestamp tie the earlier-encountered entry is retained,
+giving a deterministic result for a given input ordering. Two *submitted* reviews sharing
+a second-precision `submitted_at` requires a sub-second resubmit, which essentially never
+occurs; when it does, the retained head is whichever the walk saw first. That result is
+arbitrary (not provably "the latest") but deterministic — acceptable for this signal, and
+not worth a review-`id` secondary sort. The eligibility gate also tightens `commit_id`
+from the old `!= null` to **non-null and non-empty**; GitHub does not emit an empty
+`commit_id`, so this is a deliberate defensive tightening with no practical behavior
+change.
 
 ### Decision A — submitted review with null `commit_id` (R1b)
 
@@ -89,11 +119,28 @@ null). This is a deliberate correctness improvement — the viewer's own unsubmi
 should not mark a PR as reviewed-at-head — and a real, if rare, behavior change. It is
 in scope and intended, not an accident.
 
+**Scope of the change is narrow.** It bites only a pending draft carrying a *non-null*
+`commit_id` *at the current head*. The common pending shape (`commit_id: null`) is
+already skipped today (the `sha != null` guard), so its behavior is unchanged. In the
+affected case the PR was previously suppressed from awaiting-author by the draft and will
+now appear there (falling back to the prior submitted review's head). One consequence
+worth naming: such a PR is arguably awaiting *the reviewer's own submit*, not the author,
+yet it surfaces under "Needs re-review / awaiting author." This is acceptable — an
+unsubmitted draft is not a completed review, and submitting it clears the PR from the
+section. If draft-in-progress entries prove noisy in practice, distinguishing "you have a
+draft here" from "author pushed after you reviewed" is a separate follow-up, not this
+slice.
+
 ## Out of scope (unchanged)
 
 - **Review `state` filtering** (DISMISSED / COMMENTED). Submitted reviews of any state
   that carry `submitted_at` + `commit_id` count today and continue to count. This slice
-  does not introduce state-based filtering.
+  does not introduce state-based filtering. Note a benign consequence: a DISMISSED or
+  stale review whose `commit_id` points at a since-force-pushed/rebased (vanished) SHA is
+  still eligible and, if it is the `submitted_at`-max, becomes `best`; since
+  `best != headSha` the PR stays in awaiting-author at that dead SHA. This is intended —
+  the head moved past the reviewed commit, which is exactly the re-review signal — and is
+  the same outcome as before this slice.
 - **Pagination & page-cap warning** (#322 U2), **per-review JSON isolation**
   (`InboxJsonGuard`), **absent-PR cache eviction** (#322 U1), the `(PrReference, headSha)`
   cache key and its semantics, **404 / 429 / cancellation** paths, and the **concurrency
@@ -109,15 +156,32 @@ Single-method change inside `PRism.GitHub/Inbox/GitHubAwaitingAuthorFilter.cs`:
 - `FetchLastReviewShaAsync` returns `string?` as today. Internally it now tracks
   `DateTimeOffset? bestSubmittedAt` alongside `string? best`.
 - Per-review parsing (already inside the `try` guarded by `InboxJsonGuard.IsMalformedItem`):
-  read `commit_id` (string?) and `submitted_at`. `submitted_at` is parsed with
-  `JsonElement.TryGetProperty` + `GetDateTimeOffset()`. A malformed timestamp throws a
-  `FormatException`, which `InboxJsonGuard.IsMalformedItem` already recognizes → that one
-  review is skipped, scan continues (no tick abort).
-- Eligibility: `commit_id` non-null/non-empty **and** `submitted_at` present.
-- Update: `if (submittedAt > bestSubmittedAt) { bestSubmittedAt = submittedAt; best = commitId; }`
-  with `bestSubmittedAt` initialized to null (any real timestamp is `>` null under the
-  chosen comparison helper) — implemented so the **strictly-greater** semantics of R1a
-  hold and the first eligible review is always taken.
+  read `commit_id` (string?) and `submitted_at`.
+- **Eligibility (kind-guarded, no exception path for the normal pending case):**
+  ```csharp
+  var commitId = review.TryGetProperty("commit_id", out var c) ? c.GetString() : null;
+  if (string.IsNullOrEmpty(commitId)) continue;                       // pending/no-head → skip
+  if (!review.TryGetProperty("submitted_at", out var sa) ||
+      sa.ValueKind != JsonValueKind.String) continue;                  // null-kind/absent → skip
+  var submittedAt = sa.GetDateTimeOffset();                            // string-kind only
+  ```
+  The `ValueKind != JsonValueKind.String` check (mirroring `GitHubReviewService.cs:917`)
+  means a JSON-`null` `submitted_at` (PENDING) is excluded as a normal `continue`, **not**
+  thrown-and-caught — so no "malformed JSON shape" Debug line is emitted for routine
+  pending drafts. A genuinely malformed timestamp (a non-date *string*) reaches
+  `GetDateTimeOffset()` and throws `FormatException`, which `InboxJsonGuard.IsMalformedItem`
+  recognizes → that one review is skipped, scan continues (no tick abort).
+- **Update (explicit null-guard — the bare lifted `>` operator returns `false` against a
+  null operand, so it must not be used alone):**
+  ```csharp
+  if (bestSubmittedAt is null || submittedAt > bestSubmittedAt.Value)
+  {
+      bestSubmittedAt = submittedAt;
+      best = commitId;
+  }
+  ```
+  This takes the first eligible review (when `bestSubmittedAt` is still null) and
+  thereafter applies the **strictly-greater** semantics of R1a.
 - The page loop, Link-walk, page cap, 404/429 handling, and the post-loop
   `ReviewPagesCapped` warning are unchanged. `best`/`bestSubmittedAt` persist across page
   iterations so the max is global, not per-page.
@@ -153,11 +217,16 @@ stays valid. This is test-realism maintenance, not a semantics change to those c
    review is skipped; `best` = `"old"` ≠ `"new"` ⇒ PR **included** (awaiting author at
    the older reviewed head).
 
-3. **PENDING review (`submitted_at: null`) with a `commit_id` is excluded.** Two viewer
-   reviews: a submitted one (`submitted_at` present, `commit_id: "old"`) and a pending
-   one (`submitted_at: null`, `commit_id: "head"`). PR head is `"head"`. The pending
-   review is excluded, so `best` = `"old"` ≠ `"head"` ⇒ PR **included**. (Under today's
-   rule the pending review's `"head"` would win ⇒ excluded — this test pins R2.)
+3. **PENDING review (JSON-`null` `submitted_at`) with a `commit_id` is excluded — clean,
+   no malformed-log.** Two viewer reviews: a submitted one (`submitted_at` present,
+   `commit_id: "old"`) and a pending one with a literal `"submitted_at": null` (JSON null,
+   not an absent field) and `commit_id: "head"`. PR head is `"head"`. The pending review
+   is excluded by the `ValueKind` gate, so `best` = `"old"` ≠ `"head"` ⇒ PR **included**.
+   (Under today's rule the pending review's `"head"` would win ⇒ excluded — this test pins
+   R2.) Assert with a capturing logger that **no** `ReviewItemSkipped` ("malformed JSON
+   shape") entry is emitted — the pending review takes the normal `continue`, not the
+   exception path. This is the distinct null-kind path that test 5's non-date *string*
+   does not exercise.
 
 4. **Cross-page max-by-timestamp.** Page 1 holds the viewer review with the **newer**
    `submitted_at` (at head); page 2 holds an **older** `submitted_at` (at old sha), with
@@ -165,11 +234,14 @@ stays valid. This is test-realism maintenance, not a semantics change to those c
    `commit_id` ⇒ PR **excluded**, proving the max is taken across pages by timestamp, not
    reset or overwritten by the later page.
 
-5. **Malformed `submitted_at` skips one review, scan continues.** A page with one viewer
-   review whose `submitted_at` is a non-date string (`"not-a-date"`) and a second valid
-   viewer review (`submitted_at` present, `commit_id: "old"`). PR head `"new"`. The
-   malformed review is skipped via `InboxJsonGuard`; `best` = `"old"` ⇒ PR **included**;
-   no throw.
+5. **Malformed `submitted_at` (non-date *string*) skips one review via the guard, scan
+   continues.** A page with one viewer review whose `submitted_at` is a non-date string
+   (`"not-a-date"`, `JsonValueKind.String` so it passes the kind gate and reaches
+   `GetDateTimeOffset()`) and a second valid viewer review (`submitted_at` present,
+   `commit_id: "old"`). PR head `"new"`. The malformed review throws `FormatException`,
+   caught by `InboxJsonGuard.IsMalformedItem`; `best` = `"old"` ⇒ PR **included**; no
+   throw out of the filter. This pins the `FormatException` branch — distinct from test
+   3's clean `null`-kind exclusion.
 
 **Verification:** `dotnet build -c Release` (0/0) and `dotnet test -c Release` on
 `PRism.GitHub.Tests` green. Backend-only — no frontend files touched, so frontend
