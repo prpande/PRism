@@ -39,6 +39,19 @@ public class InboxRefreshEndpointTests
     }
 
     [Fact]
+    public async Task Post_refresh_forwards_hardRefresh_true()
+    {
+        var fakeOrch = new FakeInboxRefreshOrchestrator { Current = MakeSnapshot() };
+        using var factory = new PRismWebApplicationFactory { FakeOrchestrator = fakeOrch };
+        var client = factory.CreateClient();
+
+        var resp = await PostRefresh(client);
+
+        resp.StatusCode.Should().Be(HttpStatusCode.OK);
+        fakeOrch.LastHardRefresh.Should().BeTrue("/api/inbox/refresh is a hard refresh (#355)");
+    }
+
+    [Fact]
     public async Task Post_refresh_returns_503_on_generic_failure()
     {
         var fakeOrch = new FakeInboxRefreshOrchestrator
