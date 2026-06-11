@@ -61,17 +61,18 @@ public sealed partial class GitHubAwaitingAuthorFilter : IAwaitingAuthorFilter
         return probed.Where(p => p != null).Select(p => p!).ToList();
     }
 
-    // GitHub returns reviews in ascending order and paginates at per_page=100. Reading only
-    // page 1 takes the OLDEST 100 reviews when a PR has >100 — so the genuinely-most-recent
-    // review is on a later page and "last in the array" is wrong. Link-walk every page (capped
-    // at MaxReviewPages, mirroring the CI detector) keeping the last viewer-authored commit_id
-    // seen across all pages. Per-review JSON access is isolated so one malformed review item is
-    // skipped, not the whole tick. (#322) The selection rule (last non-null viewer commit_id) is
-    // unchanged here — null-commit_id "latest review" selection is a tracked follow-up.
+    // GitHub returns reviews paginated at per_page=100 with no documented sort order. Rather
+    // than trust array position, select the viewer review with the maximum submitted_at among
+    // reviews that carry a real (string-kind) submitted_at AND a non-empty commit_id; its
+    // commit_id is the "last reviewed head". The running best persists across all walked pages
+    // (capped at MaxReviewPages, mirroring the CI detector), so the max is global, not per-page.
+    // PENDING drafts (submitted_at: null) and null/empty commit_id reviews are skipped (#367).
+    // Per-review JSON access is isolated so one malformed review item is skipped, not the tick.
     private async Task<string?> FetchLastReviewShaAsync(
         PrReference pr, string viewerLogin, string? token, CancellationToken ct)
     {
         string? best = null;
+        DateTimeOffset? bestSubmittedAt = null;
         Uri? nextUri = null;
         var initialUrl = $"repos/{pr.Owner}/{pr.Repo}/pulls/{pr.Number}/reviews?per_page=100";
         using var http = _httpFactory.CreateClient("github");
@@ -101,8 +102,20 @@ public sealed partial class GitHubAwaitingAuthorFilter : IAwaitingAuthorFilter
                 {
                     var login = review.GetProperty("user").GetProperty("login").GetString();
                     if (!string.Equals(login, viewerLogin, StringComparison.OrdinalIgnoreCase)) continue;
-                    var sha = review.TryGetProperty("commit_id", out var s) ? s.GetString() : null;
-                    if (sha != null) best = sha; // ascending order → last seen overall = most recent
+
+                    var commitId = review.TryGetProperty("commit_id", out var c) ? c.GetString() : null;
+                    if (string.IsNullOrEmpty(commitId)) continue; // null/empty commit_id → no comparable head
+
+                    if (!review.TryGetProperty("submitted_at", out var sa)) continue; // unsubmitted/absent → skip
+                    var submittedAt = sa.GetDateTimeOffset();
+
+                    // Strictly-greater; the explicit null-guard takes the first eligible review
+                    // (a bare lifted `>` against a null DateTimeOffset? returns false).
+                    if (bestSubmittedAt is null || submittedAt > bestSubmittedAt.Value)
+                    {
+                        bestSubmittedAt = submittedAt;
+                        best = commitId;
+                    }
                 }
                 catch (Exception ex) when (InboxJsonGuard.IsMalformedItem(ex))
                 {

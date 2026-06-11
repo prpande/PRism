@@ -344,4 +344,24 @@ public sealed class GitHubAwaitingAuthorFilterTests
         await act.Should().NotThrowAsync();
         handler.CallCountFor("/repos/acme/api/pulls/1/reviews").Should().Be(10);
     }
+
+    [Fact]
+    public async Task Most_recent_by_submitted_at_wins_over_array_position()
+    {
+        // array-FIRST review is the NEWER one (at the current head); array-LAST is OLDER.
+        // The old array-last rule would pick "old" != head ⇒ wrongly include. The new rule
+        // picks the max-submitted_at review ("head") == head ⇒ correctly exclude.
+        var body = $$"""
+            [
+              { "user": { "login": "{{ViewerLogin}}" }, "commit_id": "head", "submitted_at": "2020-02-01T00:00:00Z" },
+              { "user": { "login": "{{ViewerLogin}}" }, "commit_id": "old",  "submitted_at": "2020-01-01T00:00:00Z" }
+            ]
+            """;
+        var handler = new FakeHttpMessageHandler(_ => Respond(HttpStatusCode.OK, body));
+        var sut = BuildSut(handler);
+
+        var result = await sut.FilterAsync(ViewerLogin, [Raw(1, "head")], default);
+
+        result.Should().BeEmpty("the newest review by submitted_at is at the current head");
+    }
 }
