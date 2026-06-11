@@ -64,8 +64,10 @@ Existing test files stay **unchanged** except `InlineCommentComposer.test.tsx` (
 import { describe, it, expect } from 'vitest';
 import { matchComposerKey } from './matchComposerKey';
 
+import type { KeyboardEvent } from 'react';
+
 type K = Partial<{ key: string; metaKey: boolean; ctrlKey: boolean; shiftKey: boolean }>;
-const ev = (e: K) => e as unknown as React.KeyboardEvent;
+const ev = (e: K) => e as unknown as KeyboardEvent;
 
 describe('matchComposerKey', () => {
   it('Cmd+Shift+P → toggle-preview', () => {
@@ -501,7 +503,7 @@ Lift the **current `InlineCommentComposer` body** (the canonical copy) into a ho
 
 ```tsx
 // useDraftComposer.test.tsx
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { useDraftComposer } from './useDraftComposer';
 import * as draftApi from '../../../api/draft';
@@ -532,7 +534,10 @@ function params(overrides: Partial<Parameters<typeof useDraftComposer>[0]> = {})
 }
 
 describe('useDraftComposer', () => {
-  beforeEach(() => vi.restoreAllMocks());
+  // useComposerAutoSave schedules a debounce timer on mount — fake timers keep
+  // it from firing stray sendPatch calls mid-test (matches the existing suite).
+  beforeEach(() => { vi.restoreAllMocks(); vi.useFakeTimers(); });
+  afterEach(() => { vi.useRealTimers(); });
 
   it('exposes grouped editor/actions/modals slices', () => {
     const { result } = renderHook(() => useDraftComposer(params()));
@@ -570,8 +575,32 @@ describe('useDraftComposer', () => {
     renderHook(() => useDraftComposer(params({ registerOpenComposer: register, ownerKey: 'drafts-tab' })));
     expect(register).toHaveBeenCalledWith('d1', 'drafts-tab');
   });
+
+  it('Cmd+Enter does NOT close when a 404 recovery opened mid-flush', async () => {
+    // Existing draft + update → 404 draft-not-found fires onDraftDeletedByServer,
+    // which sets recoveryModalOpenRef; the submit IIFE must then skip onClose().
+    vi.spyOn(draftApi, 'sendPatch').mockResolvedValue({ ok: false, status: 404, kind: 'draft-not-found', body: {} });
+    const p = params({ draftId: 'd1' });
+    const { result } = renderHook(() => useDraftComposer(p));
+    act(() => { result.current.editor.setBody('an updated body'); });
+    await act(async () => {
+      result.current.editor.handleKeyDown({
+        metaKey: true, key: 'Enter', preventDefault: () => {},
+      } as unknown as React.KeyboardEvent<HTMLTextAreaElement>);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(result.current.modals.recoveryModalOpen).toBe(true);
+    expect(p.onClose).not.toHaveBeenCalled();
+  });
 });
 ```
+
+> If the async-timing of the submit IIFE makes this hook test flaky in practice,
+> the recovery-skip-close path is **also** covered at the integration level by the
+> existing `__tests__/InlineCommentComposer.test.tsx` (which must stay green and
+> exercises the same `handleKeyDown`). That integration test is the accepted guard;
+> do not weaken it.
 
 - [ ] **Step 2: Run tests to verify they fail**
 
@@ -586,7 +615,10 @@ Create `useDraftComposer.ts`. Move the following from `InlineCommentComposer.tsx
 - `composerAnchor` is now the `anchor` **param** (delete the inline literal at lines 91-98).
 - `handleAssignedId`, `handleDraftDeletedByServer`, `handleLocalDelete` (lines 100-116) verbatim.
 - `useComposerAutoSave` call (lines 118-129) verbatim, passing `onSaved` through (optional param).
-- The `flushRef` publish effect (lines 134-140) verbatim — its `if (!flushRef) return` guard makes it a no-op when `flushRef` is undefined.
+- The `flushRef` publish effect (lines 134-140). **Required adaptation (not optional):** keep the
+  `if (!flushRef) return` early-return guard at the top of the effect. `ReplyComposer` passes no
+  `flushRef`, and the unguarded `flushRef.current = flush` would throw on its mount. The guard makes
+  the effect a no-op when `flushRef` is undefined.
 - `registerOpenComposer` effect (lines 145-148): change the literal `'files-tab'` to the `ownerKey` param.
 - Focus-on-mount effect (lines 152-154) verbatim — **declare it last** among the effects.
 - Derived values (lines 156-169, 215-218, 289, 292): `trimmedLength`, `bodyEmpty`, `belowCreateThreshold`, `saveDisabled`, `saveTooltip`, `postNowDisabled`, `postNowTooltip`, `closedBanner`, `addLabel`.
@@ -861,16 +893,26 @@ Expected: PASS (unchanged).
 
 - [ ] **Step 4: Add the button-order assertion to `__tests__/InlineCommentComposer.test.tsx`**
 
+First, add `within` to the file's existing `@testing-library/react` import (the current line is
+`import { render, screen, fireEvent, act } from '@testing-library/react';` — make it
+`import { render, screen, fireEvent, act, within } from '@testing-library/react';`).
+
+The file renders via a local `Harness` component (`render(<Harness ... />)`), **not** a
+`renderInline()` helper. `Harness` already mounts an **open** PR, so the save button is present.
 Append this test inside the top-level `describe`:
 ```tsx
   it('renders composer-actions buttons in canonical order (open PR)', () => {
-    renderInline(); // use the file's existing render helper with an open-PR draft
+    render(<Harness initialBody="abc" />);
     const bar = document.querySelector('.composer-actions') as HTMLElement;
     const labels = within(bar).getAllByRole('button').map((b) => b.textContent);
+    // AiComposerAssistant renders null (AI gate off in tests — proven by the
+    // existing suite rendering it bare); the badge is a <span>, not a button.
     expect(labels).toEqual(['Preview', 'Discard', 'Add to review', 'Comment']);
   });
 ```
-(Use the existing render helper in that file; import `within` from `@testing-library/react` if not already imported. If the helper renders a closed PR by default, pass an open `prState`.)
+(Match `Harness`'s actual prop names — confirm `initialBody` exists; if it renders an empty draft by
+default that is fine, button *presence* is independent of the disabled state. If `Harness` exposes a
+different prop for the open state, use it; it already defaults to an open PR.)
 
 - [ ] **Step 5: Run it**
 
