@@ -99,6 +99,7 @@ export function useWholeFileContent(input: UseWholeFileContentInput): UseWholeFi
       file === null ||
       file.status !== 'modified' ||
       file.hunks.length === 0,
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- deps are file's primitives (covers the missing-`file` + complex-`file === null` messages); selectedFile is a fresh object each render (#331)
     [enabled, path, file === null, file?.status, file?.hunks.length],
   );
 
@@ -192,6 +193,7 @@ export function useWholeFileContent(input: UseWholeFileContentInput): UseWholeFi
     // (useAiHunkAnnotations / useFileDiff). A referentially-new prRef with
     // identical fields would otherwise re-fire the effect and cause a
     // transient 'loading' flash.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- deps are prRef's stable primitive fields; the prRef object is a fresh literal each render (#331)
   }, [inactive, path, headSha, baseSha, isSplit, prRef.owner, prRef.repo, prRef.number]);
 
   return state;

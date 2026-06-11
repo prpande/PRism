@@ -163,7 +163,11 @@ export function ActivityRail() {
   const { data, isLoading, error } = useActivity();
   const [showBots, setShowBots] = useState(false); // transient; default HIDDEN
 
-  const all = data?.items ?? [];
+  // #331 — memoize so `all` is referentially stable across renders where the
+  // fetched items don't change, keeping the `visible` memo below from recomputing
+  // on unrelated re-renders (the bare `data?.items ?? []` produced a new array ref
+  // each render).
+  const all = useMemo(() => data?.items ?? [], [data?.items]);
   // No client-side count cap: the server already ceilings at MaxRawItems and the list
   // is scrollable, so render every (bot-filtered) row and let the user scroll.
   const visible = useMemo(() => all.filter((i) => showBots || !i.actorIsBot), [all, showBots]);
