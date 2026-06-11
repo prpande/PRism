@@ -169,7 +169,7 @@ internal static class PrRootCommentEndpoints
                     ? d with { PostedCommentId = created.Id, PostedBodySnapshot = rootDraft.BodyMarkdown }
                     : d)
                 .ToList();
-            return WithSession(state, sessionKey, s with { DraftComments = updatedComments });
+            return state.WithSession(sessionKey, s with { DraftComments = updatedComments });
         }, ct).ConfigureAwait(false);
 
         await DeleteDraftAsync(stateStore, sessionKey, rootDraft.Id, ct).ConfigureAwait(false);
@@ -191,14 +191,8 @@ internal static class PrRootCommentEndpoints
         {
             if (!state.Reviews.Sessions.TryGetValue(sessionKey, out var s)) return state;
             var remaining = s.DraftComments.Where(d => d.Id != draftId).ToList();
-            return WithSession(state, sessionKey, s with { DraftComments = remaining });
+            return state.WithSession(sessionKey, s with { DraftComments = remaining });
         }, ct).ConfigureAwait(false);
-    }
-
-    private static AppState WithSession(AppState state, string sessionKey, ReviewSessionState session)
-    {
-        var sessions = new Dictionary<string, ReviewSessionState>(state.Reviews.Sessions) { [sessionKey] = session };
-        return state.WithDefaultReviews(state.Reviews with { Sessions = sessions });
     }
 
     // Maps an HttpRequestException to a SubmitErrorDto. The DTO MESSAGE is a STATIC, sanitized

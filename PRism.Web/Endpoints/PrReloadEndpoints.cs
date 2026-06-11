@@ -181,12 +181,7 @@ internal static class PrReloadEndpoints
                     TabStamps = tabStamps
                 };
                 updatedSession = updated;
-
-                var sessions = new Dictionary<string, ReviewSessionState>(state.Reviews.Sessions)
-                {
-                    [refKey] = updated
-                };
-                return state.WithDefaultReviews(state.Reviews with { Sessions = sessions });
+                return state.WithSession(refKey, updated);
             }, ct).ConfigureAwait(false);
 
             if (currentHeadShaForRetry is not null)

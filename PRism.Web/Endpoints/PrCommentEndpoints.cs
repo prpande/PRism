@@ -165,17 +165,12 @@ internal static class PrCommentEndpoints
         Func<ReviewSessionState, ReviewSessionState> stamp, Func<ReviewSessionState, ReviewSessionState> delete,
         CancellationToken ct)
     {
-        await store.UpdateAsync(state => state.Reviews.Sessions.TryGetValue(sessionKey, out var s) ? WithSession(state, sessionKey, stamp(s)) : state, ct).ConfigureAwait(false);
-        await store.UpdateAsync(state => state.Reviews.Sessions.TryGetValue(sessionKey, out var s) ? WithSession(state, sessionKey, delete(s)) : state, ct).ConfigureAwait(false);
+        await store.UpdateAsync(state => state.Reviews.Sessions.TryGetValue(sessionKey, out var s) ? state.WithSession(sessionKey, stamp(s)) : state, ct).ConfigureAwait(false);
+        await store.UpdateAsync(state => state.Reviews.Sessions.TryGetValue(sessionKey, out var s) ? state.WithSession(sessionKey, delete(s)) : state, ct).ConfigureAwait(false);
     }
     private static Task DeleteComment(IAppStateStore store, string sessionKey, string draftId, CancellationToken ct) =>
-        store.UpdateAsync(state => state.Reviews.Sessions.TryGetValue(sessionKey, out var s) ? WithSession(state, sessionKey, s with { DraftComments = s.DraftComments.Where(d => d.Id != draftId).ToList() }) : state, ct);
+        store.UpdateAsync(state => state.Reviews.Sessions.TryGetValue(sessionKey, out var s) ? state.WithSession(sessionKey, s with { DraftComments = s.DraftComments.Where(d => d.Id != draftId).ToList() }) : state, ct);
     private static Task DeleteReply(IAppStateStore store, string sessionKey, string draftId, CancellationToken ct) =>
-        store.UpdateAsync(state => state.Reviews.Sessions.TryGetValue(sessionKey, out var s) ? WithSession(state, sessionKey, s with { DraftReplies = s.DraftReplies.Where(r => r.Id != draftId).ToList() }) : state, ct);
+        store.UpdateAsync(state => state.Reviews.Sessions.TryGetValue(sessionKey, out var s) ? state.WithSession(sessionKey, s with { DraftReplies = s.DraftReplies.Where(r => r.Id != draftId).ToList() }) : state, ct);
 
-    private static AppState WithSession(AppState state, string sessionKey, ReviewSessionState session)
-    {
-        var sessions = new Dictionary<string, ReviewSessionState>(state.Reviews.Sessions) { [sessionKey] = session };
-        return state.WithDefaultReviews(state.Reviews with { Sessions = sessions });
-    }
 }

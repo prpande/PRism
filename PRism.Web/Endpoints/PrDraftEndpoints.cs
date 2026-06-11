@@ -154,13 +154,7 @@ internal static class PrDraftEndpoints
                 outcome = ApplyPatch(op.Kind, op.Value, operandPayload, session, cache, prRef);
 
                 if (outcome is PatchOutcome.Applied applied)
-                {
-                    var sessions = new Dictionary<string, ReviewSessionState>(state.Reviews.Sessions)
-                    {
-                        [refKey] = applied.Updated
-                    };
-                    return state.WithDefaultReviews(state.Reviews with { Sessions = sessions });
-                }
+                    return state.WithSession(refKey, applied.Updated);
                 return state;
             }, ct).ConfigureAwait(false);
 

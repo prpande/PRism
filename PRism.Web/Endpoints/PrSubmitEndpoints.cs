@@ -233,7 +233,7 @@ internal static class PrSubmitEndpoints
                         // PendingReviewId / ThreadId for the in-flight-recovery surface. Uses
                         // CancellationToken.None — the pipeline already returned (it caught the
                         // cancellation, if any); this cleanup write must land even during host shutdown.
-                        await stateStore.UpdateAsync(state => WithSession(state, sessionKey, failed.NewSession), CancellationToken.None).ConfigureAwait(false);
+                        await stateStore.UpdateAsync(state => state.WithSession(sessionKey, failed.NewSession), CancellationToken.None).ConfigureAwait(false);
                         bus.Publish(new StateChanged(prRef, PendingReviewFields, SourceTabId: null));
                         break;
                     case SubmitOutcome.ForeignPendingReviewPromptRequired prompt:
@@ -471,7 +471,7 @@ internal static class PrSubmitEndpoints
                 PendingReviewId = snapshotB.PullRequestReviewId,
                 PendingReviewCommitOid = snapshotB.CommitOid,
             };
-            return WithSession(state, sessionKey, merged);
+            return state.WithSession(sessionKey, merged);
         }, ct).ConfigureAwait(false);
 
         bus.Publish(new StateChanged(prRef, PendingReviewFields, SourceTabId: null));
@@ -552,7 +552,7 @@ internal static class PrSubmitEndpoints
         await stateStore.UpdateAsync(state =>
         {
             if (!state.Reviews.Sessions.TryGetValue(sessionKey, out var existing)) return state;
-            return WithSession(state, sessionKey, existing with { PendingReviewId = null, PendingReviewCommitOid = null });
+            return state.WithSession(sessionKey, existing with { PendingReviewId = null, PendingReviewCommitOid = null });
         }, ct).ConfigureAwait(false);
 
         bus.Publish(new StateChanged(prRef, PendingReviewFields, SourceTabId: null));
@@ -605,12 +605,6 @@ internal static class PrSubmitEndpoints
         // normalisation (LineMatching.SplitLines TrimEnd('\r')); otherwise a CRLF-ending file's
         // imported draft would never exact-match and would land Stale / mis-anchor on the next Reload.
         return (lines[t.LineNumber - 1].TrimEnd('\r'), DraftStatus.Draft);
-    }
-
-    private static AppState WithSession(AppState state, string sessionKey, ReviewSessionState session)
-    {
-        var sessions = new Dictionary<string, ReviewSessionState>(state.Reviews.Sessions) { [sessionKey] = session };
-        return state.WithDefaultReviews(state.Reviews with { Sessions = sessions });
     }
 
     // Maps an HttpRequestException to a SubmitErrorDto using the same code vocabulary as

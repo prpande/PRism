@@ -37,6 +37,18 @@ public sealed record AppState(
         this with { Accounts = Accounts.SetItem(AccountKeys.Default,
             Accounts[AccountKeys.Default] with { LastConfiguredGithubHost = newHost }) };
 
+    /// <summary>
+    /// Upserts a review session keyed by the canonical session key (the same
+    /// owner/repo/number key shape used by <see cref="Reviews"/>.Sessions elsewhere).
+    /// Returns a new AppState; does not mutate. Callers MUST use the canonical key
+    /// or the session becomes unreachable.
+    /// </summary>
+    public AppState WithSession(string sessionKey, ReviewSessionState session)
+    {
+        var sessions = new Dictionary<string, ReviewSessionState>(Reviews.Sessions) { [sessionKey] = session };
+        return WithDefaultReviews(Reviews with { Sessions = sessions });
+    }
+
     public static AppState Default { get; } = new(
         Version: 7,
         UiPreferences: UiPreferences.Default,

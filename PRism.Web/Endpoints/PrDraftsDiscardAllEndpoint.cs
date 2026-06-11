@@ -60,8 +60,7 @@ internal static class PrDraftsDiscardAllEndpoint
                 PendingReviewId = null,
                 PendingReviewCommitOid = null,
             };
-            var sessions = new Dictionary<string, ReviewSessionState>(state.Reviews.Sessions) { [sessionKey] = cleared };
-            return state.WithDefaultReviews(state.Reviews with { Sessions = sessions });
+            return state.WithSession(sessionKey, cleared);
         }, ct).ConfigureAwait(false);
 
         bus.Publish(new StateChanged(prRef, DiscardedFields, SourceTabId: null));
