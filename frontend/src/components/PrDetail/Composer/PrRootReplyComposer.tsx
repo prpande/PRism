@@ -2,6 +2,7 @@ import { useCallback, useRef, useState } from 'react';
 import styles from './PrRootReplyComposer.module.css';
 import {
   COMPOSER_CREATE_THRESHOLD,
+  badgeLabel,
   type ComposerSaveBadge,
 } from '../../../hooks/useComposerAutoSave';
 import { sendPatch } from '../../../api/draft';
@@ -220,7 +221,7 @@ export function PrRootReplyComposer({
           role="status"
           data-testid="composer-badge"
         >
-          {badge}
+          {badgeLabel(badge)}
         </span>
 
         <AiComposerAssistant />

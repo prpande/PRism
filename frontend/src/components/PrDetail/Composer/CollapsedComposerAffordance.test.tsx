@@ -25,7 +25,7 @@ describe('CollapsedComposerAffordance', () => {
       />,
     );
     expect(screen.getByText('Continue draft…')).toBeInTheDocument();
-    expect(screen.getByText('saved')).toBeInTheDocument();
+    expect(screen.getByText('Saved')).toBeInTheDocument();
   });
 
   it('is truly inert under readOnly — natively disabled, out of tab order, no open on click', () => {
