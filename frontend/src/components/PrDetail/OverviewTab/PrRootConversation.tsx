@@ -1,4 +1,3 @@
-import { useEffect, useState } from 'react';
 import type { DraftCommentDto, IssueCommentDto, PrReference } from '../../../api/types';
 import { CommentCard } from '../Comment/CommentCard';
 import { CollapsedComposerAffordance } from '../Composer/CollapsedComposerAffordance';
@@ -6,6 +5,7 @@ import { PrRootReplyComposer } from '../Composer/PrRootReplyComposer';
 import { MarkAllReadButton } from './MarkAllReadButton';
 import styles from './PrRootConversation.module.css';
 import type { ComposerOwnerKey } from '../../../hooks/useDraftSession';
+import { useDraftBackedDisclosure } from '../../../hooks/useDraftBackedDisclosure';
 
 export interface PrRootConversationReplyContext {
   prRef: PrReference;
@@ -72,24 +72,19 @@ function PrRootConversationActions({
 }) {
   const { prRef, prState, existingPrRootDraft, registerOpenComposer, onComposerClose, readOnly } =
     replyContext;
-  // `useState(initialValue)` is frozen at first render. When a cross-tab
-  // refetch later populates `existingPrRootDraft` (PR6 will wire that path),
-  // the useEffect below re-syncs so the composer auto-opens with the
-  // persisted body. Without it, the freshly-arrived draft is silently
-  // dropped and the user sees only the Reply button.
-  const [composerOpen, setComposerOpen] = useState<boolean>(!!existingPrRootDraft);
-  const [draftId, setDraftId] = useState<string | null>(existingPrRootDraft?.id ?? null);
+  // The composer auto-opens when a saved PR-root draft exists, including a
+  // cross-tab arrival after mount (OverviewTab hydrates existingPrRootDraft from
+  // the shared draft session). See useDraftBackedDisclosure for the resync rationale.
+  const {
+    composerOpen,
+    draftId,
+    setDraftId,
+    open: handleReplyClick,
+    close: closeComposer,
+  } = useDraftBackedDisclosure(existingPrRootDraft);
 
-  useEffect(() => {
-    if (!existingPrRootDraft) return;
-    setDraftId(existingPrRootDraft.id);
-    setComposerOpen(true);
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on existingPrRootDraft?.id; re-syncs only when the draft id changes, not on every object identity change (#331)
-  }, [existingPrRootDraft?.id]);
-
-  const handleReplyClick = () => setComposerOpen(true);
   const handleClose = () => {
-    setComposerOpen(false);
+    closeComposer();
     onComposerClose();
   };
 
