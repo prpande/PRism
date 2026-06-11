@@ -120,12 +120,14 @@ public sealed class InboxRefreshOrchestratorTests
         private readonly bool _complete;
         private readonly Exception? _throw;
         public IReadOnlyList<RawPrInboxItem>? LastInput { get; private set; }
+        public bool LastForceReprobe { get; private set; }
         public FakeCiDetector(CiStatus status = CiStatus.None, bool complete = true, Exception? toThrow = null)
             { _status = status; _complete = complete; _throw = toThrow; }
         public Task<CiDetectResult> DetectAsync(
             IReadOnlyList<RawPrInboxItem> items, CancellationToken ct, bool forceReprobe = false)
         {
             LastInput = items;
+            LastForceReprobe = forceReprobe;
             if (_throw is not null) throw _throw;
             return Task.FromResult(new CiDetectResult(
                 items.Select(i => (i, _status)).ToList(), _complete));
@@ -429,6 +431,27 @@ public sealed class InboxRefreshOrchestratorTests
         detector.LastInput!.Select(i => i.Reference.Number).Should().BeEquivalentTo(new[] { 1, 2 });
         sut.Current!.Sections["review-requested"][0].Ci.Should().Be(CiStatus.Failing);
         sut.Current.Sections.Should().NotContainKey("ci-failing");
+    }
+
+    [Fact]
+    public async Task RefreshAsync_hardRefresh_forwards_forceReprobe_to_detector()
+    {
+        // #355 Lever 2 wiring: the manual-refresh path (hardRefresh: true) must thread
+        // forceReprobe through to the CI detector; the background poll / cold-start
+        // (default false) must keep the cheap cached path.
+        var ci = new FakeCiDetector(CiStatus.Passing);
+        var sut = BuildSut(
+            sections: _ => new Dictionary<string, IReadOnlyList<RawPrInboxItem>>
+            {
+                ["authored-by-me"] = new[] { RawPr(1) },
+            },
+            ciDetector: ci);
+
+        await sut.RefreshAsync(CancellationToken.None);                       // default false
+        ci.LastForceReprobe.Should().BeFalse("a normal poll/cold-start must use the cached path");
+
+        await sut.RefreshAsync(CancellationToken.None, hardRefresh: true);    // manual refresh
+        ci.LastForceReprobe.Should().BeTrue("a hard refresh must force the CI re-read");
     }
 
     [Fact]

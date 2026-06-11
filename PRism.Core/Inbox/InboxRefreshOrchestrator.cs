@@ -80,7 +80,7 @@ public sealed partial class InboxRefreshOrchestrator : IInboxRefreshOrchestrator
 #pragma warning restore CA2012
     }
 
-    public async Task RefreshAsync(CancellationToken ct)
+    public async Task RefreshAsync(CancellationToken ct, bool hardRefresh = false)
     {
         await _writerLock.WaitAsync(ct).ConfigureAwait(false);
         var sw = System.Diagnostics.Stopwatch.StartNew();
@@ -157,7 +157,7 @@ public sealed partial class InboxRefreshOrchestrator : IInboxRefreshOrchestrator
             {
                 try
                 {
-                    var probed = await _ciDetector.DetectAsync(liveForCi, ct).ConfigureAwait(false);
+                    var probed = await _ciDetector.DetectAsync(liveForCi, ct, forceReprobe: hardRefresh).ConfigureAwait(false);
                     var failingCount = 0;
                     foreach (var (item, ci) in probed.Items)
                     {
