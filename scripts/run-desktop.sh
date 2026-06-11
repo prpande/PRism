@@ -65,26 +65,43 @@ main() {
   pidfile="$data_dir/run-desktop.pid"
   mkdir -p "$data_dir"
 
+  # --- single-instance short-circuit BEFORE any work (preflight or build), so a
+  #     re-run while the app is up exits fast instead of redoing the preflight/build. ---
+  if [[ -f "$pidfile" ]]; then
+    local existing_pid
+    existing_pid="$(cat "$pidfile" 2>/dev/null || true)"
+    # kill -0 is a liveness check. No process-name recycle guard here: the macOS
+    # `ps comm` name is unverified from the Windows dev machine, and a wrong guess
+    # would silently disable the guard. Electron's own single-instance lock is the
+    # backstop, and the message prints the pidfile path so a recycled-PID false
+    # positive is self-recoverable. (A name check is a macOS-tester follow-up; the
+    # Windows sibling checks the process name via Get-Process.)
+    if [[ -n "$existing_pid" ]] && kill -0 "$existing_pid" 2>/dev/null; then
+      echo "PRism desktop is already running (pid $existing_pid, pidfile $pidfile). Close the window first; a re-run would just refocus it. Nothing rebuilt. If it is NOT running, delete that pidfile and retry." >&2
+      exit 0
+    fi
+  fi
+
   # --- preflight: Node + npm presence, .NET SDK major >= 10 ---
   command -v node   >/dev/null 2>&1 || { node_remediation;   exit 1; }
   command -v npm    >/dev/null 2>&1 || { node_remediation;   exit 1; }
   command -v dotnet >/dev/null 2>&1 || { dotnet_remediation; exit 1; }
 
+  # Capture `dotnet --list-sdks` separately (not inline in a pipeline command
+  # substitution): under set -e + pipefail, a non-zero exit from a corrupt .NET
+  # install would otherwise abort main() before the remediation could print. The
+  # `|| sdk_exit=$?` suppresses set -e on that line while capturing the code.
+  local sdk_list sdk_exit=0
+  sdk_list="$(dotnet --list-sdks 2>&1)" || sdk_exit=$?
+  if [[ "$sdk_exit" -ne 0 ]]; then
+    dotnet_remediation "'dotnet --list-sdks' exited $sdk_exit — is the .NET install healthy?"
+    exit 1
+  fi
   local max_major
-  max_major="$(dotnet --list-sdks | dotnet_sdk_max_major)"
+  max_major="$(printf '%s\n' "$sdk_list" | dotnet_sdk_max_major)"
   if [[ -z "$max_major" || "$max_major" -lt 10 ]]; then
     dotnet_remediation "Found SDK major: ${max_major:-none}."
     exit 1
-  fi
-
-  # --- single-instance short-circuit BEFORE the slow build ---
-  if [[ -f "$pidfile" ]]; then
-    local existing_pid
-    existing_pid="$(cat "$pidfile" 2>/dev/null || true)"
-    if [[ -n "$existing_pid" ]] && kill -0 "$existing_pid" 2>/dev/null; then
-      echo "PRism desktop is already running (pid $existing_pid). Close the window first; a re-run would just refocus it. Nothing rebuilt." >&2
-      exit 0
-    fi
   fi
 
   # --- host RID from arch ---
@@ -109,7 +126,7 @@ main() {
   local sidecar electron
   sidecar="$publish_dir/PRism.Web"
   electron="$desktop_dir/node_modules/.bin/electron"
-  [[ -f "$sidecar" ]]  || { echo "Sidecar not found at $sidecar. Run without --skip-build." >&2; exit 1; }
+  [[ -x "$sidecar" ]]  || { echo "Sidecar not found (or not executable) at $sidecar. Run without --skip-build." >&2; exit 1; }
   [[ -x "$electron" ]] || { echo "Electron not found at $electron. Run without --skip-build so 'npm ci' installs it." >&2; exit 1; }
 
   # 5. Launch detached. nohup ignores SIGHUP; disown drops the job so closing
