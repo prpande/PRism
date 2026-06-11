@@ -27,7 +27,12 @@ export function ComposerModals({
 }: ComposerModalsProps) {
   return (
     <>
-      <Modal open={discardModalOpen} title="Discard saved draft?" defaultFocus="cancel" onClose={onDiscardCancel}>
+      <Modal
+        open={discardModalOpen}
+        title="Discard saved draft?"
+        defaultFocus="cancel"
+        onClose={onDiscardCancel}
+      >
         <p>{discardBody}</p>
         <button type="button" data-modal-role="cancel" onClick={onDiscardCancel}>
           Cancel

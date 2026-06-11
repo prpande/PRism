@@ -25,7 +25,9 @@ describe('ComposerActionsBar', () => {
   it('renders buttons in canonical order for an open PR', () => {
     const { container } = render(<ComposerActionsBar {...baseProps} />);
     const bar = container.querySelector('.composer-actions') as HTMLElement;
-    const buttons = within(bar).getAllByRole('button').map((b) => b.textContent);
+    const buttons = within(bar)
+      .getAllByRole('button')
+      .map((b) => b.textContent);
     // AiComposerAssistant renders null (AI gate off in tests); badge is a span, not a button.
     expect(buttons).toEqual(['Preview', 'Discard', 'Add to review', 'Comment']);
   });

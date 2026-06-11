@@ -7,8 +7,12 @@ const ev = (e: K) => e as unknown as KeyboardEvent;
 
 describe('matchComposerKey', () => {
   it('Cmd+Shift+P → toggle-preview', () => {
-    expect(matchComposerKey(ev({ metaKey: true, shiftKey: true, key: 'P' }))).toBe('toggle-preview');
-    expect(matchComposerKey(ev({ ctrlKey: true, shiftKey: true, key: 'p' }))).toBe('toggle-preview');
+    expect(matchComposerKey(ev({ metaKey: true, shiftKey: true, key: 'P' }))).toBe(
+      'toggle-preview',
+    );
+    expect(matchComposerKey(ev({ ctrlKey: true, shiftKey: true, key: 'p' }))).toBe(
+      'toggle-preview',
+    );
   });
   it('Cmd/Ctrl+Enter → submit', () => {
     expect(matchComposerKey(ev({ metaKey: true, key: 'Enter' }))).toBe('submit');

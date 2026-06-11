@@ -244,7 +244,9 @@ describe('InlineCommentComposer — button order (Task 6)', () => {
   it('renders composer-actions buttons in canonical order (open PR)', () => {
     render(<Harness initialBody="abc" />);
     const bar = document.querySelector('.composer-actions') as HTMLElement;
-    const labels = within(bar).getAllByRole('button').map((b) => b.textContent);
+    const labels = within(bar)
+      .getAllByRole('button')
+      .map((b) => b.textContent);
     // AiComposerAssistant renders null (AI gate off in tests); badge is a <span>, not a button.
     expect(labels).toEqual(['Preview', 'Discard', 'Add to review', 'Comment']);
   });

@@ -49,7 +49,11 @@ export function ComposerActionsBar({
         {previewMode ? 'Edit' : 'Preview'}
       </button>
 
-      <span className={`composer-badge composer-badge--${badge}`} role="status" data-testid="composer-badge">
+      <span
+        className={`composer-badge composer-badge--${badge}`}
+        role="status"
+        data-testid="composer-badge"
+      >
         {badge}
       </span>
 

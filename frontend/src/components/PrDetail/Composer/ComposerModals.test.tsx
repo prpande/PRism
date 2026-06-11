@@ -12,7 +12,8 @@ const base = {
   onRecoveryDiscard: vi.fn(),
   discardBody: 'This will remove the saved draft on this line.',
   recoveryTitle: 'Draft deleted elsewhere',
-  recoveryBody: 'This draft was deleted from another window or by reload. Re-create it with the current text, or discard?',
+  recoveryBody:
+    'This draft was deleted from another window or by reload. Re-create it with the current text, or discard?',
 };
 
 describe('ComposerModals', () => {
