@@ -257,4 +257,36 @@ public sealed class GitHubPrEnricherTests
         result[0].AvatarUrl.Should().Be("https://avatars.githubusercontent.com/u/1?v=4");
         result[0].HeadSha.Should().Be("abc123"); // enrichment still applied alongside
     }
+
+    [Fact]
+    public async Task Malformed_pr_detail_is_dropped_other_prs_still_enriched()
+    {
+        // PR 1 returns a body missing "head"; PR 2 returns a valid body. PR 1 is dropped,
+        // PR 2 survives — one poisoned PR detail must not abort the whole enrich tick.
+        var handler = new FakeHttpMessageHandler(req =>
+        {
+            var isPr1 = req.RequestUri!.AbsolutePath.EndsWith("/pulls/1", StringComparison.Ordinal);
+            return Respond(HttpStatusCode.OK, isPr1 ? """{"additions":1}""" : PullsResponse);
+        });
+        var sut = BuildSut(handler);
+
+        var result = await sut.EnrichAsync([Raw(1), Raw(2)], default);
+
+        result.Should().ContainSingle();
+        result[0].Reference.Number.Should().Be(2);
+    }
+
+    [Fact]
+    public async Task Transient_5xx_on_one_pr_still_propagates()
+    {
+        // A 5xx is a transport failure, NOT a malformed item — it must propagate (the JSON
+        // guard does not swallow it), so the poller can skip and retry the whole tick.
+        var handler = new FakeHttpMessageHandler(_ =>
+            Respond(HttpStatusCode.InternalServerError, "{}"));
+        var sut = BuildSut(handler);
+
+        var act = async () => await sut.EnrichAsync([Raw(1)], default);
+
+        await act.Should().ThrowAsync<HttpRequestException>();
+    }
 }

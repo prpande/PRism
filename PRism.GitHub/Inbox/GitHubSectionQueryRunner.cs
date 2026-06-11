@@ -127,32 +127,42 @@ public sealed partial class GitHubSectionQueryRunner : ISectionQueryRunner
         var result = new List<RawPrInboxItem>();
         if (!doc.RootElement.TryGetProperty("items", out var items)) return result;
 
+        // The items[] EnumerateArray() above stays outside this try — a non-array body is a
+        // section-level failure isolated by QueryAllAsync's per-section catch. Here we isolate a
+        // single malformed *item* so one poisoned search result degrades that item, not the section. (#322)
         foreach (var item in items.EnumerateArray())
         {
-            var prUrl = item.GetProperty("pull_request").GetProperty("html_url").GetString() ?? "";
-            if (!Uri.TryCreate(prUrl, UriKind.Absolute, out var prUri)) continue;
-            var path = prUri.AbsolutePath.Trim('/').Split('/');
-            if (path.Length < 4 || path[2] != "pull") continue;
-            if (!int.TryParse(path[3], out var n)) continue;
+            try
+            {
+                var prUrl = item.GetProperty("pull_request").GetProperty("html_url").GetString() ?? "";
+                if (!Uri.TryCreate(prUrl, UriKind.Absolute, out var prUri)) continue;
+                var path = prUri.AbsolutePath.Trim('/').Split('/');
+                if (path.Length < 4 || path[2] != "pull") continue;
+                if (!int.TryParse(path[3], out var n)) continue;
 
-            var repo = $"{path[0]}/{path[1]}";
-            var userEl = item.GetProperty("user");
-            var login = userEl.GetProperty("login").GetString() ?? "";
-            var avatarUrl = userEl.TryGetProperty("avatar_url", out var av) && av.ValueKind == JsonValueKind.String
-                ? av.GetString() : null;
-            var title = item.GetProperty("title").GetString() ?? "";
-            var updated = item.GetProperty("updated_at").GetDateTimeOffset();
-            var comments = item.TryGetProperty("comments", out var c) ? c.GetInt32() : 0;
+                var repo = $"{path[0]}/{path[1]}";
+                var userEl = item.GetProperty("user");
+                var login = userEl.GetProperty("login").GetString() ?? "";
+                var avatarUrl = userEl.TryGetProperty("avatar_url", out var av) && av.ValueKind == JsonValueKind.String
+                    ? av.GetString() : null;
+                var title = item.GetProperty("title").GetString() ?? "";
+                var updated = item.GetProperty("updated_at").GetDateTimeOffset();
+                var comments = item.TryGetProperty("comments", out var c) ? c.GetInt32() : 0;
 
-            result.Add(new RawPrInboxItem(
-                new PrReference(path[0], path[1], n),
-                title, login, repo,
-                updated, updated, // pushed-at not in Search API; placeholder, refined in fan-out
-                comments,
-                0, 0, // additions/deletions not in Search API; refined in fan-out
-                "",   // head_sha not in Search API; refined in fan-out
-                1,    // iteration approx
-                AvatarUrl: avatarUrl));
+                result.Add(new RawPrInboxItem(
+                    new PrReference(path[0], path[1], n),
+                    title, login, repo,
+                    updated, updated, // pushed-at not in Search API; placeholder, refined in fan-out
+                    comments,
+                    0, 0, // additions/deletions not in Search API; refined in fan-out
+                    "",   // head_sha not in Search API; refined in fan-out
+                    1,    // iteration approx
+                    AvatarUrl: avatarUrl));
+            }
+            catch (Exception ex) when (InboxJsonGuard.IsMalformedItem(ex))
+            {
+                Log.ItemSkipped(_log, ex);
+            }
         }
         return result;
     }
@@ -167,5 +177,8 @@ public sealed partial class GitHubSectionQueryRunner : ISectionQueryRunner
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "GitHub section '{Section}' query failed; section will be empty this tick")]
         internal static partial void SectionQueryFailed(ILogger logger, Exception ex, string section);
+
+        [LoggerMessage(Level = LogLevel.Debug, Message = "GitHub search item skipped (malformed JSON shape)")]
+        internal static partial void ItemSkipped(ILogger logger, Exception ex);
     }
 }

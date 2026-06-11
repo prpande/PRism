@@ -329,6 +329,33 @@ public sealed class GitHubSectionQueryRunnerTests
         return $$"""{ "items": [ {{string.Join(",", items)}} ] }""";
     }
 
+    [Fact]
+    public async Task One_malformed_item_is_skipped_section_keeps_the_good_item()
+    {
+        // items[] has one valid PR and one missing pull_request.html_url / title.
+        const string mixed = """
+        {
+          "items": [
+            {
+              "number": 7, "title": "Good PR",
+              "user": { "login": "amelia" },
+              "updated_at": "2026-05-06T10:00:00Z",
+              "comments": 1,
+              "pull_request": { "html_url": "https://github.com/acme/api/pull/7" }
+            },
+            { "number": 8, "user": {} }
+          ]
+        }
+        """;
+        var handler = new FakeHttpMessageHandler(_ => Respond(HttpStatusCode.OK, mixed));
+        var sut = BuildSut(handler);
+
+        var result = await sut.QueryAllAsync(new HashSet<string> { "review-requested" }, default);
+
+        result["review-requested"].Should().ContainSingle();
+        result["review-requested"][0].Reference.Number.Should().Be(7);
+    }
+
     private static HttpResponseMessage Respond(HttpStatusCode code, string body) => new(code)
     {
         Content = new StringContent(body, Encoding.UTF8, "application/json"),
