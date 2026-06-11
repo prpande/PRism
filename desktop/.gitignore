@@ -8,3 +8,7 @@ dev-sidecar/
 sidecar/
 # Playwright _electron e2e output (traces, screenshots) — regenerated each run.
 test-results/
+
+# Framework-dependent dev sidecar published by scripts/run-desktop.* (NOT the
+# packaging sidecar/ dir, which holds the self-contained CI-renamed artifact).
+.dev-sidecar/
