@@ -49,8 +49,11 @@ rid_for_arch() {
 main() {
   set -euo pipefail
 
-  local skip_build=0
-  [[ "${1:-}" == "--skip-build" ]] && skip_build=1
+  # --skip-build is position-independent (parity with the Windows -SkipBuild switch).
+  local skip_build=0 arg
+  for arg in "$@"; do
+    [[ "$arg" == "--skip-build" ]] && skip_build=1
+  done
 
   local repo_root desktop_dir publish_dir data_dir log pidfile
   repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -59,7 +62,9 @@ main() {
   # .NET's Environment.SpecialFolder.LocalApplicationData resolves to ~/.local/share on
   # macOS (XDG) — where the sidecar's DataDirectoryResolver self-resolves the store. Match
   # it so the log/pidfile sit beside the real data dir (NOT ~/Library/Application Support,
-  # which the app never uses).
+  # which the app never uses). If PRISM_DATA_DIR is set, the launch subshell below inherits
+  # it from this env, so main.ts:resolveDataDir() points the sidecar at the SAME dir the
+  # log/pidfile use — the two stay aligned deliberately, not by accident.
   data_dir="${PRISM_DATA_DIR:-$HOME/.local/share/PRism}"
   log="$data_dir/run-desktop.log"
   pidfile="$data_dir/run-desktop.pid"
