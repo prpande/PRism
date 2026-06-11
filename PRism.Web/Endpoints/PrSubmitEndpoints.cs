@@ -344,7 +344,7 @@ internal static class PrSubmitEndpoints
                 // Log the detailed hre (full message incl. any raw GitHub body) server-side BEFORE
                 // returning the sanitized DTO — MapGithubError strips the detail from the client response.
                 s_ownDiscardGitHubFailed(loggerFactory.CreateLogger(LoggerCategory), sessionKey, hre);
-                return Results.Json(MapGithubError(hre), statusCode: StatusCodes.Status502BadGateway);
+                return GitHubErrorMapper.ToResult(hre);
             }
 #pragma warning disable CA1031  // catch-all so a rare GitHub SDK exception (non-HTTP) still surfaces a 502 instead of a bare 500
             catch (Exception ex) when (ex is not OperationCanceledException)
@@ -374,9 +374,9 @@ internal static class PrSubmitEndpoints
                     // Non-404 GitHub error: surface as 502. Do NOT clear local stamps — the pending
                     // review still exists on GitHub, so a re-detect on the next submit would catch it.
                     // Log the detailed hre (full message incl. any raw GitHub body) server-side BEFORE
-                    // returning the sanitized DTO — MapGithubError strips the detail from the client response.
+                    // returning the sanitized DTO — GitHubErrorMapper strips the detail from the client response.
                     s_ownDiscardGitHubFailed(loggerFactory.CreateLogger(LoggerCategory), sessionKey, hre);
-                    return Results.Json(MapGithubError(hre), statusCode: StatusCodes.Status502BadGateway);
+                    return GitHubErrorMapper.ToResult(hre);
                 }
 #pragma warning disable CA1031  // catch-all so a rare GitHub SDK exception (non-HTTP) still surfaces a 502 instead of a bare 500
                 catch (Exception ex) when (ex is not OperationCanceledException)
@@ -605,31 +605,6 @@ internal static class PrSubmitEndpoints
         // normalisation (LineMatching.SplitLines TrimEnd('\r')); otherwise a CRLF-ending file's
         // imported draft would never exact-match and would land Stale / mis-anchor on the next Reload.
         return (lines[t.LineNumber - 1].TrimEnd('\r'), DraftStatus.Draft);
-    }
-
-    // Maps an HttpRequestException to a SubmitErrorDto using the same code vocabulary as
-    // PrRootCommentEndpoints.MapGithubError. Private copy to avoid cross-class coupling (each file
-    // is internal static; refactoring to a shared helper is a future cleanup if a third consumer
-    // appears). Codes must stay in sync when either file adds a new status mapping.
-    //
-    // The DTO MESSAGE is a STATIC, sanitized per-code string — NOT hre.Message. hre.Message can
-    // embed up to 512 bytes of GitHub's raw error RESPONSE BODY (see GitHubReviewService.IssueComments),
-    // so forwarding it to the browser would leak raw upstream error detail. The detailed hre is
-    // logged server-side via s_ownDiscardGitHubFailed at each catch site before this maps the
-    // sanitized client response.
-    private static SubmitErrorDto MapGithubError(HttpRequestException hre)
-    {
-        var (code, message) = hre.StatusCode switch
-        {
-            System.Net.HttpStatusCode.Forbidden =>
-                ("github-forbidden", "GitHub rejected the request (forbidden). Check your token's permissions."),
-            System.Net.HttpStatusCode.Unauthorized =>
-                ("github-unauthorized", "GitHub authentication failed. Reconnect your account."),
-            System.Net.HttpStatusCode.UnprocessableEntity =>
-                ("github-validation-error", "GitHub rejected the request as invalid."),
-            _ => ("github-network-error", "Couldn't reach GitHub. Try again."),
-        };
-        return new SubmitErrorDto(code, message);
     }
 
     // The pipeline's onDuplicateMarker notices look like "draft <id>: …" or "reply <id>: …". Pull

@@ -145,7 +145,7 @@ internal static class PrRootCommentEndpoints
         catch (HttpRequestException hre)
         {
             s_rootCommentFailed(loggerFactory.CreateLogger(typeof(PrRootCommentEndpoints).FullName!), sessionKey, hre);
-            return Results.Json(MapGithubError(hre), statusCode: StatusCodes.Status502BadGateway);
+            return GitHubErrorMapper.ToResult(hre);
         }
 #pragma warning disable CA1031  // catch-all so a rare GitHub SDK exception (non-HTTP) still surfaces a 502 instead of a bare 500
         catch (Exception ex)
@@ -195,24 +195,4 @@ internal static class PrRootCommentEndpoints
         }, ct).ConfigureAwait(false);
     }
 
-    // Maps an HttpRequestException to a SubmitErrorDto. The DTO MESSAGE is a STATIC, sanitized
-    // per-code string — NOT hre.Message. hre.Message can embed up to 512 bytes of GitHub's raw
-    // error RESPONSE BODY (see GitHubReviewService.IssueComments), so forwarding it to the browser
-    // would leak raw upstream error detail. The detailed hre is logged server-side via
-    // s_rootCommentFailed at the catch site before this maps the sanitized client response.
-    private static SubmitErrorDto MapGithubError(HttpRequestException hre)
-    {
-        var status = hre.StatusCode;
-        var (code, message) = status switch
-        {
-            System.Net.HttpStatusCode.Forbidden =>
-                ("github-forbidden", "GitHub rejected the request (forbidden). Check your token's permissions."),
-            System.Net.HttpStatusCode.Unauthorized =>
-                ("github-unauthorized", "GitHub authentication failed. Reconnect your account."),
-            System.Net.HttpStatusCode.UnprocessableEntity =>
-                ("github-validation-error", "GitHub rejected the request as invalid."),
-            _ => ("github-network-error", "Couldn't reach GitHub. Try again."),
-        };
-        return new SubmitErrorDto(code, message);
-    }
 }
