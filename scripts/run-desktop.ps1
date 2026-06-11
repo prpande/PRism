@@ -140,6 +140,15 @@ function Assert-Platform {
     if (-not $IsWindows) {
         throw "run-desktop.ps1 is the Windows launcher. On macOS run scripts/run-desktop.sh instead."
     }
+    # The detached launch spawns via WMI (Win32_Process.Create). A locked-down sandbox
+    # or container may lack WMI; probe cheaply and fail HERE (before the multi-minute
+    # build) with a clear message rather than deep inside the launch with a cryptic
+    # Invoke-CimMethod error. Mirrors scripts/serve-detached.ps1:Assert-Platform.
+    try {
+        $null = Get-CimClass -ClassName Win32_Process -ErrorAction Stop
+    } catch {
+        throw "WMI (Win32_Process) is not reachable in this environment, so the detached launch cannot spawn. Underlying error: $($_.Exception.Message)"
+    }
 }
 
 function Assert-CommandPresent {
@@ -156,6 +165,11 @@ function Invoke-Preflight {
     Assert-CommandPresent -Name 'npm'  -Remediation (Get-NodeRemediation)
     Assert-CommandPresent -Name 'dotnet' -Remediation (Get-DotnetRemediation)
     $sdks = @(& dotnet --list-sdks)
+    if ($LASTEXITCODE -ne 0) {
+        # dotnet is on PATH but `--list-sdks` failed (e.g. a corrupt install). Surface
+        # that directly instead of falling into the "found majors: " empty-list message.
+        throw "Preflight failed: 'dotnet --list-sdks' exited $LASTEXITCODE. Is the .NET install healthy?"
+    }
     if (-not (Test-HasDotnetSdkAtLeast -ListSdksOutput $sdks -MinMajor 10)) {
         $majors = (Get-DotnetSdkMajors -ListSdksOutput $sdks) -join ', '
         Write-Host (Get-DotnetRemediation -FoundSdks @($sdks)) -ForegroundColor Yellow
