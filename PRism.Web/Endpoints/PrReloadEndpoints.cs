@@ -1,5 +1,4 @@
 using System.Collections.Concurrent;
-using System.Text.RegularExpressions;
 using PRism.Core;
 using PRism.Core.Contracts;
 using PRism.Core.Events;
@@ -12,9 +11,6 @@ namespace PRism.Web.Endpoints;
 
 internal static class PrReloadEndpoints
 {
-    private static readonly Regex Sha40 = new("^[0-9a-f]{40}$", RegexOptions.Compiled);
-    private static readonly Regex Sha64 = new("^[0-9a-f]{64}$", RegexOptions.Compiled);
-
     private static readonly IReadOnlyList<string> ReloadFieldsTouched =
         new[] { "draft-comments", "draft-replies", "draft-verdict-status" };
 
@@ -76,7 +72,7 @@ internal static class PrReloadEndpoints
         // ArgumentNullException → 500 instead of returning 400.
         if (string.IsNullOrEmpty(request.HeadSha))
             return Results.BadRequest(new { error = "head-sha-missing" });
-        if (!Sha40.IsMatch(request.HeadSha) && !Sha64.IsMatch(request.HeadSha))
+        if (!SharedRegexes.Sha40().IsMatch(request.HeadSha) && !SharedRegexes.Sha64().IsMatch(request.HeadSha))
             return Results.UnprocessableEntity(new { error = "sha-format-invalid" });
 
         var sem = PerPrSemaphores.GetOrAdd(refKey, _ => new SemaphoreSlim(1, 1));

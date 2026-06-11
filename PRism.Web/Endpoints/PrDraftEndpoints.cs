@@ -12,8 +12,6 @@ namespace PRism.Web.Endpoints;
 
 internal static class PrDraftEndpoints
 {
-    private static readonly Regex Sha40 = new("^[0-9a-f]{40}$", RegexOptions.Compiled);
-    private static readonly Regex Sha64 = new("^[0-9a-f]{64}$", RegexOptions.Compiled);
     private static readonly Regex ParentThreadId = new("^PRRT_[A-Za-z0-9_-]{1,128}$", RegexOptions.Compiled);
     private const int BodyMarkdownMaxChars = 8192;
 
@@ -453,7 +451,7 @@ internal static class PrDraftEndpoints
                         return Results.UnprocessableEntity(new { error = "body-too-large" });
                     if (string.IsNullOrEmpty(ndc.AnchoredSha))
                         return Results.BadRequest(new { error = "anchored-sha-missing" });
-                    if (!Sha40.IsMatch(ndc.AnchoredSha) && !Sha64.IsMatch(ndc.AnchoredSha))
+                    if (!SharedRegexes.Sha40().IsMatch(ndc.AnchoredSha) && !SharedRegexes.Sha64().IsMatch(ndc.AnchoredSha))
                         return Results.UnprocessableEntity(new { error = "sha-format-invalid" });
                     if (!IsCanonicalFilePath(ndc.FilePath))
                         return Results.UnprocessableEntity(new { error = "file-path-invalid" });

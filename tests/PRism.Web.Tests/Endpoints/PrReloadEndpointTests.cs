@@ -146,6 +146,19 @@ public class PrReloadEndpointTests : IClassFixture<PRismWebApplicationFactory>
     }
 
     [Fact]
+    public async Task Reload_uppercase_sha_is_accepted_not_422()
+    {
+        var client = ClientWithTab();
+        var upper = new string('A', 40); // 40 uppercase hex — rejected on main (lowercase-only regex)
+
+        var resp = await client.PostAsJsonAsync("/api/pr/acme/api/1003/reload", new { headSha = upper });
+
+        // The point: it must NOT be rejected as sha-format-invalid. Any downstream
+        // outcome (no-session 404, conflict, ok) is fine — just not the 422 format reject.
+        resp.StatusCode.Should().NotBe(HttpStatusCode.UnprocessableEntity);
+    }
+
+    [Fact]
     public async Task Reload_session_not_found_returns_404()
     {
         var client = ClientWithTab();

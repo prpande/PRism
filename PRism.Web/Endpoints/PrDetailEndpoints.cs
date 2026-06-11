@@ -255,13 +255,7 @@ internal static partial class PrDetailEndpoints
 
     private static bool IsValidGitOid(string s) =>
         // SHA-1 (40 hex) or SHA-256 (64 hex). Anything else → 422 /sha/invalid.
-        GitOid40Regex().IsMatch(s) || GitOid64Regex().IsMatch(s);
-
-    [GeneratedRegex("^[0-9a-fA-F]{40}$")]
-    private static partial Regex GitOid40Regex();
-
-    [GeneratedRegex("^[0-9a-fA-F]{64}$")]
-    private static partial Regex GitOid64Regex();
+        SharedRegexes.Sha40().IsMatch(s) || SharedRegexes.Sha64().IsMatch(s);
 
     // Spec § 3 — X-PRism-Tab-Id allowlist. 1-64 chars from [a-zA-Z0-9_-]. Anything else is
     // rejected with /viewed/tab-id-missing 422 by mark-viewed (Task 4), reload (Task 5),
