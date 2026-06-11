@@ -57,7 +57,11 @@ the path by which a future writer or migration introduces it.
 4. `frontend/src/components/PrDetail/PrHeader.tsx:596` — `!(both-null)` (complement).
 5–7. `frontend/src/components/PrDetail/SubmitDialog/SubmitDialog.tsx:123, 302, 450` — both-null (`:450` complement).
 
-## The design decision (this is what the gate is for)
+## The design decision (settled — kept as the rationale record)
+
+> **Resolved 2026-06-11: Variant B + full consolidation (owner-approved).** The A-vs-B exposition
+> below is retained as the decision record the owner weighed — including the "Truthful by default"
+> tension — not as an open gate. The plan, tests, and ACs implement Variant B.
 
 What should `(FilePath: null, LineNumber: 5)` *do*? Two coherent designs:
 
@@ -73,18 +77,25 @@ to), so `LineNumber` is meaningless when `FilePath is null`. Consequences:
 **Why I recommend it over the issue's own suggestion:**
 - It matches the **documented** invariant (`DraftReconciliationPipeline.cs:87`). The both-null
   variant is the over-specified, accidental one.
-- **Safety property (qualified): no user-authored text is silently dropped, *given the
-  at-most-one-PR-root invariant*.** Every draft is either a line comment (FilePath set) or PR-root
-  (FilePath null → shipped as body). The only text removed from a submit is a Stale draft, which is
-  *surfaced to the user as a stale row* — never silent.
-  - **Caveat (adversarial review):** the single-root invariant is enforced by the PR-root composer
-    upsert at `PrDraftEndpoints.cs:265`, which uses the **both-null** lookup. A half-null ghost is
-    invisible to that lookup, so a user typing in the summary composer could create a *second*
-    filePath-null draft; once `ExtractPrRootBody` is `FilePath`-only and uses `FirstOrDefault`, one
-    of the two bodies would be dropped. **This is why the upsert site (#7) must adopt the shared
-    `FilePath`-only predicate in the *same* change** — the upsert then finds and overwrites the
-    ghost instead of siblings it. A unit test must construct two filePath-null drafts and assert no
-    body is silently dropped. Even unqualified, Variant B is strictly better than `main` here.
+- **Safety property (qualified): the user's *PR-root body text* (`BodyMarkdown`) is never silently
+  dropped from a submit, *given at most one PR-root draft*.** Every draft is either a line comment
+  (FilePath set) or PR-root (FilePath null → shipped as body). The only text removed from a submit
+  is a Stale draft, which is *surfaced to the user as a stale row* — never silent. (This property is
+  about text preservation; the separate "Truthful by default" tension below is about Variant B
+  *silently normalizing the LineNumber* — a different concern, not covered by this property.)
+  - **Caveat (adversarial review) — what the upsert fix does and does not do.** The realistic way a
+    second root could arise: a half-null ghost `(null, 5)` pre-exists, the user types a summary, and
+    the composer upsert at `PrDraftEndpoints.cs:265` — which on `main` looks up with the **both-null**
+    predicate — fails to see the ghost and *inserts a new* `(null, null)` root, leaving two
+    filePath-null drafts; `ExtractPrRootBody`'s `FirstOrDefault` (FilePath-only) then ships one and
+    strands the other. **Adopting the shared `FilePath`-only predicate at the upsert (#7) closes this
+    path:** the upsert now *finds and updates the ghost in place* instead of inserting a sibling, so
+    no second root is created. **What it does NOT do:** the upsert is update-in-place and removes no
+    siblings, so it cannot *collapse two roots that already co-exist* — only the V6→V7 migration
+    (`:262-280`) folds pre-existing multiples, and only at load. Two simultaneously-present roots are
+    a doubly-unreachable shape (requires two anomalous drafts and no intervening migration); we
+    document the residual rather than add a live collapse path. Even so, Variant B is strictly better
+    than `main` on every path here.
 - Smaller blast radius on a B2 surface: no new validation/repair machinery, no new reject path in
   the migration or write endpoints. We change predicates to agree on the discriminator that's
   already documented; we don't add a gate that can itself reject legitimate data.
@@ -189,15 +200,21 @@ you to make at the gate.
   - Seam (confirmed by feasibility review): `ExtractPrRootBody(session)` is the body argument to
     `BeginPendingReviewAsync` (`SubmitPipeline.cs:192`), captured by `InMemoryReviewSubmitter` as
     `InMemoryPendingReview.SummaryBody` (read via `GetPending(ref)`). Assert `SummaryBody == "ghost"`
-    on head / `""` on main. Target the **Begin** step's summary body, not a finalize body; mirror
-    `StaleCommitOidRetryTests`.
+    on head / `""` on main. **Observe the body *before* Finalize:** a fully-successful submit calls
+    `FinalizePendingReviewAsync` → `_pendingByRef.Remove`, after which `GetPending` returns null and
+    `.SummaryBody` NREs. Inject a Finalize failure to preserve the pending snapshot. The exact
+    working template is `AttachThreadsTests.AttachThreads_filters_pr_root_drafts_silently`
+    (`AttachThreadsTests.cs:120`) — same file the fix edits — not `StaleCommitOidRetryTests`.
 - **Reconciliation test:** the same `(null, 5)` draft passes through reconciliation as PR-root
   (unchanged) — documents that reconciliation and submit now *agree*.
-- **Two-root test (single-root invariant, from adversarial review):** a session with **two**
-  filePath-null drafts (e.g. one `(null, null, "real")` plus one `(null, 5, "ghost")`) must not
-  silently drop either body. Asserts the upsert-at-`:265` consolidation maintains at-most-one-root
-  and that `ExtractPrRootBody`'s `FirstOrDefault` does not strand the other's text. This is the test
-  that backs the qualified safety property.
+- **Upsert single-root test (from adversarial review):** start from a session whose only draft is a
+  half-null ghost `(null, 5, "ghost")`; exercise the PR-root composer upsert (`PrDraftEndpoints:265`)
+  with a summary body. **On head:** the upsert (now FilePath-only) updates the ghost in place →
+  exactly **one** filePath-null draft → submit ships the summary, nothing stranded. **On main:** the
+  upsert (both-null) misses the ghost and inserts a second root → two filePath-null drafts. This
+  asserts the achievable property — *the upsert no longer creates a second root when a ghost
+  pre-exists* — not the stronger "collapses two pre-existing roots," which no live write path does
+  (see the safety caveat). Document, don't assert-away, the two-pre-existing-roots residual.
 - **Frontend:** a unit test on `isPrRootDraft` pins the shared helper. No FE *behavior-change* test
   is needed for real data (the half-null shape is unreachable from the typed DTO), but the helper
   test prevents the internal FE split from re-emerging.
@@ -208,13 +225,17 @@ you to make at the gate.
       property), frontend `isPrRootDraft` — and every *PR-root-identity* site calls it. The two
       *attachability* guards (`SubmitPipeline:233`, `PrCommentEndpoints:72`) are explicitly carved
       out and commented as a different concern, not consolidated.
-- [ ] The half-null `(FilePath: null, LineNumber: 5)` shape has the owner-decided behavior (Variant
-      A or B — see "The design decision"), with a red-on-main test demonstrating today's silent drop
-      and green-on-head.
-- [ ] The at-most-one-PR-root invariant survives a half-null ghost: the upsert at
-      `PrDraftEndpoints:265` consumes the shared predicate, and a two-filePath-null-draft test
-      asserts no body is silently dropped.
-- [ ] Reconciliation, migration, `OverviewTab`, and submit agree on what "PR-root" means.
+- [ ] The half-null `(FilePath: null, LineNumber: 5)` shape is handled per **Variant B**
+      (owner-approved 2026-06-11) — shipped as the review body — with a red-on-main test
+      demonstrating today's silent drop and green-on-head.
+- [ ] The upsert at `PrDraftEndpoints:265` consumes the shared predicate so a pre-existing half-null
+      ghost is updated in place rather than shadowed by a newly-created second root; the upsert
+      single-root test asserts the user's summary still ships. (Collapsing two *already*-co-existing
+      roots is out of scope — only the V6→V7 migration folds multiples; documented as a residual.)
+- [ ] Reconciliation, `OverviewTab`, and submit consume the one typed predicate and agree on what
+      "PR-root" means. The migration stays intentionally narrower (`side == "pr" && file-path ==
+      null`, a superset-restriction for historical-data safety) and references the canonical
+      predicate in a comment rather than calling it — this divergence is by design, not drift.
 - [ ] `PrCommentEndpoints.cs:72` headless-line-comment rejection semantics verified preserved (see Risks).
 
 ## Risks / things to verify during TDD
