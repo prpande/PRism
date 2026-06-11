@@ -5,6 +5,7 @@ import { ComposerMarkdownPreview } from './ComposerMarkdownPreview';
 import styles from './InlineCommentComposer.module.css';
 import type { DraftSide, PrReference } from '../../../api/types';
 import type { ComposerOwnerKey } from '../../../hooks/useDraftSession';
+import type React from 'react';
 
 export interface InlineAnchor {
   filePath: string;
