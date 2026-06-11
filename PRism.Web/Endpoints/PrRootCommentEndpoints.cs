@@ -100,8 +100,9 @@ internal static class PrRootCommentEndpoints
             return Results.Json(new SubmitErrorDto("no-session", "No draft session for this PR."),
                 statusCode: StatusCodes.Status400BadRequest);
 
-        // Find the PR-root draft (FilePath null AND LineNumber null).
-        var rootDraft = session.DraftComments.FirstOrDefault(d => d.FilePath is null && d.LineNumber is null);
+        // Find the PR-root draft via the canonical predicate (#324 — DraftComment.IsPrRoot,
+        // FilePath-only; a draft with no file path is the PR-root regardless of LineNumber).
+        var rootDraft = session.DraftComments.FirstOrDefault(d => d.IsPrRoot);
         if (rootDraft is null)
             return Results.Json(new SubmitErrorDto("no-root-draft", "No PR-root draft exists for this PR."),
                 statusCode: StatusCodes.Status400BadRequest);

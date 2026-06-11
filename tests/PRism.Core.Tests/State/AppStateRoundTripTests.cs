@@ -110,6 +110,29 @@ public class AppStateRoundTripTests
     }
 
     [Fact]
+    public void IsPrRoot_is_a_computed_predicate_and_does_not_serialize_into_state_json()
+    {
+        // #324 — IsPrRoot is a derived convenience getter, not persisted data. A getter-only
+        // property is serialized by System.Text.Json on write (it is only ignored on read),
+        // so without [JsonIgnore] it would leak an "is-pr-root" key into state.json: an
+        // unintended persisted-schema change and redundant data. Pin that it stays out.
+        var draft = new DraftComment(
+            Id: "d1",
+            FilePath: null,
+            LineNumber: null,
+            Side: "pr",
+            AnchoredSha: null,
+            AnchoredLineContent: null,
+            BodyMarkdown: "hello",
+            Status: DraftStatus.Draft,
+            IsOverriddenStale: false);
+
+        var json = JsonSerializer.Serialize(draft, JsonSerializerOptionsFactory.Storage);
+
+        Assert.DoesNotContain("is-pr-root", json, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void DraftReply_posted_fields_round_trip_and_default_null()
     {
         var reply = new DraftReply("r1", "PRRT_1", null, "body", DraftStatus.Draft, false);

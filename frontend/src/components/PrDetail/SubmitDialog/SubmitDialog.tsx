@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Modal } from '../../Modal/Modal';
 import { MarkdownRenderer } from '../../Markdown/MarkdownRenderer';
 import { VerdictPicker } from '../VerdictPicker';
+import { isPrRootDraft } from '../draftKinds';
 import { CountsBlock } from './CountsBlock';
 import { PreSubmitValidatorCard } from './PreSubmitValidatorCard';
 import { SubmitProgressIndicator } from './SubmitProgressIndicator';
@@ -117,10 +118,9 @@ export function SubmitDialog(props: Props) {
     onDiscardForeignPendingReview,
   } = props;
 
-  // The unified PR-root draft (filePath/lineNumber null) — the SAME draft the
-  // Overview-tab composer edits. Post-V7 this replaced the summary textarea.
-  const prRootDraft =
-    session.draftComments.find((d) => d.filePath === null && d.lineNumber === null) ?? null;
+  // The unified PR-root draft (filePath null is the discriminator) — the SAME draft the
+  // Overview-tab composer edits. Post-V7 this replaced the summary textarea. (#324 — shared predicate.)
+  const prRootDraft = session.draftComments.find(isPrRootDraft) ?? null;
 
   const [verdict, setVerdict] = useState<DraftVerdict | null>(session.draftVerdict);
   const [editing, setEditing] = useState(false);
@@ -298,12 +298,12 @@ export function SubmitDialog(props: Props) {
     if (!editing) {
       return { ...session, draftVerdict: verdict };
     }
-    const isPrRoot = (d: { filePath: string | null; lineNumber: number | null }) =>
-      d.filePath === null && d.lineNumber === null;
     const bodyHasContent = editingBody.trim().length >= COMPOSER_CREATE_THRESHOLD;
     const draftComments = bodyHasContent
-      ? session.draftComments.map((d) => (isPrRoot(d) ? { ...d, bodyMarkdown: editingBody } : d))
-      : session.draftComments.filter((d) => !isPrRoot(d));
+      ? session.draftComments.map((d) =>
+          isPrRootDraft(d) ? { ...d, bodyMarkdown: editingBody } : d,
+        )
+      : session.draftComments.filter((d) => !isPrRootDraft(d));
     return { ...session, draftVerdict: verdict, draftComments };
   })();
   const confirmReason = submitDisabledReason(effectiveSession, headShaDrift, validatorResults);
@@ -443,13 +443,10 @@ export function SubmitDialog(props: Props) {
 
           <section data-section="counts" className="submit-dialog__section">
             <CountsBlock
-              // The PR-root draft (filePath/lineNumber null) ships as the review
-              // body, not a thread — StepAttachThreadsAsync filters it out — so
-              // exclude it from the thread count. Matches DiscardAllDraftsButton.
-              threadCount={
-                session.draftComments.filter((d) => !(d.filePath === null && d.lineNumber === null))
-                  .length
-              }
+              // The PR-root draft (filePath null) ships as the review body, not a thread —
+              // StepAttachThreadsAsync filters it out — so exclude it from the thread count.
+              // (#324 — shared predicate.)
+              threadCount={session.draftComments.filter((d) => !isPrRootDraft(d)).length}
               replyCount={session.draftReplies.length}
             />
           </section>

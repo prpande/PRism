@@ -228,6 +228,10 @@ public sealed class SubmitPipeline
         PrReference reference, string sessionKey, string pendingReviewId, ReviewSessionState session,
         OwnPendingReviewSnapshot? detectionSnapshot, IProgress<SubmitProgressEvent> progress, CancellationToken ct)
     {
+        // #324 — this is the thread *attachability* guard, NOT the PR-root predicate (which is the
+        // FilePath-only DraftComment.IsPrRoot). Attaching a line thread needs both a file and a line:
+        // FilePath for the path, LineNumber for the `.Value` deref below. It is deliberately the
+        // both-non-null complement-with-safety-margin, not `!IsPrRoot`.
         var drafts = session.DraftComments
             .Where(d => d.Status != DraftStatus.Stale)
             .Where(d => d.FilePath is not null && d.LineNumber is not null)
@@ -640,7 +644,7 @@ public sealed class SubmitPipeline
     // matches the historic `session.DraftSummaryMarkdown ?? ""` semantics.
     private static string ExtractPrRootBody(ReviewSessionState session)
         => session.DraftComments
-            .FirstOrDefault(d => d.FilePath is null && d.LineNumber is null)?.BodyMarkdown ?? "";
+            .FirstOrDefault(d => d.IsPrRoot)?.BodyMarkdown ?? "";
 
     private static AppState WithSession(AppState state, string sessionKey, ReviewSessionState session)
     {
