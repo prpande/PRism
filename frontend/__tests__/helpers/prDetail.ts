@@ -10,15 +10,7 @@
 // field (title, headSha, the maxCommentId derived from rootComments, etc.)
 // overrides that field explicitly, so the fixture reads as "defaults plus the
 // fields this test cares about" with no hidden coupling to a default value.
-import type {
-  PrDetailDto,
-  PrDetailPr,
-  PrReference,
-  IterationDto,
-  CommitDto,
-  IssueCommentDto,
-  ReviewThreadDto,
-} from '../../src/api/types';
+import type { PrDetailDto, PrDetailPr, PrReference } from '../../src/api/types';
 
 const DEFAULT_REF: PrReference = { owner: 'octocat', repo: 'hello', number: 42 };
 
@@ -48,10 +40,10 @@ export function makePrDetailDto(overrides: Partial<PrDetailDto> = {}): PrDetailD
   return {
     pr: makePr(),
     clusteringQuality: 'ok',
-    iterations: [] as IterationDto[],
-    commits: [] as CommitDto[],
-    rootComments: [] as IssueCommentDto[],
-    reviewComments: [] as ReviewThreadDto[],
+    iterations: [],
+    commits: [],
+    rootComments: [],
+    reviewComments: [],
     timelineCapHit: false,
     ...overrides,
   };
