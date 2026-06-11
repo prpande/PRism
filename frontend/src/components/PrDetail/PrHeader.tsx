@@ -25,6 +25,7 @@ import { Skeleton } from '../Skeleton';
 import { SubmitDialog } from './SubmitDialog/SubmitDialog';
 import { OpenInGitHubButton } from './OpenInGitHubButton';
 import { ReviewActionButton } from './ReviewActionButton/ReviewActionButton';
+import { RefreshButton } from '../controls/RefreshButton';
 
 // #128/#203 — double-chevron, authored pointing UP (the expanded state, where
 // content folds toward when collapsed). The collapsed state rotates it 180° to
@@ -130,6 +131,12 @@ interface PrHeaderProps {
   htmlUrl?: string | null;
   /** True while the PR detail is cold-loading (!data && isLoading). Swaps title/author/chip slots for skeletons. */
   loading?: boolean;
+  // #344 — proactive manual refresh. When provided, the actions cluster renders a
+  // RefreshButton (before Open-in-GitHub). Absent → no button (e.g. surfaces that
+  // don't wire the refresh hook). isRefreshing/justRefreshed drive its morph state.
+  onRefresh?: () => void;
+  isRefreshing?: boolean;
+  justRefreshed?: boolean;
 }
 
 export function PrHeader({
@@ -157,6 +164,9 @@ export function PrHeader({
   closedAt,
   htmlUrl,
   loading = false,
+  onRefresh,
+  isRefreshing = false,
+  justRefreshed = false,
 }: PrHeaderProps) {
   const validatorResults: ValidatorResult[] = useAiGate('preSubmitValidators')
     ? CANNED_PRESUBMIT_VALIDATOR_RESULTS
@@ -465,6 +475,18 @@ export function PrHeader({
             rule rather than threading that logic through the skeleton. */}
         {!loading && (
           <div className={styles.prActions}>
+            {onRefresh && (
+              <RefreshButton
+                isRefreshing={isRefreshing}
+                justRefreshed={justRefreshed}
+                onRefresh={onRefresh}
+                label="Refresh PR"
+                refreshingLabel="Refreshing PR…"
+                title="Refresh PR"
+                testId="pr-refresh-button"
+                confirmTestId="pr-refresh-confirm"
+              />
+            )}
             <OpenInGitHubButton href={htmlUrl} />
             <ReviewActionButton
               session={session ?? EMPTY_SESSION}
