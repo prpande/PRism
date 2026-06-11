@@ -67,8 +67,10 @@ public sealed class DraftReconciliationPipeline
         {
             // PR-root drafts (no anchor) pass through. Their override flag — whether cleared
             // above by head-shift or carried in fresh — is observationally inert because
-            // PR-root drafts can never become Stale through reconciliation.
-            if (draft.FilePath is null)
+            // PR-root drafts can never become Stale through reconciliation. #324 — consume the
+            // canonical FilePath-only predicate (DraftComment.IsPrRoot); this is the discriminator
+            // this comment historically documented as "the only field that distinguishes them".
+            if (draft.IsPrRoot)
             {
                 reconciledDrafts.Add(new ReconciledDraft(
                     Id: draft.Id,
