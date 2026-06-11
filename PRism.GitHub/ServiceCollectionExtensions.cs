@@ -1,10 +1,12 @@
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
 using PRism.Core;
 using PRism.Core.Auth;
 using PRism.Core.Config;
 using PRism.Core.Feedback;
 using PRism.Core.Inbox;
+using PRism.Core.Time;
 using PRism.GitHub.Feedback;
 using PRism.GitHub.Inbox;
 
@@ -30,11 +32,19 @@ public static class ServiceCollectionExtensions
     {
         ArgumentNullException.ThrowIfNull(services);
 
+        // The wall-clock seam for the CI cache TTL (#361). TryAdd so a future composition-root
+        // registration of IClock (e.g. for the active-PR poller) does not collide.
+        services.TryAddSingleton<IClock, SystemClock>();
+
+        services.AddSingleton<IGitHubCredentialHealth, GitHubCredentialHealth>();
+        services.AddTransient<GitHubAuthHealthHandler>();
+
         services.AddHttpClient("github", (sp, client) =>
         {
             var config = sp.GetRequiredService<IConfigStore>();
             client.BaseAddress = HostUrlResolver.ApiBase(config.Current.Github.Host);
-        });
+        })
+        .AddHttpMessageHandler<GitHubAuthHealthHandler>();
 
         // GitHubReviewService implements all four capability interfaces (ADR-S5-1). Register
         // the concrete type once and bind each interface to that shared singleton so a single
@@ -77,14 +87,20 @@ public static class ServiceCollectionExtensions
         {
             var tokens = sp.GetRequiredService<ITokenStore>();
             var factory = sp.GetRequiredService<IHttpClientFactory>();
-            return new GitHubAwaitingAuthorFilter(factory, () => tokens.ReadAsync(CancellationToken.None));
+            return new GitHubAwaitingAuthorFilter(
+                factory,
+                () => tokens.ReadAsync(CancellationToken.None),
+                sp.GetRequiredService<ILogger<GitHubAwaitingAuthorFilter>>());
         });
 
         services.AddSingleton<ICiFailingDetector>(sp =>
         {
             var tokens = sp.GetRequiredService<ITokenStore>();
             var factory = sp.GetRequiredService<IHttpClientFactory>();
-            return new GitHubCiFailingDetector(factory, () => tokens.ReadAsync(CancellationToken.None));
+            return new GitHubCiFailingDetector(
+                factory,
+                () => tokens.ReadAsync(CancellationToken.None),
+                sp.GetRequiredService<IClock>());
         });
 
         services.AddSingleton<PRism.Core.Activity.IReceivedEventsReader>(sp =>
@@ -96,6 +112,42 @@ public static class ServiceCollectionExtensions
                 factory,
                 () => tokens.ReadAsync(CancellationToken.None),
                 () => Task.FromResult(viewerLogin.Get() is { Length: > 0 } l ? l : null));
+        });
+
+        // P2 activity readers. Both endpoints (notifications, user/subscriptions) are
+        // self-scoped to the authenticated viewer, so — unlike GitHubReceivedEventsReader
+        // — they need no readLogin Func: just the named "github" client + the late-bound
+        // token reader, mirroring the received-events registration above.
+        services.AddSingleton<PRism.Core.Activity.INotificationsReader>(sp =>
+        {
+            var tokens = sp.GetRequiredService<ITokenStore>();
+            var factory = sp.GetRequiredService<IHttpClientFactory>();
+            return new PRism.GitHub.Activity.GitHubNotificationsReader(
+                factory,
+                () => tokens.ReadAsync(CancellationToken.None));
+        });
+
+        services.AddSingleton<PRism.Core.Activity.IWatchedReposReader>(sp =>
+        {
+            var tokens = sp.GetRequiredService<ITokenStore>();
+            var factory = sp.GetRequiredService<IHttpClientFactory>();
+            return new PRism.GitHub.Activity.GitHubWatchedReposReader(
+                factory,
+                () => tokens.ReadAsync(CancellationToken.None));
+        });
+
+        // Activity-rail enrichment: batched GraphQL timeline reader. Needs the host late-bound
+        // (Func<string>) to build the absolute GraphQL endpoint — same late-binding rationale as
+        // the feedback submitter, so a github.com → GHES host change takes effect without restart.
+        services.AddSingleton<PRism.Core.Activity.IPrTimelineReader>(sp =>
+        {
+            var tokens = sp.GetRequiredService<ITokenStore>();
+            var factory = sp.GetRequiredService<IHttpClientFactory>();
+            var config = sp.GetRequiredService<IConfigStore>();
+            return new PRism.GitHub.Activity.GitHubPrTimelineReader(
+                factory,
+                () => tokens.ReadAsync(CancellationToken.None),
+                () => config.Current.Github.Host);
         });
 
         // Feedback always targets github.com (the feedback repo lives there),

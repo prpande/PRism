@@ -21,6 +21,13 @@
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
     <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
     <PublishTrimmed>false</PublishTrimmed>
+    <!-- #282: ship precompiled ReadyToRun images so the published sidecar's
+         first run does less JIT (cold-start lever). Publish-gated like the
+         single-file props above, so the dotnet build/test inner loop is
+         unaffected. R2R is RID-specific; the publish is already per-RID
+         (-r win-x64 / -r osx-arm64). Compression-flip stays deferred (#282
+         Part 2, decided from an A/B sidecarBoot comparison). -->
+    <PublishReadyToRun>true</PublishReadyToRun>
   </PropertyGroup>
 
   <ItemGroup>

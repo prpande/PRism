@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Mvc;
 using PRism.Core;
 using PRism.Core.Auth;
 using PRism.Core.Contracts;
+using PRism.Core.Inbox;
 using PRism.Core.PrDetail;
 using PRism.Core.State;
 using PRism.Web.Endpoints;
@@ -175,6 +176,20 @@ internal static class TestEndpoints
             return Results.Ok(new { ok = true });
         });
 
+        // #285 e2e-only. Seeds the FakeSectionQueryRunner so it returns the canonical
+        // scenario PR in "review-requested", then fires RefreshAsync so the snapshot is
+        // populated before this request returns. Opt-in — specs that don't call this
+        // get an empty inbox and their baselines stay unchanged.
+        app.MapPost("/test/seed-inbox", async (IServiceProvider sp, IInboxRefreshOrchestrator orch, CancellationToken ct) =>
+        {
+            var store = sp.GetService<FakeReviewBackingStore>();
+            if (store is null) return StoreMissing("/test/seed-inbox");
+            store.SeedInbox();
+            // Build a snapshot now so the inbox is populated when this returns.
+            await orch.RefreshAsync(ct).ConfigureAwait(false);
+            return Results.Ok(new { ok = true });
+        });
+
         // Resets per-test state: the in-memory FakeReviewBackingStore (head sha,
         // reachable shas, iterations, file content, PR state), the FakeReviewSubmitter
         // (pending reviews, injected failures, knobs, counters), the PrDetailLoader's
@@ -185,7 +200,7 @@ internal static class TestEndpoints
         // spec's beforeEach so tests don't leak state into each other. The backend
         // process is long-running for the whole Playwright run, so without this hook the
         // inboxes/sessions accumulate.
-        app.MapPost("/test/reset", async (IServiceProvider sp, IAppStateStore stateStore) =>
+        app.MapPost("/test/reset", async (IServiceProvider sp, IAppStateStore stateStore, IInboxRefreshOrchestrator orch) =>
         {
             var store = sp.GetService<FakeReviewBackingStore>();
             if (store is null) return StoreMissing("/test/reset");
@@ -216,6 +231,10 @@ internal static class TestEndpoints
                 _ => AppState.Default,
                 CancellationToken.None).ConfigureAwait(false);
             var after = await stateStore.LoadAsync(CancellationToken.None).ConfigureAwait(false);
+            // Re-run the orchestrator so the inbox snapshot reflects the now-cleared
+            // InboxSeeded flag — prevents a seeded spec's PR from leaking into the next
+            // spec's inbox. FakeSectionQueryRunner returns empty when InboxSeeded=false.
+            await orch.RefreshAsync(CancellationToken.None).ConfigureAwait(false);
             return Results.Ok(new
             {
                 ok = true,

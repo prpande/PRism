@@ -1,6 +1,8 @@
 import { useMemo, useState } from 'react';
 import { useInbox } from '../hooks/useInbox';
 import { useInboxUpdates } from '../hooks/useInboxUpdates';
+import { useInboxRefresh } from '../hooks/useInboxRefresh';
+import { useToast } from '../components/Toast/useToast';
 import { useAiGate } from '../hooks/useAiGate';
 import { usePreferences } from '../hooks/usePreferences';
 import { useMediaQuery } from '../hooks/useMediaQuery';
@@ -23,6 +25,12 @@ import styles from './InboxPage.module.css';
 export function InboxPage() {
   const { data, error, isLoading, reload } = useInbox();
   const updates = useInboxUpdates();
+  const toast = useToast();
+  const { isRefreshing, justRefreshed, announce, refresh } = useInboxRefresh({
+    reload,
+    dismiss: updates.dismiss,
+    onError: (message) => toast.show({ kind: 'error', message }),
+  });
   const { preferences } = usePreferences();
   const initialSort = preferences?.inbox.defaultSort ?? 'updated';
 
@@ -34,7 +42,10 @@ export function InboxPage() {
   // Layout B. One `showRail` drives both the rail render and the cold-load skeleton.
   const wideEnoughForRail = useMediaQuery(`(min-width: ${INBOX_RAIL_MIN_WIDTH}px)`);
   const showRail = (preferences?.inbox.showActivityRail ?? false) && wideEnoughForRail;
-  const sections = data?.sections ?? [];
+  // #331 — memoize so `sections` is referentially stable across renders where the
+  // fetched sections don't change, keeping the `maxDiff` memo (and the derived
+  // filter state) from recomputing on unrelated re-renders.
+  const sections = useMemo(() => data?.sections ?? [], [data?.sections]);
   const allEmpty = sections.length > 0 && sections.every((s) => s.items.length === 0);
 
   const [filterState, setFilterState] = useState<FilterBarState | null>(null);
@@ -94,8 +105,16 @@ export function InboxPage() {
           "refreshing" signal. Kept a sibling ABOVE <main> (not inside it) so it
           spans the same full width as the cold-load bar above <InboxSkeleton> —
           no width/position jump when the skeleton is replaced by content. */}
-      <LoadingBar active={isLoading} data-testid="inbox-loading-bar" />
+      <LoadingBar active={isLoading || isRefreshing} data-testid="inbox-loading-bar" />
       <main className={styles.page} data-testid="inbox-page" tabIndex={-1}>
+        <div
+          className="sr-only"
+          role="status"
+          aria-live="polite"
+          data-testid="inbox-refresh-status"
+        >
+          {announce}
+        </div>
         {updates.hasUpdate && (
           <InboxBanner summary={updates.summary} onReload={onReload} onDismiss={updates.dismiss} />
         )}
@@ -104,8 +123,11 @@ export function InboxPage() {
           initialSort={initialSort}
           ciProbeComplete={data.ciProbeComplete}
           onState={setFilterState}
+          refresh={refresh}
+          isRefreshing={isRefreshing}
+          justRefreshed={justRefreshed}
         />
-        <div className={styles.grid}>
+        <div className={styles.grid} data-has-rail={showRail || undefined}>
           <div className={styles.sections}>
             {showCategoryChip && <SampleBadge variant="region" />}
             {!filterActive && allEmpty && <EmptyAllSections />}

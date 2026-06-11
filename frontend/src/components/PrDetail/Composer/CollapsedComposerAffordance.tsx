@@ -32,7 +32,7 @@ export function CollapsedComposerAffordance({
       <span className={styles.label}>{label}</span>
       {hasDraft && (
         <span className="composer-badge composer-badge--saved" role="status">
-          saved
+          Saved
         </span>
       )}
     </button>

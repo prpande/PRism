@@ -13,7 +13,8 @@ export interface UseActivityResult {
 // Polls /api/activity every ~90s. Retains last-good data across a failed poll
 // (no error flash on a transient blip), mirroring usePrDetail's preservation rule.
 // Last-good retention works because the error path skips setData — no ref needed.
-// Tab-hidden visibility-pause is deferred to P2 (the 3-call cost makes it worth it there).
+// Tab-hidden visibility-pause remains future work: P2 landed the 3-call fan-out
+// (events + notifications + subscriptions) but not the pause optimization itself.
 export function useActivity(): UseActivityResult {
   const [data, setData] = useState<ActivityResponse | null>(null);
   const [isLoading, setIsLoading] = useState(true);

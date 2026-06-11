@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { getDraft } from '../api/draft';
 import type { DraftCommentDto, DraftReplyDto, PrReference, ReviewSessionDto } from '../api/types';
+import { isPrRootDraft } from '../components/PrDetail/draftKinds';
 
 // Are there OTHER staged drafts besides this composer's own? During a post-now (postingInProgress),
 // suppress entirely: by D3 post-now is only reachable when no other real drafts are staged, so the
@@ -100,11 +101,9 @@ export function useDraftSession(prRef: PrReference): UseDraftSessionResult {
   sessionRef.current = session;
 
   const getPrRootHolder = useCallback((): ComposerOwnerKey | null => {
-    const prRootDraft = session?.draftComments.find(
-      (d) => d.filePath === null && d.lineNumber === null,
-    );
-    if (!prRootDraft) return null;
-    const set = openComposers.current.get(prRootDraft.id);
+    const rootDraft = session?.draftComments.find(isPrRootDraft);
+    if (!rootDraft) return null;
+    const set = openComposers.current.get(rootDraft.id);
     if (!set || set.size === 0) return null;
     // Return the first ownerKey in insertion order.
     return set.values().next().value ?? null;
@@ -120,6 +119,7 @@ export function useDraftSession(prRef: PrReference): UseDraftSessionResult {
       setError(e as Error);
       setStatus('error');
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- deps are prRef's stable primitive fields; the prRef object is a fresh literal each render (#331)
   }, [prRef.owner, prRef.repo, prRef.number, isOpen]);
 
   // Reset to loading on prRef change so a stale local session for the
@@ -150,6 +150,7 @@ export function useDraftSession(prRef: PrReference): UseDraftSessionResult {
     return () => {
       cancelled = true;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- deps are prRef's stable primitive fields; the prRef object is a fresh literal each render (#331)
   }, [prRef.owner, prRef.repo, prRef.number]);
 
   const clearOutOfBandToast = useCallback(() => setOutOfBandToast(null), []);

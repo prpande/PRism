@@ -6,5 +6,5 @@ namespace PRism.Core;
 // See docs/specs/2026-05-11-s5-submit-pipeline-design.md § 3.
 public interface IReviewAuth
 {
-    Task<AuthValidationResult> ValidateCredentialsAsync(CancellationToken ct);
+    Task<AuthValidationResult> ValidateCredentialsAsync(CancellationToken ct, bool skipCredentialHealth = false);
 }

@@ -9,6 +9,7 @@ import { PrDescription } from './PrDescription';
 import { StatsTiles } from './StatsTiles';
 import { PrRootConversation, type PrRootConversationReplyContext } from './PrRootConversation';
 import { ReviewFilesCta } from './ReviewFilesCta';
+import { prRootDraft } from '../draftKinds';
 import styles from './OverviewTab.module.css';
 
 export function OverviewTab() {
@@ -36,10 +37,10 @@ export function OverviewTab() {
 
   // Hydrate `existingPrRootDraft` from the shared draft session so the
   // PR-root composer opens with the persisted body when one exists. PR-root
-  // drafts are anchor-less (filePath / lineNumber / side / anchoredSha all
-  // null) per spec § 5.6. There is at most one PR-root draft per PR.
+  // drafts are anchor-less (filePath null is the discriminator) per spec § 5.6.
+  // There is at most one PR-root draft per PR. (#324 — shared predicate.)
   const existingPrRootDraft = useMemo(
-    () => draftSession.session?.draftComments.find((d) => d.filePath === null) ?? null,
+    () => prRootDraft(draftSession.session?.draftComments ?? []),
     [draftSession.session],
   );
 

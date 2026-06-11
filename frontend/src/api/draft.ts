@@ -17,19 +17,12 @@ function prPath(prRef: PrReference): string {
   return `/api/pr/${prRef.owner}/${prRef.repo}/${prRef.number}`;
 }
 
-// PR3's PrDraftEndpoints validates verdict input as camelCase ("requestChanges").
-// The frontend canonical type uses the GET-response shape ("request-changes").
-// Translate at the wire boundary. See deferrals doc § "DraftVerdict wire shape
-// asymmetric".
-function verdictToWire(v: DraftVerdict): string {
-  return v === 'request-changes' ? 'requestChanges' : v;
-}
-
 // Verdict-clear (spec § 10): null payload serializes to a present-null
-// `draftVerdict` so PR3's JsonElement parser reads it as an explicit clear,
-// not an absent field. Any value goes through the camelCase translation.
+// `draftVerdict` so PrDraftEndpoints' JsonElement parser reads it as an explicit
+// clear, not an absent field. The verdict crosses the wire as kebab-case — the
+// same single canonical form GET returns (#318), so no translation is needed.
 function verdictPatchValue(v: DraftVerdict | null): string | null {
-  return v === null ? null : verdictToWire(v);
+  return v;
 }
 
 // Discriminated union → wire's "exactly one field set" body shape (spec § 4.2).

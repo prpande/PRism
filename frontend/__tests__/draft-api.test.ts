@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { jsonResponse } from './helpers/http';
 import {
   getDraft,
   getTabId,
@@ -50,13 +51,6 @@ afterEach(() => {
 
 // Helpers ----------------------------------------------------------------
 
-function jsonResponse(status: number, body: unknown): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { 'Content-Type': 'application/json' },
-  });
-}
-
 function captureFetch(response: Response | (() => Response)) {
   const fn = vi
     .fn()
@@ -102,11 +96,11 @@ describe('serializePatch — wire shape per patch kind', () => {
     expect(wire).toEqual({ draftVerdict: 'comment' });
   });
 
-  it('draftVerdict — request-changes translates to camelCase requestChanges', () => {
-    // Wire-shape asymmetry: PUT input takes camelCase but GET response renders
-    // kebab-case. Frontend canonical type is the GET shape; serializer translates.
+  it('draftVerdict — request-changes crosses the wire as kebab-case (#318)', () => {
+    // Single canonical wire form: PUT input, GET response, and the frontend type
+    // all speak kebab-case — no translation (#318).
     const wire = serializePatch({ kind: 'draftVerdict', payload: 'request-changes' });
-    expect(wire).toEqual({ draftVerdict: 'requestChanges' });
+    expect(wire).toEqual({ draftVerdict: 'request-changes' });
   });
 
   it('draftVerdict — null payload serializes to a present-null clear (spec § 10)', () => {
@@ -194,7 +188,7 @@ describe('getDraft', () => {
       pendingReviewCommitOid: null,
       fileViewState: { viewedFiles: {} },
     };
-    const fetchMock = captureFetch(jsonResponse(200, sample));
+    const fetchMock = captureFetch(jsonResponse(sample, 200));
     const result = await getDraft(ref);
     expect(result).toEqual(sample);
     expect(lastUrl(fetchMock)).toBe(`${PR_PATH}/draft`);
@@ -202,7 +196,7 @@ describe('getDraft', () => {
   });
 
   it('attaches X-PRism-Tab-Id on every request', async () => {
-    const fetchMock = captureFetch(jsonResponse(200, {}));
+    const fetchMock = captureFetch(jsonResponse({}, 200));
     await getDraft(ref);
     const headers = new Headers(lastInit(fetchMock).headers);
     expect(headers.get('X-PRism-Tab-Id')).toBe(getTabId());
@@ -211,7 +205,7 @@ describe('getDraft', () => {
 
 describe('sendPatch — HTTP wiring', () => {
   it('PUTs to /api/pr/{ref}/draft with serialized body and X-PRism-Tab-Id header', async () => {
-    const fetchMock = captureFetch(jsonResponse(200, {}));
+    const fetchMock = captureFetch(jsonResponse({}, 200));
     const result = await sendPatch(ref, { kind: 'confirmVerdict' });
     expect(result.ok).toBe(true);
     expect(lastUrl(fetchMock)).toBe(`${PR_PATH}/draft`);
@@ -222,7 +216,7 @@ describe('sendPatch — HTTP wiring', () => {
   });
 
   it('returns assignedId from the AssignedIdResponse on create patches', async () => {
-    const fetchMock = captureFetch(jsonResponse(200, { assignedId: 'uuid-new' }));
+    const fetchMock = captureFetch(jsonResponse({ assignedId: 'uuid-new' }, 200));
     const result = await sendPatch(ref, {
       kind: 'newDraftComment',
       payload: SAMPLE_NEW_COMMENT,
@@ -232,7 +226,7 @@ describe('sendPatch — HTTP wiring', () => {
   });
 
   it('returns assignedId: null on non-create successful patches', async () => {
-    captureFetch(jsonResponse(200, {}));
+    captureFetch(jsonResponse({}, 200));
     const result = await sendPatch(ref, {
       kind: 'updateDraftComment',
       payload: SAMPLE_UPDATE_COMMENT,
@@ -241,7 +235,7 @@ describe('sendPatch — HTTP wiring', () => {
   });
 
   it('maps 404 to draft-not-found', async () => {
-    captureFetch(jsonResponse(404, { error: 'draft-not-found' }));
+    captureFetch(jsonResponse({ error: 'draft-not-found' }, 404));
     const result = await sendPatch(ref, {
       kind: 'updateDraftComment',
       payload: SAMPLE_UPDATE_COMMENT,
@@ -255,7 +249,7 @@ describe('sendPatch — HTTP wiring', () => {
   });
 
   it('maps 422 to invalid-body', async () => {
-    captureFetch(jsonResponse(422, { error: 'body-too-large' }));
+    captureFetch(jsonResponse({ error: 'body-too-large' }, 422));
     const result = await sendPatch(ref, {
       kind: 'updateDraftComment',
       payload: SAMPLE_UPDATE_COMMENT,
@@ -268,7 +262,7 @@ describe('sendPatch — HTTP wiring', () => {
   });
 
   it('maps 409 to conflict', async () => {
-    captureFetch(jsonResponse(409, { error: 'reload-stale-head' }));
+    captureFetch(jsonResponse({ error: 'reload-stale-head' }, 409));
     const result = await sendPatch(ref, {
       kind: 'updateDraftComment',
       payload: SAMPLE_UPDATE_COMMENT,
@@ -281,7 +275,7 @@ describe('sendPatch — HTTP wiring', () => {
   });
 
   it('maps 400 to bad-request', async () => {
-    captureFetch(jsonResponse(400, { error: 'invalid-patch-shape' }));
+    captureFetch(jsonResponse({ error: 'invalid-patch-shape' }, 400));
     const result = await sendPatch(ref, {
       kind: 'updateDraftComment',
       payload: SAMPLE_UPDATE_COMMENT,
@@ -294,7 +288,7 @@ describe('sendPatch — HTTP wiring', () => {
   });
 
   it('passes through other ApiError statuses with kind: other', async () => {
-    captureFetch(jsonResponse(500, { error: 'boom' }));
+    captureFetch(jsonResponse({ error: 'boom' }, 500));
     const result = await sendPatch(ref, { kind: 'confirmVerdict' });
     expect(result.ok).toBe(false);
     if (!result.ok) {
@@ -328,7 +322,7 @@ describe('sendPatch — HTTP wiring', () => {
     // A 200 with missing key is a protocol violation — previously this
     // silently returned { ok: true, assignedId: null } and downstream
     // consumers received the wrong type.
-    captureFetch(jsonResponse(200, {}));
+    captureFetch(jsonResponse({}, 200));
     const result = await sendPatch(ref, {
       kind: 'newDraftComment',
       payload: SAMPLE_NEW_COMMENT,
@@ -340,7 +334,7 @@ describe('sendPatch — HTTP wiring', () => {
   });
 
   it('treats create patch with non-string assignedId as malformed', async () => {
-    captureFetch(jsonResponse(200, { assignedId: null }));
+    captureFetch(jsonResponse({ assignedId: null }, 200));
     const result = await sendPatch(ref, {
       kind: 'newDraftComment',
       payload: SAMPLE_NEW_COMMENT,
@@ -352,7 +346,7 @@ describe('sendPatch — HTTP wiring', () => {
   });
 
   it('treats create patch with empty-string assignedId as malformed', async () => {
-    captureFetch(jsonResponse(200, { assignedId: '' }));
+    captureFetch(jsonResponse({ assignedId: '' }, 200));
     const result = await sendPatch(ref, {
       kind: 'newDraftComment',
       payload: SAMPLE_NEW_COMMENT,
@@ -363,7 +357,7 @@ describe('sendPatch — HTTP wiring', () => {
 
 describe('postReload', () => {
   it('POSTs { headSha } with X-PRism-Tab-Id header', async () => {
-    const fetchMock = captureFetch(jsonResponse(200, {}));
+    const fetchMock = captureFetch(jsonResponse({}, 200));
     const result = await postReload(ref, 'a'.repeat(40));
     expect(result).toEqual({ ok: true });
     expect(lastUrl(fetchMock)).toBe(`${PR_PATH}/reload`);
@@ -374,7 +368,7 @@ describe('postReload', () => {
   });
 
   it('parses 409 reload-stale-head', async () => {
-    captureFetch(jsonResponse(409, { error: 'reload-stale-head', currentHeadSha: 'b'.repeat(40) }));
+    captureFetch(jsonResponse({ error: 'reload-stale-head', currentHeadSha: 'b'.repeat(40) }, 409));
     const result = await postReload(ref, 'a'.repeat(40));
     expect(result.ok).toBe(false);
     if (!result.ok) {
@@ -384,7 +378,7 @@ describe('postReload', () => {
   });
 
   it('parses 409 reload-in-progress', async () => {
-    captureFetch(jsonResponse(409, { error: 'reload-in-progress' }));
+    captureFetch(jsonResponse({ error: 'reload-in-progress' }, 409));
     const result = await postReload(ref, 'a'.repeat(40));
     expect(result.ok).toBe(false);
     if (!result.ok) {
@@ -394,7 +388,7 @@ describe('postReload', () => {
   });
 
   it('falls back to conflict for unrecognized 409 bodies', async () => {
-    captureFetch(jsonResponse(409, { error: 'something-else' }));
+    captureFetch(jsonResponse({ error: 'something-else' }, 409));
     const result = await postReload(ref, 'a'.repeat(40));
     expect(result.ok).toBe(false);
     if (!result.ok) {

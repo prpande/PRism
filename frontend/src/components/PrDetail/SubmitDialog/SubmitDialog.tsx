@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Modal } from '../../Modal/Modal';
 import { MarkdownRenderer } from '../../Markdown/MarkdownRenderer';
 import { VerdictPicker } from '../VerdictPicker';
+import { isPrRootDraft } from '../draftKinds';
 import { CountsBlock } from './CountsBlock';
 import { PreSubmitValidatorCard } from './PreSubmitValidatorCard';
 import { SubmitProgressIndicator } from './SubmitProgressIndicator';
@@ -9,7 +10,6 @@ import { StaleCommitOidBanner } from './StaleCommitOidBanner';
 import { ForeignPendingReviewModal } from '../ForeignPendingReviewModal/ForeignPendingReviewModal';
 import { PrRootBodyEditor } from '../Composer/PrRootBodyEditor';
 import { DiscardPendingReviewConfirmationModal } from '../DiscardPendingReviewConfirmationModal';
-import { verdictToSubmitWire } from '../../../api/submit';
 import { submitDisabledReason } from '../SubmitButton';
 import {
   COMPOSER_CREATE_THRESHOLD,
@@ -26,7 +26,6 @@ import type {
   PrReference,
   ReviewSessionDto,
   ValidatorResult,
-  Verdict,
 } from '../../../api/types';
 import type { SubmitState } from '../../../hooks/useSubmit';
 
@@ -82,7 +81,7 @@ interface Props {
   // Cancel / Close — the caller resets useSubmit.
   onClose(): void;
   // Confirm — the caller calls useSubmit.submit(verdict).
-  onSubmit(verdict: Verdict): void;
+  onSubmit(verdict: DraftVerdict): void;
   // Retry / "Recreate and resubmit" — the caller calls useSubmit.retry().
   onRetry(): void;
   // Picker change — the caller patches PUT /draft and refetches the session.
@@ -119,10 +118,9 @@ export function SubmitDialog(props: Props) {
     onDiscardForeignPendingReview,
   } = props;
 
-  // The unified PR-root draft (filePath/lineNumber null) — the SAME draft the
-  // Overview-tab composer edits. Post-V7 this replaced the summary textarea.
-  const prRootDraft =
-    session.draftComments.find((d) => d.filePath === null && d.lineNumber === null) ?? null;
+  // The unified PR-root draft (filePath null is the discriminator) — the SAME draft the
+  // Overview-tab composer edits. Post-V7 this replaced the summary textarea. (#324 — shared predicate.)
+  const prRootDraft = session.draftComments.find(isPrRootDraft) ?? null;
 
   const [verdict, setVerdict] = useState<DraftVerdict | null>(session.draftVerdict);
   const [editing, setEditing] = useState(false);
@@ -300,12 +298,12 @@ export function SubmitDialog(props: Props) {
     if (!editing) {
       return { ...session, draftVerdict: verdict };
     }
-    const isPrRoot = (d: { filePath: string | null; lineNumber: number | null }) =>
-      d.filePath === null && d.lineNumber === null;
     const bodyHasContent = editingBody.trim().length >= COMPOSER_CREATE_THRESHOLD;
     const draftComments = bodyHasContent
-      ? session.draftComments.map((d) => (isPrRoot(d) ? { ...d, bodyMarkdown: editingBody } : d))
-      : session.draftComments.filter((d) => !isPrRoot(d));
+      ? session.draftComments.map((d) =>
+          isPrRootDraft(d) ? { ...d, bodyMarkdown: editingBody } : d,
+        )
+      : session.draftComments.filter((d) => !isPrRootDraft(d));
     return { ...session, draftVerdict: verdict, draftComments };
   })();
   const confirmReason = submitDisabledReason(effectiveSession, headShaDrift, validatorResults);
@@ -339,7 +337,7 @@ export function SubmitDialog(props: Props) {
       // still lands in the session the pipeline reads (spec § 8.2). Default to
       // Comment when no verdict was picked (spec § 6).
       if (editing) await editorControl.current?.flush();
-      onSubmit(verdictToSubmitWire(verdict ?? 'comment'));
+      onSubmit(verdict ?? 'comment');
     } finally {
       confirmingRef.current = false;
     }
@@ -445,13 +443,10 @@ export function SubmitDialog(props: Props) {
 
           <section data-section="counts" className="submit-dialog__section">
             <CountsBlock
-              // The PR-root draft (filePath/lineNumber null) ships as the review
-              // body, not a thread — StepAttachThreadsAsync filters it out — so
-              // exclude it from the thread count. Matches DiscardAllDraftsButton.
-              threadCount={
-                session.draftComments.filter((d) => !(d.filePath === null && d.lineNumber === null))
-                  .length
-              }
+              // The PR-root draft (filePath null) ships as the review body, not a thread —
+              // StepAttachThreadsAsync filters it out — so exclude it from the thread count.
+              // (#324 — shared predicate.)
+              threadCount={session.draftComments.filter((d) => !isPrRootDraft(d)).length}
               replyCount={session.draftReplies.length}
             />
           </section>

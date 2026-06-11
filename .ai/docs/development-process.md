@@ -59,6 +59,19 @@ dotnet test --no-build --configuration Release
 cd frontend && npx playwright test
 ```
 
+## Tooling caveats (false-green traps)
+
+These recur on this repo's Windows-dev / Linux-CI split and have masked real failures. Verify against the actual binary, not a wrapper's summary.
+
+- **Command proxies can mask lint/format exit codes.** If your shell routes commands through a token-saving proxy (e.g. `rtk`), it can report `prettier --check` / `npm run lint` as "formatted correctly" while CI's raw `prettier` fails. Before pushing a frontend change, confirm formatting truthfully by invoking the binary directly from the frontend — `cd frontend && node ./node_modules/prettier/bin/prettier.cjs --check .` (the `.` then scopes to the frontend, matching `npm run lint`'s `prettier --check .`; use `--write <files>` to fix). Don't trust a green `npm run lint` seen through a proxy.
+- **Run vitest via the project binary, not `npx vitest`.** `npx` can resolve a cached vitest that ignores the project's `jsdom` environment, failing every render test with `document is not defined` — a false mass-failure, not a regression. Use `npm test` (script: `vitest run`).
+- **Windows `npm install` can desync the lockfile for Linux CI.** On Windows, `npm install <pkg>` may drop optional+peer entries (e.g. `@emnapi/core`, `@emnapi/runtime`) that the Linux CI `npm ci` still requires, causing `EUSAGE: Missing … from lock file`. After any `npm install` on Windows, diff `package-lock.json` for removed optional/peer blocks and restore them, then verify with a clean `npm ci`.
+- **`tsc --noEmit` is vacuous here; `tsc -b` is the real typecheck.** The frontend uses a project-references root `tsconfig` (`files: []`), so `--noEmit` checks nothing. `npm run build` (which runs `tsc -b`) is what catches type errors — vitest's esbuild transform does not typecheck.
+
+## Cross-tier change checks
+
+- **Wire-shape changes are cross-tier.** Before opening a PR that changes any `/api/*` request/response or SSE payload (dropping, renaming, or restructuring a field), grep the frontend for every consumer of the old shape and confirm each is updated in the same PR or shielded by a documented compat shim. Backend-only preflight and review read only the backend diff and miss React render-tree breakage; a cold-start Playwright smoke is the fastest cross-tier signal.
+
 ## Running parallel agents (testing without collisions)
 
 Multiple agents/worktrees can build, launch, and test on one machine at the same

@@ -21,7 +21,7 @@ internal sealed class StubReviewAuth : IReviewAuth
         _throwOnValidate = throwOnValidate;
     }
 
-    public Task<AuthValidationResult> ValidateCredentialsAsync(CancellationToken ct)
+    public Task<AuthValidationResult> ValidateCredentialsAsync(CancellationToken ct, bool skipCredentialHealth = false)
     {
         if (_throwOnValidate)
             throw new InvalidOperationException("ValidateCredentialsAsync should not have been called");

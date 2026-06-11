@@ -120,13 +120,14 @@ public sealed class LiveGitHubFixture : IDisposable
         var endpoint = HostUrlResolver.GraphQlEndpoint(config.Current.Github.Host);
         using var req = new HttpRequestMessage(HttpMethod.Post, endpoint);
         req.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
-        // Header parity with production PostGraphQLAsync (GitHubReviewService.cs:752-753):
-        // the SUT sets UserAgent "PRism/0.1" and Accept "application/vnd.github+json", and the
-        // shape-drift suite must replay those exact headers — otherwise we'd be testing a
-        // different request shape than production issues, and GitHub's response-header-driven
-        // shape variations (per-Accept content negotiation) would slip past 7g.
-        req.Headers.UserAgent.ParseAdd("PRism/0.1");
-        req.Headers.Accept.ParseAdd("application/vnd.github+json");
+        // Header parity with production PostGraphQLAsync, which sends via GitHubHttp.ApplyHeaders:
+        // reference the same GitHubHttp.UserAgent / GitHubHttp.AcceptJson constants the SUT uses so
+        // this fixture can never drift to a stale literal. The shape-drift suite must replay those
+        // exact headers — otherwise we'd be testing a different request shape than production
+        // issues, and GitHub's response-header-driven shape variations (per-Accept content
+        // negotiation) would slip past 7g.
+        req.Headers.UserAgent.ParseAdd(GitHubHttp.UserAgent);
+        req.Headers.Accept.ParseAdd(GitHubHttp.AcceptJson);
         req.Content = JsonContent.Create(new
         {
             query = GitHubReviewService.PrDetailGraphQLQuery,
