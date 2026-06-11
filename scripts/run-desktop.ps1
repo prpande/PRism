@@ -172,8 +172,9 @@ function Invoke-Preflight {
     }
     if (-not (Test-HasDotnetSdkAtLeast -ListSdksOutput $sdks -MinMajor 10)) {
         $majors = (Get-DotnetSdkMajors -ListSdksOutput $sdks) -join ', '
+        $majorsMsg = if ($majors) { $majors } else { 'none' }
         Write-Host (Get-DotnetRemediation -FoundSdks @($sdks)) -ForegroundColor Yellow
-        throw "Preflight failed: no .NET SDK with major >= 10 (found majors: $majors)."
+        throw "Preflight failed: no .NET SDK with major >= 10 (found majors: $majorsMsg)."
     }
 }
 
@@ -236,6 +237,10 @@ function Invoke-Main {
         -SidecarBinary $sidecar -Log $log -StartedUtc $startedUtc
     [System.IO.File]::WriteAllText($wrapperPath, $wrapper, [System.Text.UTF8Encoding]::new($false))
 
+    # $wrapperPath is LocalApplicationData\PRism\run-desktop.wrapper.ps1 — a system-derived
+    # path that never contains a double-quote, so wrapping it in `"..."` here is safe (same
+    # assumption serve-detached.ps1 makes for its WMI command line; the wrapper's own
+    # internal paths use single-quote doubling for defense in depth).
     $cmd = "pwsh -NoProfile -ExecutionPolicy Bypass -File `"$wrapperPath`""
     $res = Invoke-CimMethod -ClassName Win32_Process -MethodName Create `
         -Arguments @{ CommandLine = $cmd; CurrentDirectory = $desktopDir }

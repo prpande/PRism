@@ -46,14 +46,34 @@ rid_for_arch() {
   esac
 }
 
+# Pure, position-independent arg parser (testable). Echoes "skip=0"/"skip=1" for the
+# recognized flag set, or "error:<arg>" for the first unrecognized option — main()
+# turns an "error:" result into a usage error + exit (rather than silently ignoring a
+# typo'd flag and doing a full build anyway).
+resolve_args() {
+  local a skip=0
+  for a in "$@"; do
+    case "$a" in
+      --skip-build) skip=1 ;;
+      *) echo "error:$a"; return 0 ;;
+    esac
+  done
+  echo "skip=$skip"
+}
+
 main() {
   set -euo pipefail
 
-  # --skip-build is position-independent (parity with the Windows -SkipBuild switch).
-  local skip_build=0 arg
-  for arg in "$@"; do
-    [[ "$arg" == "--skip-build" ]] && skip_build=1
-  done
+  # --skip-build is position-independent (parity with the Windows -SkipBuild switch);
+  # unknown flags are rejected, not silently ignored.
+  local parsed
+  parsed="$(resolve_args "$@")"
+  if [[ "$parsed" == error:* ]]; then
+    echo "Unknown option: ${parsed#error:}" >&2
+    echo "Usage: run-desktop.sh [--skip-build]" >&2
+    exit 1
+  fi
+  local skip_build="${parsed#skip=}"
 
   local repo_root desktop_dir publish_dir data_dir log pidfile
   repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

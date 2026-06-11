@@ -31,6 +31,11 @@ else
   echo "  PASS: unsupported arch returns nonzero"
 fi
 
+# resolve_args (position-independent flag parse + unknown-flag rejection)
+assert_eq "skip=0"        "$(resolve_args)"              "no args -> skip=0"
+assert_eq "skip=1"        "$(resolve_args --skip-build)" "--skip-build -> skip=1"
+assert_eq "error:--bogus" "$(resolve_args --bogus)"      "unknown flag -> error"
+
 # remediation text
 assert_match "$(node_remediation 2>&1)"   "brew install node" "node remediation names brew"
 assert_match "$(dotnet_remediation 2>&1)" "\.NET 10"          "dotnet remediation references .NET 10"
