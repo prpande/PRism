@@ -1,10 +1,12 @@
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
 using PRism.Core;
 using PRism.Core.Auth;
 using PRism.Core.Config;
 using PRism.Core.Feedback;
 using PRism.Core.Inbox;
+using PRism.Core.Time;
 using PRism.GitHub.Feedback;
 using PRism.GitHub.Inbox;
 
@@ -29,6 +31,10 @@ public static class ServiceCollectionExtensions
     public static IServiceCollection AddPrismGitHub(this IServiceCollection services)
     {
         ArgumentNullException.ThrowIfNull(services);
+
+        // The wall-clock seam for the CI cache TTL (#361). TryAdd so a future composition-root
+        // registration of IClock (e.g. for the active-PR poller) does not collide.
+        services.TryAddSingleton<IClock, SystemClock>();
 
         services.AddSingleton<IGitHubCredentialHealth, GitHubCredentialHealth>();
         services.AddTransient<GitHubAuthHealthHandler>();
@@ -81,14 +87,20 @@ public static class ServiceCollectionExtensions
         {
             var tokens = sp.GetRequiredService<ITokenStore>();
             var factory = sp.GetRequiredService<IHttpClientFactory>();
-            return new GitHubAwaitingAuthorFilter(factory, () => tokens.ReadAsync(CancellationToken.None));
+            return new GitHubAwaitingAuthorFilter(
+                factory,
+                () => tokens.ReadAsync(CancellationToken.None),
+                sp.GetRequiredService<ILogger<GitHubAwaitingAuthorFilter>>());
         });
 
         services.AddSingleton<ICiFailingDetector>(sp =>
         {
             var tokens = sp.GetRequiredService<ITokenStore>();
             var factory = sp.GetRequiredService<IHttpClientFactory>();
-            return new GitHubCiFailingDetector(factory, () => tokens.ReadAsync(CancellationToken.None));
+            return new GitHubCiFailingDetector(
+                factory,
+                () => tokens.ReadAsync(CancellationToken.None),
+                sp.GetRequiredService<IClock>());
         });
 
         services.AddSingleton<PRism.Core.Activity.IReceivedEventsReader>(sp =>
