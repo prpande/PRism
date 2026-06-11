@@ -1,4 +1,3 @@
-import { useEffect, useState } from 'react';
 import type {
   DraftCommentDto,
   DraftReplyDto,
@@ -13,6 +12,7 @@ import {
   computeAnyOtherDraftsStaged,
   type ComposerOwnerKey,
 } from '../../../../hooks/useDraftSession';
+import { useDraftBackedDisclosure } from '../../../../hooks/useDraftBackedDisclosure';
 import type { OptimisticComment } from '../optimisticComment';
 
 export interface ExistingCommentWidgetReplyContext {
@@ -80,26 +80,18 @@ function ThreadView({
   );
 
   // The composer auto-mounts when there is already a saved draft for this
-  // thread; otherwise the user opens it via the Reply button. The useEffect
-  // below re-syncs when `replyContext.draftReplies` changes after mount —
-  // e.g., another tab creates a draft reply and `useStateChangedSubscriber`
-  // refetches the session. Without it, the useState initializer would be
-  // frozen at the first-render value and the auto-open silently misses
-  // cross-tab arrivals.
-  const [composerOpen, setComposerOpen] = useState<boolean>(!!existingDraft);
-  const [draftReplyId, setDraftReplyId] = useState<string | null>(existingDraft?.id ?? null);
-
-  useEffect(() => {
-    if (!existingDraft) return;
-    setDraftReplyId(existingDraft.id);
-    setComposerOpen(true);
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on existingDraft?.id; re-syncs only when the draft id changes, not on every object identity change (#331)
-  }, [existingDraft?.id]);
-
-  const handleReplyClick = () => setComposerOpen(true);
+  // thread (incl. cross-tab arrivals after mount); otherwise the user opens it
+  // via the Reply button. See useDraftBackedDisclosure for the resync rationale.
+  const {
+    composerOpen,
+    draftId: draftReplyId,
+    setDraftId: setDraftReplyId,
+    open: handleReplyClick,
+    close: closeComposer,
+  } = useDraftBackedDisclosure(existingDraft);
 
   const handleComposerClose = () => {
-    setComposerOpen(false);
+    closeComposer();
     replyContext?.onReplyComposerClose();
   };
 
