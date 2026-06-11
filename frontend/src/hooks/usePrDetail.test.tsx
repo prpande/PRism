@@ -1,7 +1,8 @@
 import { describe, test, expect, vi, beforeEach } from 'vitest';
 import { renderHook, waitFor, act } from '@testing-library/react';
-import type { PrDetailDto, PrReference } from '../api/types';
+import type { PrReference } from '../api/types';
 import { usePrDetail } from './usePrDetail';
+import { makePrDetailDto, makePr } from '../../__tests__/helpers/prDetail';
 
 // ---------------------------------------------------------------------------
 // usePrDetail — real data-preservation contract (PR2 Task 8 / OQ6).
@@ -31,32 +32,9 @@ vi.mock('../api/markViewed', () => ({
 
 const PR_REF: PrReference = { owner: 'acme', repo: 'api', number: 7 };
 
-const PR_DETAIL: PrDetailDto = {
-  pr: {
-    reference: PR_REF,
-    title: 'Keep-alive title',
-    body: 'A realistic body.',
-    author: 'alice',
-    state: 'open',
-    headSha: 'abc123',
-    baseSha: 'def456',
-    headBranch: 'feat',
-    baseBranch: 'main',
-    mergeability: 'mergeable',
-    ciSummary: '',
-    isMerged: false,
-    isClosed: false,
-    openedAt: new Date('2026-01-01T00:00:00Z').toISOString(),
-    mergedAt: null,
-    closedAt: null,
-  },
-  clusteringQuality: 'ok',
-  iterations: [],
-  commits: [],
-  rootComments: [],
-  reviewComments: [],
-  timelineCapHit: false,
-};
+const PR_DETAIL = makePrDetailDto({
+  pr: makePr({ reference: PR_REF, title: 'Keep-alive title', author: 'alice' }),
+});
 
 beforeEach(() => {
   getPrDetailMock.mockReset();

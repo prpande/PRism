@@ -2,8 +2,8 @@ import { describe, test, expect, vi } from 'vitest';
 import { render, screen, act, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, useNavigate } from 'react-router-dom';
-import type { PrDetailDto } from '../../api/types';
 import { App } from '../../App';
+import { makePrDetailDto, makePr } from '../../../__tests__/helpers/prDetail';
 import { PrTabHost, parsePrRoute } from './PrTabHost';
 import { OpenTabsContext, type OpenTabsContextValue } from '../../contexts/OpenTabsContext';
 import { ToastProvider } from '../../components/Toast';
@@ -20,32 +20,9 @@ import { AskAiDrawerProvider } from '../../contexts/AskAiDrawerContext';
 // independent of any network result.
 // ---------------------------------------------------------------------------
 
-const PR_DETAIL: PrDetailDto = {
-  pr: {
-    reference: { owner: 'acme', repo: 'api', number: 7 },
-    title: 'Keep-alive title',
-    body: 'A realistic body.',
-    author: 'alice',
-    state: 'open',
-    headSha: 'abc123',
-    baseSha: 'def456',
-    headBranch: 'feat',
-    baseBranch: 'main',
-    mergeability: 'mergeable',
-    ciSummary: '',
-    isMerged: false,
-    isClosed: false,
-    openedAt: new Date('2026-01-01T00:00:00Z').toISOString(),
-    mergedAt: null,
-    closedAt: null,
-  },
-  clusteringQuality: 'ok',
-  iterations: [],
-  commits: [],
-  rootComments: [],
-  reviewComments: [],
-  timelineCapHit: false,
-};
+const PR_DETAIL = makePrDetailDto({
+  pr: makePr({ reference: { owner: 'acme', repo: 'api', number: 7 }, title: 'Keep-alive title' }),
+});
 
 // Auth: token present so the authed routes (Inbox + PrTabHost) mount.
 vi.mock('../../hooks/useAuth', () => ({

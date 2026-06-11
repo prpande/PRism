@@ -12,6 +12,7 @@ import {
   installFakeEventSource,
 } from '../../../__tests__/helpers/fakeEventSource';
 import { jsonResponse } from '../../../__tests__/helpers/http';
+import { makePrDetailDto, makePr } from '../../../__tests__/helpers/prDetail';
 
 // ---------------------------------------------------------------------------
 // Live merge/close transition coverage, migrated from the deleted
@@ -44,35 +45,13 @@ vi.mock('../../hooks/useAiSummary', () => ({ useAiSummary: () => null }));
 vi.mock('../../hooks/useAiFileFocus', () => ({ useAiFileFocus: () => null }));
 vi.mock('../../hooks/useAiDraftSuggestions', () => ({ useAiDraftSuggestions: () => null }));
 
-const openPrDto: PrDetailDto = {
-  pr: {
-    reference: { owner: 'octocat', repo: 'hello', number: 42 },
-    title: 'Refactor the renewal worker',
-    body: '',
-    author: 'amelia.cho',
-    state: 'open',
-    headSha: 'abc123',
-    baseSha: 'def456',
-    headBranch: 'amelia/work',
-    baseBranch: 'main',
-    mergeability: 'mergeable',
-    ciSummary: 'success',
-    isMerged: false,
-    isClosed: false,
-    openedAt: '2026-05-01T00:00:00Z',
-    mergedAt: null,
-    closedAt: null,
-  },
-  clusteringQuality: 'ok',
+const openPrDto: PrDetailDto = makePrDetailDto({
+  pr: makePr({ title: 'Refactor the renewal worker', author: 'amelia.cho', headSha: 'abc123' }),
   iterations: [
     { number: 1, beforeSha: 'a', afterSha: 'b', commits: [], hasResolvableRange: true },
     { number: 2, beforeSha: 'b', afterSha: 'abc123', commits: [], hasResolvableRange: true },
   ],
-  commits: [],
-  rootComments: [],
-  reviewComments: [],
-  timelineCapHit: false,
-};
+});
 
 function mountView(fetchImpl?: typeof fetch) {
   if (fetchImpl) globalThis.fetch = fetchImpl;

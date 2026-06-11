@@ -1,6 +1,7 @@
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { jsonResponse } from './helpers/http';
+import { makePrDetailDto, makePr } from './helpers/prDetail';
 import { MemoryRouter, Routes, Route, Outlet } from 'react-router-dom';
 import { FilesTab } from '../src/components/PrDetail/FilesTab/FilesTab';
 import { PrDetailContextProvider } from '../src/components/PrDetail/prDetailContext';
@@ -36,26 +37,8 @@ function diffOrDraft(diffMock: () => Promise<Response>) {
 
 const ref: PrReference = { owner: 'octocat', repo: 'hello', number: 42 };
 
-const minimalPrDetail: PrDetailDto = {
-  pr: {
-    reference: ref,
-    title: 'Test PR',
-    body: '',
-    author: 'test',
-    state: 'open',
-    headSha: 'headabc',
-    baseSha: 'basedef',
-    headBranch: 'feature',
-    baseBranch: 'main',
-    mergeability: 'mergeable',
-    ciSummary: 'success',
-    isMerged: false,
-    isClosed: false,
-    openedAt: '2026-05-01T00:00:00Z',
-    mergedAt: null,
-    closedAt: null,
-  },
-  clusteringQuality: 'ok',
+const minimalPrDetail: PrDetailDto = makePrDetailDto({
+  pr: makePr({ reference: ref, headSha: 'headabc', baseSha: 'basedef' }),
   iterations: [
     {
       number: 1,
@@ -74,10 +57,7 @@ const minimalPrDetail: PrDetailDto = {
       deletions: 2,
     },
   ],
-  rootComments: [],
-  reviewComments: [],
-  timelineCapHit: false,
-};
+});
 
 const sampleDiff: DiffDto = {
   range: 'basedef..headabc',
