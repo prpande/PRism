@@ -142,22 +142,7 @@ public sealed class PrDetailLoader : IDisposable
             return existing;
         }
 
-        var timeline = await _review.GetTimelineAsync(prRef, ct).ConfigureAwait(false);
-
-        var commitDtos = timeline.Commits
-            .Select(c => new CommitDto(c.Sha, c.Message, c.CommittedDate, c.Additions, c.Deletions))
-            .ToArray();
-        var commitShaSet = new HashSet<string>(timeline.Commits.Select(c => c.Sha), StringComparer.Ordinal);
-
-        var (quality, iterations) = DetermineQuality(timeline, commitShaSet);
-
-        var finalDetail = detail with
-        {
-            ClusteringQuality = quality,
-            Iterations = iterations,
-            Commits = commitDtos,
-        };
-        var snapshot = new PrDetailSnapshot(finalDetail, detail.Pr.HeadSha, generation);
+        var snapshot = await ComposeSnapshotAsync(prRef, detail, generation, ct).ConfigureAwait(false);
 
         // Re-check the generation before publishing into the cache. If `InvalidateAll` ran
         // between line 73 and here, our snapshot was computed against the now-stale generation
@@ -178,6 +163,34 @@ public sealed class PrDetailLoader : IDisposable
         var canonical = _snapshots.GetOrAdd(realKey, snapshot);
         _snapshotKeyByPrRef[prRef] = realKey;
         return canonical;
+    }
+
+    /// <summary>
+    /// Composes a <see cref="PrDetailSnapshot"/> from an already-fetched <paramref name="detail"/>:
+    /// fetches the timeline, runs clustering, and folds the results into the snapshot. Extracted
+    /// from <see cref="LoadAsync"/> (#344) so the force-fresh <see cref="RefreshAsync"/> path can
+    /// reuse the identical compose logic. Does NOT touch the cache — callers decide whether/how to
+    /// publish the returned snapshot.
+    /// </summary>
+    private async Task<PrDetailSnapshot> ComposeSnapshotAsync(
+        PrReference prRef, PrDetailDto detail, int generation, CancellationToken ct)
+    {
+        var timeline = await _review.GetTimelineAsync(prRef, ct).ConfigureAwait(false);
+
+        var commitDtos = timeline.Commits
+            .Select(c => new CommitDto(c.Sha, c.Message, c.CommittedDate, c.Additions, c.Deletions))
+            .ToArray();
+        var commitShaSet = new HashSet<string>(timeline.Commits.Select(c => c.Sha), StringComparer.Ordinal);
+
+        var (quality, iterations) = DetermineQuality(timeline, commitShaSet);
+
+        var finalDetail = detail with
+        {
+            ClusteringQuality = quality,
+            Iterations = iterations,
+            Commits = commitDtos,
+        };
+        return new PrDetailSnapshot(finalDetail, detail.Pr.HeadSha, generation);
     }
 
     /// <summary>
