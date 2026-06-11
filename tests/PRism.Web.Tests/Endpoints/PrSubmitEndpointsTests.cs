@@ -310,6 +310,24 @@ public class PrSubmitEndpointsTests
         (await resp.Content.ReadFromJsonAsync<JsonElement>(CamelCase)).GetProperty("code").GetString().Should().Be("verdict-invalid");
     }
 
+    // A BARE JSON-INTEGER verdict ({"verdict":1}, no quotes) is a different shape from the string
+    // "1" the theory above covers: SubmitRequestDto.Verdict is `string?`, so a JSON number can't
+    // bind to it and the request is rejected at MODEL BINDING — before TryParseVerdict runs. The
+    // contract guarantee here is "rejected with 400", not the structured verdict-invalid code (the
+    // model-binding failure short-circuits the endpoint). Pinned so a future DTO change to
+    // JsonElement / NumberHandling can't silently start accepting numeric-ordinal verdicts.
+    [Fact]
+    public async Task PostSubmit_bare_json_integer_verdict_is_rejected_at_model_binding()
+    {
+        using var ctx = SubmitEndpointsTestContext.Create();
+        using var client = ctx.CreateClient();
+        using var content = new StringContent("""{"verdict":1}""", Encoding.UTF8, "application/json");
+
+        var resp = await client.PostAsync(new Uri("/api/pr/o/r/7/submit", UriKind.Relative), content);
+
+        resp.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
     [Fact]
     public async Task PostSubmit_concurrent_second_call_returns_409_submit_in_progress()
     {
