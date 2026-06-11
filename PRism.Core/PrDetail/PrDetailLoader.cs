@@ -167,12 +167,13 @@ public sealed class PrDetailLoader : IDisposable
 
     /// <summary>
     /// Force-refreshes the snapshot for <paramref name="prRef"/>, bypassing the snapshot cache
-    /// (#344 manual Refresh). Re-fetches PR detail + timeline, re-clusters, and atomically
-    /// REPLACES the cached snapshot (overwrite, not GetOrAdd) so a warm cache with an unchanged
-    /// head SHA still yields fresh data — the proactive analog of the inbox's hardRefresh.
+    /// (#344 manual Refresh). Re-fetches PR detail + timeline, re-clusters, and REPLACES the
+    /// cached snapshot (overwrite, not GetOrAdd) so a warm cache with an unchanged head SHA
+    /// still yields fresh data — the proactive analog of the inbox's hardRefresh.
     /// Returns null when the PR no longer exists (GetPrDetail => null), mapped to 404 by the
-    /// endpoint. Lock-free by design: the two ConcurrentDictionary writes are individually
-    /// atomic and any interleave self-heals on the next LoadAsync (see spec § 3.1).
+    /// endpoint. Lock-free by design: the two ConcurrentDictionary writes (snapshot map then
+    /// prRef->key sidecar) are individually atomic — not transactionally atomic as a pair — and
+    /// any interleave self-heals on the next LoadAsync (see spec § 3.1).
     /// </summary>
     public async Task<PrDetailSnapshot?> RefreshAsync(PrReference prRef, CancellationToken ct)
     {
