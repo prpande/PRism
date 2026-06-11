@@ -30,6 +30,19 @@ Write-Host "run-desktop.ps1 unit tests" -ForegroundColor Cyan
 
 # === test blocks are appended here by later tasks ===
 
+Write-Host "Get-DotnetSdkMajors / Test-HasDotnetSdkAtLeast" -ForegroundColor Cyan
+$sample = @(
+    '8.0.404 [C:\Program Files\dotnet\sdk]',
+    '10.0.100 [C:\Program Files\dotnet\sdk]'
+)
+$majors = Get-DotnetSdkMajors -ListSdksOutput $sample
+Assert-True ($majors -contains 8)  "parses major 8"
+Assert-True ($majors -contains 10) "parses major 10"
+Assert-Equal 0 (Get-DotnetSdkMajors -ListSdksOutput @()).Count "empty input -> no majors"
+Assert-True  (Test-HasDotnetSdkAtLeast -ListSdksOutput $sample -MinMajor 10) "has >= 10 when 10.0.100 present"
+Assert-True  (-not (Test-HasDotnetSdkAtLeast -ListSdksOutput @('8.0.404 [x]') -MinMajor 10)) "no >= 10 when only 8.x"
+Assert-True  (-not (Test-HasDotnetSdkAtLeast -ListSdksOutput @('garbage line') -MinMajor 10)) "non-version line ignored"
+
 # --- footer: exit non-zero on any failure ---
 if ($script:Failures -gt 0) {
     Write-Host "$script:Failures test(s) failed" -ForegroundColor Red

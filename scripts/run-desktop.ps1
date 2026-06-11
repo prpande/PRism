@@ -29,6 +29,23 @@ $ErrorActionPreference = 'Stop'
 # importable into run-desktop.Tests.ps1 without executing the launch.
 # ---------------------------------------------------------------------------
 
+function Get-DotnetSdkMajors {
+    # Parse `dotnet --list-sdks` lines (e.g. "10.0.100 [C:\Program Files\dotnet\sdk]")
+    # into a sorted-unique list of integer major versions. Non-matching lines are
+    # ignored; empty input yields an empty array.
+    param([string[]]$ListSdksOutput)
+    $majors = foreach ($line in $ListSdksOutput) {
+        if ($line -match '^\s*(\d+)\.\d+\.\d+') { [int]$Matches[1] }
+    }
+    return @($majors | Sort-Object -Unique)
+}
+
+function Test-HasDotnetSdkAtLeast {
+    # True if any installed SDK major version is >= $MinMajor.
+    param([string[]]$ListSdksOutput, [int]$MinMajor)
+    return (@(Get-DotnetSdkMajors -ListSdksOutput $ListSdksOutput | Where-Object { $_ -ge $MinMajor })).Count -gt 0
+}
+
 function Invoke-Main {
     param([switch]$SkipBuild)
     throw "Invoke-Main not yet implemented"
