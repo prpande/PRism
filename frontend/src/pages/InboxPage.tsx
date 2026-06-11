@@ -41,7 +41,10 @@ export function InboxPage() {
   // Layout B. One `showRail` drives both the rail render and the cold-load skeleton.
   const wideEnoughForRail = useMediaQuery(`(min-width: ${INBOX_RAIL_MIN_WIDTH}px)`);
   const showRail = (preferences?.inbox.showActivityRail ?? false) && wideEnoughForRail;
-  const sections = data?.sections ?? [];
+  // #331 — memoize so `sections` is referentially stable across renders where the
+  // fetched sections don't change, keeping the `maxDiff` memo (and the derived
+  // filter state) from recomputing on unrelated re-renders.
+  const sections = useMemo(() => data?.sections ?? [], [data?.sections]);
   const allEmpty = sections.length > 0 && sections.every((s) => s.items.length === 0);
 
   const [filterState, setFilterState] = useState<FilterBarState | null>(null);

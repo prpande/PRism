@@ -13,6 +13,10 @@ function call(
   ownerKey: ComposerOwnerKey,
   prRootHolder: ComposerOwnerKey | null,
 ): CantEditRootBodyReason {
+  // useCantEditRootBodyReason is a pure function despite its `use*` name (see
+  // header comment) — calling it directly here is safe. rules-of-hooks can't know
+  // that from the name, so disable it for this one call. #331
+  // eslint-disable-next-line react-hooks/rules-of-hooks
   return useCantEditRootBodyReason({ readOnly, ownerKey, prRootHolder });
 }
 

@@ -123,6 +123,7 @@ export function useCrossTabPrPresence(prRef: PrReference | null): UseCrossTabPrP
       ch.close();
       channelRef.current = null;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- deps are prRef's stable primitive fields; the prRef object is a fresh literal each render (#331)
   }, [prRef?.owner, prRef?.repo, prRef?.number, tabId]);
 
   const switchToOther = useCallback(() => {
@@ -157,6 +158,7 @@ export function useCrossTabPrPresence(prRef: PrReference | null): UseCrossTabPrP
     }
     dismissedRef.current = true;
     setShowBanner(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- deps are prRef's stable primitive fields; the prRef object is a fresh literal each render (#331)
   }, [prRef?.owner, prRef?.repo, prRef?.number]);
 
   return { showBanner, readOnly, switchToOther, takeOver, dismissForSession };

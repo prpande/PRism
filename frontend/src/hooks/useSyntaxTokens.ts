@@ -138,5 +138,6 @@ export function useSyntaxTokens(input: UseSyntaxTokensInput): SyntaxTokenMaps {
     return { oldLineTokens, newLineTokens, ready: true };
     // headSha/baseSha bust the memo on PR navigation / force-push even when
     // path & lang are unchanged; newSource/oldSource cover content changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- input.headSha/baseSha are intentional memo-bust keys (PR-nav / force-push), not used directly in the body (#331)
   }, [ready, lang, file, newSource, oldSource, input.headSha, input.baseSha]);
 }
