@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.Net.Http;
-using System.Net.Http.Headers;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -29,13 +28,8 @@ public sealed class GitHubWatchedReposReader : IWatchedReposReader
         {
             var token = await _readToken().ConfigureAwait(false);
             using var http = _httpFactory.CreateClient("github");
-            using var req = new HttpRequestMessage(HttpMethod.Get, $"user/subscriptions?per_page={PerPage}");
-            if (!string.IsNullOrEmpty(token))
-                req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
-            req.Headers.UserAgent.ParseAdd("PRism/0.1");
-            req.Headers.Accept.ParseAdd("application/vnd.github+json");
-
-            using var resp = await http.SendAsync(req, ct).ConfigureAwait(false);
+            var url = $"user/subscriptions?per_page={PerPage}";
+            using var resp = await GitHubHttp.SendAsync(http, HttpMethod.Get, url, token, ct).ConfigureAwait(false);
             if (!resp.IsSuccessStatusCode) return new WatchedReposResult([], Degraded: true);
 
             using var stream = await resp.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);

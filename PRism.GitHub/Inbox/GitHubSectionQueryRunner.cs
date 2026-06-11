@@ -1,4 +1,3 @@
-using System.Net.Http.Headers;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -106,20 +105,8 @@ public sealed partial class GitHubSectionQueryRunner : ISectionQueryRunner
         var url = $"search/issues?q={Uri.EscapeDataString(q)}&per_page=50"
             + (sort is null ? "" : $"&sort={Uri.EscapeDataString(sort)}&order=desc");
         using var http = _httpFactory.CreateClient("github");
-        using var req = new HttpRequestMessage(HttpMethod.Get, url);
-        if (!string.IsNullOrEmpty(token))
-            req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
-        req.Headers.UserAgent.ParseAdd("PRism/0.1");
-        req.Headers.Accept.ParseAdd("application/vnd.github+json");
-
-        using var resp = await http.SendAsync(req, ct).ConfigureAwait(false);
-        if (resp.StatusCode == System.Net.HttpStatusCode.TooManyRequests)
-        {
-            var retryAfter = resp.Headers.RetryAfter?.Delta;
-            throw new RateLimitExceededException(
-                "GitHub Search API rate-limited (429); orchestrator should skip this tick.",
-                retryAfter);
-        }
+        using var resp = await GitHubHttp.SendAsync(http, HttpMethod.Get, url, token, ct).ConfigureAwait(false);
+        GitHubHttp.ThrowIfRateLimited(resp, " Search API");
         resp.EnsureSuccessStatusCode();
         var body = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
         using var doc = JsonDocument.Parse(body);

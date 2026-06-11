@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Net.Http;
-using System.Net.Http.Headers;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Threading;
@@ -33,14 +32,8 @@ public sealed partial class GitHubNotificationsReader : INotificationsReader
             var token = await _readToken().ConfigureAwait(false);
             using var http = _httpFactory.CreateClient("github");
             var sinceParam = Uri.EscapeDataString(since.UtcDateTime.ToString("O", CultureInfo.InvariantCulture));
-            using var req = new HttpRequestMessage(HttpMethod.Get,
-                $"notifications?all=true&since={sinceParam}&per_page={PerPage}");
-            if (!string.IsNullOrEmpty(token))
-                req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
-            req.Headers.UserAgent.ParseAdd("PRism/0.1");
-            req.Headers.Accept.ParseAdd("application/vnd.github+json");
-
-            using var resp = await http.SendAsync(req, ct).ConfigureAwait(false);
+            var url = $"notifications?all=true&since={sinceParam}&per_page={PerPage}";
+            using var resp = await GitHubHttp.SendAsync(http, HttpMethod.Get, url, token, ct).ConfigureAwait(false);
             if (!resp.IsSuccessStatusCode) return new NotificationsResult([], Degraded: true);
 
             using var stream = await resp.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
