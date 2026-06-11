@@ -136,9 +136,103 @@ function Test-LauncherAlreadyRunning {
     return $ExpectedNames -contains $p.Name
 }
 
+function Assert-Platform {
+    if (-not $IsWindows) {
+        throw "run-desktop.ps1 is the Windows launcher. On macOS run scripts/run-desktop.sh instead."
+    }
+}
+
+function Assert-CommandPresent {
+    param([string]$Name, [string]$Remediation)
+    if (-not (Get-Command $Name -ErrorAction SilentlyContinue)) {
+        Write-Host $Remediation -ForegroundColor Yellow
+        throw "Preflight failed: '$Name' not found on PATH."
+    }
+}
+
+function Invoke-Preflight {
+    # Node + npm presence; .NET SDK major >= 10. On any miss, print remediation and throw.
+    Assert-CommandPresent -Name 'node' -Remediation (Get-NodeRemediation)
+    Assert-CommandPresent -Name 'npm'  -Remediation (Get-NodeRemediation)
+    Assert-CommandPresent -Name 'dotnet' -Remediation (Get-DotnetRemediation)
+    $sdks = @(& dotnet --list-sdks)
+    if (-not (Test-HasDotnetSdkAtLeast -ListSdksOutput $sdks -MinMajor 10)) {
+        $majors = (Get-DotnetSdkMajors -ListSdksOutput $sdks) -join ', '
+        Write-Host (Get-DotnetRemediation -FoundSdks @($sdks)) -ForegroundColor Yellow
+        throw "Preflight failed: no .NET SDK with major >= 10 (found majors: $majors)."
+    }
+}
+
 function Invoke-Main {
     param([switch]$SkipBuild)
-    throw "Invoke-Main not yet implemented"
+    Assert-Platform
+    $repoRoot   = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
+    $desktopDir = Join-Path $repoRoot 'desktop'
+    $publishDir = Join-Path $desktopDir '.dev-sidecar'
+    $dataDir    = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'PRism'
+    $log        = Join-Path $dataDir 'run-desktop.log'
+    $pidfile    = Get-LauncherPidfilePath -DataDir $dataDir
+    New-Item -ItemType Directory -Force $dataDir | Out-Null
+
+    # Single-instance short-circuit BEFORE the (slow) build, so a re-run while the
+    # app is up doesn't rebuild into an Electron single-instance-lock no-op.
+    if (Test-LauncherAlreadyRunning -PidfilePath $pidfile) {
+        Write-Host "PRism desktop is already running (pidfile $pidfile). Close the window first; a re-run would just refocus it. Nothing rebuilt." -ForegroundColor Yellow
+        return
+    }
+
+    Invoke-Preflight
+
+    if (-not $SkipBuild) {
+        # 1. Frontend SPA -> PRism.Web/wwwroot
+        Push-Location (Join-Path $repoRoot 'frontend')
+        try {
+            npm ci;        if ($LASTEXITCODE -ne 0) { throw "frontend npm ci failed ($LASTEXITCODE)." }
+            npm run build; if ($LASTEXITCODE -ne 0) { throw "frontend npm run build failed ($LASTEXITCODE)." }
+        } finally { Pop-Location }
+
+        # 2. Sidecar: clean publish dir, then framework-dependent win-x64 publish.
+        if (Test-Path -LiteralPath $publishDir) { Remove-Item -Recurse -Force $publishDir }
+        dotnet publish (Join-Path $repoRoot 'PRism.Web/PRism.Web.csproj') `
+            -c Release -r (Get-HostRid) --self-contained false -o $publishDir
+        if ($LASTEXITCODE -ne 0) { throw "dotnet publish failed ($LASTEXITCODE)." }
+
+        # 3. Electron TS -> desktop/dist/main.js
+        Push-Location $desktopDir
+        try {
+            npm ci;        if ($LASTEXITCODE -ne 0) { throw "desktop npm ci failed ($LASTEXITCODE)." }
+            npm run build; if ($LASTEXITCODE -ne 0) { throw "desktop npm run build failed ($LASTEXITCODE)." }
+        } finally { Pop-Location }
+    }
+
+    # 4. Resolve the published apphost + local electron shim; both must exist.
+    $sidecar  = Get-SidecarApphostPath -PublishDir $publishDir
+    if (-not (Test-Path -LiteralPath $sidecar)) {
+        throw "Sidecar binary not found at $sidecar. Run without -SkipBuild to build it."
+    }
+    $electron = Join-Path $desktopDir 'node_modules\.bin\electron.cmd'
+    if (-not (Test-Path -LiteralPath $electron)) {
+        throw "Electron not found at $electron. Run without -SkipBuild so 'npm ci' installs it."
+    }
+
+    # 5. Author the wrapper (owns env + redirection), spawn it detached via WMI.
+    $startedUtc  = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
+    $wrapperPath = Join-Path $dataDir 'run-desktop.wrapper.ps1'
+    $wrapper     = New-DesktopLauncherWrapper -ElectronExe $electron -DesktopDir $desktopDir `
+        -SidecarBinary $sidecar -Log $log -StartedUtc $startedUtc
+    [System.IO.File]::WriteAllText($wrapperPath, $wrapper, [System.Text.UTF8Encoding]::new($false))
+
+    $cmd = "pwsh -NoProfile -ExecutionPolicy Bypass -File `"$wrapperPath`""
+    $res = Invoke-CimMethod -ClassName Win32_Process -MethodName Create `
+        -Arguments @{ CommandLine = $cmd; CurrentDirectory = $desktopDir }
+    if ($res.ReturnValue -ne 0) {
+        throw "WMI Win32_Process.Create refused to spawn the wrapper (ReturnValue=$($res.ReturnValue))."
+    }
+    Write-LauncherPidfile -PidfilePath $pidfile -ProcessId ([int]$res.ProcessId)
+
+    Write-Host "PRism desktop launching (detached). The window should appear shortly." -ForegroundColor Green
+    Write-Host "  If it stays blank or never appears, inspect: $log" -ForegroundColor DarkGray
+    Write-Host "  Close the window to stop (the sidecar shuts down with it)." -ForegroundColor DarkGray
 }
 
 # --- main (skipped when dot-sourced for isolated testing) ---
