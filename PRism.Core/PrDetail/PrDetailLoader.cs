@@ -28,8 +28,9 @@ public sealed class PrDetailLoader : IDisposable
     private readonly IterationClusteringCoefficients _coefficients;
     private readonly IConfigStore _configStore;
 
-    // Kept alive for the loader's (singleton) lifetime; never disposed, mirroring the
-    // un-torn-down _configStore.Changed subscription below.
+    // Subscribed for the loader's (singleton) lifetime and torn down in Dispose() (added
+    // in #150 so the Subscribe IDisposable is released at shutdown rather than leaked, the
+    // same as the _configStore.Changed handler).
     private readonly IDisposable _activePrSubscription;
 
     // #353: evict the PR's snapshot immediately on a root-comment post — the constructor
