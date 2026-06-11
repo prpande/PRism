@@ -21,6 +21,7 @@ export function EgressConsentModal({ open, onAccept, onDecline }: Props) {
     setDisclosure(null);
     setFailed(false);
     setSubmitError(false);
+    setSubmitting(false);
     getEgressDisclosure()
       .then((d) => {
         if (!cancelled) setDisclosure(d);

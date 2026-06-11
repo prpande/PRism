@@ -41,4 +41,18 @@ describe('EgressConsentModal', () => {
     await waitFor(() => expect(post).toHaveBeenCalledWith('1'));
     expect(onAccept).toHaveBeenCalled();
   });
+
+  it('submit error: shows retry copy, does not call onAccept, re-enables Accept', async () => {
+    vi.spyOn(api, 'getEgressDisclosure').mockResolvedValue(disclosure);
+    vi.spyOn(api, 'postAiConsent').mockRejectedValue(new Error('409'));
+    const onAccept = vi.fn();
+    render(<EgressConsentModal open onAccept={onAccept} onDecline={vi.fn()} />);
+    await waitFor(() => screen.getByText(/Anthropic/));
+    const accept = screen.getByRole('button', { name: /enable live/i });
+    await userEvent.click(accept);
+    // `.` matches the apostrophe; scoped phrase avoids colliding with the modal title "Enable Live AI".
+    await waitFor(() => expect(screen.getByText(/Couldn.t enable Live AI/i)).toBeInTheDocument());
+    expect(onAccept).not.toHaveBeenCalled();
+    expect(accept).not.toBeDisabled();
+  });
 });
