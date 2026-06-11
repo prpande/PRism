@@ -39,14 +39,17 @@ internal static class GitHubHttp
                 if (http.BaseAddress is null)
                     throw new HttpRequestException(
                         "Cannot attach GitHub credentials: the HttpClient has no BaseAddress to validate the request host against.");
-                // Compare host AND port. Uri.Host strips the port, so a crafted `host:8080`
-                // Link URL — or an http:// downgrade (default port 80 vs the https
-                // BaseAddress's 443) — must be caught here, not just a different hostname.
-                if (!uri.Host.Equals(http.BaseAddress.Host, StringComparison.OrdinalIgnoreCase)
+                // Match scheme, host, AND port against the trusted BaseAddress. Host alone is
+                // not enough: Uri.Host strips the port (a crafted `host:8080` would slip through),
+                // and an http:// downgrade on the SAME host+port (e.g. an explicit `http://host:443`)
+                // would still send the PAT in plaintext — the scheme check is what actually closes
+                // that, not the port check alone. Any mismatch refuses to attach the credential.
+                if (!uri.Scheme.Equals(http.BaseAddress.Scheme, StringComparison.OrdinalIgnoreCase)
+                    || !uri.Host.Equals(http.BaseAddress.Host, StringComparison.OrdinalIgnoreCase)
                     || uri.Port != http.BaseAddress.Port)
                 {
                     throw new HttpRequestException(
-                        $"Refusing to attach GitHub credentials to off-host URL (request authority '{uri.Authority}', client authority '{http.BaseAddress.Authority}').");
+                        $"Refusing to attach GitHub credentials to off-host URL (request '{uri.Scheme}://{uri.Authority}', client '{http.BaseAddress.Scheme}://{http.BaseAddress.Authority}').");
                 }
             }
             // A relative URI resolves against the trusted BaseAddress — safe to credential.

@@ -152,6 +152,17 @@ public class GitHubHttpTests
     }
 
     [Fact]
+    public async Task SendAsync_http_downgrade_same_host_port_with_token_throws()
+    {
+        // Explicit http://host:443 matches host+port but is plaintext — the scheme check
+        // must refuse the PAT (Copilot review, PR #372).
+        var h = new CapturingHandler();
+        using var http = Client(h); // https://api.github.com/ (https, port 443)
+        await Assert.ThrowsAsync<HttpRequestException>(() =>
+            GitHubHttp.SendAsync(http, HttpMethod.Get, "http://api.github.com:443/x", "tok", CancellationToken.None));
+    }
+
+    [Fact]
     public async Task SendAsync_passes_absolute_ghes_url_through_without_doubling_prefix()
     {
         // Proves the §4.2 GHES fix: passing the absolute Link URL avoids the /api/v3/api/v3/
