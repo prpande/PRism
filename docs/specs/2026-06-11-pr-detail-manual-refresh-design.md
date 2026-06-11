@@ -20,7 +20,10 @@ PR-detail has three *reactive* reload paths but no *proactive* one:
 
 All three only fire when *something already told the UI to reload*. There is no "I don't
 trust what's on screen — re-read this PR from GitHub now" control. The user must close and
-reopen the PR (or wait for the 30 s poller) to force a fresh pull.
+reopen the PR (or wait for the 30 s poller) to force a fresh pull. This is not a speculative
+need: it is the explicitly-deferred PR-detail half of #311, whose inbox half (#341) already
+shipped exactly this proactive affordance — parity across the two primary surfaces is the
+accepted goal, validated when #311 was scoped.
 
 **Why a plain `reload()` is not enough.** `reload()` → `GET /api/pr/{ref}` →
 `PrDetailLoader.LoadAsync`, whose snapshot cache is keyed by `(prRef, headSha, generation)`.
@@ -119,6 +122,17 @@ private async Task<PrDetailSnapshot> ComposeSnapshotAsync(
 cold-load-race collapse semantics are preserved). **No behavior change to `LoadAsync`** — this
 is a pure extraction, asserted by the existing loader tests staying green.
 
+*Lock-free by design (unlike the inbox precedent).* `InboxRefreshOrchestrator.RefreshAsync`
+serializes under a `SemaphoreSlim _writerLock(1,1)` because it mutates a single shared
+`_current` field. `PrDetailLoader` instead writes two per-`prRef` `ConcurrentDictionary`
+entries (`_snapshots[realKey]`, then `_snapshotKeyByPrRef[prRef]`), each individually atomic,
+so no writer lock is added. The two writes are not transactionally atomic together, but every
+interleaving self-heals on the next `LoadAsync`: a poller `Invalidate` landing between them, or
+a concurrent `LoadAsync` `GetOrAdd` at the same `realKey`, leaves the maps mutually consistent
+(both reference `realKey`) and at worst yields a transient read that the next load corrects — no
+stale snapshot wins permanently. The honest-completion identity check (§3.2) tolerates which
+instance occupies the slot.
+
 ### 3.2 Endpoint: `POST /api/pr/{owner}/{repo}/{number}/refresh`
 
 Mapped in a new `PrRefreshEndpoints.cs` (mirrors `InboxEndpoints` `/refresh`; kept out of
@@ -138,21 +152,24 @@ app.MapPost("/api/pr/{owner}/{repo}/{number:int}/refresh",
             ? Results.Problem(type: "/pr/not-found", statusCode: 404)
             : Results.Ok();                            // fresh snapshot committed (incl. no-change)
     }
-    catch (RateLimitExceededException)
-    {
-        // Honest-completion (semantic C, same as /api/inbox/refresh): we cannot cheaply prove
-        // "*this* call committed", so the success test is "did the committed view ADVANCE past
-        // where it was when the request arrived?". A concurrent poller/GET that advanced it →
-        // the view is fresh → 200. If it did not advance, the manual pull was rate-limited and
-        // nothing got fresher → 503.
-        return ReferenceEquals(loader.TryGetCachedSnapshot(prRef), before)
-            ? Results.Problem(title: "PR refresh rate-limited", statusCode: 503, type: "/pr/refresh-rate-limited")
-            : Results.Ok();
-    }
     catch (OperationCanceledException) { throw; }       // client aborted; not an error
     catch (Exception)
     {
-        return Results.Problem(title: "PR refresh failed", statusCode: 503, type: "/pr/refresh-failed");
+        // Honest-completion (semantic C, same as /api/inbox/refresh). ANY throw lands here
+        // BEFORE RefreshAsync's overwrite, so this call did not commit. The success test is
+        // "did the committed view ADVANCE past where it was when the request arrived?" — true
+        // if a concurrent poller/GET advanced it → the view is fresh → 200; false → nothing
+        // got fresher → 503.
+        //
+        // The advance-check MUST live in the generic catch, not a typed
+        // `catch (RateLimitExceededException)`: GetPrDetailAsync/GetTimelineAsync surface a
+        // GitHub 429 as a plain HttpRequestException (via EnsureSuccessStatusCode), NOT the
+        // inbox-CI-probe-only RateLimitExceededException. A typed catch would therefore never
+        // run on a real rate-limit — the exact case AC#2 exists for — and a 429 the poller
+        // already resolved would wrongly report a hard 503.
+        return ReferenceEquals(loader.TryGetCachedSnapshot(prRef), before)
+            ? Results.Problem(title: "PR refresh failed", statusCode: 503, type: "/pr/refresh-failed")
+            : Results.Ok();
     }
 });
 ```
@@ -162,19 +179,26 @@ Returns an empty `200` (not the body): the frontend reloads via the existing `us
 inbox's two-step (POST refresh → GET reload), reuses the canonical reload path, and keeps the
 endpoint's single responsibility "make the backend fresh".
 
-**Note for implementation:** confirm whether `IPrReader.GetPrDetailAsync` / `GetTimelineAsync`
-surface a GitHub 429 as `RateLimitExceededException` (the inbox path does, from its CI probe).
-If they do not, the typed `catch` is inert and the generic `catch` returns the same `503
-/pr/refresh-failed` — the contract holds either way; the typed branch only buys the more
-precise `rate-limited` `type`.
+**Why one generic catch, not a typed rate-limit branch.** Verified against the codebase:
+`RateLimitExceededException` is thrown only on the inbox CI-probe / enrichment paths;
+`GetPrDetailAsync` / `GetTimelineAsync` raise a plain `HttpRequestException` on a 429. So the
+honest-completion advance-check is placed in the generic `catch (Exception)` — it then fires for
+*every* throw-before-commit (429 or otherwise), which is what AC#2 requires. A single `503
+/pr/refresh-failed` `type` is used (we don't parse `HttpRequestException.StatusCode` to
+distinguish 429 from other failures — the frontend's user-facing message is identical either way).
 
 ## 4. Frontend
 
 ### 4.1 `usePrDetailRefresh` hook (mirror of `useInboxRefresh`)
 
-New `frontend/src/hooks/usePrDetailRefresh.ts`, structurally identical to `useInboxRefresh`
+New `frontend/src/hooks/usePrDetailRefresh.ts`, structurally **mirroring** `useInboxRefresh`
 (re-entrancy guard, `MIN_INTERVAL_MS` success-only lockout, `TIMEOUT_MS` abort, `announce`
-strings, `justRefreshed` morph window with `CONFIRM_MS ≥ MIN_INTERVAL_MS`):
+strings, `justRefreshed` morph window with `CONFIRM_MS ≥ MIN_INTERVAL_MS`). Two seams differ
+from the inbox and are called out below: (a) `usePrDetail.reload` is a **void** counter-bump,
+not an awaitable `Promise` like the inbox's `reload`; (b) the banner-clear callback is named
+`clearUpdates` (it wraps `updates.clear` from `useActivePrUpdates`), where the inbox passes
+`dismiss` (wrapping `useInboxUpdates.dismiss`) — the names track the different underlying
+update hooks, not a drift.
 
 ```ts
 export function usePrDetailRefresh({ prRef, reload, clearUpdates, onError }: Options): PrDetailRefreshState {
@@ -186,9 +210,13 @@ export function usePrDetailRefresh({ prRef, reload, clearUpdates, onError }: Opt
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
     try {
-      await prDetailApi.refresh(prRef, controller.signal);
-      await reload();          // usePrDetail re-GET — now hits the fresh snapshot
-      clearUpdates();          // dismiss any latched "update available" banner
+      await prDetailApi.refresh(prRef, controller.signal);  // the awaited step — backend now fresh
+      reload();                // fire-and-forget re-GET. usePrDetail.reload is `() =>
+                               // setReloadCounter(c => c+1)` (void; triggers a useEffect re-fetch),
+                               // NOT an awaitable Promise — so we do NOT `await` it. The success
+                               // confirmation below attests "I re-read this PR" (the POST settled);
+                               // the LoadingBar covers the brief subsequent GET window.
+      clearUpdates();          // dismiss any latched "update available" banner (wraps updates.clear)
       lastSuccessAt.current = Date.now();
       setAnnounce('PR refreshed'); setJustRefreshed(true);
       // ...CONFIRM_MS reset of justRefreshed...
@@ -203,9 +231,20 @@ export function usePrDetailRefresh({ prRef, reload, clearUpdates, onError }: Opt
 **Deliberately no `reconcile.reload()` leg.** Draft-vs-head reconciliation is the head-shift
 draft-safety operation owned by `BannerRefresh` / `handleReload`; the proactive button's
 contract is "re-pull the displayed detail". This matches `useActivationTransition` (line
-119–125), which also does `reload() + updates.clear()` without reconcile. If a manual refresh
-surfaces a head shift, the next poller tick raises `BannerRefresh` and the user reconciles
-drafts on an explicit Reload — same as today's focus-refetch behavior.
+119–125), which also does `reload() + updates.clear()` without reconcile.
+
+*Explicit-intent boundary (accepted limitation).* A deliberate Refresh click carries more
+"make-this-current" intent than an ambient tab-refocus, so the gap is worth naming: if the
+manual refresh pulls a **new head SHA** while the user holds drafts anchored to the old head,
+the display updates but the drafts are not reconciled until the **next poller tick** raises
+`BannerRefresh` (≤ one cadence, ~30 s) and the user clicks Reload. This is the same window the
+existing focus-refetch already lives with, and the drafts are not lost — only the reconcile
+*prompt* is delayed. Proactively raising the reconcile affordance from the refresh path itself
+(e.g. comparing pre/post head SHA and synthesizing the banner without waiting for the poller)
+is a real enhancement but is **deferred**: it couples the refresh path into the SSE-driven
+`useActivePrUpdates` state for a low-probability edge (refresh **and** a concurrent head shift
+**and** old-head-anchored drafts), which YAGNI counsels against until dogfooding shows the
+delay bites.
 
 API client: add `refresh(prRef, signal)` →
 `apiClient.post(`/api/pr/${owner}/${repo}/${number}/refresh`, undefined, { signal })`
@@ -213,14 +252,21 @@ API client: add `refresh(prRef, signal)` →
 
 ### 4.2 Shared `RefreshButton`
 
-Generalize the existing `frontend/src/components/Inbox/RefreshButton.tsx` (currently hardcodes
-"inbox" labels + `inbox-refresh-button` testid) to take `label`, `refreshingLabel`, and
-`testId` props, and **relocate it to `frontend/src/components/controls/RefreshButton.tsx`**
+Generalize the existing `frontend/src/components/Inbox/RefreshButton.tsx` (which currently
+hardcodes the `aria-label`/`title` "inbox" strings, the `inbox-refresh-button` testid, **and**
+the confirm-checkmark `inbox-refresh-confirm` testid asserted by its colocated
+`RefreshButton.test.tsx`) to take `label`, `refreshingLabel`, `title`, `testId`, and
+`confirmTestId` props, and **relocate it to `frontend/src/components/controls/RefreshButton.tsx`**
 (the design-system controls home). Inbox passes its existing strings; PR-detail passes
-`"Refresh PR"` / `"Refreshing PR…"` / `pr-refresh-button`. The rendered markup
-(`btn btn-icon`, spinner/checkmark/arrow morph) is **byte-identical for the inbox** when given
-the same strings, so no inbox visual baseline changes — only the import path moves. This avoids
-duplicating the SVG morph logic, consistent with the codebase's shared-core ethos (#326).
+`"Refresh PR"` / `"Refreshing PR…"` / `pr-refresh-button` / `pr-refresh-confirm`.
+
+The rendered markup (`btn btn-icon`, spinner/checkmark/arrow morph) is **unchanged for the
+inbox when given its existing strings**, so no inbox visual baseline changes. But the relocation
+is not a single import edit — three call/test sites move together: the importer is
+`frontend/src/components/Inbox/filters/FilterBar.tsx:9` (not `InboxPage`), and both `FilterBar`'s
+import path and the colocated `RefreshButton.test.tsx` (including its `inbox-refresh-confirm`
+assertion, now parameterized) update alongside the move. This avoids duplicating the SVG morph
+logic, consistent with the codebase's shared-core ethos (#326).
 
 *(Fallback if the relocation churn is unwanted: a `PrDetailRefreshButton` sibling that imports
 the same SVGs. Recommended path is the shared control.)*
@@ -238,11 +284,36 @@ the same SVGs. Recommended path is the shared control.)*
 - Pass `onRefresh={refresh}`, `isRefreshing`, `justRefreshed` into `PrHeader`, which renders the
   shared `RefreshButton` inside its `prActions` cluster.
 
+**Interaction states (all inherited from the inbox `RefreshButton`, stated explicitly):**
+
+- *idle* → circular-arrow icon, enabled.
+- *refreshing* (`isRefreshing`) → decorative spinner, `disabled`, `aria-label="Refreshing PR…"`.
+- *just-refreshed* (`justRefreshed`, the `CONFIRM_MS` window) → checkmark, **enabled** — the
+  button is NOT disabled during the success-lockout. The lockout is enforced inside the hook
+  (`refresh()` early-returns within `MIN_INTERVAL_MS`), so a click in this window silently
+  no-ops; the visible checkmark *is* the feedback (`CONFIRM_MS ≥ MIN_INTERVAL_MS` guarantees the
+  window is never feedback-free). This matches the inbox exactly — there is no "disabled with no
+  reason" state.
+- *error* → returns to the idle arrow; the toast carries the failure message.
+- *focus* → the button is always mounted in `prActions` (when `!loading`) and is never
+  conditionally unmounted during the morph/lockout, so keyboard focus stays on it across a
+  refresh — no focus-loss-to-document-top.
+
+**Coexistence with `BannerRefresh`.** Two refresh affordances can share the screen: the
+proactive header button ("refresh on demand") and the SSE-driven banner ("updates detected —
+Reload"). The rule: a successful button refresh **subsumes** the banner — `clearUpdates()`
+dismisses it on success. The banner may still *appear* during an in-flight refresh (the poller
+keeps ticking); it is not suppressed, and `clearUpdates()` cleans it on completion. No new
+labelling is needed beyond the existing distinct copy (button `aria-label` "Refresh PR" vs
+banner "… available — Reload to view").
+
 **Placement (the B1 visual decision).** `prActions` today renders
 `<OpenInGitHubButton/> <ReviewActionButton/>`. Default: insert the icon-only `RefreshButton`
 **before** `OpenInGitHubButton` (two low-weight icon utilities to the left of the emphasized
-Review split-button). #291 decluttered this bar, so the exact slot/order is settled at the B1
-gate with before/after light+dark screenshots rather than unilaterally.
+Review split-button). The B1 gate decides **existence-and-weight**, not only slot order: #291
+deliberately decluttered this bar, so the question to settle with before/after light+dark
+screenshots is whether an always-present icon is the right home for a rarely-fired action, or
+whether a lower-prominence placement is warranted — not merely left-vs-right of Open-in-GitHub.
 
 ## 5. Error handling & edge cases
 
@@ -250,15 +321,23 @@ gate with before/after light+dark screenshots rather than unilaterally.
   `MIN_INTERVAL_MS` lockout (button also `disabled` while `isRefreshing`).
 - **Timeout:** `AbortController` at `TIMEOUT_MS`; aborted fetch → `onError` toast.
 - **404 (PR gone):** endpoint returns 404 → hook `catch` → toast "Couldn't refresh this PR."
-  (The PR genuinely disappearing is already handled by the next `GET`'s 404 path / ErrorModal;
-  the refresh just reports its own failure.)
-- **503 (rate-limited / failed):** toast "Couldn't refresh this PR. Try again."
+  The dead-PR case then **converges** on the existing path: `reload()` does not run on the
+  error branch, but the user's next interaction (or the existing freshness reload) issues a
+  `GET` that 404s and routes to the `ErrorModal` ("Couldn't load this PR" → Back to inbox). The
+  refresh toast is the immediate signal; the ErrorModal is the terminal state — no new dead-PR
+  handling is added.
+- **503 (failed / rate-limited-and-not-advanced):** toast "Couldn't refresh this PR. Try again."
+- **No-change success:** a successful re-read where nothing changed (unchanged head SHA) returns
+  `200` and shows the **same** "PR refreshed" confirmation as a changed re-read. This is
+  deliberate: the button's contract is "force a re-read", which succeeded — the confirmation
+  attests the re-read, not that data changed (the inbox refresh behaves identically). No
+  "already up to date" variant is added.
 - **Read-only cross-tab presence:** the refresh path is a backend read + a GET reload; it does
   **not** mutate state, so (unlike `handleReload`'s reconcile leg) it is safe under
   `presence.readOnly` and needs no guard. The button stays enabled for a passive viewer.
-- **Concurrent poller eviction:** if the poller evicts/advances the snapshot between `before`
-  capture and the rate-limit catch, `ReferenceEquals` returns false → `200` (the view did
-  advance) — the honest, correct outcome.
+- **Concurrent poller eviction:** if the poller evicts/advances the snapshot between the
+  `before` capture and the generic `catch` (§3.2), `ReferenceEquals` returns false → `200` (the
+  view did advance) — the honest, correct outcome.
 
 ## 6. Testing
 
@@ -270,9 +349,14 @@ gate with before/after light+dark screenshots rather than unilaterally.
 - `RefreshAsync` returns the snapshot **uncached** when `_generation` is bumped mid-flight.
 - `LoadAsync` behavior is unchanged after the `ComposeSnapshotAsync` extraction (existing
   loader tests stay green — the regression guard).
-- Endpoint: `200` on success; `404` on not-found; `503 /pr/refresh-rate-limited` when
-  `RateLimitExceededException` and the snapshot did **not** advance; `200` when it **did**
-  advance (concurrent advance simulated); `OperationCanceledException` propagates (no 503).
+- Endpoint: `200` on success; `404` on not-found; `503 /pr/refresh-failed` when `RefreshAsync`
+  throws (any exception — stub a `GetPrDetailAsync` throw, incl. a 429-shaped
+  `HttpRequestException`) **and** the snapshot did **not** advance; `200` when it **did** advance
+  (simulate a concurrent commit so `TryGetCachedSnapshot(prRef) != before`);
+  `OperationCanceledException` propagates (no 503). Add a regression test that the advance-check
+  runs from the **generic** catch (a non-`RateLimitExceededException` throw still yields the
+  200-if-advanced / 503-if-not contract) — guarding against a future typed-catch reintroducing
+  the dead-branch bug.
 
 **Frontend (vitest):** mirror `useInboxRefresh` tests — re-entrancy guard, min-interval lockout,
 timeout abort, `announce` transitions, `justRefreshed` morph window, calls `reload` +
