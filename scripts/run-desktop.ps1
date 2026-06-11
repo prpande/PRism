@@ -67,6 +67,19 @@ After installing, open a new terminal so PATH refreshes, then re-run this script
 "@
 }
 
+function Get-HostRid {
+    # This Windows launcher only runs on Windows; the macOS RID (osx-arm64/osx-x64)
+    # is handled by run-desktop.sh. win-x64 is the sole target here.
+    return 'win-x64'
+}
+
+function Get-SidecarApphostPath {
+    # The framework-dependent publish produces an apphost named after the assembly
+    # (PRism.Web -> PRism.Web.exe). NOT the CI-renamed PRism-<rid> packaging artifact.
+    param([string]$PublishDir)
+    return (Join-Path $PublishDir 'PRism.Web.exe')
+}
+
 function Invoke-Main {
     param([switch]$SkipBuild)
     throw "Invoke-Main not yet implemented"

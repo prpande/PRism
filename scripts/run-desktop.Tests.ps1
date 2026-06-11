@@ -51,6 +51,11 @@ $dnMsg = Get-DotnetRemediation
 Assert-Match $dnMsg 'Microsoft\.DotNet\.SDK\.10' "dotnet remediation names SDK 10 winget package"
 Assert-Match $dnMsg '\.NET 10' "dotnet remediation names .NET 10"
 
+Write-Host "Get-HostRid / Get-SidecarApphostPath" -ForegroundColor Cyan
+Assert-Equal 'win-x64' (Get-HostRid) "Windows RID is win-x64"
+$apphost = Get-SidecarApphostPath -PublishDir 'C:\repo\desktop\.dev-sidecar'
+Assert-Equal 'C:\repo\desktop\.dev-sidecar\PRism.Web.exe' $apphost "apphost is PRism.Web.exe under publish dir"
+
 # --- footer: exit non-zero on any failure ---
 if ($script:Failures -gt 0) {
     Write-Host "$script:Failures test(s) failed" -ForegroundColor Red
