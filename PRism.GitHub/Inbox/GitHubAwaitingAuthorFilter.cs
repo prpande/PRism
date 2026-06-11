@@ -106,7 +106,12 @@ public sealed partial class GitHubAwaitingAuthorFilter : IAwaitingAuthorFilter
                     var commitId = review.TryGetProperty("commit_id", out var c) ? c.GetString() : null;
                     if (string.IsNullOrEmpty(commitId)) continue; // null/empty commit_id → no comparable head
 
-                    if (!review.TryGetProperty("submitted_at", out var sa)) continue; // unsubmitted/absent → skip
+                    // submitted_at is JSON null for PENDING drafts; gate on the value KIND so a
+                    // null-kind is a clean skip, not a GetDateTimeOffset() throw caught as malformed
+                    // (mirrors GitHubReviewService.cs:917). A non-date STRING still reaches the parse
+                    // below and throws FormatException → handled by the malformed-item guard.
+                    if (!review.TryGetProperty("submitted_at", out var sa) ||
+                        sa.ValueKind != JsonValueKind.String) continue;
                     var submittedAt = sa.GetDateTimeOffset();
 
                     // Strictly-greater; the explicit null-guard takes the first eligible review

@@ -1,6 +1,7 @@
 using System.Net;
 using System.Text;
 using FluentAssertions;
+using Microsoft.Extensions.Logging;
 using PRism.Core.Contracts;
 using PRism.Core.Inbox;
 using PRism.GitHub.Inbox;
@@ -16,6 +17,11 @@ public sealed class GitHubAwaitingAuthorFilterTests
     private static GitHubAwaitingAuthorFilter BuildSut(HttpMessageHandler handler) =>
         new(new FakeHttpClientFactory(handler, new Uri("https://api.github.com/")),
             () => Task.FromResult<string?>("t"));
+
+    private static GitHubAwaitingAuthorFilter BuildSut(
+        HttpMessageHandler handler, ILogger<GitHubAwaitingAuthorFilter> log) =>
+        new(new FakeHttpClientFactory(handler, new Uri("https://api.github.com/")),
+            () => Task.FromResult<string?>("t"), log);
 
     private static RawPrInboxItem Raw(int n, string headSha = "new", string repo = "acme/api")
     {
@@ -382,5 +388,32 @@ public sealed class GitHubAwaitingAuthorFilterTests
         var result = await sut.FilterAsync(ViewerLogin, [Raw(1, "new")], default);
 
         result.Should().ContainSingle("the null-commit_id newest review is skipped; best falls back to 'old' != head");
+    }
+
+    [Fact]
+    public async Task Pending_review_with_null_submitted_at_is_skipped_cleanly_no_malformed_log()
+    {
+        // The pending review carries a non-null commit_id "head" (load-bearing: a fully-pending
+        // review with commit_id null would be skipped at the commit_id gate before the kind
+        // check). Its submitted_at is a literal JSON null. It must be excluded by the ValueKind
+        // gate as a normal `continue` — NOT thrown-and-caught as a malformed item. best falls
+        // back to "old" != head ⇒ PR included; and no ReviewItemSkipped ("malformed JSON shape")
+        // log is emitted.
+        var log = new CapturingLogger<GitHubAwaitingAuthorFilter>();
+        var body = $$"""
+            [
+              { "user": { "login": "{{ViewerLogin}}" }, "commit_id": "old",  "submitted_at": "2020-01-01T00:00:00Z" },
+              { "user": { "login": "{{ViewerLogin}}" }, "commit_id": "head", "submitted_at": null }
+            ]
+            """;
+        var handler = new FakeHttpMessageHandler(_ => Respond(HttpStatusCode.OK, body));
+        var sut = BuildSut(handler, log);
+
+        var result = await sut.FilterAsync(ViewerLogin, [Raw(1, "head")], default);
+
+        result.Should().ContainSingle("pending review skipped; best falls back to 'old' != head");
+        log.Entries.Should().NotContain(
+            e => e.Message.Contains("malformed JSON shape", StringComparison.Ordinal),
+            "a JSON-null submitted_at must be a clean skip, not a malformed-item log");
     }
 }
