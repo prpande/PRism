@@ -1,5 +1,6 @@
 using System.Collections.Immutable;
 using System.Diagnostics.CodeAnalysis;
+using System.Text.Json.Serialization;
 
 namespace PRism.Core.State;
 
@@ -85,6 +86,10 @@ public sealed record DraftComment(
     // [MemberNotNullWhen(false, ...)] keeps the predicate flow-aware: a false result proves
     // FilePath is non-null, so call sites that guard `if (draft.IsPrRoot) continue;` can deref
     // FilePath afterward without a null-forgiving operator (as DraftReconciliationPipeline does).
+    // [JsonIgnore] keeps this derived getter out of persisted state.json: System.Text.Json
+    // serializes getter-only properties on write (it only ignores them on read), so without it
+    // an "is-pr-root" key would leak into storage — an unintended schema change and redundant data.
+    [JsonIgnore]
     [MemberNotNullWhen(false, nameof(FilePath))]
     public bool IsPrRoot => FilePath is null;
 }
