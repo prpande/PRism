@@ -85,6 +85,7 @@ PRism.GitHub/
   GitHubRestContractException.cs (NEW) typed malformed-2xx exception
   Inbox/
     InboxCacheEviction.cs        (NEW) shared absent-PrReference prune helper
+    InboxJsonGuard.cs            (NEW) shared JSON-shape exception predicate (per-item isolation)
     GitHubCiFailingDetector.cs   (EDIT) IClock + per-entry timestamp + TTL; eviction; use GitHubLinkHeader
     GitHubPrEnricher.cs          (EDIT) eviction; per-PR JSON isolation
     GitHubAwaitingAuthorFilter.cs(EDIT) eviction; Link-walk reviews; per-item JSON isolation; ILogger
@@ -175,6 +176,10 @@ prune runs on the calling thread after `Task.WhenAll` completes, so it never rac
   tick {A} again → A re-probed (proving `Clear()` ran).
 - If a behavioural assert is impractical for a given class, fall back to an `internal` count accessor
   guarded by `InternalsVisibleTo` (the GitHub test project already has access) rather than reflection.
+- **For the CI detector specifically, the eviction test must use the default frozen clock — do NOT advance
+  it.** With the clock frozen, tick-3's B re-probe is attributable to eviction alone; advancing past
+  `TerminalTtl` (U5) would make the re-probe ambiguous (eviction vs TTL expiry) and could flip A's tick-2
+  cache hit to a miss, silently weakening the eviction proof into a tautology.
 
 ---
 
@@ -541,12 +546,20 @@ tests build the SUT through a `BuildSut(handler)` helper referenced ~37×; updat
 thread a clock (one edit fixes all call sites), e.g.:
 ```csharp
 private static GitHubCiFailingDetector BuildSut(FakeHttpMessageHandler handler, IClock? clock = null) =>
-    new(new FakeHttpClientFactory(handler), () => Task.FromResult<string?>("t"), clock ?? new MutableClock());
+    new(new FakeHttpClientFactory(handler, new Uri("https://api.github.com/")),
+        () => Task.FromResult<string?>("t"),
+        clock ?? new MutableClock());
 ```
-TTL tests pass an explicit `MutableClock` they advance; all existing tests get a fresh default clock and
-keep compiling. (The required-param shape is kept deliberately over an `IClock? clock = null`
-default-to-`new SystemClock()` ctor overload — a required param keeps the DI contract explicit and avoids a
-hidden production default; the cost is the one-line `BuildSut` edit above.)
+Keep the existing two-arg `FakeHttpClientFactory(handler, new Uri(...))` shape (the sibling
+enricher/filter/section-runner `BuildSut` helpers all pass the same base address — a one-arg call does not
+compile). TTL tests pass an explicit `MutableClock` they advance; all existing tests get the **frozen**
+default `MutableClock` (fixed at `2026-06-11T12:00:00`, never advancing) and keep compiling. **The default
+must be the frozen `MutableClock`, not `SystemClock`** — every existing cache-hit assertion (a second
+`DetectAsync` on the same key serving from cache) holds only because `UtcNow − CachedAtUtc == 0 ≤ TerminalTtl`
+under the frozen clock; a wall-clock `SystemClock` default would couple those tests to real time. (The
+required-param ctor shape is kept deliberately over an `IClock? clock = null` default-to-`new SystemClock()`
+ctor overload — a required param keeps the DI contract explicit and avoids a hidden production default; the
+cost is the one-line `BuildSut` edit above.)
 
 **Test clock:** the existing `TestClock` lives in `tests/PRism.Core.Tests/TestHelpers`; the GitHub test
 project references `PRism.Core` but **not** `PRism.Core.Tests`, so `TestClock` is inaccessible without a new
