@@ -10,6 +10,7 @@ import { PrDetailView } from './PrDetailView';
 import { FilesTab } from './FilesTab/FilesTab';
 import { PrDetailContextProvider } from './prDetailContext';
 import type { PrDetailContextValue } from './prDetailContext';
+import { makePrDetailDto, makePr } from '../../../__tests__/helpers/prDetail';
 
 // ---------------------------------------------------------------------------
 // PR2 Task 8 — data freshness on tab re-activation.
@@ -35,32 +36,9 @@ import type { PrDetailContextValue } from './prDetailContext';
 // stub whose clearUnread is a cross-render-stable hoisted spy.
 // ---------------------------------------------------------------------------
 
-const PR_DETAIL: PrDetailDto = {
-  pr: {
-    reference: { owner: 'acme', repo: 'api', number: 7 },
-    title: 'Keep-alive title',
-    body: 'A realistic body.',
-    author: 'alice',
-    state: 'open',
-    headSha: 'abc123',
-    baseSha: 'def456',
-    headBranch: 'feat',
-    baseBranch: 'main',
-    mergeability: 'mergeable',
-    ciSummary: '',
-    isMerged: false,
-    isClosed: false,
-    openedAt: new Date('2026-01-01T00:00:00Z').toISOString(),
-    mergedAt: null,
-    closedAt: null,
-  },
-  clusteringQuality: 'ok',
-  iterations: [],
-  commits: [],
-  rootComments: [],
-  reviewComments: [],
-  timelineCapHit: false,
-};
+const PR_DETAIL = makePrDetailDto({
+  pr: makePr({ reference: { owner: 'acme', repo: 'api', number: 7 }, title: 'Keep-alive title' }),
+});
 
 // Hoisted spies + a mutable result holder so individual tests can reshape what
 // usePrDetail returns (e.g. inject an error for the OQ6 failure case) without

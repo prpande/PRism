@@ -1,37 +1,15 @@
 import { renderHook, act, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { jsonResponse } from './helpers/http';
+import { makePrDetailDto, makePr } from './helpers/prDetail';
 import type { PrDetailDto, PrReference } from '../src/api/types';
 import { usePrDetail } from '../src/hooks/usePrDetail';
 
 const ref: PrReference = { owner: 'octocat', repo: 'hello', number: 42 };
 
-const minimalDto: PrDetailDto = {
-  pr: {
-    reference: ref,
-    title: 'Refactor the renewal worker',
-    body: '',
-    author: 'amelia.cho',
-    state: 'open',
-    headSha: 'abc',
-    baseSha: 'def',
-    headBranch: 'amelia/work',
-    baseBranch: 'main',
-    mergeability: 'mergeable',
-    ciSummary: 'success',
-    isMerged: false,
-    isClosed: false,
-    openedAt: '2026-05-01T00:00:00Z',
-    mergedAt: null,
-    closedAt: null,
-  },
-  clusteringQuality: 'ok',
-  iterations: [],
-  commits: [],
-  rootComments: [],
-  reviewComments: [],
-  timelineCapHit: false,
-};
+const minimalDto: PrDetailDto = makePrDetailDto({
+  pr: makePr({ reference: ref, title: 'Refactor the renewal worker', author: 'amelia.cho' }),
+});
 
 afterEach(() => {
   vi.restoreAllMocks();
