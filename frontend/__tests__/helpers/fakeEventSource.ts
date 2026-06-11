@@ -38,6 +38,12 @@ export class FakeEventSource {
     this.readyState = FakeEventSource.CLOSED;
   }
 
+  // NOTE: dispatch / dispatchRaw fire only `addEventListener`-registered
+  // listeners, NOT the `onmessage` property — every former caller subscribes via
+  // addEventListener('<named-event>', ...), never onmessage. `onmessage` is
+  // exposed only because the real EventSource has it; setting `instance.onmessage`
+  // and calling dispatch('message', ...) will NOT invoke it (mirrors that no
+  // caller relies on that path).
   dispatch(type: string, data: unknown) {
     this.listeners[type]?.forEach((cb) => cb({ data: JSON.stringify(data) } as MessageEvent));
   }

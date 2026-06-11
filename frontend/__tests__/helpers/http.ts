@@ -6,6 +6,9 @@
 // 204 path so a no-body status yields a spec-valid bodyless Response (the
 // Response constructor rejects a body on a 204).
 export function jsonResponse(data: unknown, status = 200): Response {
+  // Guards 204 only (the one no-body status the tests actually pass) rather than
+  // the full spec set (205/304) — kept deliberately narrow so a future reader
+  // doesn't widen it speculatively. Add a case here only when a test needs it.
   const isNoBody = status === 204;
   return new Response(isNoBody ? null : JSON.stringify(data), {
     status,
