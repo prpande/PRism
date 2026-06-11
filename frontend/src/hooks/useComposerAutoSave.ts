@@ -4,6 +4,19 @@ import type { DraftSide, PrReference, ReviewSessionPatch } from '../api/types';
 
 export type ComposerSaveBadge = 'saved' | 'saving' | 'unsaved' | 'rejected';
 
+export function badgeLabel(badge: ComposerSaveBadge): string {
+  switch (badge) {
+    case 'saved':
+      return 'Saved';
+    case 'saving':
+      return 'Saving…';
+    case 'unsaved':
+      return 'Unsaved';
+    case 'rejected':
+      return 'Save failed';
+  }
+}
+
 export type ComposerAnchor =
   | {
       kind: 'inline-comment';
