@@ -47,6 +47,17 @@ it('shows file · line for a file-anchored draft', () => {
   expect(screen.getByText(/line 42/)).toBeInTheDocument();
 });
 
+it('does not repeat the line for a moved draft (chip already shows it)', () => {
+  const movedDraft: DraftLike = {
+    kind: 'comment',
+    data: { ...fileDraft.data, id: 'd3', status: 'moved' },
+  };
+  render(<DraftListItem prRef={prRef} draft={movedDraft} onEdit={noop} onMutated={noop} />);
+  // "line 42" appears only in the "Moved (line 42)" chip, not again in the band.
+  expect(screen.getAllByText(/line 42/)).toHaveLength(1);
+  expect(screen.getByText(/src\/Calc\.cs/)).toBeInTheDocument();
+});
+
 it('shows chip-only band (no file/line) for a PR-root draft', () => {
   render(<DraftListItem prRef={prRef} draft={rootDraft} onEdit={noop} onMutated={noop} />);
   expect(screen.queryByText(/line/)).toBeNull();

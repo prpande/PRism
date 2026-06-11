@@ -91,7 +91,9 @@ export function DraftListItem({
         {draft.kind === 'comment' && draft.data.filePath != null && (
           <span className={styles.fileref}>
             {draft.data.filePath}
-            {draft.data.lineNumber != null && (
+            {/* The "moved" chip already reads "Moved (line N)", so suppress the
+                band's redundant line suffix for that variant only. */}
+            {draft.data.lineNumber != null && status.modifier !== 'moved' && (
               <span className={styles.fileRefLine}> · line {draft.data.lineNumber}</span>
             )}
           </span>
