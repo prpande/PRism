@@ -126,7 +126,7 @@ internal static class PrSubmitEndpoints
         // The Submit Review button enforces the same rules client-side; this is the backstop.
         var appState = await stateStore.LoadAsync(ct).ConfigureAwait(false);
         if (!appState.Reviews.Sessions.TryGetValue(sessionKey, out var session))
-            return Results.Json(new SubmitErrorDto("no-session", "No draft session for this PR."), statusCode: StatusCodes.Status400BadRequest);
+            return Results.Json(new SubmitErrorDto("no-session", "No draft session for this PR."), statusCode: StatusCodes.Status404NotFound);
 
         // Rule (b): any non-overridden Stale draft / reply blocks submit.
         if (session.DraftComments.Any(d => d.Status == DraftStatus.Stale && !d.IsOverriddenStale)

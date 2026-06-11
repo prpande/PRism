@@ -97,7 +97,7 @@ internal static class PrRootCommentEndpoints
         var appState = await stateStore.LoadAsync(ct).ConfigureAwait(false);
         if (!appState.Reviews.Sessions.TryGetValue(sessionKey, out var session))
             return Results.Json(new SubmitErrorDto("no-session", "No draft session for this PR."),
-                statusCode: StatusCodes.Status400BadRequest);
+                statusCode: StatusCodes.Status404NotFound);
 
         // Find the PR-root draft (FilePath null AND LineNumber null).
         var rootDraft = session.DraftComments.FirstOrDefault(d => d.FilePath is null && d.LineNumber is null);

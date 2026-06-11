@@ -106,14 +106,14 @@ public class PrRootCommentEndpointTests
     // ── no-session ───────────────────────────────────────────────────────────
 
     [Fact]
-    public async Task PostRootComment_no_session_returns_400_no_session()
+    public async Task PostRootComment_no_session_returns_404_no_session()
     {
         using var ctx = RootCommentTestContext.Create();
         // No session seeded.
 
         var resp = await ctx.Post(20);
 
-        resp.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        resp.StatusCode.Should().Be(HttpStatusCode.NotFound);
         var body = await resp.Content.ReadFromJsonAsync<JsonElement>(CamelCase);
         body.GetProperty("code").GetString().Should().Be("no-session");
     }
