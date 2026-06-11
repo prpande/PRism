@@ -5,7 +5,10 @@ import { MemoryRouter } from 'react-router-dom';
 import { AskAiPullTab } from './AskAiPullTab';
 
 const mocks = vi.hoisted(() => ({ gate: vi.fn(), drawer: vi.fn() }));
-vi.mock('../../hooks/useAiGate', () => ({ useAiGate: () => mocks.gate(), useIsSampleMode: () => false }));
+vi.mock('../../hooks/useAiGate', () => ({
+  useAiGate: () => mocks.gate(),
+  useIsSampleMode: () => false,
+}));
 vi.mock('../../contexts/AskAiDrawerContext', () => ({ useAskAiDrawer: () => mocks.drawer() }));
 
 const renderAt = (path: string) =>
