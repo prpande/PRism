@@ -59,12 +59,16 @@ main() {
   repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
   desktop_dir="$repo_root/desktop"
   publish_dir="$desktop_dir/.dev-sidecar"
-  # .NET's Environment.SpecialFolder.LocalApplicationData resolves to ~/.local/share on
-  # macOS (XDG) — where the sidecar's DataDirectoryResolver self-resolves the store. Match
-  # it so the log/pidfile sit beside the real data dir (NOT ~/Library/Application Support,
-  # which the app never uses). If PRISM_DATA_DIR is set, the launch subshell below inherits
-  # it from this env, so main.ts:resolveDataDir() points the sidecar at the SAME dir the
-  # log/pidfile use — the two stay aligned deliberately, not by accident.
+  # Where this launcher writes its OWN log + pidfile. This is best-effort co-location
+  # with the sidecar's data store, NOT load-bearing: the script never passes --dataDir,
+  # so the sidecar always self-resolves its own correct store
+  # (DataDirectoryResolver -> Environment.SpecialFolder.LocalApplicationData) regardless
+  # of this path — only the log/pidfile location depends on it. The default targets the
+  # XDG data dir (.NET on macOS commonly maps LocalApplicationData to ~/.local/share;
+  # the exact mapping can vary by runtime, so this is a chosen default, not a guaranteed
+  # match — repo docs elsewhere assume ~/Library/Application Support). To pin the store
+  # AND this dir to the same place unambiguously, set PRISM_DATA_DIR (the launch subshell
+  # below inherits it, so main.ts:resolveDataDir() and this path then agree).
   data_dir="${PRISM_DATA_DIR:-$HOME/.local/share/PRism}"
   log="$data_dir/run-desktop.log"
   pidfile="$data_dir/run-desktop.pid"
