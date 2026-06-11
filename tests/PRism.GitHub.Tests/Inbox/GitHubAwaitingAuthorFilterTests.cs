@@ -27,9 +27,10 @@ public sealed class GitHubAwaitingAuthorFilterTests
             0, 0, 0, headSha, 1);
     }
 
-    private static string ReviewsResponse(string viewerLogin, string lastReviewSha) => $$"""
+    private static string ReviewsResponse(
+        string viewerLogin, string lastReviewSha, string submittedAt = "2020-01-01T00:00:00Z") => $$"""
         [
-            { "user": { "login": "{{viewerLogin}}" }, "commit_id": "{{lastReviewSha}}" }
+            { "user": { "login": "{{viewerLogin}}" }, "commit_id": "{{lastReviewSha}}", "submitted_at": "{{submittedAt}}" }
         ]
         """;
 
@@ -283,8 +284,8 @@ public sealed class GitHubAwaitingAuthorFilterTests
         // Reviews are ascending: page 1 holds the OLDER review (at "old"), page 2 the NEWER
         // (at "head"). The viewer's latest review IS at head ⇒ PR is excluded. The single-page
         // bug would read page-1 "old" != head ⇒ wrongly include the PR.
-        var page1 = $$"""[ { "user": { "login": "{{ViewerLogin}}" }, "commit_id": "old" } ]""";
-        var page2 = $$"""[ { "user": { "login": "{{ViewerLogin}}" }, "commit_id": "head" } ]""";
+        var page1 = $$"""[ { "user": { "login": "{{ViewerLogin}}" }, "commit_id": "old", "submitted_at": "2020-01-01T00:00:00Z" } ]""";
+        var page2 = $$"""[ { "user": { "login": "{{ViewerLogin}}" }, "commit_id": "head", "submitted_at": "2020-02-01T00:00:00Z" } ]""";
         var handler = new PaginatedFakeHandler()
             .RouteJson("/repos/acme/api/pulls/1/reviews", page1, page2);
         var sut = BuildSut(handler);
@@ -298,7 +299,7 @@ public sealed class GitHubAwaitingAuthorFilterTests
     [Fact]
     public async Task Single_page_with_no_next_link_returns_page_1_best()
     {
-        var page1 = $$"""[ { "user": { "login": "{{ViewerLogin}}" }, "commit_id": "old" } ]""";
+        var page1 = $$"""[ { "user": { "login": "{{ViewerLogin}}" }, "commit_id": "old", "submitted_at": "2020-01-01T00:00:00Z" } ]""";
         var handler = new PaginatedFakeHandler()
             .RouteJson("/repos/acme/api/pulls/1/reviews", page1);
         var sut = BuildSut(handler);
@@ -315,7 +316,7 @@ public sealed class GitHubAwaitingAuthorFilterTests
         // One review missing user.login is skipped; a later valid viewer review still counts.
         var page1 = $$"""
             [ { "user": {} },
-              { "user": { "login": "{{ViewerLogin}}" }, "commit_id": "old" } ]
+              { "user": { "login": "{{ViewerLogin}}" }, "commit_id": "old", "submitted_at": "2020-01-01T00:00:00Z" } ]
             """;
         var handler = new PaginatedFakeHandler()
             .RouteJson("/repos/acme/api/pulls/1/reviews", page1);
@@ -332,7 +333,7 @@ public sealed class GitHubAwaitingAuthorFilterTests
         // 11 scripted pages, each with a rel="next" → the walk must stop at MaxReviewPages (10)
         // and return without throwing or over-calling.
         var pages = Enumerable.Range(1, 11)
-            .Select(_ => $$"""[ { "user": { "login": "{{ViewerLogin}}" }, "commit_id": "old" } ]""")
+            .Select(_ => $$"""[ { "user": { "login": "{{ViewerLogin}}" }, "commit_id": "old", "submitted_at": "2020-01-01T00:00:00Z" } ]""")
             .ToArray();
         var handler = new PaginatedFakeHandler()
             .RouteJson("/repos/acme/api/pulls/1/reviews", pages);
