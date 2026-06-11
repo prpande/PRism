@@ -106,7 +106,7 @@ async function seedBodyViaDialog(page: Page, body: string): Promise<void> {
   const save = waitForDraftSave(page);
   await editor.fill(body);
   await save;
-  await expect(dialog.getByTestId('composer-badge')).toHaveText('saved', { timeout: 10_000 });
+  await expect(dialog.getByTestId('composer-badge')).toHaveText('Saved', { timeout: 10_000 });
   await dialog.getByTestId('pr-root-done-toggle').click();
   await dialog.getByRole('button', { name: /^cancel$/i }).click();
   await expect(page.getByRole('dialog')).toHaveCount(0);
@@ -177,7 +177,7 @@ test('S-dialog 3 — Edit toggle: type → autosave → Done re-renders preview 
   const save = waitForDraftSave(page);
   await editor.fill(updated);
   await save;
-  await expect(dialog.getByTestId('composer-badge')).toHaveText('saved', { timeout: 10_000 });
+  await expect(dialog.getByTestId('composer-badge')).toHaveText('Saved', { timeout: 10_000 });
 
   // Done → the editor unmounts and the dialog returns to PREVIEW mode.
   await dialog.getByTestId('pr-root-done-toggle').click();
