@@ -915,33 +915,38 @@ git -C D:/src/PRism-344 commit -m "feat(#344): usePrDetailRefresh hook (mirror o
 In the existing `PrHeader` test (e.g. `PrHeader.test.tsx`), add (set `loading={false}` and pass the
 new props; reuse the test's existing props-builder):
 
+Use the file's **existing** `renderHeader(extra)` helper (it wraps `<MemoryRouter><AskAiDrawerProvider><PrHeader ...defaults {...extra} /></...>` and takes a `Partial<ComponentProps<typeof PrHeader>>` override — pass `loading`/`onRefresh`/`isRefreshing`/`justRefreshed` as `extra`). Add `import userEvent from '@testing-library/user-event';` if the file does not already import it.
+
 ```tsx
 it('renders the Refresh button in the actions cluster when not loading', () => {
-  renderPrHeader({ loading: false, onRefresh: vi.fn(), isRefreshing: false, justRefreshed: false });
+  renderHeader({ loading: false, onRefresh: () => {}, isRefreshing: false, justRefreshed: false });
   expect(screen.getByTestId('pr-refresh-button')).toBeInTheDocument();
+});
+
+it('does not render the Refresh button while loading', () => {
+  // prActions (and the button) render only when !loading (PrHeader.tsx:466).
+  renderHeader({ loading: true, onRefresh: () => {} });
+  expect(screen.queryByTestId('pr-refresh-button')).not.toBeInTheDocument();
 });
 
 it('clicking Refresh calls onRefresh', async () => {
   const onRefresh = vi.fn();
-  renderPrHeader({ loading: false, onRefresh, isRefreshing: false, justRefreshed: false });
+  renderHeader({ loading: false, onRefresh, isRefreshing: false, justRefreshed: false });
   await userEvent.click(screen.getByTestId('pr-refresh-button'));
   expect(onRefresh).toHaveBeenCalledTimes(1);
 });
 
-it('does not unmount the Refresh button across refresh state transitions (spec §4.3 focus guarantee)', () => {
-  // The button is rendered unconditionally (gated only on `onRefresh`), so it must persist as the
-  // SAME DOM node across isRefreshing true→false — never conditionally unmounted, so keyboard
-  // focus is never lost to document-top on the error/success paths.
-  const base = { loading: false, onRefresh: vi.fn() };
-  const { rerender } = renderPrHeader({ ...base, isRefreshing: true, justRefreshed: false });
-  const node = screen.getByTestId('pr-refresh-button');
-  // Re-render through the error path (isRefreshing → false, justRefreshed stays false).
-  rerender(<PrHeader {...buildPrHeaderProps({ ...base, isRefreshing: false, justRefreshed: false })} />);
-  expect(screen.getByTestId('pr-refresh-button')).toBe(node); // same node ⇒ not remounted
+// Spec §4.3 focus guarantee: the button is rendered in EVERY refresh state (it is not gated on
+// refresh state), so it can't be conditionally unmounted out from under keyboard focus mid-refresh.
+it.each([
+  { isRefreshing: true, justRefreshed: false },   // in-flight
+  { isRefreshing: false, justRefreshed: true },   // just-refreshed morph
+  { isRefreshing: false, justRefreshed: false },  // idle / post-error
+])('keeps the Refresh button mounted in refresh state %o', (state) => {
+  renderHeader({ loading: false, onRefresh: () => {}, ...state });
+  expect(screen.getByTestId('pr-refresh-button')).toBeInTheDocument();
 });
 ```
-
-(Match the test file's existing render helper name/signature — `renderPrHeader`/`buildPrHeaderProps` are placeholders for whatever the file already uses; if it builds props inline, add the three new props there. The `rerender` form depends on the helper; the assertion that matters is **node identity persists** across the transition.)
 
 Run (from `frontend/`): `frontend/node_modules/.bin/vitest run src/components/PrDetail/PrHeader.test.tsx`
 Expected: FAIL — no `pr-refresh-button`.
@@ -1017,29 +1022,41 @@ re-GETs the detail. Mirror the existing `PrDetailView` test setup (it already mo
 and the SSE/event hooks — reuse that harness). Assert:
 
 ```tsx
-it('clicking Refresh posts /refresh then re-GETs the detail', async () => {
+This test file **fully mocks `usePrDetail`** (`vi.mock('../../hooks/usePrDetail', ...)` returning
+`{ data, isLoading: false, error: null, reload: vi.fn() }`) and `useActivePrUpdates` — so there is
+**no `getPrDetail` spy**; assert on the mocked `reload` instead. Hoist a stable `reload` mock so the
+test can observe it (mind the `vi.hoisted` TDZ rule — declare before the `vi.mock` factory):
+
+```tsx
+import { prRefKey } from '../../api/types';
+const { reloadMock } = vi.hoisted(() => ({ reloadMock: vi.fn() }));
+// In the existing usePrDetail mock factory, return `reload: reloadMock` instead of `reload: vi.fn()`.
+
+const PR = { owner: 'acme', repo: 'api', number: 7 }; // match the prRef the file already renders with
+
+it('clicking Refresh posts /refresh then reloads the detail', async () => {
   const refreshSpy = vi.spyOn(prDetailApi, 'refreshPrDetail').mockResolvedValue(undefined);
-  // ...render PrDetailView with the existing test harness, wait for initial load...
+  reloadMock.mockClear();
+  // ...render PrDetailView with the existing harness (prRef = PR)...
   await userEvent.click(screen.getByTestId('pr-refresh-button'));
   await waitFor(() => expect(refreshSpy).toHaveBeenCalledTimes(1));
-  // getPrDetail called again after the refresh (initial load + reload)
-  await waitFor(() => expect(getPrDetailSpy).toHaveBeenCalledTimes(2));
+  await waitFor(() => expect(reloadMock).toHaveBeenCalled()); // hook's fire-and-forget reload()
 });
 
 it('shows the per-tab loading bar during an in-flight refresh (initial load already settled)', async () => {
   // Never-resolving refresh → isRefreshing stays true while isLoading is already false. Proves the
-  // LoadingBar `active={active && (isLoading || isRefreshing)}` term is wired (guards the || isRefreshing).
+  // LoadingBar `active={active && (isLoading || isRefreshing)}` term is wired (guards `|| isRefreshing`).
   vi.spyOn(prDetailApi, 'refreshPrDetail').mockImplementation(() => new Promise<void>(() => {}));
-  // ...render + wait for initial load so the cold-load bar is already inactive...
+  // ...render PrDetailView (isLoading is false via the usePrDetail mock)...
   await userEvent.click(screen.getByTestId('pr-refresh-button'));
-  // Assert the LoadingBar for this tab is in its active state. Use LoadingBar's existing
-  // active-state signal (the same one the inbox test asserts on `inbox-loading-bar`); the
-  // testid is `pr-loading-bar:<refKey>`.
-  await waitFor(() => expect(screen.getByTestId(`pr-loading-bar:${expectedRefKey}`)).toBeActiveLoadingBar());
+  // LoadingBar renders `<div data-active={active} data-testid="pr-loading-bar:<refKey>">`.
+  await waitFor(() =>
+    expect(screen.getByTestId(`pr-loading-bar:${prRefKey(PR)}`)).toHaveAttribute('data-active', 'true'),
+  );
 });
 ```
 
-(Use the file's existing spies/harness for `getPrDetail`; add a `refreshPrDetail` spy. `expectedRefKey` and the LoadingBar active assertion adapt to the file's harness + how `LoadingBar` renders `active` — mirror the inbox `inbox-loading-bar` assertion.)
+(Add a `refreshPrDetail` spy; reuse the file's existing render harness for `PrDetailView`. `usePrDetailRefresh` is the only refresh hook NOT mocked here, so it runs for real against the spied `refreshPrDetail`. Match `PR` to whatever prRef the existing tests render with.)
 
 Run (from `frontend/`): `frontend/node_modules/.bin/vitest run src/components/PrDetail/PrDetailView.test.tsx`
 Expected: FAIL — no refresh button wired.
