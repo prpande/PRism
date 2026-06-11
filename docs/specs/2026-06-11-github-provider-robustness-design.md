@@ -592,7 +592,7 @@ internal sealed class MutableClock : IClock
 - **U2 selection residual (out of scope, tracked).** U2 fixes pagination, not review *selection*: a
   null-`commit_id` latest review still resolves to the prior non-null SHA, and the ascending-order
   assumption is empirical, not a documented contract (see U2 "Scope of this fix"). No new risk vs today's
-  behavior; deferred to a follow-up issue rather than expanded into this slice.
+  behavior; deferred to #367 rather than expanded into this slice.
 - **TTL probe-cost (U5).** A 2-minute TTL means each terminal PR re-probes at most once per 2 minutes
   per session — negligible against the existing per-tick check-runs/status calls, and bounded by inbox
   size. No rate-limit concern at realistic inbox sizes.
@@ -617,9 +617,8 @@ internal sealed class MutableClock : IClock
 
 - CI classification refinements — superseded runs, `action_required` modelling (#305).
 - Any change to the atomic-submit GraphQL pipeline (intentionally untouched; B2 surface).
-- **Reviews-selection semantics** — null-`commit_id` "latest review" handling and a sort-order-robust
-  selection (max `submitted_at` instead of array position). File a follow-up issue at PR time and link it
-  here; U2 corrects pagination only.
+- **Reviews-selection semantics** (#367) — null-`commit_id` "latest review" handling and a
+  sort-order-robust selection (max `submitted_at` instead of array position). U2 corrects pagination only.
 
 ## Proof (to be filled at PR time)
 
