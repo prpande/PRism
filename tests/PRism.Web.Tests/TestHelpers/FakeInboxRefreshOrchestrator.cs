@@ -16,15 +16,17 @@ public sealed class FakeInboxRefreshOrchestrator : IInboxRefreshOrchestrator
     public Func<CancellationToken, Task>? RefreshOverride { get; set; }
 
     public int RefreshCalls { get; private set; }
+    public bool? LastHardRefresh { get; private set; }
 
     private int _coldStartKicked;
 
     public Task<bool> WaitForFirstSnapshotAsync(TimeSpan timeout, CancellationToken ct)
         => WaitOverride?.Invoke(timeout, ct) ?? Task.FromResult(Current != null);
 
-    public Task RefreshAsync(CancellationToken ct)
+    public Task RefreshAsync(CancellationToken ct, bool hardRefresh = false)
     {
         RefreshCalls++;
+        LastHardRefresh = hardRefresh;
         return RefreshOverride?.Invoke(ct) ?? Task.CompletedTask;
     }
 
