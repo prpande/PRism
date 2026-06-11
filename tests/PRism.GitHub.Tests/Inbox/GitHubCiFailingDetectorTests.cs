@@ -3,6 +3,7 @@ using System.Text;
 using FluentAssertions;
 using PRism.Core.Contracts;
 using PRism.Core.Inbox;
+using PRism.Core.Time;
 using PRism.GitHub.Inbox;
 using PRism.GitHub.Tests.TestHelpers;
 using Xunit;
@@ -26,9 +27,10 @@ public sealed class GitHubCiFailingDetectorTests
         Content = new StringContent(body, Encoding.UTF8, "application/json"),
     };
 
-    private static GitHubCiFailingDetector BuildSut(FakeHttpMessageHandler handler) =>
+    private static GitHubCiFailingDetector BuildSut(FakeHttpMessageHandler handler, IClock? clock = null) =>
         new(new FakeHttpClientFactory(handler, new Uri("https://api.github.com/")),
-            () => Task.FromResult<string?>("t"));
+            () => Task.FromResult<string?>("t"),
+            clock ?? new MutableClock());
 
     private static FakeHttpMessageHandler RouterHandler(string checkRunsBody, string statusBody)
         => new(req =>
@@ -903,5 +905,78 @@ public sealed class GitHubCiFailingDetectorTests
         phase = "passing";
         var healed = await sut.DetectAsync([candidate], default);
         healed.Items[0].Ci.Should().Be(CiStatus.Passing, "Lever 1 re-probes Pending each sweep until terminal");
+    }
+
+    [Fact]
+    public async Task Evicts_absent_pr_cache_entry_observed_on_reinclusion()
+    {
+        // Count check-runs probes per PR. Frozen default clock ⇒ TTL never expires,
+        // so a tick-3 re-probe is attributable to eviction alone, not TTL.
+        var perPr = new Dictionary<string, int>();
+        var handler = new FakeHttpMessageHandler(req =>
+        {
+            var path = req.RequestUri!.AbsolutePath;
+            if (path.Contains("/check-runs", StringComparison.Ordinal))
+            {
+                perPr[path] = perPr.TryGetValue(path, out var v) ? v + 1 : 1;
+                return Respond(HttpStatusCode.OK, FailingCheckRun);
+            }
+            return Respond(HttpStatusCode.OK, SuccessNoLegacyStatus);
+        });
+        var sut = BuildSut(handler);
+
+        var pr1 = Raw(1, "head1"); var pr2 = Raw(2, "head2");
+        await sut.DetectAsync([pr1, pr2], default);
+        await sut.DetectAsync([pr1], default);
+        await sut.DetectAsync([pr1, pr2], default);
+
+        perPr["/repos/acme/api/commits/head1/check-runs"].Should().Be(1);
+        perPr["/repos/acme/api/commits/head2/check-runs"].Should().Be(2);
+    }
+
+    [Fact]
+    public async Task Terminal_status_within_TTL_is_served_from_cache_without_reprobe()
+    {
+        var clock = new MutableClock();
+        var requestCount = 0;
+        var handler = new FakeHttpMessageHandler(req =>
+        {
+            Interlocked.Increment(ref requestCount);
+            return req.RequestUri!.AbsoluteUri.Contains("/check-runs", StringComparison.Ordinal)
+                ? Respond(HttpStatusCode.OK, FailingCheckRun)
+                : Respond(HttpStatusCode.OK, SuccessNoLegacyStatus);
+        });
+        var sut = BuildSut(handler, clock);
+
+        var pr = Raw(1, "headX");
+        await sut.DetectAsync([pr], default);
+        var first = requestCount;
+        clock.Advance(TimeSpan.FromSeconds(30)); // still within the 2-min TTL
+        await sut.DetectAsync([pr], default);
+
+        requestCount.Should().Be(first, "a terminal status within the TTL is served from cache");
+    }
+
+    [Fact]
+    public async Task Terminal_status_past_TTL_is_reprobed()
+    {
+        var clock = new MutableClock();
+        var checkRunsBody = FailingCheckRun;
+        var handler = new FakeHttpMessageHandler(req =>
+            req.RequestUri!.AbsoluteUri.Contains("/check-runs", StringComparison.Ordinal)
+                ? Respond(HttpStatusCode.OK, checkRunsBody)
+                : Respond(HttpStatusCode.OK, SuccessNoLegacyStatus));
+        var sut = BuildSut(handler, clock);
+
+        var pr = Raw(1, "headX");
+        var r1 = await sut.DetectAsync([pr], default);
+        r1.Items[0].Ci.Should().Be(CiStatus.Failing);
+
+        // Same SHA "re-run": CI flips to in-progress. Advance past the TTL → re-probe picks it up.
+        checkRunsBody = InProgressCheckRun;
+        clock.Advance(TimeSpan.FromMinutes(3));
+        var r2 = await sut.DetectAsync([pr], default);
+
+        r2.Items[0].Ci.Should().Be(CiStatus.Pending, "past the TTL the same-SHA re-run is re-probed");
     }
 }

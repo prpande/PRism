@@ -200,6 +200,24 @@ public class PrRootCommentEndpointTests
         rootDraft.PostedCommentId.Should().BeNull("PostedCommentId must not be stamped when the GitHub call fails");
     }
 
+    // ── malformed-2xx (GitHubRestContractException) → 502 github-network-error ──
+
+    [Fact]
+    public async Task PostRootComment_contract_exception_maps_to_502_github_network_error()
+    {
+        using var ctx = RootCommentTestContext.Create();
+        await ctx.SeedSessionAsync("o", "r", 24, SessionWithRootDraft());
+        ctx.Submitter.InjectFailure(new PRism.GitHub.GitHubRestContractException("missing 'id'"));
+
+        var resp = await ctx.Post(24);
+
+        resp.StatusCode.Should().Be(HttpStatusCode.BadGateway);
+        var body = await resp.Content.ReadFromJsonAsync<JsonElement>(CamelCase);
+        // Not an HttpRequestException ⇒ the catch-all yields github-network-error,
+        // NOT the 403 path's github-forbidden.
+        body.GetProperty("code").GetString().Should().Be("github-network-error");
+    }
+
     // ── lock held → 409 ─────────────────────────────────────────────────────
 
     [Fact]
