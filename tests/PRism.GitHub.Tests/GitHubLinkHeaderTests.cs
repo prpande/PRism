@@ -1,38 +1,53 @@
 using System.Net;
-using FluentAssertions;
-using PRism.GitHub;
 using Xunit;
 
 namespace PRism.GitHub.Tests;
 
-public sealed class GitHubLinkHeaderTests
+public class GitHubLinkHeaderTests
 {
-    private static HttpResponseMessage WithLink(string? link)
+    private static HttpResponseMessage WithLink(string link)
     {
         var r = new HttpResponseMessage(HttpStatusCode.OK);
-        if (link is not null) r.Headers.TryAddWithoutValidation("Link", link);
+        r.Headers.TryAddWithoutValidation("Link", link);
         return r;
     }
 
     [Fact]
-    public void Returns_next_url_when_present()
+    public void TryGetRel_finds_quoted_next()
     {
-        using var resp = WithLink(
-            "<https://api.github.com/x?page=2>; rel=\"next\", <https://api.github.com/x?page=9>; rel=\"last\"");
-        GitHubLinkHeader.TryGetNext(resp).Should().Be(new Uri("https://api.github.com/x?page=2"));
+        using var r = WithLink("<https://api.github.com/x?page=2>; rel=\"next\", <https://api.github.com/x?page=9>; rel=\"last\"");
+        Assert.True(GitHubLinkHeader.TryGetRel(r, "next", out var url));
+        Assert.Equal("https://api.github.com/x?page=2", url);
     }
 
     [Fact]
-    public void Returns_null_when_only_last()
+    public void TryGetRel_finds_last()
     {
-        using var resp = WithLink("<https://api.github.com/x?page=9>; rel=\"last\"");
-        GitHubLinkHeader.TryGetNext(resp).Should().BeNull();
+        using var r = WithLink("<https://api.github.com/x?page=2>; rel=\"next\", <https://api.github.com/x?page=9>; rel=\"last\"");
+        Assert.True(GitHubLinkHeader.TryGetRel(r, "last", out var url));
+        Assert.Equal("https://api.github.com/x?page=9", url);
     }
 
     [Fact]
-    public void Returns_null_when_no_link_header()
+    public void TryGetRel_accepts_unquoted_rel()
     {
-        using var resp = WithLink(null);
-        GitHubLinkHeader.TryGetNext(resp).Should().BeNull();
+        using var r = WithLink("<https://api.github.com/x?page=2>; rel=next");
+        Assert.True(GitHubLinkHeader.TryGetRel(r, "next", out var url));
+        Assert.Equal("https://api.github.com/x?page=2", url);
+    }
+
+    [Fact]
+    public void TryGetRel_missing_header_returns_false()
+    {
+        using var r = new HttpResponseMessage(HttpStatusCode.OK);
+        Assert.False(GitHubLinkHeader.TryGetRel(r, "next", out var url));
+        Assert.Equal(string.Empty, url);
+    }
+
+    [Fact]
+    public void TryGetRel_rel_absent_returns_false()
+    {
+        using var r = WithLink("<https://api.github.com/x?page=9>; rel=\"last\"");
+        Assert.False(GitHubLinkHeader.TryGetRel(r, "next", out _));
     }
 }
