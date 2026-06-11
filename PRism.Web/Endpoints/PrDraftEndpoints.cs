@@ -78,20 +78,12 @@ internal static class PrDraftEndpoints
         var refKey = prRef.ToString();
         var sourceTabId = httpContext.Request.Headers[TabStamps.TabIdHeader].FirstOrDefault();
 
-        JsonDocument doc;
-        try
-        {
-            doc = await JsonDocument.ParseAsync(httpContext.Request.Body, default, ct).ConfigureAwait(false);
-        }
-        catch (JsonException)
-        {
-            return Results.BadRequest(new { error = "patch-body-missing" });
-        }
+        var read = await HttpJson.TryReadJsonObjectAsync(httpContext, ct).ConfigureAwait(false);
+        if (read.Error != JsonReadError.None)
+            return Results.BadRequest(new { error = "patch-body-missing" }); // both InvalidJson and NotObject -> same body (preserved)
+        using var doc = read.Document!;
 
-        using (doc)
         {
-            if (doc.RootElement.ValueKind != JsonValueKind.Object)
-                return Results.BadRequest(new { error = "patch-body-missing" });
 
             // Resolve the single operation. "Real" ops: an object kind with an object value, a bool
             // kind with `true`, or a scalar kind with a non-null string. "Clear" ops: a scalar kind
