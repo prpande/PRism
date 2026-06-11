@@ -81,7 +81,10 @@ public static class ServiceCollectionExtensions
         {
             var tokens = sp.GetRequiredService<ITokenStore>();
             var factory = sp.GetRequiredService<IHttpClientFactory>();
-            return new GitHubAwaitingAuthorFilter(factory, () => tokens.ReadAsync(CancellationToken.None));
+            return new GitHubAwaitingAuthorFilter(
+                factory,
+                () => tokens.ReadAsync(CancellationToken.None),
+                sp.GetRequiredService<ILogger<GitHubAwaitingAuthorFilter>>());
         });
 
         services.AddSingleton<ICiFailingDetector>(sp =>

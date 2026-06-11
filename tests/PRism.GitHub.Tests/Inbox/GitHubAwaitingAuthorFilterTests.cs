@@ -13,7 +13,7 @@ public sealed class GitHubAwaitingAuthorFilterTests
 {
     private const string ViewerLogin = "alice";
 
-    private static GitHubAwaitingAuthorFilter BuildSut(FakeHttpMessageHandler handler) =>
+    private static GitHubAwaitingAuthorFilter BuildSut(HttpMessageHandler handler) =>
         new(new FakeHttpClientFactory(handler, new Uri("https://api.github.com/")),
             () => Task.FromResult<string?>("t"));
 
@@ -275,5 +275,72 @@ public sealed class GitHubAwaitingAuthorFilterTests
         await sut.FilterAsync(ViewerLogin, [pr1], default);  // re-probe (cache was cleared)
 
         perUrl["/repos/acme/api/pulls/1/reviews"].Should().Be(2);
+    }
+
+    [Fact]
+    public async Task Most_recent_review_on_page_2_is_used_not_page_1()
+    {
+        // Reviews are ascending: page 1 holds the OLDER review (at "old"), page 2 the NEWER
+        // (at "head"). The viewer's latest review IS at head ⇒ PR is excluded. The single-page
+        // bug would read page-1 "old" != head ⇒ wrongly include the PR.
+        var page1 = $$"""[ { "user": { "login": "{{ViewerLogin}}" }, "commit_id": "old" } ]""";
+        var page2 = $$"""[ { "user": { "login": "{{ViewerLogin}}" }, "commit_id": "head" } ]""";
+        var handler = new PaginatedFakeHandler()
+            .RouteJson("/repos/acme/api/pulls/1/reviews", page1, page2);
+        var sut = BuildSut(handler);
+
+        var result = await sut.FilterAsync(ViewerLogin, [Raw(1, "head")], default);
+
+        result.Should().BeEmpty("the page-2 review at head means the viewer reviewed the current head");
+        handler.CallCountFor("/repos/acme/api/pulls/1/reviews").Should().Be(2);
+    }
+
+    [Fact]
+    public async Task Single_page_with_no_next_link_returns_page_1_best()
+    {
+        var page1 = $$"""[ { "user": { "login": "{{ViewerLogin}}" }, "commit_id": "old" } ]""";
+        var handler = new PaginatedFakeHandler()
+            .RouteJson("/repos/acme/api/pulls/1/reviews", page1);
+        var sut = BuildSut(handler);
+
+        var result = await sut.FilterAsync(ViewerLogin, [Raw(1, "head")], default);
+
+        result.Should().ContainSingle("last review at 'old' != head ⇒ awaiting author");
+        handler.CallCountFor("/repos/acme/api/pulls/1/reviews").Should().Be(1);
+    }
+
+    [Fact]
+    public async Task Malformed_review_item_is_skipped_scan_continues()
+    {
+        // One review missing user.login is skipped; a later valid viewer review still counts.
+        var page1 = $$"""
+            [ { "user": {} },
+              { "user": { "login": "{{ViewerLogin}}" }, "commit_id": "old" } ]
+            """;
+        var handler = new PaginatedFakeHandler()
+            .RouteJson("/repos/acme/api/pulls/1/reviews", page1);
+        var sut = BuildSut(handler);
+
+        var result = await sut.FilterAsync(ViewerLogin, [Raw(1, "head")], default);
+
+        result.Should().ContainSingle();
+    }
+
+    [Fact]
+    public async Task Page_cap_is_honored_and_does_not_loop_forever()
+    {
+        // 11 scripted pages, each with a rel="next" → the walk must stop at MaxReviewPages (10)
+        // and return without throwing or over-calling.
+        var pages = Enumerable.Range(1, 11)
+            .Select(_ => $$"""[ { "user": { "login": "{{ViewerLogin}}" }, "commit_id": "old" } ]""")
+            .ToArray();
+        var handler = new PaginatedFakeHandler()
+            .RouteJson("/repos/acme/api/pulls/1/reviews", pages);
+        var sut = BuildSut(handler);
+
+        var act = async () => await sut.FilterAsync(ViewerLogin, [Raw(1, "head")], default);
+
+        await act.Should().NotThrowAsync();
+        handler.CallCountFor("/repos/acme/api/pulls/1/reviews").Should().Be(10);
     }
 }
