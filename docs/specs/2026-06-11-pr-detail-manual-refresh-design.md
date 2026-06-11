@@ -187,6 +187,14 @@ honest-completion advance-check is placed in the generic `catch (Exception)` —
 /pr/refresh-failed` `type` is used (we don't parse `HttpRequestException.StatusCode` to
 distinguish 429 from other failures — the frontend's user-facing message is identical either way).
 
+*Accepted tradeoff:* this broad catch collapses a deterministic programming bug (e.g. an NRE in
+clustering) into the same retryable `503 "Try again"` as a transient 429, matching the inbox
+endpoint's `catch`-all (`InboxEndpoints` `/refresh`). The cost is that a non-transient fault is
+mis-signalled as retryable rather than surfacing as a `500`. This is house-consistent and
+acceptable for a local PoC tool; if error-rate monitoring later needs to separate bugs from
+rate-limits, narrow the catch to `HttpRequestException` and let other exceptions propagate to a
+`500`.
+
 ## 4. Frontend
 
 ### 4.1 `usePrDetailRefresh` hook (mirror of `useInboxRefresh`)
@@ -268,6 +276,10 @@ import path and the colocated `RefreshButton.test.tsx` (including its `inbox-ref
 assertion, now parameterized) update alongside the move. This avoids duplicating the SVG morph
 logic, consistent with the codebase's shared-core ethos (#326).
 
+The generalized component keeps its existing `disabled={isRefreshing}` behavior and derives its
+`aria-label` from the `label`/`refreshingLabel` props (idle vs refreshing) — both inherited from
+the current `RefreshButton.tsx`, not re-designed.
+
 *(Fallback if the relocation churn is unwanted: a `PrDetailRefreshButton` sibling that imports
 the same SVGs. Recommended path is the shared control.)*
 
@@ -301,11 +313,19 @@ the same SVGs. Recommended path is the shared control.)*
 
 **Coexistence with `BannerRefresh`.** Two refresh affordances can share the screen: the
 proactive header button ("refresh on demand") and the SSE-driven banner ("updates detected —
-Reload"). The rule: a successful button refresh **subsumes** the banner — `clearUpdates()`
-dismisses it on success. The banner may still *appear* during an in-flight refresh (the poller
-keeps ticking); it is not suppressed, and `clearUpdates()` cleans it on completion. No new
-labelling is needed beyond the existing distinct copy (button `aria-label` "Refresh PR" vs
-banner "… available — Reload to view").
+Reload"). The rule: a **successful** button refresh **subsumes** the banner — `clearUpdates()`
+dismisses it on the success branch only. The banner may still *appear* during an in-flight
+refresh (the poller keeps ticking); it is not suppressed. On a **failed** refresh the banner
+**persists** (the toast reports the failure; the banner's Reload remains a valid recovery) —
+this is intended coexistence, not a leak. No new labelling is needed beyond the existing
+distinct copy (button `aria-label` "Refresh PR" vs banner "… available — Reload to view").
+
+The banner's own Reload (`handleReload`) is a **separate, ungated** path from
+`usePrDetailRefresh` — clicking it while a button-refresh is in flight runs the two concurrently.
+This is self-healing and needs no cross-guard: both ultimately call `reload()` (coalescing
+counter bumps), and the force-refresh POST and the banner's reconcile POST operate on
+independent concerns (loader cache vs draft reconciliation). Do **not** add an `inFlight`
+cross-guard between them.
 
 **Placement (the B1 visual decision).** `prActions` today renders
 `<OpenInGitHubButton/> <ReviewActionButton/>`. Default: insert the icon-only `RefreshButton`
@@ -321,11 +341,16 @@ whether a lower-prominence placement is warranted — not merely left-vs-right o
   `MIN_INTERVAL_MS` lockout (button also `disabled` while `isRefreshing`).
 - **Timeout:** `AbortController` at `TIMEOUT_MS`; aborted fetch → `onError` toast.
 - **404 (PR gone):** endpoint returns 404 → hook `catch` → toast "Couldn't refresh this PR."
-  The dead-PR case then **converges** on the existing path: `reload()` does not run on the
-  error branch, but the user's next interaction (or the existing freshness reload) issues a
-  `GET` that 404s and routes to the `ErrorModal` ("Couldn't load this PR" → Back to inbox). The
-  refresh toast is the immediate signal; the ErrorModal is the terminal state — no new dead-PR
-  handling is added.
+  `reload()` does not run on the error branch, so a re-click just re-hits the 404 — but the
+  `MIN_INTERVAL_MS` lockout is **success-only**, so re-click is permitted (matches the inbox),
+  and `useToast` **de-dups by `(kind, message)`**, so repeated 404s collapse to a single
+  persistent toast rather than a stack — there is no visible toast-loop. The dead-PR terminal
+  state is reached on the next detail `GET` (re-activation freshness or a manual Reload), which
+  404s and routes to the `ErrorModal` ("Couldn't load this PR" → Back to inbox). The refresh
+  toast is the immediate signal; the ErrorModal is the terminal state — no new dead-PR handling
+  is added. *(If immediate terminal routing is wanted, the hook could special-case a 404 to
+  trigger `reload()` so the ErrorModal fires at once; deferred as an enhancement to keep the
+  hook a clean inbox mirror.)*
 - **503 (failed / rate-limited-and-not-advanced):** toast "Couldn't refresh this PR. Try again."
 - **No-change success:** a successful re-read where nothing changed (unchanged head SHA) returns
   `200` and shows the **same** "PR refreshed" confirmation as a changed re-read. This is
