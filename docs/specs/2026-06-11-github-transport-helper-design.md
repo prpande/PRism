@@ -55,8 +55,13 @@ version number would rot in 15 places.
 - No change to *what* any endpoint fetches, parses, or returns.
 - No `GitHubReviewService` god-object decomposition (tracked separately by the epic).
 - No DI/lifetime changes to the 10 classes (see §4.1 rejected alternative).
-- **The reviewer-atomic submit pipeline's GraphQL transport (`GitHubReviewService.Submit.cs`,
-  `PostSubmitGraphQLAsync`) is NOT touched** (B2 — see §7).
+- **The reviewer-atomic submit pipeline's GraphQL *envelope* — the
+  `addPullRequestReview → thread/reply → submitPullRequestReview` sequence, `pendingReviewId`
+  handling, and fail-loud-on-errors rule (`GitHubReviewService.Submit.cs`) — is NOT touched.**
+  Its underlying HTTP *send*, however, is **not** independent: `PostSubmitGraphQLAsync` is a thin
+  wrapper over the shared `PostGraphQLAsync` (Submit.cs has no transport of its own), so the §4.4
+  reroute reaches the submit path. Safety there rests on the reroute being **byte-identical**, not
+  on non-modification (B2 — see §7).
 - Not in this PR: group **E** (`pulls/{n}` union record) and force-merging
   semantically-distinct page sizes — see §5.
 
@@ -125,10 +130,14 @@ means `SendAsync` now receives server-controlled absolute URLs (from `Link` resp
 at two callers instead of one. To keep the PAT from ever riding a request to an unexpected
 host, `SendAsync` attaches `Authorization` only when the request URL is **relative** (resolved
 against the trusted `BaseAddress`) **or** its host equals `http.BaseAddress!.Host`; an
-absolute, off-host URL throws `ArgumentException` (fail loud — never silently send the token
-off-host, never silently drop it). GitHub pagination `Link` URLs are always same-host, so this
-is inert for every legitimate response; it is a cheap chokepoint guard at the moment the
-absolute-URL path is broadened. (Pre-existing posture hardened, not new required behavior —
+absolute, off-host URL throws `HttpRequestException` (fail loud — never silently send the token
+off-host, never silently drop it). `HttpRequestException` (not `ArgumentException`) is
+deliberate (round-2 security finding): the paginating callers (`PaginatePullsFilesAsync`,
+`FetchChecksAsync`) already degrade gracefully on `HttpRequestException`/non-2xx, so an
+(unexpected) off-host `Link` URL degrades the affected operation instead of aborting the whole
+inbox tick. GitHub pagination `Link` URLs are always same-host, so this is inert for every
+legitimate response; it is a cheap chokepoint guard at the moment the absolute-URL path is
+broadened. (Pre-existing posture hardened, not new required behavior —
 the deeper "validate all egress hosts" work is out of scope.)
 
 ### 4.2 `GitHubLinkHeader` — one parser, unified to absolute URLs
@@ -303,9 +312,15 @@ effect goes in the PR body.
 The shared transport underlies `PostGraphQLAsync` (read-side GraphQL) and the standalone
 issue/review-comment REST POSTs. To hold the tightest B2 envelope:
 
-- **The reviewer-atomic submit pipeline's GraphQL transport (`Submit.cs`,
-  `PostSubmitGraphQLAsync`, the `addPullRequestReview → thread/reply → submitPullRequestReview`
-  sequence and its pending-review-id handling) is left untouched.** Out of scope.
+- **The reviewer-atomic submit pipeline's GraphQL *envelope* (`Submit.cs` — the
+  `addPullRequestReview → thread/reply → submitPullRequestReview` sequence, pending-review-id
+  handling, and the stricter fail-loud-on-errors rule) is left untouched.** But its underlying
+  HTTP send is **not** independent (round-2 feasibility finding): `PostSubmitGraphQLAsync` is a
+  thin wrapper over the shared `PostGraphQLAsync` (Submit.cs has no `CreateClient` /
+  `HttpRequestMessage` / `SendAsync` of its own), so the §4.4 reroute reaches the submit path.
+  Safety there rests on the reroute being **byte-identical** (`apiVersion:false` reproduces the
+  currently-absent version header; UA / Accept / Authorization / body / endpoint unchanged),
+  **not** on non-modification — and §8.1 pins the submit-path request bytes, not just the read path.
 - Read-side `PostGraphQLAsync` keeps its request **byte-identical** (`apiVersion:false`, same
   auth, same body, same error shape).
 - The standalone comment POSTs already route through `SendGitHubAsync` (which already sends the
@@ -313,7 +328,9 @@ issue/review-comment REST POSTs. To hold the tightest B2 envelope:
 
 At pre-PR re-check (workflow step 7) the committed diff is re-read against the Axis-B table; if
 any submit-path *semantic* shifted, the issue re-classifies to gated (B2) and routes to the
-human gate before the PR opens.
+human gate before the PR opens. Because the submit path's transport IS reached (byte-identically),
+the green-and-ready notification will explicitly flag the submit-path diff + its byte-identity
+test for the owner's eyeball, even though the change is behavior-preserving.
 
 ## 8. Testing strategy (TDD)
 
@@ -321,9 +338,12 @@ Behavior-preserving refactor → the proof is **characterization tests written b
 refactor** (pin current behavior, stay green through the change) plus targeted unit tests for
 the new helpers.
 
-1. **GraphQL byte-identity (AC #4).** Pin `PrDetailGraphQLQuery` and `GetTimelineAsync`'s
-   query string to their exact current bytes (the frozen-shape integration test already covers
-   the former; add an explicit pin for the latter) **before** extraction; both stay green after.
+1. **GraphQL byte-identity (AC #4) + submit-path transport.** Pin `PrDetailGraphQLQuery` and
+   `GetTimelineAsync`'s query string to their exact current bytes (the frozen-shape integration
+   test already covers the former; add an explicit pin for the latter) **before** extraction;
+   both stay green after. Additionally assert (stub `HttpMessageHandler`) that a
+   `PostSubmitGraphQLAsync` call emits the same request headers + endpoint as today — the
+   submit-path transport byte-identity the B2 envelope now rests on (round-2 finding).
 2. **Header presence (AC #1/#2).** Unit-test `GitHubHttp.SendAsync` via a stub
    `HttpMessageHandler`: UA / Accept / `X-GitHub-Api-Version` / Bearer present; `accept`
    override replaces the default; empty token → no Authorization; **`apiVersion:false` → no
@@ -332,8 +352,10 @@ the new helpers.
    Regression: a previously-omitting reader (e.g. `GitHubReceivedEventsReader`) now sends the
    version header.
 3. **Same-host guard (§4.1).** `SendAsync` with a relative URL attaches Authorization; with a
-   same-host absolute URL attaches it; with an off-host absolute URL throws `ArgumentException`
-   (token never leaves the host).
+   same-host absolute URL attaches it; with an off-host absolute URL throws `HttpRequestException`
+   (token never leaves the host) so paginating callers degrade rather than crash the tick. Assert
+   the absolute GraphQL endpoint (`HostUrlResolver.GraphQlEndpoint`) passes the guard on both
+   github.com and a GHES-shaped host.
 4. **Link parser parity + GHES fix (AC #3, §4.2).** Table-test `GitHubLinkHeader.TryGetRel`
    across quoted / unquoted rel, multi-rel headers, missing header. Per-caller adapter tests
    prove last-page / next outputs equal the pre-refactor outputs **on github.com-shaped
@@ -377,7 +399,19 @@ token-sharing callers) → applied (§4.1 resolved-token); feasibility **P3** + 
 unevidenced) → applied (§6); scope **P2** (`GitHubLimits` one-const class) → applied (§4.7);
 plus coherence/scope wording clarifications (gate phrasing, Group H split, AC#1 grep semantics,
 explicit cheap extras). Security **P3** (error-body in messages) → FYI: pre-existing, truncated,
-no token material; noted, no behavior change. Round 2 pending.
+no token material; noted, no behavior change.
+
+**Round 2** (revised spec re-reviewed): feasibility **P1** (the "Submit.cs transport is separate
+and untouched" claim was false — `PostSubmitGraphQLAsync` wraps the shared `PostGraphQLAsync`)
+→ applied (§2/§7 corrected: envelope untouched, transport rerouted byte-identically; §8.1 pins
+the submit-path bytes; owner-eyeball flag added). Security **P3** (off-host guard's
+`ArgumentException` uncaught in the pagination chain → aborts the inbox tick) → applied (§4.1
+throws `HttpRequestException` so callers degrade gracefully; §8.3 GraphQL-endpoint host-pass
+test). Coherence / adversarial / scope-guardian → **no new findings** (adversarial verified the
+`DelegatingHandler` sees an identical `RequestUri` for relative-vs-absolute on github.com because
+`HttpClient` resolves before the handler chain; scope confirmed the GHES fix is zero-code and the
+guard closes a hole the unification opens). Round-2 residuals (GHES-reject escape hatch,
+`BaseAddress` null-guard) carried into the plan as low-priority notes.
 
 ## 11. Self-review
 
