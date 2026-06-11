@@ -1,7 +1,9 @@
+import type React from 'react';
 import { useCallback, useRef, useState } from 'react';
 import styles from './PrRootReplyComposer.module.css';
 import {
   COMPOSER_CREATE_THRESHOLD,
+  badgeLabel,
   type ComposerSaveBadge,
 } from '../../../hooks/useComposerAutoSave';
 import { sendPatch } from '../../../api/draft';
@@ -154,7 +156,7 @@ export function PrRootReplyComposer({
       role="form"
       aria-label="Reply to this PR"
       data-composer="true"
-      className={styles.prRootReplyComposer}
+      className={`composer-frame ${styles.prRootReplyComposer}`}
       onKeyDown={handleKeyDown}
     >
       {/* Keep the editor mounted across Preview toggles so autosave continuity
@@ -176,6 +178,7 @@ export function PrRootReplyComposer({
           registerOpenComposer={registerOpenComposer}
           ownerKey="reply-composer"
           readOnly={readOnly || postInFlight}
+          showBadge={false}
           onBodyChange={handleBodyChange}
           onAutosaveControl={handleAutosaveControl}
           onDraftLost={handleDraftLost}
@@ -220,7 +223,7 @@ export function PrRootReplyComposer({
           role="status"
           data-testid="composer-badge"
         >
-          {badge}
+          {badgeLabel(badge)}
         </span>
 
         <AiComposerAssistant />

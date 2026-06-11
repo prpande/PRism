@@ -930,7 +930,7 @@ a:hover { text-decoration: underline; }
 .composer-badge {
   font-size: var(--text-xs);
   padding: 2px var(--s-2);
-  border-radius: var(--radius-1);
+  border-radius: 999px;
   background: var(--surface-3);
   color: var(--text-2);
 }
@@ -1030,16 +1030,36 @@ a:hover { text-decoration: underline; }
   box-shadow: var(--shadow-1);
   overflow: hidden;
 }
-/* The frame is the SOLE focus indicator: kill the inner textarea's border AND
-   its :focus-visible ring so focus doesn't paint two rings. */
+/* The frame's :focus-within ring is the SOLE focus indicator; the textarea
+   keeps its own resting border but suppresses its focus ring so focus paints
+   once. The textarea is a recessed input "well" (#352) so the typing area is
+   clearly delineated inside the frame. */
 .composer-frame .composer-textarea {
-  border: none;
-  border-radius: 0;
-  background: transparent;
+  /* The base `.composer-textarea` is `width: 100%` (border-box). Adding a
+     horizontal margin here would push the margin box to 100% + 2×--s-2 and
+     overflow the frame (clipped by its `overflow: hidden`), eating the right
+     gutter. Subtract the gutters from the width so the margin box fills the
+     frame's content edge exactly. (`width: auto` is wrong — a <textarea>
+     collapses to its `cols`-based intrinsic width without an explicit width.) */
+  width: calc(100% - 2 * var(--s-2));
+  margin: var(--s-2);
+  background: var(--surface-inset);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-2);
 }
 .composer-frame .composer-textarea:focus-visible {
   outline: none;
 }
+/* Preview pane gets the same gutter so toggling Edit<->Preview does not shift
+   the content box edges inside the overflow:hidden frame. */
+.composer-frame .composer-markdown-preview {
+  margin: var(--s-2);
+}
+/* Dark note (#347 surface compression): --surface-inset (0.20) sits ~0.01 L
+   from --surface-1 (0.21), so the well's FILL is near-invisible in dark; the
+   --border-1 hairline carries the "input here" affordance. If B1 finds the dark
+   well reads flat, uncomment the scoped darker fill below.
+   html[data-theme='dark'] .composer-frame .composer-textarea { background: oklch(0.17 0.009 250); } */
 .composer-frame:focus-within {
   border-color: var(--accent);
   box-shadow: 0 0 0 3px var(--accent-ring);

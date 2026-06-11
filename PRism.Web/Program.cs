@@ -332,6 +332,7 @@ app.MapActivity();
 app.MapPrDetail();
 app.MapPrDraftEndpoints();
 app.MapPrReloadEndpoints();
+app.MapPrRefreshEndpoints();
 app.MapPrSubmitEndpoints();
 app.MapPrRootCommentEndpoints();
 app.MapPrCommentEndpoints();

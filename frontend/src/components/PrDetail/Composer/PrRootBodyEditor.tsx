@@ -1,7 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import styles from './PrRootBodyEditor.module.css';
-import { useComposerAutoSave, type ComposerSaveBadge } from '../../../hooks/useComposerAutoSave';
+import {
+  useComposerAutoSave,
+  badgeLabel,
+  type ComposerSaveBadge,
+} from '../../../hooks/useComposerAutoSave';
 import { Modal } from '../../Modal/Modal';
 import type { PrReference } from '../../../api/types';
 import type { ComposerOwnerKey } from '../../../hooks/useDraftSession';
@@ -24,6 +28,10 @@ export interface PrRootBodyEditorProps {
   // Cross-tab take-over yields this surface to read-only (spec § 5.7a). Auto-
   // save short-circuits via useComposerAutoSave's `disabled` gate.
   readOnly?: boolean;
+  // Default true. The Overview reply composer (PrRootReplyComposer) renders its
+  // OWN footer badge for diff-composer parity and passes false here to avoid a
+  // duplicate badge inside the frame. SubmitDialog keeps the default.
+  showBadge?: boolean;
   // Surfaces the live body to the consumer so it can drive Post / preview.
   // Read from a ref and invoked on `body` changes only, NOT on callback-identity
   // change — consumers may pass inline callbacks safely.
@@ -50,6 +58,7 @@ export function PrRootBodyEditor({
   registerOpenComposer,
   ownerKey,
   readOnly = false,
+  showBadge = true,
   onBodyChange,
   onAutosaveControl,
   onDraftLost,
@@ -144,13 +153,15 @@ export function PrRootBodyEditor({
         aria-readonly={readOnly || undefined}
       />
 
-      <span
-        className={`composer-badge composer-badge--${badge}`}
-        role="status"
-        data-testid="composer-badge"
-      >
-        {badge}
-      </span>
+      {showBadge && (
+        <span
+          className={`composer-badge composer-badge--${badge}`}
+          role="status"
+          data-testid="composer-badge"
+        >
+          {badgeLabel(badge)}
+        </span>
+      )}
 
       {createPortal(
         <Modal
