@@ -58,6 +58,18 @@ it('does not repeat the line for a moved draft (chip already shows it)', () => {
   expect(screen.getByText(/src\/Calc\.cs/)).toBeInTheDocument();
 });
 
+it('renders a Stale chip and keeps the line for a stale draft', () => {
+  const staleDraft: DraftLike = {
+    kind: 'comment',
+    data: { ...fileDraft.data, id: 'd4', status: 'stale' },
+  };
+  render(<DraftListItem prRef={prRef} draft={staleDraft} onEdit={noop} onMutated={noop} />);
+  expect(screen.getByText('Stale')).toBeInTheDocument();
+  // The line suffix is suppressed only for 'moved' (whose chip already reads
+  // the line); a stale draft still shows file · line in the band.
+  expect(screen.getByText(/line 42/)).toBeInTheDocument();
+});
+
 it('shows chip-only band (no file/line) for a PR-root draft', () => {
   render(<DraftListItem prRef={prRef} draft={rootDraft} onEdit={noop} onMutated={noop} />);
   expect(screen.queryByText(/line/)).toBeNull();

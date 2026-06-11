@@ -38,9 +38,14 @@
 }
 
 /* Body — composes CommentCard's body block (padding / font / line-height /
-   prose rules) so the draft body matches a posted comment. */
+   prose rules) so the draft body matches a posted comment. The base `.body`
+   only gains `overflow-x: auto` under `[data-density='compact']`, which the
+   draft card never sets; without it a wide code block would be clipped by the
+   card's `overflow: hidden` instead of scrolling. Re-add it here so the draft
+   body scrolls its own overflow. */
 .draftBody {
   composes: body from '../Comment/CommentCard.module.css';
+  overflow-x: auto;
 }
 
 /* Footer — action strip mirroring .composer-frame .composer-actions. */
