@@ -166,8 +166,10 @@ function Invoke-Preflight {
     Assert-CommandPresent -Name 'dotnet' -Remediation (Get-DotnetRemediation)
     $sdks = @(& dotnet --list-sdks)
     if ($LASTEXITCODE -ne 0) {
-        # dotnet is on PATH but `--list-sdks` failed (e.g. a corrupt install). Surface
-        # that directly instead of falling into the "found majors: " empty-list message.
+        # dotnet is on PATH but `--list-sdks` failed (e.g. a corrupt install). Print the
+        # remediation block (the preflight promises copy/paste remediation on any miss)
+        # before throwing — parity with run-desktop.sh, which calls dotnet_remediation here.
+        Write-Host (Get-DotnetRemediation -FoundSdks @()) -ForegroundColor Yellow
         throw "Preflight failed: 'dotnet --list-sdks' exited $LASTEXITCODE. Is the .NET install healthy?"
     }
     if (-not (Test-HasDotnetSdkAtLeast -ListSdksOutput $sdks -MinMajor 10)) {
@@ -192,7 +194,7 @@ function Invoke-Main {
     # Single-instance short-circuit BEFORE the (slow) build, so a re-run while the
     # app is up doesn't rebuild into an Electron single-instance-lock no-op.
     if (Test-LauncherAlreadyRunning -PidfilePath $pidfile) {
-        Write-Host "PRism desktop is already running (pidfile $pidfile). Close the window first; a re-run would just refocus it. Nothing rebuilt." -ForegroundColor Yellow
+        Write-Host "PRism desktop is already running (pidfile $pidfile). Close the window first; a re-run would just refocus it. Nothing rebuilt. If it is NOT running, delete that pidfile and retry." -ForegroundColor Yellow
         return
     }
 
