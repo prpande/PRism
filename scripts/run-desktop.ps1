@@ -46,6 +46,27 @@ function Test-HasDotnetSdkAtLeast {
     return (@(Get-DotnetSdkMajors -ListSdksOutput $ListSdksOutput | Where-Object { $_ -ge $MinMajor })).Count -gt 0
 }
 
+function Get-NodeRemediation {
+    return @'
+Node.js / npm was not found on PATH.
+  Windows: winget install OpenJS.NodeJS.LTS
+  (or download from https://nodejs.org/ — CI builds on Node 24, the recommended version)
+After installing, open a new terminal so PATH refreshes, then re-run this script.
+'@
+}
+
+function Get-DotnetRemediation {
+    param([string[]]$FoundSdks = @())
+    $found = if ($FoundSdks.Count -gt 0) { "Found SDK(s): $($FoundSdks -join ', ')." } else { "No .NET SDK found." }
+    return @"
+A .NET 10 SDK is required to publish the PRism sidecar (the solution targets net10.0).
+  $found
+  Windows: winget install Microsoft.DotNet.SDK.10
+  (or download the .NET 10 SDK from https://dotnet.microsoft.com/download/dotnet/10.0)
+After installing, open a new terminal so PATH refreshes, then re-run this script.
+"@
+}
+
 function Invoke-Main {
     param([switch]$SkipBuild)
     throw "Invoke-Main not yet implemented"

@@ -43,6 +43,14 @@ Assert-True  (Test-HasDotnetSdkAtLeast -ListSdksOutput $sample -MinMajor 10) "ha
 Assert-True  (-not (Test-HasDotnetSdkAtLeast -ListSdksOutput @('8.0.404 [x]') -MinMajor 10)) "no >= 10 when only 8.x"
 Assert-True  (-not (Test-HasDotnetSdkAtLeast -ListSdksOutput @('garbage line') -MinMajor 10)) "non-version line ignored"
 
+Write-Host "remediation messages" -ForegroundColor Cyan
+$nodeMsg = Get-NodeRemediation
+Assert-Match $nodeMsg 'winget install OpenJS\.NodeJS\.LTS' "node remediation names winget package"
+Assert-Match $nodeMsg 'Node 24' "node remediation names recommended version"
+$dnMsg = Get-DotnetRemediation
+Assert-Match $dnMsg 'Microsoft\.DotNet\.SDK\.10' "dotnet remediation names SDK 10 winget package"
+Assert-Match $dnMsg '\.NET 10' "dotnet remediation names .NET 10"
+
 # --- footer: exit non-zero on any failure ---
 if ($script:Failures -gt 0) {
     Write-Host "$script:Failures test(s) failed" -ForegroundColor Red
