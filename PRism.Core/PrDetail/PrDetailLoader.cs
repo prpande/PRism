@@ -32,6 +32,10 @@ public sealed class PrDetailLoader : IDisposable
     // un-torn-down _configStore.Changed subscription below.
     private readonly IDisposable _activePrSubscription;
 
+    // #353: evict the PR's snapshot immediately on a root-comment post — the constructor
+    // wire-up explains why waiting for the poller's CommentCountChanged is too slow.
+    private readonly IDisposable _rootCommentSubscription;
+
     // Snapshot cache. PoC: unbounded ConcurrentDictionary; if dogfooding shows growth
     // (rare — user opens many distinct PRs in one process lifetime), introduce a bounded
     // LRU here. The (prRef → most-recent CacheKey) sidecar lets TryGetCachedSnapshot do
@@ -78,6 +82,16 @@ public sealed class PrDetailLoader : IDisposable
         // endpoints (which read TryGetCachedSnapshot) return 422 snapshot-evicted
         // even though nothing changed (Copilot PR #150 review).
         _activePrSubscription = eventBus.Subscribe<ActivePrUpdated>(OnActivePrUpdated);
+
+        // #353: RootCommentPostedBusEvent is a GitHub issue comment — it doesn't move the
+        // head SHA, so the (prRef, headSha, generation) key would re-serve the stale
+        // pre-post snapshot on the SSE-driven reload. Evict the PR's snapshot immediately
+        // on the post so the reload re-fetches fresh detail, instead of waiting for the
+        // ActivePrPoller's CommentCountChanged (OnActivePrUpdated). Mirrors that handler.
+        // NOT subscribed to SingleCommentPostedBusEvent (diff post-now): that path has no
+        // immediate client reload trigger, so eviction there is inert and would open a
+        // /file & /viewed 422 window on the active diff tab — see #353 design doc.
+        _rootCommentSubscription = eventBus.Subscribe<RootCommentPostedBusEvent>(OnRootCommentPosted);
     }
 
     // Evicts the PR's snapshot only on a real change: a head-SHA or comment-count
@@ -93,6 +107,11 @@ public sealed class PrDetailLoader : IDisposable
         if (evt.HeadShaChanged || evt.CommentCountChanged || doneNow != doneCached)
             Invalidate(evt.PrRef);
     }
+
+    // #353: see the constructor wire-up for the rationale. Eviction is unconditional —
+    // unlike OnActivePrUpdated's quiet-hydration guard, RootCommentPostedBusEvent fires
+    // only on an actual post, so there is no no-op event to suppress.
+    private void OnRootCommentPosted(RootCommentPostedBusEvent evt) => Invalidate(evt.PrRef);
 
     /// <summary>
     /// Loads or refreshes the snapshot for <paramref name="prRef"/>. Polls the active-PR
@@ -238,16 +257,18 @@ public sealed class PrDetailLoader : IDisposable
     }
 
     /// <summary>
-    /// Tears down the two subscriptions wired in the constructor. The loader is a
-    /// DI singleton, so this runs only on container/app shutdown; it exists so the
-    /// <see cref="IReviewEventBus.Subscribe"/> IDisposable is released rather than
-    /// held for the process lifetime (Claude PR #150 review — the raw
-    /// <c>_configStore.Changed</c> event has no IDisposable, but Subscribe returns one).
+    /// Tears down the three subscriptions wired in the constructor (the
+    /// <c>_configStore.Changed</c> handler plus the two <see cref="IReviewEventBus.Subscribe"/>
+    /// IDisposables). The loader is a DI singleton, so this runs only on container/app
+    /// shutdown; it exists so the Subscribe IDisposables are released rather than held for
+    /// the process lifetime (Claude PR #150 review — the raw <c>_configStore.Changed</c>
+    /// event has no IDisposable, but Subscribe returns one).
     /// </summary>
     public void Dispose()
     {
         _configStore.Changed -= OnConfigChanged;
         _activePrSubscription.Dispose();
+        _rootCommentSubscription.Dispose();
     }
 
     private (ClusteringQuality Quality, IReadOnlyList<IterationDto>? Iterations) DetermineQuality(
