@@ -9,13 +9,12 @@
    CSS-modules injection order). */
 
 .draftListItem {
-  display: flex;
-  flex-direction: column;
-  gap: var(--s-2);
-  padding: var(--s-3) var(--s-4);
-  background: var(--surface-2);
-  border: 1px solid var(--border-1);
-  border-radius: var(--radius-2);
+  /* Share the CommentCard shell (surface-1 / border-1 / radius-3 / shadow-2 /
+     overflow:hidden) — single source of truth, #354. Cross-file composes; if
+     the build rejects it, replace this line with the four shell properties:
+     background: var(--surface-1); border: 1px solid var(--border-1);
+     border-radius: var(--radius-3); box-shadow: var(--shadow-2); overflow: hidden; */
+  composes: card from '../Comment/CommentCard.module.css';
 }
 
 .draftListItemHeader {
