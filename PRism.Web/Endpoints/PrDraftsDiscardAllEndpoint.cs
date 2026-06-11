@@ -43,8 +43,8 @@ internal static class PrDraftsDiscardAllEndpoint
     {
         var prRef = new PrReference(owner, repo, number);
         var sessionKey = prRef.ToString();
-        if (!activePrCache.IsSubscribed(prRef))
-            return Results.Json(new SubmitErrorDto("unauthorized", "Subscribe to this PR before discarding."), statusCode: StatusCodes.Status401Unauthorized);
+        if (RequireSubscribed.Check(activePrCache, prRef) is { } notSubscribed)
+            return notSubscribed;
 
         string? pendingToDelete = null;
         await stateStore.UpdateAsync(state =>

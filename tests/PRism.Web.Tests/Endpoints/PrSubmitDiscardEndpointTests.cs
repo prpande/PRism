@@ -176,16 +176,16 @@ public class PrSubmitDiscardEndpointTests
         loaded!.PendingReviewId.Should().Be("PRR_existing", "stamps must NOT be cleared on non-HTTP GitHub exception");
     }
 
-    // ── unauthorized → 401 ───────────────────────────────────────────────────
+    // ── unauthorized → 403 ───────────────────────────────────────────────────
 
     [Fact]
-    public async Task Discard_unauthorized_returns_401()
+    public async Task Discard_unauthorized_returns_403()
     {
         using var ctx = DiscardTestContext.Create(subscribeAll: false);
 
         var resp = await ctx.Discard(199);
 
-        resp.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+        resp.StatusCode.Should().Be(HttpStatusCode.Forbidden);
         var body = await resp.Content.ReadFromJsonAsync<JsonElement>(CamelCase);
         body.GetProperty("code").GetString().Should().Be("unauthorized");
     }

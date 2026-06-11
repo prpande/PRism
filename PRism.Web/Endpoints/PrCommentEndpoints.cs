@@ -41,9 +41,8 @@ internal static class PrCommentEndpoints
         var prRef = new PrReference(owner, repo, number);
         var sessionKey = prRef.ToString();
 
-        if (!activePrCache.IsSubscribed(prRef))
-            return Results.Json(new SubmitErrorDto("unauthorized", "Subscribe to this PR before posting a comment."),
-                statusCode: StatusCodes.Status401Unauthorized);
+        if (RequireSubscribed.Check(activePrCache, prRef) is { } notSubscribed)
+            return notSubscribed;
 
 #pragma warning disable CA2000
         var handle = await lockRegistry.TryAcquireAsync(prRef, TimeSpan.Zero, ct).ConfigureAwait(false);

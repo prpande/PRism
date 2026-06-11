@@ -58,9 +58,8 @@ internal static class PrRootCommentEndpoints
         var sessionKey = prRef.ToString();
 
         // --- Authorization (same broader-than-spec authz as /submit; spec T10 § 6.2) ---
-        if (!activePrCache.IsSubscribed(prRef))
-            return Results.Json(new SubmitErrorDto("unauthorized", "Subscribe to this PR before posting a comment."),
-                statusCode: StatusCodes.Status401Unauthorized);
+        if (RequireSubscribed.Check(activePrCache, prRef) is { } notSubscribed)
+            return notSubscribed;
 
         // --- Per-PR lock (TimeSpan.Zero → non-blocking; 409 on contention) ---
         // NOT `await using` — TryAcquireAsync returns null on lock contention (→ 409 below), and

@@ -1,11 +1,18 @@
 using System.Net;
 using System.Net.Http;
 using System.Net.Http.Json;
+using System.Text.Json;
 
 using FluentAssertions;
 
+using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
+
 using PRism.Core.Events;
+using PRism.Core.PrDetail;
 using PRism.Core.State;
+using PRism.Web.Middleware;
 using PRism.Web.Tests.TestHelpers;
 
 namespace PRism.Web.Tests.Endpoints;
@@ -73,5 +80,57 @@ public class PrDraftsDiscardAllEndpointTests
         // The fire-and-forget courtesy delete fails asynchronously → submit-orphan-cleanup-failed published.
         await TestPoll.UntilAsync(() => ctx.Bus.Published.OfType<SubmitOrphanCleanupFailedBusEvent>().Any(), CourtesyWait);
         ctx.Bus.Published.OfType<SubmitOrphanCleanupFailedBusEvent>().Should().ContainSingle();
+    }
+
+    [Fact]
+    public async Task DiscardAll_not_subscribed_returns_403()
+    {
+        using var ctx = DiscardAllUnsubscribedContext.Create();
+        using var client = ctx.CreateClient();
+
+        var resp = await client.PostAsync(new Uri("/api/pr/o/r/99/drafts/discard-all", UriKind.Relative), null);
+
+        resp.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+        (await resp.Content.ReadFromJsonAsync<JsonElement>())
+            .GetProperty("code").GetString().Should().Be("unauthorized");
+    }
+}
+
+// ─── Minimal harness for the not-subscribed path ───────────────────────────────────────────────
+// Mirrors SubmitEndpointsTestContext but substitutes ConfigurableActivePrCache(subscribeAll: false)
+// so the IsSubscribed guard fires. No session seed is needed — the guard short-circuits first.
+internal sealed class DiscardAllUnsubscribedContext : IDisposable
+{
+    private readonly PRismWebApplicationFactory _base;
+    private readonly WebApplicationFactory<Program> _derived;
+
+    private DiscardAllUnsubscribedContext()
+    {
+        _base = new PRismWebApplicationFactory();
+        _derived = _base.WithWebHostBuilder(b => b.ConfigureServices(s =>
+        {
+            s.RemoveAll<IActivePrCache>();
+            s.AddSingleton<IActivePrCache>(new ConfigurableActivePrCache(subscribeAll: false));
+        }));
+        _ = _derived.Services;
+    }
+
+    public static DiscardAllUnsubscribedContext Create() => new();
+
+    public HttpClient CreateClient()
+    {
+        var token = _derived.Services.GetRequiredService<SessionTokenProvider>().Current;
+        var c = _derived.CreateClient();
+        c.DefaultRequestHeaders.Add("X-PRism-Session", token);
+        c.DefaultRequestHeaders.Add("Cookie", $"prism-session={token}");
+        var origin = c.BaseAddress?.GetLeftPart(UriPartial.Authority);
+        if (!string.IsNullOrEmpty(origin)) c.DefaultRequestHeaders.Add("Origin", origin);
+        return c;
+    }
+
+    public void Dispose()
+    {
+        _derived.Dispose();
+        _base.Dispose();
     }
 }

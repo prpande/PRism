@@ -106,8 +106,8 @@ internal static class PrSubmitEndpoints
         var prRef = new PrReference(owner, repo, number);
         var sessionKey = prRef.ToString();
 
-        if (!activePrCache.IsSubscribed(prRef))
-            return Results.Json(new SubmitErrorDto("unauthorized", "Subscribe to this PR before submitting."), statusCode: StatusCodes.Status401Unauthorized);
+        if (RequireSubscribed.Check(activePrCache, prRef) is { } notSubscribed1)
+            return notSubscribed1;
 
         if (!TryParseVerdict(request?.Verdict, out var verdict))
             return Results.Json(new SubmitErrorDto("verdict-invalid", "verdict must be approve, request-changes, or comment."), statusCode: StatusCodes.Status400BadRequest);
@@ -305,8 +305,8 @@ internal static class PrSubmitEndpoints
         var prRef = new PrReference(owner, repo, number);
         var sessionKey = prRef.ToString();
 
-        if (!activePrCache.IsSubscribed(prRef))
-            return Results.Json(new SubmitErrorDto("unauthorized", "Subscribe to this PR before discarding."), statusCode: StatusCodes.Status401Unauthorized);
+        if (RequireSubscribed.Check(activePrCache, prRef) is { } notSubscribed2)
+            return notSubscribed2;
 
         // Signal cancellation to any in-flight pipeline for this PR. Idempotent — no-op if nothing
         // is registered (either idle or already past registration). When a pipeline IS running,
@@ -415,8 +415,8 @@ internal static class PrSubmitEndpoints
     {
         var prRef = new PrReference(owner, repo, number);
         var sessionKey = prRef.ToString();
-        if (!activePrCache.IsSubscribed(prRef))
-            return Results.Json(new SubmitErrorDto("unauthorized", "Subscribe to this PR before resuming."), statusCode: StatusCodes.Status401Unauthorized);
+        if (RequireSubscribed.Check(activePrCache, prRef) is { } notSubscribed3)
+            return notSubscribed3;
         if (string.IsNullOrEmpty(request?.PullRequestReviewId))
             return Results.Json(new SubmitErrorDto("pull-request-review-id-missing", "pullRequestReviewId is required."), statusCode: StatusCodes.Status400BadRequest);
 
@@ -520,8 +520,8 @@ internal static class PrSubmitEndpoints
     {
         var prRef = new PrReference(owner, repo, number);
         var sessionKey = prRef.ToString();
-        if (!activePrCache.IsSubscribed(prRef))
-            return Results.Json(new SubmitErrorDto("unauthorized", "Subscribe to this PR before discarding."), statusCode: StatusCodes.Status401Unauthorized);
+        if (RequireSubscribed.Check(activePrCache, prRef) is { } notSubscribed4)
+            return notSubscribed4;
         if (string.IsNullOrEmpty(request?.PullRequestReviewId))
             return Results.Json(new SubmitErrorDto("pull-request-review-id-missing", "pullRequestReviewId is required."), statusCode: StatusCodes.Status400BadRequest);
 

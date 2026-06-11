@@ -247,14 +247,14 @@ public class PrRootCommentEndpointTests
     // ── unauthorized ─────────────────────────────────────────────────────────
 
     [Fact]
-    public async Task PostRootComment_unauthorized_returns_401()
+    public async Task PostRootComment_unauthorized_returns_403()
     {
         using var ctx = RootCommentTestContext.Create(subscribeAll: false);
         await ctx.SeedSessionAsync("o", "r", 26, SessionWithRootDraft());
 
         var resp = await ctx.Post(26);
 
-        resp.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+        resp.StatusCode.Should().Be(HttpStatusCode.Forbidden);
         var body = await resp.Content.ReadFromJsonAsync<JsonElement>(CamelCase);
         body.GetProperty("code").GetString().Should().Be("unauthorized");
     }
