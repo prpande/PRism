@@ -168,4 +168,24 @@ describe('AppearancePane', () => {
       expect(document.activeElement).toBe(screen.getByRole('radio', { name: 'Preview' })),
     );
   });
+
+  it('aborts an in-flight Live disclosure fetch when a downgrade is chosen first', async () => {
+    prefs.aiMode = 'preview';
+    let resolveDisclosure!: (d: EgressDisclosure) => void;
+    vi.mocked(consentApi.getEgressDisclosure).mockReturnValue(
+      new Promise<EgressDisclosure>((res) => {
+        resolveDisclosure = res;
+      }),
+    );
+    render(<AppearancePane />);
+    await userEvent.click(screen.getByRole('radio', { name: 'Live' })); // starts the in-flight fetch (no modal yet)
+    await userEvent.click(screen.getByRole('radio', { name: 'Off' })); // aborts it + commits the downgrade
+    await waitFor(() => expect(set).toHaveBeenCalledWith('ui.ai.mode', 'off'));
+    // The now-aborted fetch resolves late: it must NOT open the modal or flip to live.
+    resolveDisclosure(disclosure(false));
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(set).not.toHaveBeenCalledWith('ui.ai.mode', 'live');
+  });
 });

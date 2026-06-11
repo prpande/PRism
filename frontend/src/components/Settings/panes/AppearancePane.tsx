@@ -60,6 +60,11 @@ export function AppearancePane() {
     });
   }, [modalOpen]);
 
+  // Abort any in-flight Live disclosure fetch on unmount so a resolved fetch
+  // can't commit the mode (alreadyConsented path) or open a modal after the
+  // pane is gone.
+  useEffect(() => () => abortRef.current?.abort(), []);
+
   if (!preferences) return null;
 
   const onTheme = (value: Theme) => {
@@ -105,8 +110,11 @@ export function AppearancePane() {
     if (next === resolvedMode && !pendingLive) return;
     if (next !== 'live') {
       // Off/Preview commit immediately and cancel any in-flight Live intercept.
+      // Also dismiss the consent modal if it was already open — a downgrade
+      // supersedes a pending Live consent, so no orphaned dialog is left behind.
       abortRef.current?.abort();
       setPendingLive(false);
+      setModalOpen(false);
       void set('ui.ai.mode', next).catch(() => {});
       return;
     }
