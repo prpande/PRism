@@ -158,15 +158,19 @@ main() {
   [[ -x "$sidecar" ]]  || { echo "Sidecar not found (or not executable) at $sidecar. Run without --skip-build." >&2; exit 1; }
   [[ -x "$electron" ]] || { echo "Electron not found at $electron. Run without --skip-build so 'npm ci' installs it." >&2; exit 1; }
 
-  # 5. Launch detached. nohup ignores SIGHUP; disown drops the job so closing
-  #    Terminal doesn't kill Electron (or the sidecar it owns).
+  # 5. Launch detached. nohup is the load-bearing detach (Electron ignores SIGHUP);
+  #    disown additionally drops the job from the shell's table. disown is best-effort:
+  #    in a non-interactive shell with job control disabled it can return non-zero, which
+  #    under `set -e` would fail this subshell and make the launcher report an error even
+  #    though nohup already started Electron — so `|| true` keeps it non-fatal. nohup
+  #    alone already survives terminal close.
   echo "=== run-desktop launch @ $(date -u +%Y-%m-%dT%H:%M:%SZ) ===" >>"$log"
   (
     cd "$desktop_dir"
     export PRISM_SIDECAR_BINARY="$sidecar"
     nohup "$electron" . >>"$log" 2>&1 &
     echo $! >"$pidfile"
-    disown
+    disown 2>/dev/null || true
   )
 
   echo "PRism desktop launching (detached). The window should appear shortly."
