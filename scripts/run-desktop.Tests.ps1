@@ -71,6 +71,27 @@ Assert-Match $wrapper "electron\.cmd' \." "wrapper invokes electron with ."
 $q = New-DesktopLauncherWrapper -ElectronExe "e" -DesktopDir "d'x" -SidecarBinary "s" -Log "l" -StartedUtc "t"
 Assert-Match $q "Set-Location 'd''x'" "single-quote in path is doubled"
 
+Write-Host "pidfile guard" -ForegroundColor Cyan
+$tmp = Join-Path ([System.IO.Path]::GetTempPath()) ("rd-test-" + [guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory -Force $tmp | Out-Null
+try {
+    $pf = Get-LauncherPidfilePath -DataDir $tmp
+    Assert-Equal (Join-Path $tmp 'run-desktop.pid') $pf "pidfile path under data dir"
+    Assert-True (-not (Test-LauncherAlreadyRunning -PidfilePath $pf)) "absent pidfile -> not running"
+    # A pidfile naming THIS process (pwsh) with pwsh in the expected set -> running.
+    Write-LauncherPidfile -PidfilePath $pf -ProcessId $PID
+    $thisName = (Get-Process -Id $PID).Name
+    Assert-True (Test-LauncherAlreadyRunning -PidfilePath $pf -ExpectedNames @($thisName)) "live PID with matching name -> running"
+    # A bogus/dead PID -> not running.
+    Write-LauncherPidfile -PidfilePath $pf -ProcessId 999999
+    Assert-True (-not (Test-LauncherAlreadyRunning -PidfilePath $pf)) "dead PID -> not running"
+    # A live PID whose name is NOT in the expected set (recycle guard) -> not running.
+    Write-LauncherPidfile -PidfilePath $pf -ProcessId $PID
+    Assert-True (-not (Test-LauncherAlreadyRunning -PidfilePath $pf -ExpectedNames @('definitely-not-this'))) "name mismatch -> not running (recycle guard)"
+} finally {
+    Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
+}
+
 # --- footer: exit non-zero on any failure ---
 if ($script:Failures -gt 0) {
     Write-Host "$script:Failures test(s) failed" -ForegroundColor Red

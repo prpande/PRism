@@ -110,6 +110,32 @@ Set-Location $qDesktop
 "@
 }
 
+function Get-LauncherPidfilePath {
+    param([string]$DataDir)
+    return (Join-Path $DataDir 'run-desktop.pid')
+}
+
+function Write-LauncherPidfile {
+    param([string]$PidfilePath, [int]$ProcessId)
+    [System.IO.File]::WriteAllText($PidfilePath, "$ProcessId", [System.Text.UTF8Encoding]::new($false))
+}
+
+function Test-LauncherAlreadyRunning {
+    # True only if the pidfile names a LIVE process whose name is in $ExpectedNames.
+    # The recycle guard (name check) mirrors serve-detached.ps1:Stop-ProcessIfMatches:
+    # a 32-bit PID recycles fast, so a stale pidfile PID may now be an unrelated app.
+    # The wrapper pwsh stays alive as electron's parent, so 'pwsh' is the live owner;
+    # 'electron' is included for the macOS-style direct case / defensiveness.
+    param([string]$PidfilePath, [string[]]$ExpectedNames = @('pwsh', 'electron'))
+    if (-not (Test-Path -LiteralPath $PidfilePath)) { return $false }
+    $raw = Get-Content -LiteralPath $PidfilePath -Raw -ErrorAction SilentlyContinue
+    if (-not ($raw -match '^\s*(\d+)\s*$')) { return $false }
+    $procId = [int]$Matches[1]
+    $p = Get-Process -Id $procId -ErrorAction SilentlyContinue
+    if (-not $p) { return $false }
+    return $ExpectedNames -contains $p.Name
+}
+
 function Invoke-Main {
     param([switch]$SkipBuild)
     throw "Invoke-Main not yet implemented"
