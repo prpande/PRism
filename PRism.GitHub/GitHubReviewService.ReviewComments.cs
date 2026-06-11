@@ -1,4 +1,3 @@
-using System.Net;
 using System.Text;
 using System.Text.Json;
 using PRism.Core;
@@ -45,10 +44,10 @@ public sealed partial class GitHubReviewService
         var root = doc.RootElement;
         var id = root.TryGetProperty("id", out var idEl) && idEl.ValueKind == JsonValueKind.Number
             ? idEl.GetInt64()
-            : throw new HttpRequestException("GitHub review comment response missing 'id'.", inner: null, statusCode: HttpStatusCode.OK);
+            : throw new GitHubRestContractException("GitHub review comment response missing 'id'.");
         var createdAt = root.TryGetProperty("created_at", out var caEl) && caEl.ValueKind == JsonValueKind.String
             ? caEl.GetDateTimeOffset()
-            : throw new HttpRequestException("GitHub review comment response missing 'created_at'.", inner: null, statusCode: HttpStatusCode.OK);
+            : throw new GitHubRestContractException("GitHub review comment response missing 'created_at'.");
         return new CreatedReviewCommentResult(id, createdAt);
     }
 

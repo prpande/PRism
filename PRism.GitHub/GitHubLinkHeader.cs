@@ -5,6 +5,8 @@ namespace PRism.GitHub;
 // (page-number / relative-path / absolute-Uri). Callers adapt the absolute URL to what
 // they need (parse &page=, or `new Uri(...)`). Standardizes on quoted-or-unquoted rel
 // (GitHub always quotes; the unquoted branch matches the most-tolerant prior parser).
+// (#322 added a `TryGetNext`-shaped variant for the reviews/CI walks; this PR folds it
+// into the general `TryGetRel("next", ...)` so there is exactly one Link parser.)
 internal static class GitHubLinkHeader
 {
     internal static bool TryGetRel(HttpResponseMessage resp, string rel, out string url)
