@@ -1,6 +1,7 @@
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
+import { jsonResponse } from './helpers/http';
 import { MemoryRouter, Routes, Route, Outlet } from 'react-router-dom';
 import { OverviewTab } from '../src/components/PrDetail/OverviewTab/OverviewTab';
 import { PrDetailContextProvider } from '../src/components/PrDetail/prDetailContext';
@@ -115,14 +116,6 @@ interface MockOptions {
   draftSession?: UseDraftSessionResult;
 }
 
-function jsonResponse(data: unknown, status = 200): Response {
-  const isNoBody = status === 204;
-  return new Response(isNoBody ? null : JSON.stringify(data), {
-    status,
-    headers: isNoBody ? undefined : { 'Content-Type': 'application/json' },
-  });
-}
-
 function mockFetch(opts: MockOptions = {}) {
   const diff = opts.diff ?? sampleDiff;
   const aiPreview = opts.aiPreview ?? false;
@@ -225,10 +218,6 @@ function mountOverview(opts: MockOptions = {}) {
   );
   return { ...result, onSelectSubTab };
 }
-
-beforeEach(() => {
-  vi.spyOn(document, 'cookie', 'get').mockReturnValue('');
-});
 
 afterEach(() => {
   vi.restoreAllMocks();
