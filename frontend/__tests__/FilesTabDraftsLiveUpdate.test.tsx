@@ -6,6 +6,7 @@ import { DraftsTab } from '../src/components/PrDetail/DraftsTab/DraftsTab';
 import { PrDetailContextProvider } from '../src/components/PrDetail/prDetailContext';
 import { __resetTabIdForTest } from '../src/api/draft';
 import { useDraftSession } from '../src/hooks/useDraftSession';
+import { makePrDetailDto, makePr } from './helpers/prDetail';
 import type {
   DiffDto,
   DraftCommentDto,
@@ -36,26 +37,8 @@ const onefileDiff: DiffDto = {
   truncated: false,
 };
 
-const minimalPrDetail: PrDetailDto = {
-  pr: {
-    reference: ref,
-    title: 'Test PR',
-    body: '',
-    author: 'test',
-    state: 'open',
-    headSha: 'headabc',
-    baseSha: 'basedef',
-    headBranch: 'feature',
-    baseBranch: 'main',
-    mergeability: 'mergeable',
-    ciSummary: 'success',
-    isMerged: false,
-    isClosed: false,
-    openedAt: '2026-05-01T00:00:00Z',
-    mergedAt: null,
-    closedAt: null,
-  },
-  clusteringQuality: 'ok',
+const minimalPrDetail: PrDetailDto = makePrDetailDto({
+  pr: makePr({ reference: ref, headSha: 'headabc', baseSha: 'basedef' }),
   iterations: [
     {
       number: 1,
@@ -65,11 +48,7 @@ const minimalPrDetail: PrDetailDto = {
       hasResolvableRange: true,
     },
   ],
-  commits: [],
-  rootComments: [],
-  reviewComments: [],
-  timelineCapHit: false,
-};
+});
 
 function emptySession(): ReviewSessionDto {
   return {
@@ -190,7 +169,6 @@ function renderBothTabs() {
 }
 
 beforeEach(() => {
-  vi.spyOn(document, 'cookie', 'get').mockReturnValue('');
   __resetTabIdForTest();
 });
 

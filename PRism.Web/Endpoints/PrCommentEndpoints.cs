@@ -69,6 +69,9 @@ internal static class PrCommentEndpoints
         PrReference prRef, string sessionKey, DraftComment draft, IAppStateStore store,
         IReviewSubmitter submitter, IReviewEventBus bus, ILoggerFactory lf, CancellationToken ct)
     {
+        // #324 — this is an *attachability* guard, NOT the PR-root predicate: an inline post target
+        // must be fully anchored (both file and line). It is intentionally NOT `!IsPrRoot`
+        // (= FilePath is not null), which would wrongly accept a headless `(file, null)` comment.
         if (draft.FilePath is null || draft.LineNumber is null) return NoDraft();
         if (draft.PostedCommentId is { } posted)
             return await AlreadyPostedAsync(store, sessionKey, draft.Id, draft.BodyMarkdown, draft.PostedBodySnapshot, posted, prRef, bus, isReply: false, ct).ConfigureAwait(false);

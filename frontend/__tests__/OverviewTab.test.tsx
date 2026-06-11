@@ -1,6 +1,8 @@
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
+import { jsonResponse } from './helpers/http';
+import { makePrDetailDto, makePr } from './helpers/prDetail';
 import { MemoryRouter, Routes, Route, Outlet } from 'react-router-dom';
 import { OverviewTab } from '../src/components/PrDetail/OverviewTab/OverviewTab';
 import { PrDetailContextProvider } from '../src/components/PrDetail/prDetailContext';
@@ -40,28 +42,14 @@ function fakeDraftSession(overrides: Partial<UseDraftSessionResult> = {}): UseDr
 
 const ref: PrReference = { owner: 'octocat', repo: 'hello', number: 42 };
 
-const baseDetail: PrDetailDto = {
-  pr: {
+const baseDetail: PrDetailDto = makePrDetailDto({
+  pr: makePr({
     reference: ref,
     title: 'Refactor the renewal worker',
     body: 'Replaces the per-lease loop with **Task.WhenAll**.',
     author: 'amelia.cho',
-    state: 'open',
-    headSha: 'headabc',
-    baseSha: 'basedef',
-    headBranch: 'amelia/work',
-    baseBranch: 'main',
-    mergeability: 'mergeable',
-    ciSummary: 'success',
-    isMerged: false,
-    isClosed: false,
-    openedAt: '2026-05-01T00:00:00Z',
-    mergedAt: null,
-    closedAt: null,
-  },
-  clusteringQuality: 'ok',
+  }),
   iterations: null,
-  commits: [],
   rootComments: [
     { id: 1, author: 'reviewer1', createdAt: '2026-05-08T14:00:00Z', body: 'Looks good.' },
     { id: 2, author: 'reviewer2', createdAt: '2026-05-08T15:00:00Z', body: 'Also LGTM.' },
@@ -92,8 +80,7 @@ const baseDetail: PrDetailDto = {
       comments: [],
     },
   ],
-  timelineCapHit: false,
-};
+});
 
 const sampleDiff: DiffDto = {
   range: 'basedef..headabc',
@@ -113,14 +100,6 @@ interface MockOptions {
   capabilitiesOn?: boolean;
   aiSummary?: { body: string; category: string } | null;
   draftSession?: UseDraftSessionResult;
-}
-
-function jsonResponse(data: unknown, status = 200): Response {
-  const isNoBody = status === 204;
-  return new Response(isNoBody ? null : JSON.stringify(data), {
-    status,
-    headers: isNoBody ? undefined : { 'Content-Type': 'application/json' },
-  });
 }
 
 function mockFetch(opts: MockOptions = {}) {
@@ -225,10 +204,6 @@ function mountOverview(opts: MockOptions = {}) {
   );
   return { ...result, onSelectSubTab };
 }
-
-beforeEach(() => {
-  vi.spyOn(document, 'cookie', 'get').mockReturnValue('');
-});
 
 afterEach(() => {
   vi.restoreAllMocks();

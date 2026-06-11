@@ -91,10 +91,10 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 
-// Every PrHeader test needs the AskAiDrawerProvider wrap: PR8 rewired
-// AskAiButton.onClick → useAskAiDrawer().toggle(), and the hook throws if
-// rendered outside the provider. `render` is shadowed so existing tests don't
-// need per-call updates.
+// PrHeader tests render inside AskAiDrawerProvider so any descendant that
+// consumes useAskAiDrawer() has its context (the hook throws if rendered
+// outside the provider). `render` is shadowed so existing tests don't need
+// per-call updates.
 function render(node: ReactNode) {
   return rtlRender(<AskAiDrawerProvider>{node}</AskAiDrawerProvider>);
 }

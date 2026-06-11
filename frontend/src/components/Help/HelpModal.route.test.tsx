@@ -63,14 +63,7 @@ vi.mock('../../hooks/useCapabilities', () => ({
 }));
 
 import { App } from '../../App';
-
-class FakeEventSource {
-  close() {}
-  addEventListener() {}
-  removeEventListener() {}
-  onmessage = null;
-  onerror = null;
-}
+import { FakeEventSource } from '../../../__tests__/helpers/fakeEventSource';
 
 function renderAppAt(path: string) {
   return render(
@@ -83,6 +76,11 @@ function renderAppAt(path: string) {
 describe('/help route renders as modal', () => {
   beforeEach(() => {
     vi.stubGlobal('EventSource', FakeEventSource);
+    // vi.stubGlobal (auto-restored by Vitest) is kept instead of
+    // installFakeEventSource() so the global is torn down via vi.unstubAllGlobals,
+    // but the instance registry still needs an explicit reset between tests so a
+    // later test that inspects .instances doesn't see this describe's leftovers.
+    FakeEventSource.instances = [];
   });
 
   it('first-run user: /help shows the dialog AND the welcome-card background', () => {
@@ -107,6 +105,11 @@ describe('/help route renders as modal', () => {
 describe('/feedback route renders as modal', () => {
   beforeEach(() => {
     vi.stubGlobal('EventSource', FakeEventSource);
+    // vi.stubGlobal (auto-restored by Vitest) is kept instead of
+    // installFakeEventSource() so the global is torn down via vi.unstubAllGlobals,
+    // but the instance registry still needs an explicit reset between tests so a
+    // later test that inspects .instances doesn't see this describe's leftovers.
+    FakeEventSource.instances = [];
   });
 
   it('first-run user: /feedback shows the "Send feedback" dialog AND the welcome-card background', () => {

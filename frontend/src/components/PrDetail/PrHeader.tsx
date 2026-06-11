@@ -19,6 +19,7 @@ import { PrSubTabStrip, type PrTabId } from './PrSubTabStrip';
 import { DiscardPendingReviewConfirmationModal } from './DiscardPendingReviewConfirmationModal';
 import { DiscardAllConfirmationModal } from './DiscardAllConfirmationModal';
 import { ImportedDraftsBanner } from './ForeignPendingReviewModal/ImportedDraftsBanner';
+import { isPrRootDraft, prRootDraft } from './draftKinds';
 import styles from './PrHeader.module.css';
 import { Avatar } from '../Avatar/Avatar';
 import { Skeleton } from '../Skeleton';
@@ -83,9 +84,7 @@ const EMPTY_SESSION: ReviewSessionDto = {
 // count inline threads separately from the summary (mirrors the helper that used to
 // live in DiscardAllDraftsButton, removed in this slice).
 function prRootSummaryBody(s: ReviewSessionDto): string {
-  return (
-    s.draftComments.find((d) => d.filePath === null && d.lineNumber === null)?.bodyMarkdown ?? ''
-  ).trim();
+  return (prRootDraft(s.draftComments)?.bodyMarkdown ?? '').trim();
 }
 
 interface PrHeaderProps {
@@ -590,12 +589,9 @@ export function PrHeader({
         <DiscardAllConfirmationModal
           open={discardAllModalOpen}
           prState={prState}
-          // Inline threads only — exclude the PR-root summary (filePath/lineNumber
-          // null), which is named separately via hasSummary, to avoid double-counting.
-          threadCount={
-            session.draftComments.filter((d) => !(d.filePath === null && d.lineNumber === null))
-              .length
-          }
+          // Inline threads only — exclude the PR-root summary (filePath null), which is
+          // named separately via hasSummary, to avoid double-counting. (#324 — shared predicate.)
+          threadCount={session.draftComments.filter((d) => !isPrRootDraft(d)).length}
           replyCount={session.draftReplies.length}
           hasSummary={prRootSummaryBody(session).length > 0}
           hasPendingReview={!!session.pendingReviewId}

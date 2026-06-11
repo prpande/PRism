@@ -245,7 +245,10 @@ internal static class PrDraftEndpoints
             case "newPrRootDraftComment":
                 {
                     if (payload is not NewPrRootDraftCommentPayload n) return new PatchOutcome.PatchShapeInvalid();
-                    var existing = session.DraftComments.FirstOrDefault(d => d.FilePath is null && d.LineNumber is null);
+                    // #324 — use the canonical PR-root predicate (FilePath-only). The both-null
+                    // lookup would miss a half-null ghost `(null, non-null)` and insert a *second*
+                    // filePath-null root, which ExtractPrRootBody's FirstOrDefault would then strand.
+                    var existing = session.DraftComments.FirstOrDefault(d => d.IsPrRoot);
                     if (existing is not null)
                     {
                         // Upsert: update body in place, preserving Id, Status, PostedCommentId,
