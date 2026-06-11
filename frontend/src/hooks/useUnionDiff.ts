@@ -43,6 +43,7 @@ export function useUnionDiff(prRef: PrReference, commits: string[] | null): UseU
     return () => {
       cancelled = true;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- deps are prRef's primitives + commitsKey (a stable derived key), not the raw prRef object / commits array (#331)
   }, [prRef.owner, prRef.repo, prRef.number, commitsKey]);
 
   const showSkeleton = useDelayedLoading(isLoading);
