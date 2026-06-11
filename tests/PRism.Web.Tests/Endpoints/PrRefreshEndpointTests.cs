@@ -1,7 +1,6 @@
 using System.Net;
 using FluentAssertions;
 using Microsoft.Extensions.DependencyInjection;
-using PRism.Core;
 using PRism.Core.Contracts;
 using PRism.Core.PrDetail;
 using PRism.Web.Tests.TestHelpers;
