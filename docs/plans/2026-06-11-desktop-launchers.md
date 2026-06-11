@@ -356,7 +356,7 @@ $wrapper = New-DesktopLauncherWrapper `
     -StartedUtc '2026-06-11T00:00:00Z'
 Assert-Match $wrapper "\`$env:PRISM_SIDECAR_BINARY = 'C:\\repo\\desktop\\\.dev-sidecar\\PRism\.Web\.exe'" "wrapper sets PRISM_SIDECAR_BINARY"
 Assert-Match $wrapper "Set-Location 'C:\\repo\\desktop'" "wrapper cd's to desktop dir"
-Assert-Match $wrapper "\*>> \`\$log" "wrapper redirects electron output to log"
+Assert-Match $wrapper "\*>> \`$log" "wrapper redirects electron output to log"
 Assert-Match $wrapper "electron\.cmd' \." "wrapper invokes electron with ."
 # Embedded single-quote in a path must be doubled (PowerShell literal escaping):
 $q = New-DesktopLauncherWrapper -ElectronExe "e" -DesktopDir "d'x" -SidecarBinary "s" -Log "l" -StartedUtc "t"
