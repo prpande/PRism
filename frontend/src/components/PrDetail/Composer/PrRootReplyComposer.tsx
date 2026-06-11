@@ -1,3 +1,4 @@
+import type React from 'react';
 import { useCallback, useRef, useState } from 'react';
 import styles from './PrRootReplyComposer.module.css';
 import {
