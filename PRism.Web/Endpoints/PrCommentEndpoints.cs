@@ -17,6 +17,7 @@ namespace PRism.Web.Endpoints;
 internal static class PrCommentEndpoints
 {
     private static readonly string[] FieldsTouched = { "draft-comments", "draft-replies" };
+    private static readonly string LoggerCategory = typeof(PrCommentEndpoints).FullName!;
     private static readonly Action<ILogger, string, Exception?> s_commentPostFailed =
         LoggerMessage.Define<string>(LogLevel.Warning, new EventId(1, "CommentPostFailed"),
             "POST /comment/post failed with a GitHub error for {SessionKey}");
@@ -81,9 +82,9 @@ internal static class PrCommentEndpoints
         CreatedReviewCommentResult created;
         try { created = await submitter.CreateReviewCommentAsync(prRef, request, ct).ConfigureAwait(false); }
         catch (OperationCanceledException) { throw; }
-        catch (HttpRequestException hre) { s_commentPostFailed(lf.CreateLogger(typeof(PrCommentEndpoints).FullName!), sessionKey, hre); return GitHubErrorMapper.ToResult(hre); }
+        catch (HttpRequestException hre) { s_commentPostFailed(lf.CreateLogger(LoggerCategory), sessionKey, hre); return GitHubErrorMapper.ToResult(hre); }
 #pragma warning disable CA1031
-        catch (Exception ex) { s_commentPostFailed(lf.CreateLogger(typeof(PrCommentEndpoints).FullName!), sessionKey, ex); return GitHubErrorMapper.ToResult(ex); }
+        catch (Exception ex) { s_commentPostFailed(lf.CreateLogger(LoggerCategory), sessionKey, ex); return GitHubErrorMapper.ToResult(ex); }
 #pragma warning restore CA1031
 
         await StampThenDeleteComment(store, sessionKey, draft.Id, created.Id, draft.BodyMarkdown, ct).ConfigureAwait(false);
@@ -104,9 +105,9 @@ internal static class PrCommentEndpoints
         CreatedReviewCommentResult created;
         try { created = await submitter.CreateReviewCommentReplyAsync(prRef, draft.ParentThreadId, draft.BodyMarkdown, ct).ConfigureAwait(false); }
         catch (OperationCanceledException) { throw; }
-        catch (HttpRequestException hre) { s_commentPostFailed(lf.CreateLogger(typeof(PrCommentEndpoints).FullName!), sessionKey, hre); return GitHubErrorMapper.ToResult(hre); }
+        catch (HttpRequestException hre) { s_commentPostFailed(lf.CreateLogger(LoggerCategory), sessionKey, hre); return GitHubErrorMapper.ToResult(hre); }
 #pragma warning disable CA1031
-        catch (Exception ex) { s_commentPostFailed(lf.CreateLogger(typeof(PrCommentEndpoints).FullName!), sessionKey, ex); return GitHubErrorMapper.ToResult(ex); }
+        catch (Exception ex) { s_commentPostFailed(lf.CreateLogger(LoggerCategory), sessionKey, ex); return GitHubErrorMapper.ToResult(ex); }
 #pragma warning restore CA1031
 
         await StampThenDeleteReply(store, sessionKey, draft.Id, created.Id, draft.BodyMarkdown, ct).ConfigureAwait(false);
