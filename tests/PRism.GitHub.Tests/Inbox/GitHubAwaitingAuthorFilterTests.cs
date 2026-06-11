@@ -364,4 +364,23 @@ public sealed class GitHubAwaitingAuthorFilterTests
 
         result.Should().BeEmpty("the newest review by submitted_at is at the current head");
     }
+
+    [Fact]
+    public async Task Latest_by_submitted_at_with_null_commit_id_falls_back_to_prior()
+    {
+        // The newest review (by submitted_at) has commit_id: null → skipped; selection falls
+        // back to the older review at "old". PR head "new" != "old" ⇒ PR included (decision A).
+        var body = $$"""
+            [
+              { "user": { "login": "{{ViewerLogin}}" }, "commit_id": "old", "submitted_at": "2020-01-01T00:00:00Z" },
+              { "user": { "login": "{{ViewerLogin}}" }, "commit_id": null,  "submitted_at": "2020-02-01T00:00:00Z" }
+            ]
+            """;
+        var handler = new FakeHttpMessageHandler(_ => Respond(HttpStatusCode.OK, body));
+        var sut = BuildSut(handler);
+
+        var result = await sut.FilterAsync(ViewerLogin, [Raw(1, "new")], default);
+
+        result.Should().ContainSingle("the null-commit_id newest review is skipped; best falls back to 'old' != head");
+    }
 }
