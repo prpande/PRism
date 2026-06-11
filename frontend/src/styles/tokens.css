@@ -1035,6 +1035,13 @@ a:hover { text-decoration: underline; }
    once. The textarea is a recessed input "well" (#352) so the typing area is
    clearly delineated inside the frame. */
 .composer-frame .composer-textarea {
+  /* The base `.composer-textarea` is `width: 100%` (border-box). Adding a
+     horizontal margin here would push the margin box to 100% + 2×--s-2 and
+     overflow the frame (clipped by its `overflow: hidden`), eating the right
+     gutter. Subtract the gutters from the width so the margin box fills the
+     frame's content edge exactly. (`width: auto` is wrong — a <textarea>
+     collapses to its `cols`-based intrinsic width without an explicit width.) */
+  width: calc(100% - 2 * var(--s-2));
   margin: var(--s-2);
   background: var(--surface-inset);
   border: 1px solid var(--border-1);
