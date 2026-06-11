@@ -11,17 +11,22 @@ namespace PRism.Web.Ai;
 /// Thread-safety: a <see cref="SemaphoreSlim"/>(1,1) prevents concurrent callers from
 /// each firing a real probe when the cache is cold; the double-check after acquiring the
 /// gate means only the first caller probes while the rest wait and then read the freshly
-/// written cache.
+/// written cache. The cached value and its timestamp are held together in a single
+/// immutable <see cref="CacheEntry"/> read through one reference load, so the lock-free
+/// fast path can never observe a torn or mismatched (value, timestamp) pair — a reference
+/// read is atomic on every runtime, whereas reading a multi-word <see cref="DateTimeOffset"/>
+/// field unsynchronised could tear on weak-memory targets (e.g. arm64).
 /// </para>
 /// </summary>
 internal sealed class CachedLlmAvailabilityProbe : ILlmAvailabilityProbe, IDisposable
 {
+    private sealed record CacheEntry(LlmAvailability Value, DateTimeOffset At);
+
     private readonly ILlmAvailabilityProbe _inner;
     private readonly TimeProvider _clock;
     private readonly TimeSpan _ttl;
     private readonly SemaphoreSlim _gate = new(1, 1);
-    private LlmAvailability? _cached;
-    private DateTimeOffset _cachedAt;
+    private CacheEntry? _entry;
 
     public CachedLlmAvailabilityProbe(ILlmAvailabilityProbe inner, TimeProvider clock, TimeSpan ttl)
     {
@@ -33,7 +38,8 @@ internal sealed class CachedLlmAvailabilityProbe : ILlmAvailabilityProbe, IDispo
     public async Task<LlmAvailability> ProbeAsync(CancellationToken ct)
     {
         var now = _clock.GetUtcNow();
-        if (_cached is not null && now - _cachedAt < _ttl) return _cached;
+        var entry = _entry; // single atomic reference read — value and timestamp stay consistent
+        if (entry is not null && now - entry.At < _ttl) return entry.Value;
 
         await _gate.WaitAsync(ct).ConfigureAwait(false);
         try
@@ -41,11 +47,11 @@ internal sealed class CachedLlmAvailabilityProbe : ILlmAvailabilityProbe, IDispo
             // Double-check after acquiring the gate: another caller may have probed
             // while we were waiting, making the cache valid now.
             now = _clock.GetUtcNow();
-            if (_cached is not null && now - _cachedAt < _ttl) return _cached;
+            entry = _entry;
+            if (entry is not null && now - entry.At < _ttl) return entry.Value;
 
             var result = await _inner.ProbeAsync(ct).ConfigureAwait(false);
-            _cached = result;
-            _cachedAt = now;
+            _entry = new CacheEntry(result, now);
             return result;
         }
         finally

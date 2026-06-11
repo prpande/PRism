@@ -42,6 +42,29 @@ describe('EgressConsentModal', () => {
     expect(onAccept).toHaveBeenCalled();
   });
 
+  it('does not commit Live if the modal is dismissed before the consent POST resolves', async () => {
+    vi.spyOn(api, 'getEgressDisclosure').mockResolvedValue(disclosure);
+    let resolvePost!: () => void;
+    vi.spyOn(api, 'postAiConsent').mockReturnValue(
+      new Promise<void>((res) => {
+        resolvePost = res;
+      }),
+    );
+    const onAccept = vi.fn();
+    const { rerender } = render(
+      <EgressConsentModal open onAccept={onAccept} onDecline={vi.fn()} />,
+    );
+    await waitFor(() => screen.getByText(/Anthropic/));
+    await userEvent.click(screen.getByRole('button', { name: /enable live/i }));
+    // Consent POST is in flight; the user dismisses the modal (Escape / Decline →
+    // parent flips `open` to false) BEFORE the POST settles.
+    rerender(<EgressConsentModal open={false} onAccept={onAccept} onDecline={vi.fn()} />);
+    resolvePost();
+    await waitFor(() => expect(api.postAiConsent).toHaveBeenCalled());
+    // The late resolution must NOT commit Live — the dismissal is the user's final word.
+    expect(onAccept).not.toHaveBeenCalled();
+  });
+
   it('submit error: shows retry copy, does not call onAccept, re-enables Accept', async () => {
     vi.spyOn(api, 'getEgressDisclosure').mockResolvedValue(disclosure);
     vi.spyOn(api, 'postAiConsent').mockRejectedValue(new Error('409'));

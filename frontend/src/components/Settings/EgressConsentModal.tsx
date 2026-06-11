@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Modal } from '../Modal/Modal';
 import { Skeleton } from '../Skeleton/Skeleton';
 import { getEgressDisclosure, postAiConsent, type EgressDisclosure } from '../../api/aiConsent';
@@ -14,6 +14,13 @@ export function EgressConsentModal({ open, onAccept, onDecline }: Props) {
   const [failed, setFailed] = useState(false);
   const [submitError, setSubmitError] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  // Tracks whether the modal is still open. A consent POST can outlive a dismissal
+  // (Escape / Decline while it is in flight); without this guard the late resolution
+  // would call onAccept() and commit Live despite the user's dismissal.
+  const openRef = useRef(open);
+  useEffect(() => {
+    openRef.current = open;
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;
@@ -40,11 +47,12 @@ export function EgressConsentModal({ open, onAccept, onDecline }: Props) {
     setSubmitError(false);
     try {
       await postAiConsent(disclosure.disclosureVersion);
+      if (!openRef.current) return; // dismissed mid-POST — don't commit Live
       onAccept();
     } catch {
-      setSubmitError(true); // consent POST failure (incl. 409) — retry allowed (not an LLM call)
+      if (openRef.current) setSubmitError(true); // consent POST failure (incl. 409) — retry allowed (not an LLM call)
     } finally {
-      setSubmitting(false);
+      if (openRef.current) setSubmitting(false);
     }
   };
 
