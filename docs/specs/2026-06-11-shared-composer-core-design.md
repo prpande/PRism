@@ -278,8 +278,14 @@ new tests for the extracted units — **not** a red-on-main bug test.
   they survive the JSX relocation — but, being structure-agnostic, **they do not guard DOM
   structure or visual output.**
 - **Structural guard (the real pixel-identity guard):**
-  - A new assertion on the `composer-actions` child order (preview-toggle → badge → AI assistant →
-    discard → save → post-now), so a reordering inside `ComposerActionsBar` is caught in unit tests.
+  - A new assertion on the `composer-actions` **button** order in an open-PR render —
+    `[preview-toggle, discard, save, post-now]` — so a reordering inside `ComposerActionsBar` is
+    caught in unit tests. Note the realistic DOM: the badge is a `<span>` (not a button);
+    `AiComposerAssistant` renders **`null` unless the AI gate is on** (off by default, so no node);
+    and the save button only renders for `prState === 'open'`. Assert against the buttons actually
+    present (filter to `role="button"` children in an open-PR render), or force the `composerAssist`
+    gate on to materialize the AI node before asserting the full sequence — do **not** assert a
+    fixed six-node order, which fails in the default config.
   - The **B1 visual assert** (human) at green-and-ready, side-by-side vs `main`.
   - The composer-touching **e2e specs** must pass unchanged: `pr-detail-single-comment.spec.ts`,
     `recently-closed-readonly.spec.ts`, and any with composer screenshot baselines (enumerate at
