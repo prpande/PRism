@@ -112,7 +112,7 @@ internal sealed class DiscardAllUnsubscribedContext : IDisposable
             s.RemoveAll<IActivePrCache>();
             s.AddSingleton<IActivePrCache>(new ConfigurableActivePrCache(subscribeAll: false));
         }));
-        _ = _derived.Services;
+        _ = _derived.Services; // Force server (and DataDir/state.json) creation.
     }
 
     public static DiscardAllUnsubscribedContext Create() => new();
