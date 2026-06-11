@@ -416,4 +416,42 @@ public sealed class GitHubAwaitingAuthorFilterTests
             e => e.Message.Contains("malformed JSON shape", StringComparison.Ordinal),
             "a JSON-null submitted_at must be a clean skip, not a malformed-item log");
     }
+
+    [Fact]
+    public async Task Newer_review_on_page1_wins_over_older_on_page2_by_submitted_at()
+    {
+        // Page 1 holds the NEWER review (at head); page 2 the OLDER (at old sha). The running
+        // best must be the max-by-submitted_at across BOTH pages ⇒ best == head ⇒ PR excluded.
+        var page1 = $$"""[ { "user": { "login": "{{ViewerLogin}}" }, "commit_id": "head", "submitted_at": "2020-02-01T00:00:00Z" } ]""";
+        var page2 = $$"""[ { "user": { "login": "{{ViewerLogin}}" }, "commit_id": "old",  "submitted_at": "2020-01-01T00:00:00Z" } ]""";
+        var handler = new PaginatedFakeHandler()
+            .RouteJson("/repos/acme/api/pulls/1/reviews", page1, page2);
+        var sut = BuildSut(handler);
+
+        var result = await sut.FilterAsync(ViewerLogin, [Raw(1, "head")], default);
+
+        result.Should().BeEmpty("the page-1 review is newest by submitted_at and is at head");
+        handler.CallCountFor("/repos/acme/api/pulls/1/reviews").Should().Be(2);
+    }
+
+    [Fact]
+    public async Task Malformed_submitted_at_string_skips_one_review_scan_continues()
+    {
+        // First review: non-null commit_id "x" (so it passes the commit_id gate) + a non-date
+        // STRING submitted_at (passes the ValueKind gate, throws FormatException at parse) →
+        // skipped via the malformed-item guard. Second review valid ⇒ best = "old" != head.
+        var body = $$"""
+            [
+              { "user": { "login": "{{ViewerLogin}}" }, "commit_id": "x",   "submitted_at": "not-a-date" },
+              { "user": { "login": "{{ViewerLogin}}" }, "commit_id": "old", "submitted_at": "2020-01-01T00:00:00Z" }
+            ]
+            """;
+        var handler = new FakeHttpMessageHandler(_ => Respond(HttpStatusCode.OK, body));
+        var sut = BuildSut(handler);
+
+        var act = async () => await sut.FilterAsync(ViewerLogin, [Raw(1, "new")], default);
+
+        var result = await act.Should().NotThrowAsync();
+        result.Subject.Should().ContainSingle("malformed review skipped; best = 'old' != head");
+    }
 }
