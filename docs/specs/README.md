@@ -40,6 +40,7 @@ This is a **concise index** — one line per spec, grouped by status. The per-sp
 - [`2026-06-03-issue-resolution-workflow-design.md`](2026-06-03-issue-resolution-workflow-design.md) — agent-driven, risk-gated issue-resolution runbook (shipped as [`.ai/docs/issue-resolution-workflow.md`](../../.ai/docs/issue-resolution-workflow.md)).
 - [`2026-06-06-sse-reconnect-resilience-design.md`](2026-06-06-sse-reconnect-resilience-design.md) — SSE reconnect resilience + subscription accounting (#141/#142).
 - [`2026-06-11-verdict-kebab-unification-design.md`](2026-06-11-verdict-kebab-unification-design.md) — verdict wire kebab unification + dead-enum delete (#318, epic #317).
+- [`2026-06-11-github-provider-robustness-design.md`](2026-06-11-github-provider-robustness-design.md) — GitHub provider read-path hardening: absent-PR cache eviction, reviews Link-walk pagination, typed REST-contract exception, per-item JSON isolation, terminal-CI TTL (#322; folds #361).
 
 ### v1 ship & desktop
 
