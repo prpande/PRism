@@ -1,15 +1,10 @@
-// Shared PrDetailDto test-fixture builders, replacing the ~10 hand-rolled
-// full-literal `PrDetailDto` fixtures that each re-spelled the entire `pr`
-// summary block across the PR-detail test suite (#332). Two shallow builders
-// mirror the existing `makePrDetailContextValue` convention in
-// src/components/PrDetail/testUtils.tsx: each takes a `Partial` of its type and
-// spreads it over neutral defaults. A test tweaking one `pr` field writes
-// `makePrDetailDto({ pr: makePr({ headSha: 'feedface' }) })`.
-//
-// The defaults are deliberately generic — every test that asserts on a specific
-// field (title, headSha, the maxCommentId derived from rootComments, etc.)
-// overrides that field explicitly, so the fixture reads as "defaults plus the
-// fields this test cares about" with no hidden coupling to a default value.
+// Shared PrDetailDto test-fixture builders (#332), replacing ~10 hand-rolled
+// full-literal fixtures that each re-spelled the whole `pr` block and drifted.
+// Mirror the makePrDetailContextValue convention (src/components/PrDetail/
+// testUtils.tsx): each spreads a `Partial` over neutral defaults, overrides
+// last. Compose for a nested tweak: makePrDetailDto({ pr: makePr({ headSha:
+// 'feedface' }) }). Defaults are generic, so each test overrides exactly the
+// fields it asserts on — no hidden coupling to a default value.
 import type { PrDetailDto, PrDetailPr, PrReference } from '../../src/api/types';
 
 const DEFAULT_REF: PrReference = { owner: 'octocat', repo: 'hello', number: 42 };
