@@ -2,6 +2,8 @@
 
 This document explains how items in this backlog are ordered, the dependency graph between them, and how to translate a backlog entry into a spec item ready for implementation.
 
+> **What this backlog is.** It is the **v2 feature roadmap** — the AI-augmentation work that builds on the shipped V1 review experience, under active development on the `V2` branch. (See also [`../roadmap.md`](../roadmap.md) § "v2 — AI augmentation". Day-to-day execution is tracked issue-by-issue in GitHub milestones, which this feature view doesn't enumerate.)
+
 ---
 
 ## Priority tiers

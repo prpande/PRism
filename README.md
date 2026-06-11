@@ -47,8 +47,8 @@ Pick a verdict — **Approve**, **Request changes**, or **Comment** — add an o
 ### Theming and desktop
 Light and dark themes. Run PRism as a standalone **desktop app** with its own window, or as a tab in your default browser — both share the same data folder, so your token and drafts carry across.
 
-### AI augmentation (planned)
-The architecture is already in place — capability-gated seams throughout the inbox and review surfaces — for Claude-powered review summaries, file-focus hints, and review assistance. These features aren't built yet; they're planned for a future release.
+### AI augmentation (in development)
+The architecture is already in place — capability-gated seams throughout the inbox and review surfaces — for Claude-powered review summaries, file-focus hints, and review assistance. These features aren't in the shipping build yet; they're under active development on the project's V2 branch and will arrive in a future release.
 
 ---
 
@@ -56,7 +56,7 @@ The architecture is already in place — capability-gated seams throughout the i
 
 Download the latest build from the [**Releases page**](https://github.com/prpande/PRism/releases). PRism currently ships as a desktop app — a Windows installer or portable executable, and a macOS (Apple Silicon) disk image. (A standalone browser-tab build that opens in your default browser is planned; for now you can run that mode from source — see [Development](#development).)
 
-The current build is an unsigned preview (`v0.2.0`). PRism is open source and unsigned because code-signing certificates require a paid developer account — so your OS shows a one-time trust prompt the first time you launch it. This is expected, and the steps below clear it. Download only from the official [Releases page](https://github.com/prpande/PRism/releases) so you know you have the genuine build.
+The current build is an unsigned pre-release. PRism is open source and unsigned because code-signing certificates require a paid developer account — so your OS shows a one-time trust prompt the first time you launch it. This is expected, and the steps below clear it. Download only from the official [Releases page](https://github.com/prpande/PRism/releases) so you know you have the genuine build.
 
 ### Windows
 
@@ -142,4 +142,4 @@ All production code is written test-first. Contributor guidance — the full dev
 
 ## Status
 
-PRism began as a single-user proof of concept and is now in its fit-and-finish stage — the core review experience is feature-complete and available as an unsigned preview build, with AI augmentation planned for a future release. The [Releases page](https://github.com/prpande/PRism/releases) is the source of truth for what's downloadable.
+PRism began as a single-user proof of concept and has since shipped a series of unsigned pre-release builds to early testers. The core review experience is feature-complete; AI augmentation is under active development in parallel (on the V2 branch) for a future release. The [Releases page](https://github.com/prpande/PRism/releases) is the source of truth for what's downloadable.
