@@ -75,6 +75,7 @@ export function PrDetailView({
   // useReconcile's onReloadComplete — referentially stable across renders.
   const handleReconcileComplete = useCallback(() => {
     void draftSession.refetch();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- depends on the stable draftSession.refetch useCallback, not the per-render draftSession object literal (#331)
   }, [draftSession.refetch]);
   const reconcile = useReconcile({
     prRef,
@@ -104,10 +105,10 @@ export function PrDetailView({
   // clear, not a re-fire on every refKey change (the host owns focus-driven
   // clears under keep-alive). `clearUnread` is a useCallback([]) from
   // OpenTabsContext, so it's referentially stable for the provider's lifetime —
-  // the empty deps array can't go stale. ESLint's react-hooks plugin is not
-  // enabled in this config, so no disable directive is needed.
+  // the empty deps array can't go stale.
   useEffect(() => {
     clearUnread(refKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- one-shot first-mount clear; clearUnread is a stable useCallback([]) and refKey is read once (#331)
   }, []);
 
   // Re-activation freshness: when the user switches BACK to this kept-alive
@@ -168,9 +169,8 @@ export function PrDetailView({
   // marker bind the shell to the viewport so the diff scrolls internally with a
   // bottom-of-screen horizontal scrollbar (#191/#156). The cleanup removes the
   // marker when this view deactivates or switches sub-tab, so a different active
-  // view (or a non-Files tab) reverts to normal document scroll. ESLint's
-  // react-hooks plugin is not enabled in this config, so no disable directive is
-  // needed for the deps array.
+  // view (or a non-Files tab) reverts to normal document scroll. The deps array
+  // below is exhaustive-deps-clean now that the react-hooks plugin is wired (#331).
   useLayoutEffect(() => {
     // Only the ACTIVE view manages the shared marker. Inactive views must NOT
     // run the body — otherwise, with 2+ open tabs, an inactive view whose effect

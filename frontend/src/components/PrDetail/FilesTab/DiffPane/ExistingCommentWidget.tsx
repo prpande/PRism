@@ -93,6 +93,7 @@ function ThreadView({
     if (!existingDraft) return;
     setDraftReplyId(existingDraft.id);
     setComposerOpen(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on existingDraft?.id; re-syncs only when the draft id changes, not on every object identity change (#331)
   }, [existingDraft?.id]);
 
   const handleReplyClick = () => setComposerOpen(true);
