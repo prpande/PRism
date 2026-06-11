@@ -37,13 +37,19 @@ public sealed class GitHubCiFailingDetector : ICiFailingDetector
                 if (_cache.TryGetValue(key, out var cached)) return (Item: c, Ci: cached, Degraded: false);
 
                 var (ci, degraded) = await ProbeAsync(c.Reference, c.HeadSha, token, ct).ConfigureAwait(false);
-                // Only cache a result built from complete, successful reads. A DEGRADED
-                // result (a non-2xx from Checks/Status — a fine-grained 403 or a transient
-                // 5xx) is NOT cached, so the next tick re-probes: a transient failure
-                // recovers when GitHub heals, and a fine-grained 403 re-probes cheaply
-                // until the token is replaced. Caching None here would pin it until the
-                // head SHA changes — contradicting the "recovers next tick" contract. (#213)
-                if (!degraded) _cache[key] = ci;
+                // Cache only a complete, successful, NON-TRANSIENT read. A DEGRADED result
+                // (a non-2xx from Checks/Status — a fine-grained 403 or a transient 5xx) is
+                // NOT cached, so the next tick re-probes: a transient failure recovers when
+                // GitHub heals, and a fine-grained 403 re-probes cheaply until the token is
+                // replaced. Caching a degraded None would pin it until the head SHA changes —
+                // contradicting the "recovers next tick" contract. (#213)
+                //
+                // PENDING joins the never-cache set: a clean (non-degraded) Pending is still
+                // transient. Caching it pinned the CI dot under that head SHA — so checks
+                // finishing on an UNCHANGED head never advanced the dot, and a manual Refresh
+                // re-hit the same pinned Pending. Re-probe Pending every sweep (exactly as a
+                // degraded read does) until it goes terminal, then cache the terminal. (#355)
+                if (!degraded && ci != CiStatus.Pending) _cache[key] = ci;
                 return (Item: c, Ci: ci, Degraded: degraded);
             }
             finally { sem.Release(); }

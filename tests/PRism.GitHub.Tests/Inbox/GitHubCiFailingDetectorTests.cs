@@ -721,4 +721,51 @@ public sealed class GitHubCiFailingDetectorTests
         result.Items.Should().HaveCount(1);
         result.Items[0].Ci.Should().Be(CiStatus.None);
     }
+
+    [Fact]
+    public async Task Pending_is_not_cached_and_advances_to_terminal_next_sweep()
+    {
+        // #355 Lever 1: a clean (non-degraded) Pending must NOT be pinned. Same (ref, headSha):
+        // sweep 1 reads in-progress (Pending), sweep 2 reads passing → sweep 2 must reflect Passing.
+        // On main the cached Pending pins and sweep 2 still returns Pending (RED).
+        var finished = false;
+        var handler = new FakeHttpMessageHandler(req =>
+        {
+            if (req.RequestUri!.AbsoluteUri.Contains("/check-runs", StringComparison.Ordinal))
+                return Respond(HttpStatusCode.OK, finished ? AllPassingCheckRuns : InProgressCheckRun);
+            return Respond(HttpStatusCode.OK, SuccessNoLegacyStatus);
+        });
+        var sut = BuildSut(handler);
+
+        var first = await sut.DetectAsync([Raw(1)], default);
+        first.Items[0].Ci.Should().Be(CiStatus.Pending);
+
+        finished = true;
+        var second = await sut.DetectAsync([Raw(1)], default);
+        second.Items[0].Ci.Should().Be(CiStatus.Passing,
+            "a clean Pending must not be cached — the next sweep re-probes and sees the terminal status");
+    }
+
+    [Fact]
+    public async Task Pending_reprobes_http_each_sweep()
+    {
+        // A Pending sweep must issue HTTP again next sweep (not served from cache).
+        var requestCount = 0;
+        var handler = new FakeHttpMessageHandler(req =>
+        {
+            Interlocked.Increment(ref requestCount);
+            if (req.RequestUri!.AbsoluteUri.Contains("/check-runs", StringComparison.Ordinal))
+                return Respond(HttpStatusCode.OK, InProgressCheckRun);
+            return Respond(HttpStatusCode.OK, RegisteredPendingStatus);
+        });
+        var sut = BuildSut(handler);
+
+        var candidate = Raw(1, "sha-A");
+        await sut.DetectAsync([candidate], default);
+        var afterFirst = requestCount;
+        await sut.DetectAsync([candidate], default);
+
+        afterFirst.Should().Be(2);
+        requestCount.Should().Be(4, "a Pending result must re-probe next sweep, not hit the cache");
+    }
 }
