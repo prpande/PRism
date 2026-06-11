@@ -101,5 +101,6 @@ export function useTreeHScroll(
       spacer.style.removeProperty('width');
     };
     // `deps` lets the caller re-measure when the rendered row set changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- caller-supplied `...deps` re-measure key; a spread element can't be statically verified (#331)
   }, [enabled, viewportRef, rowRef, scrollbarRef, spacerRef, ...deps]);
 }

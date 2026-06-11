@@ -40,4 +40,13 @@ public static class HostUrlResolver
         var trimmed = host.TrimEnd('/');
         return new Uri($"{trimmed}/api/graphql");
     }
+
+    /// <summary>
+    /// True when <paramref name="requestUri"/> targets the github.com API host
+    /// (api.github.com). The "github" HttpClient's BaseAddress is HostUrlResolver.ApiBase,
+    /// so a github.com request resolves to api.github.com and a GHES request to the
+    /// enterprise host. Credential-health detection is github.com-only this slice (#312 §11).
+    /// </summary>
+    public static bool IsGitHubDotCom(Uri? requestUri) =>
+        requestUri is not null && requestUri.Host.Equals("api.github.com", StringComparison.OrdinalIgnoreCase);
 }

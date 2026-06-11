@@ -138,7 +138,7 @@ internal sealed class StubReviewService : IReviewAuth
     private readonly Func<Task<AuthValidationResult>> _validate;
     public StubReviewService(Func<Task<AuthValidationResult>> validate) { _validate = validate; }
 
-    public Task<AuthValidationResult> ValidateCredentialsAsync(CancellationToken ct) => _validate();
+    public Task<AuthValidationResult> ValidateCredentialsAsync(CancellationToken ct, bool skipCredentialHealth = false) => _validate();
 }
 
 // Scripted availability probe. Wired in by PRismWebApplicationFactory.AvailabilityProbeOverride

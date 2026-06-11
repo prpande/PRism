@@ -6,7 +6,6 @@ import {
   resumeForeignPendingReview,
   submitReview,
   SubmitConflictError,
-  verdictToSubmitWire,
 } from '../src/api/submit';
 import { __resetTabIdForTest } from '../src/api/draft';
 import type { PrReference } from '../src/api/types';
@@ -36,31 +35,30 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe('verdictToSubmitWire', () => {
-  it('maps kebab DraftVerdict to PascalCase submit Verdict', () => {
-    expect(verdictToSubmitWire('approve')).toBe('Approve');
-    expect(verdictToSubmitWire('request-changes')).toBe('RequestChanges');
-    expect(verdictToSubmitWire('comment')).toBe('Comment');
-  });
-});
-
 describe('submitReview', () => {
-  it('POSTs the PascalCase verdict to /submit and returns the parsed outcome', async () => {
+  it('POSTs the kebab-case verdict to /submit and returns the parsed outcome', async () => {
     fetchMock.mockResolvedValueOnce(jsonResponse(200, { outcome: 'started' }));
-    const result = await submitReview(ref, 'Comment');
+    const result = await submitReview(ref, 'comment');
     expect(result.outcome).toBe('started');
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(url).toBe(`${PR_PATH}/submit`);
     expect(init.method).toBe('POST');
-    expect(JSON.parse(init.body as string)).toEqual({ verdict: 'Comment' });
+    expect(JSON.parse(init.body as string)).toEqual({ verdict: 'comment' });
+  });
+
+  it('POSTs request-changes as kebab-case (the single canonical wire form)', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse(200, { outcome: 'started' }));
+    await submitReview(ref, 'request-changes');
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(JSON.parse(init.body as string)).toEqual({ verdict: 'request-changes' });
   });
 
   it('throws SubmitConflictError carrying the code on 409', async () => {
     fetchMock.mockResolvedValueOnce(
       jsonResponse(409, { code: 'submit-in-progress', message: 'A submit is already running.' }),
     );
-    await expect(submitReview(ref, 'Approve')).rejects.toMatchObject({
+    await expect(submitReview(ref, 'approve')).rejects.toMatchObject({
       name: 'SubmitConflictError',
       code: 'submit-in-progress',
     });
@@ -68,12 +66,12 @@ describe('submitReview', () => {
 
   it('throws SubmitConflictError on a 4xx { code } body (e.g. stale-drafts)', async () => {
     fetchMock.mockResolvedValueOnce(jsonResponse(400, { code: 'stale-drafts', message: '...' }));
-    await expect(submitReview(ref, 'Approve')).rejects.toBeInstanceOf(SubmitConflictError);
+    await expect(submitReview(ref, 'approve')).rejects.toBeInstanceOf(SubmitConflictError);
   });
 
   it('rethrows the raw error when the body has no code field', async () => {
     fetchMock.mockResolvedValueOnce(jsonResponse(500, { error: 'boom' }));
-    await expect(submitReview(ref, 'Approve')).rejects.not.toBeInstanceOf(SubmitConflictError);
+    await expect(submitReview(ref, 'approve')).rejects.not.toBeInstanceOf(SubmitConflictError);
   });
 });
 

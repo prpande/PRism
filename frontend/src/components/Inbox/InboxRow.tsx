@@ -110,58 +110,63 @@ export function InboxRow({
           <path d={PR_GLYPH_PATH[prState]} />
         </svg>
       </span>
-      <span className={styles.main}>
-        <span className={styles.titleRow}>
-          <span className={styles.title} title={pr.title}>
-            {pr.title}
+      <span className={styles.midCol}>
+        <span className={styles.main}>
+          <span className={styles.titleRow}>
+            <span className={styles.title} title={pr.title}>
+              {pr.title}
+            </span>
           </span>
-          {!isDone && pr.ci !== 'none' && (
-            <svg
-              className={`${styles.ciSuffix} ${styles[CI_GLYPH_CLASS[pr.ci]]}`}
-              data-ci={pr.ci}
-              viewBox="0 0 16 16"
-              width="14"
-              height="14"
-              fill="currentColor"
-              aria-hidden="true"
-            >
-              <title>{CI_GLYPH_LABEL[pr.ci]}</title>
-              <path d={CI_GLYPH_PATH[pr.ci]} />
-            </svg>
-          )}
-        </span>
-        <span className={styles.meta}>
-          {showCategoryChip && enrichment?.categoryChip && (
-            <span className={styles.chipWrap}>
-              {/* #283 visual AI-preview marker. The fake category is visual-only (the row's
+          <span className={styles.meta}>
+            {showCategoryChip && enrichment?.categoryChip && (
+              <span className={styles.chipWrap}>
+                {/* #283 visual AI-preview marker. The fake category is visual-only (the row's
                   aria-label omits it and the button swallows descendant labels), so this is a
                   sighted-user cue, not an a11y mechanism. The marker is fixed-width (flex:none)
                   so the category text — not the marker — absorbs any width pressure, and it
                   hides together with the chip below the 560px breakpoint. */}
-              <span className={styles.chip}>
-                <span className={styles.chipMarker} aria-hidden="true">
-                  AI
+                <span className={styles.chip}>
+                  <span className={styles.chipMarker} aria-hidden="true">
+                    AI
+                  </span>
+                  {enrichment.categoryChip}
                 </span>
-                {enrichment.categoryChip}
+                <span className={styles.dotsep}>·</span>
               </span>
-              <span className={styles.dotsep}>·</span>
+            )}
+            {showRepo && (
+              <>
+                <span className={styles.mono}>{pr.repo}</span>
+                <span className={styles.dotsep}>·</span>
+              </>
+            )}
+            <span className={styles.author} data-testid="inbox-author">
+              <Avatar src={pr.avatarUrl} login={pr.author} size="sm" />
+              <span className={styles.authorName}>{pr.author}</span>
             </span>
-          )}
-          {showRepo && (
-            <>
-              <span className={styles.mono}>{pr.repo}</span>
-              <span className={styles.dotsep}>·</span>
-            </>
-          )}
-          <span className={styles.author} data-testid="inbox-author">
-            <Avatar src={pr.avatarUrl} login={pr.author} size="sm" />
-            <span className={styles.authorName}>{pr.author}</span>
+            <span className={styles.dotsep}>·</span>
+            <span className={styles.mono}>iter {pr.iterationNumber}</span>
+            <span className={styles.dotsep}>·</span>
+            <span>{formatAge(pr.updatedAt)}</span>
           </span>
-          <span className={styles.dotsep}>·</span>
-          <span className={styles.mono}>iter {pr.iterationNumber}</span>
-          <span className={styles.dotsep}>·</span>
-          <span>{formatAge(pr.updatedAt)}</span>
         </span>
+        {/* CI glyph — sibling of .main inside the row-centering .midCol so it sits on
+            the row's vertical center, in line with the right-side metrics it reads with,
+            rather than pinned to the title's first line (#345). */}
+        {!isDone && pr.ci !== 'none' && (
+          <svg
+            className={`${styles.ciSuffix} ${styles[CI_GLYPH_CLASS[pr.ci]]}`}
+            data-ci={pr.ci}
+            viewBox="0 0 16 16"
+            width="14"
+            height="14"
+            fill="currentColor"
+            aria-hidden="true"
+          >
+            <title>{CI_GLYPH_LABEL[pr.ci]}</title>
+            <path d={CI_GLYPH_PATH[pr.ci]} />
+          </svg>
+        )}
       </span>
       <span className={styles.tail}>
         <span className={styles.metrics}>

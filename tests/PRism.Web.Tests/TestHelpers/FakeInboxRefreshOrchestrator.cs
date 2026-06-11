@@ -7,14 +7,28 @@ public sealed class FakeInboxRefreshOrchestrator : IInboxRefreshOrchestrator
 {
     public InboxSnapshot? Current { get; set; }
     public Func<TimeSpan, CancellationToken, Task<bool>>? WaitOverride { get; set; }
+
+    /// <summary>
+    /// Lets a test drive RefreshAsync: throw (to simulate a failed/rate-limited pull)
+    /// and/or mutate <see cref="Current"/> (to simulate a committed snapshot) before
+    /// returning/throwing. Null → the default no-op success.
+    /// </summary>
+    public Func<CancellationToken, Task>? RefreshOverride { get; set; }
+
     public int RefreshCalls { get; private set; }
+    public bool? LastHardRefresh { get; private set; }
 
     private int _coldStartKicked;
 
     public Task<bool> WaitForFirstSnapshotAsync(TimeSpan timeout, CancellationToken ct)
         => WaitOverride?.Invoke(timeout, ct) ?? Task.FromResult(Current != null);
 
-    public Task RefreshAsync(CancellationToken ct) { RefreshCalls++; return Task.CompletedTask; }
+    public Task RefreshAsync(CancellationToken ct, bool hardRefresh = false)
+    {
+        RefreshCalls++;
+        LastHardRefresh = hardRefresh;
+        return RefreshOverride?.Invoke(ct) ?? Task.CompletedTask;
+    }
 
     public void TryColdStartRefresh()
     {

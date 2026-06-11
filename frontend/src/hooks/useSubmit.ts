@@ -14,9 +14,9 @@ import {
   type SubmitForeignPendingReviewEvent,
   type SubmitProgressEvent,
   type SubmitStaleCommitOidEvent,
+  type DraftVerdict,
   type SubmitStep,
   type SubmitStepStatus,
-  type Verdict,
 } from '../api/types';
 
 export interface SubmitProgressStep {
@@ -50,7 +50,7 @@ export interface ResumeSummary {
 
 export interface UseSubmitResult {
   state: SubmitState;
-  submit(verdict: Verdict): Promise<void>;
+  submit(verdict: DraftVerdict): Promise<void>;
   retry(): Promise<void>;
   resumeForeignPendingReview(reviewId: string): Promise<void>;
   discardForeignPendingReview(reviewId: string): Promise<void>;
@@ -91,7 +91,7 @@ export function useSubmit(reference: PrReference): UseSubmitResult {
   const ownsActiveSubmit = useRef(false);
   // Last-confirmed verdict, so retry() (stale-commitOID recovery, post-failure
   // retry) re-fires with the same value without plumbing it back through props.
-  const lastVerdictRef = useRef<Verdict | null>(null);
+  const lastVerdictRef = useRef<DraftVerdict | null>(null);
   // Counts the user saw in the foreign-pending-review prompt (Snapshot A),
   // captured when the prompt state arrives so resumeForeignPendingReview can
   // diff them against the resume 200's counts (Snapshot B) — spec § 11.1.
@@ -163,7 +163,7 @@ export function useSubmit(reference: PrReference): UseSubmitResult {
   }, [stream, prRef]);
 
   const fire = useCallback(
-    async (verdict: Verdict, initialSteps: SubmitProgressStep[]) => {
+    async (verdict: DraftVerdict, initialSteps: SubmitProgressStep[]) => {
       lastVerdictRef.current = verdict;
       ownsActiveSubmit.current = true;
       // Go in-flight *before* the await — the submit endpoint is fire-and-forget
@@ -183,7 +183,7 @@ export function useSubmit(reference: PrReference): UseSubmitResult {
     [reference],
   );
 
-  const submit = useCallback((verdict: Verdict) => fire(verdict, []), [fire]);
+  const submit = useCallback((verdict: DraftVerdict) => fire(verdict, []), [fire]);
 
   const retry = useCallback(async () => {
     const verdict = lastVerdictRef.current;

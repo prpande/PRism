@@ -3,7 +3,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { PrHeader } from '../src/components/PrDetail/PrHeader';
 import { ToastProvider } from '../src/components/Toast/useToast';
 import { ToastContainer } from '../src/components/Toast/ToastContainer';
-import { AskAiDrawerProvider, useAskAiDrawer } from '../src/contexts/AskAiDrawerContext';
+import { AskAiDrawerProvider } from '../src/contexts/AskAiDrawerContext';
 import { SubmitConflictError } from '../src/api/submit';
 import type { ReactNode } from 'react';
 import type {
@@ -37,8 +37,8 @@ vi.mock('../src/hooks/usePreferences', () => ({
   }),
 }));
 
-// Real SubmitConflictError + verdictToSubmitWire kept; only the network call is
-// stubbed so the catch in PrHeader runs against a real thrown error type.
+// Real SubmitConflictError kept; only the network call is stubbed so the catch
+// in PrHeader runs against a real thrown error type.
 vi.mock('../src/api/submit', async () => {
   const actual = await vi.importActual<typeof import('../src/api/submit')>('../src/api/submit');
   return {
@@ -154,31 +154,40 @@ describe('PrHeader', () => {
 
   it('Submit button is enabled once a submittable session is supplied', () => {
     render(<PrHeader {...baseProps} session={readySession} headShaDrift={false} />);
-    expect(screen.getByRole('button', { name: /submit review/i })).toBeEnabled();
+    expect(screen.getByTestId('review-action-main')).toBeEnabled();
   });
 
   it('Submit button stays disabled when head_sha drift is reported (rule f)', () => {
     render(<PrHeader {...baseProps} session={readySession} headShaDrift />);
-    expect(screen.getByRole('button', { name: /submit review/i })).toBeDisabled();
+    expect(screen.getByTestId('review-action-main')).toBeDisabled();
   });
 
-  it('renders the verdict picker bound to the session verdict', () => {
+  it('reflects the session verdict on the action button', () => {
     render(<PrHeader {...baseProps} session={session({ draftVerdict: 'approve' })} />);
-    const group = screen.getByRole('group', { name: /verdict/i });
-    expect(group).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Approve' })).toHaveAttribute('aria-pressed', 'true');
+    // The main button label reflects the active verdict.
+    expect(screen.getByTestId('review-action-main')).toHaveTextContent('Approve');
+    // Opening the menu exposes all three verdict options; the checked one carries a ✓.
+    fireEvent.click(screen.getByTestId('review-action-chevron'));
+    expect(screen.getByRole('menuitem', { name: 'Approve' })).toBeInTheDocument();
+    expect(screen.getByRole('menuitem', { name: 'Request changes' })).toBeInTheDocument();
+    expect(screen.getByRole('menuitem', { name: 'Comment' })).toBeInTheDocument();
+    expect(
+      within(screen.getByRole('menuitem', { name: 'Approve' })).getByText('✓'),
+    ).toBeInTheDocument();
   });
 
   it('clicking Submit Review opens the dialog', () => {
     render(<PrHeader {...baseProps} session={readySession} />);
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: /submit review/i }));
+    fireEvent.click(screen.getByTestId('review-action-main'));
     expect(screen.getByRole('dialog')).toBeInTheDocument();
   });
 
-  it('shows the in-flight-submit recovery badge when the session carries a pendingReviewId', () => {
+  it('surfaces a resumable pending review on the action button', () => {
     render(<PrHeader {...baseProps} session={session({ pendingReviewId: 'PRR_abc' })} />);
-    expect(screen.getByRole('button', { name: /submit in progress.*resume/i })).toBeInTheDocument();
+    const main = screen.getByTestId('review-action-main');
+    expect(main).toHaveTextContent('Resume review');
+    expect(main).toHaveAttribute('title', expect.stringMatching(/pending review on github/i));
   });
 
   it('does not render the Ask AI button unless aiPreview is on', () => {
@@ -186,68 +195,8 @@ describe('PrHeader', () => {
     expect(screen.queryByRole('button', { name: /ask ai/i })).not.toBeInTheDocument();
   });
 
-  it('renders the Ask AI button + clicking it toggles the AskAiDrawer when aiPreview is on', () => {
-    preferencesValue.preferences = {
-      // aiMode:'preview' opens the gate (useAiGate reads aiMode).
-      ui: {
-        theme: 'system',
-        accent: 'indigo',
-        aiMode: 'preview',
-        density: 'comfortable',
-        contentScale: 'm',
-      },
-      inbox: {
-        sections: {
-          'review-requested': true,
-          'awaiting-author': true,
-          'authored-by-me': true,
-          mentioned: true,
-          'recently-closed': true,
-        },
-        defaultSort: 'updated',
-        sectionOrder: 'review-requested,awaiting-author,authored-by-me,mentioned',
-        showActivityRail: false,
-        groupByRepo: true,
-      },
-      github: {
-        host: 'https://github.com',
-        configPath: '/fake/config.json',
-        logsPath: '/fake/logs',
-      },
-    };
-    capabilitiesValue.capabilities = {
-      summary: true,
-      fileFocus: true,
-      hunkAnnotations: true,
-      preSubmitValidators: true,
-      composerAssist: true,
-      draftSuggestions: true,
-      draftReconciliation: true,
-      inboxEnrichment: true,
-      inboxRanking: true,
-    };
-    // PR8 § 4.8: the static "coming in v2" empty-state was removed. The Ask AI
-    // button now opens the global AskAiDrawer (mounted in App.tsx, outside
-    // PrHeader). This probe shares the test's provider so the toggle state is
-    // observable in-tree.
-    function DrawerProbe() {
-      const { isOpen } = useAskAiDrawer();
-      return <span data-testid="drawer-state">{isOpen ? 'open' : 'closed'}</span>;
-    }
-    rtlRender(
-      <AskAiDrawerProvider>
-        <PrHeader {...baseProps} session={readySession} />
-        <DrawerProbe />
-      </AskAiDrawerProvider>,
-    );
-    const askAi = screen.getByRole('button', { name: /ask ai/i });
-    expect(askAi).toBeInTheDocument();
-    expect(screen.getByTestId('drawer-state')).toHaveTextContent('closed');
-    fireEvent.click(askAi);
-    expect(screen.getByTestId('drawer-state')).toHaveTextContent('open');
-    fireEvent.click(askAi);
-    expect(screen.getByTestId('drawer-state')).toHaveTextContent('closed');
-  });
+  // The Ask-AI trigger moved to the App-level AskAiPullTab (outside PrHeader).
+  // Integration coverage for the pull-tab toggle lives in AskAiPullTab.test.tsx.
 
   it('does not render the branch arrow when branchInfo is absent and the dialog is closed', () => {
     render(<PrHeader {...baseProps} />);
@@ -302,7 +251,7 @@ describe('PrHeader — surfacing 4xx errors from /submit (regression: silent swa
   // each known SubmitConflictError code surfaces a useful toast.
 
   async function clickSubmitAndConfirm() {
-    fireEvent.click(screen.getByRole('button', { name: /submit review/i }));
+    fireEvent.click(screen.getByTestId('review-action-main'));
     const confirm = await screen.findByRole('button', { name: /confirm submit/i });
     fireEvent.click(confirm);
   }
@@ -353,12 +302,13 @@ describe('PrHeader — surfacing 4xx errors from /submit (regression: silent swa
     expect(await screen.findByText(/unexpected error.*Try again/i)).toBeInTheDocument();
   });
 
-  it('surfaces 4xx via toast on the SubmitInProgressBadge Resume path (parallel onResume catch)', async () => {
+  it('surfaces 4xx via toast on the Resume path (parallel onResume catch)', async () => {
     // Regression: PR #55 wired surfaceSubmitError into onSubmit but the parallel
     // onResume path sat untested. The recovery flow is the higher-stakes silent-
     // failure surface — the user already failed once. Asserts the catch wires
     // through surfaceSubmitError, not the empty .catch(() => {}) that shipped
     // originally on the dialog onSubmit.
+    // With pending+approve the main button action is resume → fires onResume → catch surfaces toast.
     submitReviewMock.mockRejectedValueOnce(
       new SubmitConflictError('submit-in-progress', 'A submit is already in flight.'),
     );
@@ -368,13 +318,13 @@ describe('PrHeader — surfacing 4xx errors from /submit (regression: silent swa
         session={session({ pendingReviewId: 'PRR_recover', draftVerdict: 'approve' })}
       />,
     );
-    fireEvent.click(screen.getByRole('button', { name: /submit in progress.*resume/i }));
+    fireEvent.click(screen.getByTestId('review-action-main'));
     expect(await screen.findByText(/A submit is already in flight/i)).toBeInTheDocument();
   });
 });
 
 describe('PrHeader — closed/merged PR (PR5 § 13)', () => {
-  it('shows "Discard all drafts", hides the verdict picker, and disables Submit on a closed PR with session content', () => {
+  it('shows "Discard all drafts" in the menu, hides the verdict picker, and shows Drafts label on a closed PR with session content', () => {
     render(
       <PrHeader
         {...baseProps}
@@ -382,34 +332,42 @@ describe('PrHeader — closed/merged PR (PR5 § 13)', () => {
         prState="closed"
       />,
     );
-    expect(screen.getByRole('button', { name: /discard all drafts/i })).toBeInTheDocument();
+    // Main button shows "Drafts" for closed/merged PRs.
+    expect(screen.getByTestId('review-action-main')).toHaveTextContent('Drafts');
+    // No standalone verdict group — verdict is surfaced in the menu, not a picker widget.
     expect(screen.queryByRole('group', { name: /verdict/i })).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /submit review/i })).toBeDisabled();
+    // Discard all drafts is offered in the menu.
+    fireEvent.click(screen.getByTestId('review-action-chevron'));
+    expect(screen.getByRole('menuitem', { name: /discard all drafts/i })).toBeInTheDocument();
+    // No submit item in the menu for closed/merged PRs.
+    expect(screen.queryByRole('menuitem', { name: /submit/i })).not.toBeInTheDocument();
   });
 
   it('does not show "Discard all drafts" on a closed PR with an empty session', () => {
     render(<PrHeader {...baseProps} session={session()} prState="closed" />);
-    expect(screen.queryByRole('button', { name: /discard all drafts/i })).not.toBeInTheDocument();
+    // Menu is empty (no drafts) — the chevron opens nothing (or closes immediately).
+    // Either way, no discard-all menuitem should be present.
+    expect(screen.queryByRole('menuitem', { name: /discard all drafts/i })).not.toBeInTheDocument();
   });
 
-  it('does not show "Discard all drafts" on an open PR even with session content; verdict picker stays', () => {
+  it('does not show "Discard all drafts" on an open PR even with session content; verdict options stay in the menu', () => {
     render(
       <PrHeader {...baseProps} session={session({ pendingReviewId: 'PRR_x' })} prState="open" />,
     );
-    expect(screen.queryByRole('button', { name: /discard all drafts/i })).not.toBeInTheDocument();
-    expect(screen.getByRole('group', { name: /verdict/i })).toBeInTheDocument();
+    // No discard-all in the menu for open PRs.
+    fireEvent.click(screen.getByTestId('review-action-chevron'));
+    expect(screen.queryByRole('menuitem', { name: /discard all drafts/i })).not.toBeInTheDocument();
+    // Verdict options ARE available in the menu (replaces the old verdict-picker group).
+    expect(screen.getByRole('menuitem', { name: 'Approve' })).toBeInTheDocument();
   });
 
-  it('clicking "Discard all drafts" opens the confirmation modal naming what is removed', () => {
+  it('clicking "Discard all drafts" from the menu opens the confirmation modal naming what is removed', () => {
     render(
       <PrHeader {...baseProps} session={session({ pendingReviewId: 'PRR_x' })} prState="merged" />,
     );
-    fireEvent.click(screen.getByRole('button', { name: /discard all drafts/i }));
-    // Scope to the confirmation dialog: the T24 pending-review pill also renders
-    // "Pending review on GitHub · Discard" in the header on this merged PR (it's
-    // gated only on pendingReviewId + !dialogOpen), so a document-wide
-    // getByText(/pending review on github/i) is ambiguous. The modal's bullet is
-    // the assertion target here.
+    fireEvent.click(screen.getByTestId('review-action-chevron'));
+    fireEvent.click(screen.getByRole('menuitem', { name: /discard all drafts/i }));
+    // Scope assertions to the confirmation dialog.
     const dialog = within(screen.getByRole('dialog'));
     expect(dialog.getByText(/on this merged PR/i)).toBeInTheDocument();
     expect(dialog.getByText(/pending review on github/i)).toBeInTheDocument();

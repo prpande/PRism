@@ -14,6 +14,8 @@ import { PrDetailSkeleton } from './PrDetailSkeleton';
 import type { PrTabId } from './PrSubTabStrip';
 import { usePrDetail } from '../../hooks/usePrDetail';
 import { useActivePrUpdates } from '../../hooks/useActivePrUpdates';
+import { usePrDetailRefresh } from '../../hooks/usePrDetailRefresh';
+import { useToast } from '../Toast/useToast';
 import { useDraftSession } from '../../hooks/useDraftSession';
 import { useStateChangedSubscriber } from '../../hooks/useStateChangedSubscriber';
 import { useRootCommentPostedSubscriber } from '../../hooks/useRootCommentPostedSubscriber';
@@ -56,6 +58,20 @@ export function PrDetailView({
 
   const { data, isLoading, error, reload } = usePrDetail(prRef);
   const updates = useActivePrUpdates(prRef);
+
+  // #344 — proactive manual Refresh. Force-re-reads the PR from GitHub (bypasses
+  // the head-SHA-keyed snapshot cache), then fires usePrDetail.reload() to re-GET
+  // the fresh detail and clears any latched "PR updated" banner (a manual pull
+  // moots it). Errors surface as a soft, dismissible toast — the view keeps its
+  // current data. Drives the header RefreshButton + the sr-only announcer below.
+  const toast = useToast();
+  const prRefresh = usePrDetailRefresh({
+    prRef,
+    reload,
+    clearUpdates: updates.clear,
+    onError: (message) => toast.show({ kind: 'error', message }),
+  });
+
   const draftSession = useDraftSession(prRef);
   // Refetch draft session when other tabs / the reload pipeline mutate
   // drafts. Own-tab events are filtered by the subscriber per spec § 5.7.
@@ -75,6 +91,7 @@ export function PrDetailView({
   // useReconcile's onReloadComplete — referentially stable across renders.
   const handleReconcileComplete = useCallback(() => {
     void draftSession.refetch();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- depends on the stable draftSession.refetch useCallback, not the per-render draftSession object literal (#331)
   }, [draftSession.refetch]);
   const reconcile = useReconcile({
     prRef,
@@ -104,10 +121,10 @@ export function PrDetailView({
   // clear, not a re-fire on every refKey change (the host owns focus-driven
   // clears under keep-alive). `clearUnread` is a useCallback([]) from
   // OpenTabsContext, so it's referentially stable for the provider's lifetime —
-  // the empty deps array can't go stale. ESLint's react-hooks plugin is not
-  // enabled in this config, so no disable directive is needed.
+  // the empty deps array can't go stale.
   useEffect(() => {
     clearUnread(refKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- one-shot first-mount clear; clearUnread is a stable useCallback([]) and refKey is read once (#331)
   }, []);
 
   // Re-activation freshness: when the user switches BACK to this kept-alive
@@ -168,9 +185,8 @@ export function PrDetailView({
   // marker bind the shell to the viewport so the diff scrolls internally with a
   // bottom-of-screen horizontal scrollbar (#191/#156). The cleanup removes the
   // marker when this view deactivates or switches sub-tab, so a different active
-  // view (or a non-Files tab) reverts to normal document scroll. ESLint's
-  // react-hooks plugin is not enabled in this config, so no disable directive is
-  // needed for the deps array.
+  // view (or a non-Files tab) reverts to normal document scroll. The deps array
+  // below is exhaustive-deps-clean now that the react-hooks plugin is wired (#331).
   useLayoutEffect(() => {
     // Only the ACTIVE view manages the shared marker. Inactive views must NOT
     // run the body — otherwise, with 2+ open tabs, an inactive view whose effect
@@ -267,7 +283,17 @@ export function PrDetailView({
       {/* Per-tab loading bar pinned to THIS tab's content boundary (not a global
           screen-top bar) — each open PR tab owns its own. Shows on cold load and
           background reload; self-contained, so no layout shift. */}
-      <LoadingBar active={active && isLoading} data-testid={`pr-loading-bar:${refKey}`} />
+      <LoadingBar
+        active={active && (isLoading || prRefresh.isRefreshing)}
+        data-testid={`pr-loading-bar:${refKey}`}
+      />
+      {/* #344 — sr-only live region announcing manual-refresh progress/completion
+          ("Refreshing PR…" → "PR refreshed"). The RefreshButton's icon morphs are
+          aria-hidden, so this status region carries the state change to assistive
+          tech. */}
+      <div className="sr-only" role="status" aria-live="polite" data-testid="pr-refresh-status">
+        {prRefresh.announce}
+      </div>
       <PrHeader
         reference={prRef}
         loading={!data && isLoading}
@@ -293,6 +319,9 @@ export function PrDetailView({
         registerOpenComposer={draftSession.registerOpenComposer}
         getPrRootHolder={draftSession.getPrRootHolder}
         onSessionRefetch={() => void draftSession.refetch()}
+        onRefresh={prRefresh.refresh}
+        isRefreshing={prRefresh.isRefreshing}
+        justRefreshed={prRefresh.justRefreshed}
       />
       <CrossTabPresenceBanner
         visible={presence.showBanner}

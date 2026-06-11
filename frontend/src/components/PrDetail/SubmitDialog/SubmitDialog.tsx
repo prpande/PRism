@@ -9,7 +9,6 @@ import { StaleCommitOidBanner } from './StaleCommitOidBanner';
 import { ForeignPendingReviewModal } from '../ForeignPendingReviewModal/ForeignPendingReviewModal';
 import { PrRootBodyEditor } from '../Composer/PrRootBodyEditor';
 import { DiscardPendingReviewConfirmationModal } from '../DiscardPendingReviewConfirmationModal';
-import { verdictToSubmitWire } from '../../../api/submit';
 import { submitDisabledReason } from '../SubmitButton';
 import {
   COMPOSER_CREATE_THRESHOLD,
@@ -26,7 +25,6 @@ import type {
   PrReference,
   ReviewSessionDto,
   ValidatorResult,
-  Verdict,
 } from '../../../api/types';
 import type { SubmitState } from '../../../hooks/useSubmit';
 
@@ -82,7 +80,7 @@ interface Props {
   // Cancel / Close — the caller resets useSubmit.
   onClose(): void;
   // Confirm — the caller calls useSubmit.submit(verdict).
-  onSubmit(verdict: Verdict): void;
+  onSubmit(verdict: DraftVerdict): void;
   // Retry / "Recreate and resubmit" — the caller calls useSubmit.retry().
   onRetry(): void;
   // Picker change — the caller patches PUT /draft and refetches the session.
@@ -339,7 +337,7 @@ export function SubmitDialog(props: Props) {
       // still lands in the session the pipeline reads (spec § 8.2). Default to
       // Comment when no verdict was picked (spec § 6).
       if (editing) await editorControl.current?.flush();
-      onSubmit(verdictToSubmitWire(verdict ?? 'comment'));
+      onSubmit(verdict ?? 'comment');
     } finally {
       confirmingRef.current = false;
     }

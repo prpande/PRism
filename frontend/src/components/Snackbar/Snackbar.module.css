@@ -1,0 +1,87 @@
+/* Snackbar.module.css — shared top-center snackbar primitive (#312).
+   Extracted from StreamHealthSnackbar so GitHubAuthBanner can reuse the exact
+   same presentational shell in a danger (red) tone. Positioning/animation
+   values are preserved verbatim so the StreamHealthSnackbar baseline is
+   unchanged. */
+.snackbar {
+  position: fixed;
+  top: 100px; /* B1: top-center, below Header (0–48px) + PrTabStrip (48–89px) so it never covers the tabs */
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 200; /* literal per repo convention; above Header (100), below modal-backdrop (1000), below Cheatsheet (1500) */
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18);
+  font-size: 0.875rem;
+  animation: snackbar-in 150ms ease-out;
+}
+
+/* Tone treatments reuse the design-system semantic tokens so the bar stays
+   theme-aware in light + dark. `warning` is the original StreamHealthSnackbar
+   amber; `danger` is the GitHubAuthBanner red. */
+.warning {
+  background: var(--warning-soft);
+  border: 1px solid var(--warning);
+  color: var(--warning-fg);
+}
+.danger {
+  background: var(--danger-soft);
+  border: 1px solid var(--danger);
+  color: var(--danger-fg);
+}
+
+.message {
+  color: inherit;
+  white-space: nowrap;
+}
+
+/* text-button, tinted to the snackbar foreground so it stays cohesive on the tone */
+.action {
+  background: transparent;
+  color: inherit;
+  border: none;
+  padding: 0;
+  font: inherit;
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+.action:hover {
+  text-decoration: none;
+}
+
+/* icon button */
+.dismiss {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: inherit;
+  font-size: 1.1rem;
+  line-height: 1;
+  padding: 0;
+  opacity: 0.7;
+}
+.dismiss:hover {
+  opacity: 1;
+}
+
+@keyframes snackbar-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -8px); /* slide down from above (top placement) */
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .snackbar {
+    animation: none;
+  }
+}

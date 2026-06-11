@@ -120,6 +120,7 @@ export function useDraftSession(prRef: PrReference): UseDraftSessionResult {
       setError(e as Error);
       setStatus('error');
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- deps are prRef's stable primitive fields; the prRef object is a fresh literal each render (#331)
   }, [prRef.owner, prRef.repo, prRef.number, isOpen]);
 
   // Reset to loading on prRef change so a stale local session for the
@@ -150,6 +151,7 @@ export function useDraftSession(prRef: PrReference): UseDraftSessionResult {
     return () => {
       cancelled = true;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- deps are prRef's stable primitive fields; the prRef object is a fresh literal each render (#331)
   }, [prRef.owner, prRef.repo, prRef.number]);
 
   const clearOutOfBandToast = useCallback(() => setOutOfBandToast(null), []);

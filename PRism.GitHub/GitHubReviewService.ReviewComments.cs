@@ -1,4 +1,3 @@
-using System.Net;
 using System.Text;
 using System.Text.Json;
 using PRism.Core;
@@ -28,17 +27,13 @@ public sealed partial class GitHubReviewService
         });
 
         using var http = _httpFactory.CreateClient("github");
+        using var content = new StringContent(payload, Encoding.UTF8, "application/json");
         using var resp = await SendGitHubAsync(http, HttpMethod.Post, url, ct,
-            content: new StringContent(payload, Encoding.UTF8, "application/json")).ConfigureAwait(false);
+            content: content).ConfigureAwait(false);
 
         if (!resp.IsSuccessStatusCode)
         {
-            string errorBody = string.Empty;
-            try { errorBody = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false); }
-            catch (OperationCanceledException) { throw; }
-#pragma warning disable CA1031
-            catch (Exception) { /* best-effort; original status is what matters */ }
-#pragma warning restore CA1031
+            var errorBody = await GitHubHttp.ReadErrorBodyBestEffortAsync(resp, ct).ConfigureAwait(false);
             throw new HttpRequestException(
                 $"GitHub review comment POST HTTP {(int)resp.StatusCode} {resp.ReasonPhrase}: {Truncate(errorBody, 512)}",
                 inner: null, statusCode: resp.StatusCode);
@@ -49,10 +44,10 @@ public sealed partial class GitHubReviewService
         var root = doc.RootElement;
         var id = root.TryGetProperty("id", out var idEl) && idEl.ValueKind == JsonValueKind.Number
             ? idEl.GetInt64()
-            : throw new HttpRequestException("GitHub review comment response missing 'id'.", inner: null, statusCode: resp.StatusCode);
+            : throw new GitHubRestContractException("GitHub review comment response missing 'id'.");
         var createdAt = root.TryGetProperty("created_at", out var caEl) && caEl.ValueKind == JsonValueKind.String
             ? caEl.GetDateTimeOffset()
-            : throw new HttpRequestException("GitHub review comment response missing 'created_at'.", inner: null, statusCode: resp.StatusCode);
+            : throw new GitHubRestContractException("GitHub review comment response missing 'created_at'.");
         return new CreatedReviewCommentResult(id, createdAt);
     }
 

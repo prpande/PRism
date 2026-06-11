@@ -8,6 +8,7 @@ export const authedAuthState = {
   hasToken: true,
   host: 'https://github.com',
   hostMismatch: null,
+  githubCredentialInvalid: false,
 } as const;
 
 export const allOffCapabilities = {

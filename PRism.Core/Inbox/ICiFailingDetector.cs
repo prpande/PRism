@@ -19,12 +19,19 @@ public interface ICiFailingDetector
 {
     /// <summary>
     /// Probes Checks API + legacy combined-status for each input PR and annotates it
-    /// with its <see cref="CiStatus"/>. Caches by (ref, headSha); degraded reads are
-    /// not cached (re-probed next sweep). Throws <see cref="RateLimitExceededException"/>
-    /// on 429 so the orchestrator can back off. Scope-agnostic: the caller decides
-    /// which PRs to probe.
+    /// with its <see cref="CiStatus"/>. Caches by (ref, headSha); degraded reads and
+    /// transient <see cref="CiStatus.Pending"/> are not cached (re-probed next sweep).
+    /// Throws <see cref="RateLimitExceededException"/> on 429 so the orchestrator can
+    /// back off. Scope-agnostic: the caller decides which PRs to probe.
     /// </summary>
+    /// <param name="forceReprobe">
+    /// When true, skips the cache READ for every item (always probes) and refreshes the
+    /// stored value, honoring the same never-cache rules for Pending/degraded. Used by the
+    /// manual "Refresh now" path so an unchanged head SHA re-reads CI. The caller is
+    /// responsible for passing only live PRs (recently-closed never reaches this detector).
+    /// </param>
     Task<CiDetectResult> DetectAsync(
         IReadOnlyList<RawPrInboxItem> items,
-        CancellationToken ct);
+        CancellationToken ct,
+        bool forceReprobe = false);
 }

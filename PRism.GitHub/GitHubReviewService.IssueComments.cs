@@ -1,4 +1,3 @@
-using System.Net;
 using System.Text;
 using System.Text.Json;
 using PRism.Core;
@@ -34,30 +33,16 @@ public sealed partial class GitHubReviewService
         var payload = JsonSerializer.Serialize(new { body = bodyMarkdown });
 
         using var http = _httpFactory.CreateClient("github");
+        using var content = new StringContent(payload, Encoding.UTF8, "application/json");
         using var resp = await SendGitHubAsync(
             http, HttpMethod.Post, url, ct,
-            content: new StringContent(payload, Encoding.UTF8, "application/json")).ConfigureAwait(false);
+            content: content).ConfigureAwait(false);
 
         if (!resp.IsSuccessStatusCode)
         {
             // Read the body before throwing so the exception's Message carries the actionable reason
-            // (same pattern as PostGraphQLAsync in the main partial).
-            string errorBody = string.Empty;
-            try
-            {
-                errorBody = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
-            }
-            catch (OperationCanceledException)
-            {
-                throw;
-            }
-#pragma warning disable CA1031
-            catch (Exception)
-            {
-                // best-effort; original status is what matters
-            }
-#pragma warning restore CA1031
-
+            // (shared best-effort read; same pattern as PostGraphQLAsync in the main partial).
+            var errorBody = await GitHubHttp.ReadErrorBodyBestEffortAsync(resp, ct).ConfigureAwait(false);
             throw new HttpRequestException(
                 $"GitHub issue comment POST HTTP {(int)resp.StatusCode} {resp.ReasonPhrase}: {Truncate(errorBody, 512)}",
                 inner: null,
@@ -70,13 +55,11 @@ public sealed partial class GitHubReviewService
 
         var id = root.TryGetProperty("id", out var idEl) && idEl.ValueKind == JsonValueKind.Number
             ? idEl.GetInt64()
-            : throw new HttpRequestException("GitHub issue comment response missing 'id' field.",
-                inner: null, statusCode: HttpStatusCode.OK);
+            : throw new GitHubRestContractException("GitHub issue comment response missing 'id' field.");
 
         var createdAt = root.TryGetProperty("created_at", out var caEl) && caEl.ValueKind == JsonValueKind.String
             ? caEl.GetDateTimeOffset()
-            : throw new HttpRequestException("GitHub issue comment response missing 'created_at'.",
-                inner: null, statusCode: HttpStatusCode.OK);
+            : throw new GitHubRestContractException("GitHub issue comment response missing 'created_at'.");
 
         return new CreatedIssueCommentResult(id, createdAt);
     }

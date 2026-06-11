@@ -49,3 +49,21 @@ public class HostUrlResolverTests
         act.Should().Throw<ArgumentException>();
     }
 }
+
+public class HostUrlResolverIsGitHubDotComTests
+{
+    [Theory]
+    [InlineData("https://api.github.com/user", true)]
+    [InlineData("https://API.GITHUB.COM/user", true)]
+    [InlineData("https://github.example.com/api/v3/user", false)]
+    [InlineData(null, false)]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage(
+        "Design",
+        "CA1054:URI-like parameters should not be strings",
+        Justification = "xUnit InlineData cannot carry a Uri; the string is converted in the body.")]
+    public void IsGitHubDotCom_ClassifiesHost(string? uri, bool expected)
+    {
+        var u = uri is null ? null : new Uri(uri);
+        Assert.Equal(expected, HostUrlResolver.IsGitHubDotCom(u));
+    }
+}

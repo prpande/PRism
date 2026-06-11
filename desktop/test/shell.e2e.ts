@@ -67,6 +67,25 @@ test("window opens and loads the app from the sidecar", async () => {
   expect(url).toMatch(/^http:\/\/127\.0\.0\.1:\d+\//);
 });
 
+test("startup timing line is written to the logs dir (#282)", async () => {
+  const app = await launch(tmp("prism-e2e-"), tmp("prism-ud-"));
+  const win = await app.firstWindow();
+  await expect(win.locator("body")).toBeVisible(); // loadURL resolved → contentLoaded marked → summary emitted
+
+  // The log path is derived from the LAUNCH, not hardcoded: Electron resolves
+  // getPath("logs") under userData, which we override per-launch with
+  // --user-data-dir. Asserting against the packaged %APPDATA%/PRism/logs default
+  // would read an empty directory and pass/fail vacuously.
+  const logsDir = await app.evaluate(({ app }) => app.getPath("logs"));
+  const logFile = path.join(logsDir, "startup.log");
+
+  // emitStartupSummary() appends synchronously right after loadURL resolves; poll
+  // briefly to absorb the gap between firstWindow() and that append landing.
+  await expect
+    .poll(() => (fs.existsSync(logFile) ? fs.readFileSync(logFile, "utf8") : ""), { timeout: 10_000 })
+    .toMatch(/^\[startup\] .*\(ms\)$/m);
+});
+
 test("session handshake: prism-session cookie is set on the document response", async () => {
   const app = await launch(tmp("prism-e2e-"), tmp("prism-ud-"));
   const win = await app.firstWindow();

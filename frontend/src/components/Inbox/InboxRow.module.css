@@ -20,7 +20,7 @@
 }
 
 .row:hover {
-  background: var(--surface-2);
+  background: var(--row-hover);
 }
 
 /* Unread activity — left-edge accent bar on rows with commits the user hasn't
@@ -38,12 +38,25 @@
   border-radius: 0 2px 2px 0;
 }
 
-/* Status column (16px wide) */
+/* Status column (16px wide) — grid-row-centred (the grid's align-items: center),
+   so the leading PR-state octicon shares the row's vertical centre with the CI glyph
+   and the right-side metrics (#345). */
 .status {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   flex: none;
+}
+
+/* Middle column wrapper: the title/meta stack (.main) plus the CI glyph, laid out as
+   a row and vertically centred. Centring here puts the CI glyph on the row's vertical
+   centre — in line with the right-side metrics it reads with — instead of pinned to
+   the title's first line, while .main keeps the title clamp and meta line (#345). */
+.midCol {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
 }
 
 /* Leading PR-state octicon — 14px glyph centred in the 16px grid track (the
@@ -63,25 +76,23 @@
   color: var(--danger-fg);
 }
 
-/* Title row: title (clamped) + trailing CI glyph pinned to the first line. */
+/* Title row: just the clamped title now (the CI glyph moved out to .midCol so it can
+   row-centre with the metrics rather than pin to this row's first line). */
 .titleRow {
   display: flex;
   align-items: flex-start;
-  gap: 6px;
   margin-bottom: 4px;
   min-width: 0; /* bound the flex row so .title's -webkit-line-clamp holds in any ancestor layout */
 }
 
-/* CI suffix octicon — bare check / cross / amber dot, no enclosing circle, so
-   the three shapes stay distinct in greyscale (spec Decision 4). align-self
-   flex-start + a small top offset optically centres it on the title's first
-   line, not the midpoint of a two-line title. */
+/* CI suffix octicon — bare check / cross / amber dot, no enclosing circle, so the
+   three shapes stay distinct in greyscale (spec Decision 4). Lives in .midCol and is
+   row-centred by it (no align-self / margin-top): it sits on the row's vertical centre,
+   in line with the right-side metrics, not pinned to the title's first line (#345). */
 .ciSuffix {
   flex: none;
   width: 14px;
   height: 14px;
-  align-self: flex-start;
-  margin-top: 2px;
 }
 .ciPassing {
   color: var(--success-fg);
@@ -93,11 +104,13 @@
   color: var(--warning-fg);
 }
 
-/* Main column */
+/* Main column — title + meta stack. flex: 1 so it fills .midCol and the CI glyph
+   (flex: none) lands at the column's right edge, where it sat before. */
 .main {
   display: flex;
   flex-direction: column;
   min-width: 0;
+  flex: 1;
 }
 
 .title {
@@ -261,8 +274,11 @@
   color: var(--accent);
 }
 
+/* Keep the comment-pill readable as a raised chip on a hovered row. Per-theme token:
+   surface-3 in light, but a distinct value in dark where --row-hover sits next to
+   surface-3 (#347). */
 .row:hover .comments {
-  background: var(--surface-3);
+  background: var(--row-hover-pill);
 }
 
 /* Indent grouped rows via left padding, not the accordion body, so the tail's

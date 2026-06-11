@@ -386,6 +386,7 @@ export function FilesTab() {
   // loopback alongside the write that already happened.
   const handleComposerSaved = useCallback(() => {
     void draftSession.refetch();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- depends on the stable draftSession.refetch useCallback, not the per-render draftSession object literal (#331)
   }, [draftSession.refetch]);
 
   const prState: 'open' | 'closed' | 'merged' = prDetail.pr.isMerged
@@ -495,6 +496,7 @@ export function FilesTab() {
   // for the open draft.
   const handleReplyComposerClose = useCallback(() => {
     void draftSession.refetch();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- depends on the stable draftSession.refetch useCallback, not the per-render draftSession object literal (#331)
   }, [draftSession.refetch]);
 
   const replyContext = useMemo(
@@ -532,6 +534,7 @@ export function FilesTab() {
       optimisticByThread,
       readOnly,
     }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- deps narrow to the specific draftSession members read; the draftSession object is a fresh literal each render, so depending on it would re-create the memo every render (#331)
     [
       prRef,
       prState,
