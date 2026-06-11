@@ -250,7 +250,7 @@ export function useDraftComposer(params: UseDraftComposerParams): UseDraftCompos
         if (recoveryModalOpenRef.current) return; // 404-recovery opened mid-flush → keep modal
         onClose();
       })();
-    } else {
+    } else if (shortcut === 'escape') {
       handleDiscardClick();
     }
   };

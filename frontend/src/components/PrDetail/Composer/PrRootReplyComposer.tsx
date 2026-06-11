@@ -144,7 +144,7 @@ export function PrRootReplyComposer({
       setPreviewMode((p) => !p);
     } else if (shortcut === 'submit') {
       if (!postDisabled) void handlePost();
-    } else {
+    } else if (shortcut === 'escape') {
       handleDiscardClick();
     }
   };
