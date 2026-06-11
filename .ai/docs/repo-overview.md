@@ -1,9 +1,9 @@
 # Repository overview
 
-PRism's V1 review experience is complete and shipping; current work is fit-and-finish polish plus AI-augmentation development against the in-place seams. Main contents:
+PRism's V1 review experience is complete and shipping as unsigned pre-release builds (see the [Releases page](https://github.com/prpande/PRism/releases)); current work on `main` is fit-and-finish polish, while AI augmentation is under active development on the **V2** branch against the in-place seams. Main contents:
 
 - `PRism.sln` and six backend projects: `PRism.Core`, `PRism.Core.Contracts`, `PRism.GitHub`, `PRism.Web`, `PRism.AI.Contracts`, `PRism.AI.Placeholder`
-- `tests/` — `PRism.Core.Tests`, `PRism.GitHub.Tests`, `PRism.Web.Tests`
+- `tests/` — `PRism.Core.Tests`, `PRism.GitHub.Tests`, `PRism.GitHub.Tests.Integration`, `PRism.Web.Tests`
 - `frontend/` — React + Vite + TS app (per S0+S1)
 - `desktop/` — Electron desktop shell (v0.2.0): TypeScript main process that spawns the self-contained `PRism.Web` binary as a managed sidecar (stdout-port handshake → `/api/health` gate) and points a sandboxed `BrowserWindow` at `http://127.0.0.1:<port>`. Additive — no app-domain code lives here; the shell wraps the *unchanged* web app. Design: `docs/specs/2026-06-02-electron-desktop-shell-design.md`
 - `validation-harness/` — manual / scripted validation harness
