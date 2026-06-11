@@ -4,24 +4,40 @@ interface Props {
   isRefreshing: boolean;
   justRefreshed: boolean;
   onRefresh: () => void;
+  /** Idle / completion accessible name (e.g. "Refresh inbox" / "Refresh PR"). */
+  label: string;
+  /** In-flight accessible name (e.g. "Refreshing inbox…"). */
+  refreshingLabel: string;
+  /** Native tooltip text. */
+  title: string;
+  testId: string;
+  confirmTestId: string;
 }
 
-// Manual inbox refresh. `btn btn-icon` (both classes — .btn supplies the inline-flex
-// centering .btn-icon lacks, so the swapped-in spinner/checkmark stays centered).
-// In-flight → decorative spinner; on success the circular-arrow briefly morphs to a
-// checkmark (self-contained inside the button, so it can never overlap the Sort control);
-// idle → circular-arrow. AT gets completion from the InboxPage role=status region, so the
-// icon swaps are aria-hidden and the accessible name stays "Refresh inbox".
-export function RefreshButton({ isRefreshing, justRefreshed, onRefresh }: Props) {
+// Shared manual-refresh icon button (#341 inbox, #344 pr-detail). `btn btn-icon` (both classes —
+// .btn supplies the inline-flex centering .btn-icon lacks). In-flight → decorative spinner; on
+// success the circular-arrow briefly morphs to a checkmark; idle → circular-arrow. AT gets
+// completion from the host's role=status region, so the icon swaps are aria-hidden and the
+// accessible name stays `label`.
+export function RefreshButton({
+  isRefreshing,
+  justRefreshed,
+  onRefresh,
+  label,
+  refreshingLabel,
+  title,
+  testId,
+  confirmTestId,
+}: Props) {
   return (
     <button
       type="button"
       className="btn btn-icon"
-      aria-label={isRefreshing ? 'Refreshing inbox…' : 'Refresh inbox'}
-      title="Refresh inbox"
+      aria-label={isRefreshing ? refreshingLabel : label}
+      title={title}
       disabled={isRefreshing}
       onClick={onRefresh}
-      data-testid="inbox-refresh-button"
+      data-testid={testId}
     >
       {isRefreshing ? (
         <Spinner decorative size="sm" />
@@ -37,7 +53,7 @@ export function RefreshButton({ isRefreshing, justRefreshed, onRefresh }: Props)
           strokeLinejoin="round"
           aria-hidden="true"
           focusable="false"
-          data-testid="inbox-refresh-confirm"
+          data-testid={confirmTestId}
         >
           <path d="M20 6 9 17l-5-5" />
         </svg>

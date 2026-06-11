@@ -6,7 +6,7 @@ import { SORT_OPTIONS } from './applyInboxFilters';
 import { InboxQueryInput } from './InboxQueryInput';
 import { FilterFacet } from './FilterFacet';
 import { FilterSummary } from './FilterSummary';
-import { RefreshButton } from '../RefreshButton';
+import { RefreshButton } from '../../controls/RefreshButton';
 import styles from './filters.module.css';
 
 const CI_VALUES: CiStatus[] = ['failing', 'pending'];
@@ -126,6 +126,11 @@ export function FilterBar({
             isRefreshing={isRefreshing}
             justRefreshed={justRefreshed}
             onRefresh={refresh}
+            label="Refresh inbox"
+            refreshingLabel="Refreshing inbox…"
+            title="Refresh inbox"
+            testId="inbox-refresh-button"
+            confirmTestId="inbox-refresh-confirm"
           />
         </div>
       </div>

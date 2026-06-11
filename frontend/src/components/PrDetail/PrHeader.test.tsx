@@ -1,5 +1,6 @@
 import { render, screen } from '@testing-library/react';
-import { describe, expect, it } from 'vitest';
+import userEvent from '@testing-library/user-event';
+import { describe, expect, it, vi } from 'vitest';
 import { MemoryRouter } from 'react-router-dom';
 import { PrHeader } from './PrHeader';
 import { AskAiDrawerProvider } from '../../contexts/AskAiDrawerContext';
@@ -106,5 +107,46 @@ describe('PrHeader mergeability chip', () => {
   it('hides the chip when mergeability is UNKNOWN (uppercase GraphQL value)', () => {
     const { container } = renderHeader({ loading: false, mergeability: 'UNKNOWN' });
     expect(container.querySelector('.chip-mergeability')).toBeNull();
+  });
+});
+
+describe('PrHeader refresh button', () => {
+  it('renders the Refresh button in the actions cluster when not loading', () => {
+    renderHeader({
+      loading: false,
+      onRefresh: () => {},
+      isRefreshing: false,
+      justRefreshed: false,
+    });
+    expect(screen.getByTestId('pr-refresh-button')).toBeInTheDocument();
+  });
+
+  it('does not render the Refresh button while loading', () => {
+    // prActions (and the button) render only when !loading.
+    renderHeader({ loading: true, onRefresh: () => {} });
+    expect(screen.queryByTestId('pr-refresh-button')).not.toBeInTheDocument();
+  });
+
+  it('does not render the Refresh button when onRefresh is absent', () => {
+    renderHeader({ loading: false });
+    expect(screen.queryByTestId('pr-refresh-button')).not.toBeInTheDocument();
+  });
+
+  it('clicking Refresh calls onRefresh', async () => {
+    const onRefresh = vi.fn();
+    renderHeader({ loading: false, onRefresh, isRefreshing: false, justRefreshed: false });
+    await userEvent.click(screen.getByTestId('pr-refresh-button'));
+    expect(onRefresh).toHaveBeenCalledTimes(1);
+  });
+
+  // Spec §4.3 focus guarantee: the button is rendered in EVERY refresh state (it is not gated on
+  // refresh state), so it can't be conditionally unmounted out from under keyboard focus mid-refresh.
+  it.each([
+    { isRefreshing: true, justRefreshed: false }, // in-flight
+    { isRefreshing: false, justRefreshed: true }, // just-refreshed morph
+    { isRefreshing: false, justRefreshed: false }, // idle / post-error
+  ])('keeps the Refresh button mounted in refresh state %o', (state) => {
+    renderHeader({ loading: false, onRefresh: () => {}, ...state });
+    expect(screen.getByTestId('pr-refresh-button')).toBeInTheDocument();
   });
 });
