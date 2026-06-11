@@ -14,6 +14,10 @@
 
 **Plan deviations from spec §8 (documented per repo convention):**
 - The spec said to "flip the PrReloadEndpoint SHA-reject test." Reality: the existing reject test (`Reload_invalid_sha_returns_422`) uses `"not-a-sha"`, which stays invalid under case-insensitive matching — it does **not** flip. Task 3 instead **adds** a new red-on-main test asserting an uppercase 40-hex SHA is now accepted.
+- **Task 9 targets `PrSubmitEndpoints.cs:559` (foreign-pending discard), not the bulk `/drafts/discard-all`.** The spec round-2 review found the original `PrDraftsDiscardAllEndpointTests:35` pin named the wrong endpoint; the issue's "twin discard" is foreign-pending (`:559`) vs own-pending (`:396`). The bulk discard-all stays 200.
+- **Task 10 is constant-unification only** — the metadata-migration probe was dropped (it's expected to fail and risked uncapping). Predicate unchanged; pre-existing uncapped `comment/post`/`preferences` are a follow-up.
+
+> **Line-number caveat:** every `file:line` reference is a *pre-implementation* pointer captured against `main`. Tasks 1–10 delete/insert lines in shared files (`PrSubmitEndpoints.cs` is touched by Tasks 1, 2, 5, 7, 8, 9), so absolute line numbers drift as you go. **Locate each edit by its symbol/method name and the quoted code, not by the line number.**
 
 ---
 
@@ -114,8 +118,10 @@ In `PrSubmitEndpoints.cs`: **delete** the private helper at 610-614, and rewrite
 - Inside the 464-475 lambda: `return state.WithSession(sessionKey, merged);`
 - Inside the 552-556 lambda: `return state.WithSession(sessionKey, existing with { PendingReviewId = null, PendingReviewCommitOid = null });`
 
-In `PrRootCommentEndpoints.cs`: **delete** helper 198-202; rewrite its `WithSession(state, ...)` caller to `state.WithSession(...)`.
-In `PrCommentEndpoints.cs`: **delete** helper 176-180; rewrite its caller.
+In `PrRootCommentEndpoints.cs`: **delete** helper 198-202; rewrite **both** `WithSession(state, ...)` callers (lines ~172 and ~194) to `state.WithSession(...)`.
+In `PrCommentEndpoints.cs`: **delete** helper 176-180; rewrite **all four** `WithSession(state, sessionKey, ...)` callers (the two-step stamp+delete paths, DeleteComment, DeleteReply) to `state.WithSession(...)`.
+
+> ce-doc-review feasibility note: PrComment has 4 callers and PrRootComment has 2 — deleting the helper without rewriting every caller is a compile error. Step 6's build catches a miss, but rewrite them all up front. Grep each file for `WithSession(` after deleting the helper to confirm none remain.
 In `PrDraftEndpoints.cs` (155-165): replace the inline `var sessions = new Dictionary<...>(state.Reviews.Sessions) { [refKey] = applied.Updated }; return state.WithDefaultReviews(state.Reviews with { Sessions = sessions });` with `return state.WithSession(refKey, applied.Updated);`
 In `PrReloadEndpoints.cs` (182-192): replace the inline `var sessions = new Dictionary<...>(state.Reviews.Sessions) { [refKey] = updated }; return state.WithDefaultReviews(...);` with `return state.WithSession(refKey, updated);`
 In `PrDraftsDiscardAllEndpoint.cs` (63-64): replace `var sessions = new Dictionary<string, ReviewSessionState>(state.Reviews.Sessions) { [sessionKey] = cleared }; return state.WithDefaultReviews(state.Reviews with { Sessions = sessions });` with `return state.WithSession(sessionKey, cleared);`
@@ -150,7 +156,6 @@ git commit -m "refactor(#319): AppState.WithSession replaces 6 inline session up
 
 ```csharp
 using System.Net;
-using PRism.Core.Submit; // SubmitErrorDto
 
 namespace PRism.Web.Endpoints;
 
@@ -176,7 +181,7 @@ internal static class GitHubErrorMapper
 }
 ```
 
-> Confirm `SubmitErrorDto`'s namespace by checking the `using` in `PrSubmitEndpoints.cs` (it references `SubmitErrorDto` — use the same import; likely `PRism.Core.Submit` or `PRism.Web.Submit`).
+> `SubmitErrorDto` is declared in `PRism.Web/Endpoints/PrSubmitDtos.cs` under `namespace PRism.Web.Endpoints` — the **same** namespace as this helper, so **no `using` is needed** for it (verified by ce-doc-review feasibility). `Results`/`StatusCodes` come from the implicit `Microsoft.AspNetCore.Http` global usings.
 
 - [ ] **Step 2: Build — verify the helper compiles**
 
@@ -215,8 +220,10 @@ git commit -m "refactor(#319): GitHubErrorMapper replaces 3 copies of the 502 sw
 
 **Files:**
 - Create: `PRism.Web/Endpoints/Shared/SharedRegexes.cs`
-- Modify: `PrDraftEndpoints.cs` (delete 15-16, route call at 462), `PrReloadEndpoints.cs` (delete 15-16, route calls at 79)
+- Modify: `PrDraftEndpoints.cs` (delete 15-16, route call at 462), `PrReloadEndpoints.cs` (delete 15-16, route calls at 79), **`PrDetailEndpoints.cs` (delete `GitOid40Regex`/`GitOid64Regex` 260-264, route their call sites to `SharedRegexes`)**
 - Test: `tests/PRism.Web.Tests/Endpoints/PrReloadEndpointTests.cs` (add the red-on-main accept test)
+
+> ce-doc-review scope-guardian catch: the spec (§5 Seam 6) requires `PrDetailEndpoints`'s SHA regex to also fold into the shared one — otherwise the "one definition" AC isn't met. Its regexes are named `GitOid40Regex()`/`GitOid64Regex()` (already `[GeneratedRegex]`, case-insensitive — byte-identical pattern to `SharedRegexes`), so routing them is behavior-preserving.
 
 - [ ] **Step 1: Write the red-on-main test (uppercase SHA now accepted)**
 
@@ -267,6 +274,8 @@ internal static partial class SharedRegexes
 
 `PrDraftEndpoints.cs`: delete fields 15-16; change the `Sha40`/`Sha64` `.IsMatch` call(s) near 462 to `SharedRegexes.Sha40().IsMatch(...)` / `SharedRegexes.Sha64().IsMatch(...)`.
 
+`PrDetailEndpoints.cs`: delete the `GitOid40Regex()`/`GitOid64Regex()` partial-method declarations (260-264); grep the file for `GitOid40Regex()` / `GitOid64Regex()` call sites and replace each with `SharedRegexes.Sha40()` / `SharedRegexes.Sha64()`. (Pattern is identical, so no behavior change.) If `PrDetailEndpoints` was `partial` only for these `[GeneratedRegex]` methods, drop the now-unneeded `partial` only if nothing else requires it.
+
 - [ ] **Step 5: Run — verify the new test passes and existing reject test still passes**
 
 Run: `dotnet test tests/PRism.Web.Tests --filter "FullyQualifiedName~Reload" -v minimal`
@@ -288,39 +297,45 @@ git commit -m "refactor(#319): SharedRegexes unifies SHA validation (case-insens
 - Modify: `PrDraftEndpoints.cs` (delete `IsCanonicalFilePath` 558-570; route call at 464)
 - Test: `tests/PRism.Web.Tests/Endpoints/PrDraftEndpointTests.cs` (multi-byte test)
 
-- [ ] **Step 1: Write the red-on-main multi-byte test**
+- [ ] **Step 1: Write the red-on-main empty-segment test**
 
-The drift: main caps the draft path by **char count** (`path.Length > 4096`); the byte-count rule rejects a multi-byte path whose UTF-8 length differs from its char length only when it also fails the NFC-byte-length-mismatch check. The observable, stable behavior change to pin is the **NFC byte-length-mismatch rejection** (a decomposed-Unicode path that main's draft validator accepts but the canonical one rejects). Add to `PrDraftEndpointTests.cs` (match the file's request helper + auth/tab headers):
+ce-doc-review caught that the first draft's decomposed-Unicode input was **already rejected on main** (`IsCanonicalFilePath` line 568 `path != path.Normalize(FormC)` fires for it) — a green-on-main test, i.e. a fake TDD red. The reliably red-on-main difference is the **empty-segment** case: main uses substring `"/../"`/`"/./"` matching with no empty-segment check, while `CanonicalizePath` splits on `/` and rejects `s.Length == 0`. So `src//foo.cs` is accepted by main, rejected by the canonical validator. Add to `PrDraftEndpointTests.cs` (match the file's request helper + auth/tab headers):
 
 ```csharp
 [Fact]
-public async Task Draft_path_with_decomposed_unicode_is_rejected()
+public async Task Draft_path_with_empty_segment_is_rejected()
 {
     var client = ClientWithTabAndSession(); // reuse this file's authed+seeded helper
-    // "e" + U+0301 (combining acute) — NFC-normalizes to a different byte length than the
-    // raw input, which CanonicalizePath rejects but main's draft char-count validator accepts.
-    var decomposed = "src/café.txt";
+    var emptySegment = "src//foo.cs"; // accepted by main's substring validator; rejected by segment-split
 
     var resp = await client.PutAsJsonAsync(
         "/api/pr/acme/api/123/draft",
-        SingleInlinePatch(filePath: decomposed)); // a patch whose NewDraftComment.FilePath = decomposed
+        SingleInlinePatch(filePath: emptySegment)); // a patch whose NewDraftComment.FilePath = emptySegment
 
     resp.StatusCode.Should().Be(HttpStatusCode.UnprocessableEntity);
-    (await resp.Content.ReadFromJsonAsync<JsonElement>(CamelCase))
+    (await resp.Content.ReadFromJsonAsync<JsonElement>())
         .GetProperty("error").GetString().Should().Be("file-path-invalid");
 }
 ```
 
-> Use whatever inline-comment-draft patch builder this test file already has (the call site is `IsCanonicalFilePath(ndc.FilePath)` at 464, where `ndc` is a NewDraftComment). If no `SingleInlinePatch` helper exists, build the patch body inline mirroring an existing draft-patch test that exercises `file-path-invalid`.
+> Use whatever inline-comment-draft patch builder this test file already has (the call site is `IsCanonicalFilePath(ndc.FilePath)` at 464, where `ndc` is a NewDraftComment). If no `SingleInlinePatch` helper exists, build the patch body inline mirroring an existing draft-patch test that exercises `file-path-invalid`. `ReadFromJsonAsync<JsonElement>()` uses Web (camelCase) defaults — no options arg needed.
 
 - [ ] **Step 2: Run — verify it fails on main**
 
-Run: `dotnet test tests/PRism.Web.Tests --filter "FullyQualifiedName~Draft_path_with_decomposed_unicode" -v minimal`
-Expected: FAIL — main's `IsCanonicalFilePath` only checks `path != path.Normalize(FormC)`; `"café"` IS already in a form where `!= FormC` is true, so... **verify the assumption**: if main already rejects it (test passes red→green not achievable), instead pin the **char-vs-byte cap boundary** by asserting a path that is ≤4096 chars but >4096 UTF-8 bytes is rejected only after the change. Pick whichever input is genuinely red-on-main; do not land a test that is green on main.
+Run: `dotnet test tests/PRism.Web.Tests --filter "FullyQualifiedName~Draft_path_with_empty_segment" -v minimal`
+Expected: FAIL — main's `IsCanonicalFilePath` accepts `src//foo.cs` (its substring `"/../"`/`"/./"` checks don't catch an empty segment), so it does not 422.
 
-> Implementer note: run the candidate input against main first. The canonical validator differs from the draft one in three ways (byte vs char cap; segment-split vs substring `..`; empty-segment rejection). Choose the input that exercises a **real** main-vs-after difference and is red on main — the empty-segment case (`"src//foo.cs"`, which main's substring check accepts and CanonicalizePath rejects) is the most reliable red-on-main input. Prefer it if the decomposed-unicode input turns out green on main.
+> The length cap (Step 3) is **not** independently red-on-main for ASCII (1 byte/char == main's char cap), so don't write a separate red test for it; the empty-segment test is the load-bearing TDD red. A 5000-byte-path -> 422 test is worth adding as a *green-after* guard that the inline cap isn't dropped, but it is not a TDD red.
 
-- [ ] **Step 3: Create `PathValidation.cs`** (CanonicalizePath body verbatim from `PrDetailEndpoints.cs:273-304`)
+- [ ] **Step 3: Create `PathValidation.cs`** (CanonicalizePath body from `PrDetailEndpoints.cs:273-304`, **plus the inline 4096-byte length cap**)
+
+> **CRITICAL (ce-doc-review security catch):** `PrDetailEndpoints.CanonicalizePath` has **no**
+> length check — the `/viewed` route enforces 4096 bytes as a *separate* pre-check at its call
+> site (`PrDetailEndpoints.cs:199`). The draft side's `IsCanonicalFilePath` enforces
+> `path.Length > 4096` **inside** the validator. Copying CanonicalizePath verbatim would drop the
+> draft cap → unbounded `FilePath` persisted to `AppState` (DoS). The inline
+> `Encoding.UTF8.GetByteCount(path) > 4096` guard below restores it (byte-count, per spec §5).
+> Leave `PrDetailEndpoints.cs:199`'s separate pre-check as-is.
 
 ```csharp
 using System.Text;
@@ -331,12 +346,13 @@ internal static class PathValidation
 {
     /// <summary>
     /// Canonicalizes a repo-relative file path. Returns the NFC-normalized path, or null
-    /// if invalid. Rejects a superset of the prior draft-side validator (segment-split
-    /// catches bare `..`; empty-segment + NFC byte-length-mismatch close traversal/bypass gaps).
+    /// if invalid. Rejects a superset of the prior draft-side validator: 4096-byte length cap,
+    /// segment-split (bare `..` and empty segments), control chars, backslash, NFC bypass guard.
     /// </summary>
     internal static string? Canonicalize(string path)
     {
         if (string.IsNullOrEmpty(path)) return null;
+        if (Encoding.UTF8.GetByteCount(path) > 4096) return null; // length cap — DO NOT DROP
         if (path.StartsWith('/') || path.EndsWith('/')) return null;
         if (path.Contains('\\', StringComparison.Ordinal)) return null;
         foreach (var c in path)
@@ -454,16 +470,18 @@ Add to `PreferencesEndpointsTests.cs` (match how the file POSTs; raw string body
 [Fact]
 public async Task Preferences_malformed_body_returns_400_invalid_json()
 {
-    using var client = CreateClient(); // match this file's factory/fixture helper
+    using var client = new PRismWebApplicationFactory().CreateClient(); // match this file's existing factory pattern
     using var content = new StringContent("{ not json", System.Text.Encoding.UTF8, "application/json");
 
     var resp = await client.PostAsync("/api/preferences", content);
 
     resp.StatusCode.Should().Be(HttpStatusCode.BadRequest);
-    (await resp.Content.ReadFromJsonAsync<JsonElement>(CamelCase))
+    (await resp.Content.ReadFromJsonAsync<JsonElement>())
         .GetProperty("error").GetString().Should().Be("invalid-json");
 }
 ```
+
+> ce-doc-review feasibility: `PreferencesEndpointsTests` has no `CamelCase` field and no `CreateClient()` helper — it instantiates `new PRismWebApplicationFactory().CreateClient()` inline. Match that; `ReadFromJsonAsync<JsonElement>()` uses Web (camelCase) defaults, so no options arg. Adapt to whatever this file actually does.
 
 - [ ] **Step 2: Run — verify it fails on main (500, not 400)**
 
@@ -574,6 +592,21 @@ git commit -m "fix(#319): HttpJson helper + /api/preferences returns 400 invalid
 `PrCommentEndpointTests.cs:237-239`: same (`Unauthorized` → `Forbidden`, code stays `"unauthorized"`).
 `PrRootCommentEndpointTests.cs:257-259`: same.
 
+**Author a new discard-all not-subscribed test** (ce-doc-review adversarial: `PrDraftsDiscardAllEndpoint.cs:46` is the one Task-7 guard with **zero** test coverage today — its 401→403 change would otherwise ship unverified). In `PrDraftsDiscardAllEndpointTests.cs`, mirror a sibling's not-subscribed setup (subscribe=false) and assert:
+```csharp
+[Fact]
+public async Task DiscardAll_not_subscribed_returns_403()
+{
+    // ... arrange an authed client + tab but NOT subscribed to the PR (mirror the file's seeding) ...
+    var resp = await PostDiscardAll(/* unsubscribed PR ref */);
+
+    resp.StatusCode.Should().Be(HttpStatusCode.Forbidden); // red on main: 401
+    (await resp.Content.ReadFromJsonAsync<JsonElement>())
+        .GetProperty("code").GetString().Should().Be("unauthorized");
+}
+```
+This is red-on-main (401) until Step 4 lands the 403.
+
 - [ ] **Step 2: Run — verify these three now fail on main (still 401)**
 
 Run: `dotnet test tests/PRism.Web.Tests --filter "FullyQualifiedName~Submit|FullyQualifiedName~Comment|FullyQualifiedName~RootComment" -v minimal`
@@ -582,8 +615,8 @@ Expected: the three updated assertions FAIL (main returns 401).
 - [ ] **Step 3: Create `RequireSubscribed.cs`**
 
 ```csharp
-using PRism.Core.Contracts; // IActivePrCache, PrRef
-using PRism.Core.Submit;    // SubmitErrorDto
+using PRism.Core.Contracts; // PrReference
+using PRism.Core.PrDetail;  // IActivePrCache
 
 namespace PRism.Web.Endpoints;
 
@@ -592,7 +625,7 @@ internal static class RequireSubscribed
     /// <summary>null => subscribed (proceed). Non-null => 403 result the caller returns.
     /// Status moves 401 -> 403; code stays "unauthorized" (a KNOWN_SUBMIT_ERROR_CODES value
     /// the frontend maps), so no FE .code branch regresses.</summary>
-    internal static IResult? Check(IActivePrCache cache, PrRef prRef) =>
+    internal static IResult? Check(IActivePrCache cache, PrReference prRef) =>
         cache.IsSubscribed(prRef)
             ? null
             : Results.Json(
@@ -601,7 +634,11 @@ internal static class RequireSubscribed
 }
 ```
 
-> Confirm `IActivePrCache` and `PrRef` namespaces against an endpoint's usings (the explorer found `IActivePrCache activePrCache`; match its import).
+> ce-doc-review feasibility caught two errors in the first draft: the type is **`PrReference`**
+> (not `PrRef` — which doesn't exist), and **`IActivePrCache` lives in `PRism.Core.PrDetail`**
+> (verified `IActivePrCache.cs:16`; `IsSubscribed` takes `PrReference`). `SubmitErrorDto` needs
+> no `using` (same `PRism.Web.Endpoints` namespace). Confirm the exact namespaces against
+> `PrSubmitEndpoints.cs`'s usings before creating the file.
 
 - [ ] **Step 4: Replace the six guards**
 
@@ -663,49 +700,80 @@ git commit -m "refactor(#319): no-session -> 404 (submit + root-comment), code p
 
 ---
 
-## Task 9: discard-success (foreign discard-all) 200→204
+## Task 9: foreign-pending-review discard 200→204
 
 **Files:**
-- Modify: `PrSubmitEndpoints.cs:559` (`DiscardForeignPendingReviewAsync`)
-- Test: `PrDraftsDiscardAllEndpointTests:35`
+- Modify: `PrSubmitEndpoints.cs:559` (`DiscardForeignPendingReviewAsync`, `return Results.Ok()`)
+- Test: **author a new test** in `PrSubmitDiscardEndpointTests.cs` (none exists for this path)
 
-> Verify the target: the foreign 200 is `PrSubmitEndpoints.cs:559 return Results.Ok();` in `DiscardForeignPendingReviewAsync`. The `PrDraftsDiscardAllEndpointTests:35` 200/OK assertion is for `/drafts/discard-all` — confirm which endpoint that test hits. If `discard-all` returns its own 200 (separate from the foreign-discard 200), change **that** endpoint's return to 204 and update this test. If the test actually exercises the foreign-discard path, align accordingly. Pin the test to whichever endpoint you change; do not change a return without a test covering it.
+> **ce-doc-review correction (feasibility + adversarial, conf 100).** The first draft targeted
+> the wrong endpoint. The issue's "twin discard" drift is foreign-pending (`:559`, 200) vs
+> own-pending (`:396`, 204) — NOT the bulk `POST /drafts/discard-all`
+> (`PrDraftsDiscardAllEndpoint.cs:105`, also 200, which has three passing tests at
+> `PrDraftsDiscardAllEndpointTests.cs:35,53,69`). Changing `:559` aligns the foreign twin to the
+> own twin. The bulk discard-all is **left at 200** (not part of the twin drift; out of scope).
+> `DiscardForeignPendingReviewAsync` has **no existing test**, so this task authors one.
 
-- [ ] **Step 1: Update the discard test to expect 204 (red until impl)**
+- [ ] **Step 1: Author the red-on-main foreign-discard test (expects 204)**
 
-`PrDraftsDiscardAllEndpointTests.cs:35`: `HttpStatusCode.OK` → `HttpStatusCode.NoContent`.
+In `PrSubmitDiscardEndpointTests.cs`, mirror the file's foreign-pending-review setup (seed a
+foreign pending review, subscribe, then POST the foreign-discard endpoint). Assert 204:
+```csharp
+[Fact]
+public async Task DiscardForeignPendingReview_returns_204()
+{
+    // ... arrange: authed+subscribed client, seed a FOREIGN pending review for the PR
+    //     (mirror the existing foreign-resume/discard test setup in this file) ...
+    var resp = await PostForeignDiscard(/* the PR ref */);
+
+    resp.StatusCode.Should().Be(HttpStatusCode.NoContent); // red on main: 200 OK
+}
+```
+> If the file has no foreign-discard helper, copy the arrange from the nearest foreign-pending
+> test (resume/discard share setup). The endpoint is
+> `POST /api/pr/{o}/{r}/{n}/submit/foreign-pending-review/discard`.
 
 - [ ] **Step 2: Run — verify it fails on main**
 
-Run: `dotnet test tests/PRism.Web.Tests --filter "FullyQualifiedName~DiscardAll" -v minimal`
-Expected: FAIL (main returns 200).
+Run: `dotnet test tests/PRism.Web.Tests --filter "FullyQualifiedName~DiscardForeignPendingReview_returns_204" -v minimal`
+Expected: FAIL (main returns 200 OK).
 
 - [ ] **Step 3: Change the return to 204**
 
-In the endpoint the test exercises, change `return Results.Ok();` → `return Results.NoContent();`. (Per spec §6 the foreign discard-all 200→204; the own-discard at `PrSubmitEndpoints.cs:396` is already 204 — leave it.)
+`PrSubmitEndpoints.cs:559` (`DiscardForeignPendingReviewAsync`): `return Results.Ok();` →
+`return Results.NoContent();`. Leave own-discard (`:396`, already 204) and the bulk
+`/drafts/discard-all` (`PrDraftsDiscardAllEndpoint.cs:105`, stays 200) untouched.
 
-- [ ] **Step 4: Run — verify green; confirm FE client treats 200/204 identically**
+- [ ] **Step 4: Run — verify green; bulk discard-all tests still pass**
 
 Run: `dotnet test tests/PRism.Web.Tests --filter "FullyQualifiedName~Discard" -v minimal`
-Expected: PASS. (FE `client.ts:87` returns `undefined` for 204 and for empty-200 alike — no FE change.)
+Expected: PASS — new foreign-discard test green; `PrDraftsDiscardAllEndpointTests` (35/53/69)
+still green at 200 (not touched). FE `client.ts` returns `undefined` for 204 and empty-200 alike,
+so no FE change.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add PRism.Web/Endpoints/ tests/PRism.Web.Tests/Endpoints/PrDraftsDiscardAllEndpointTests.cs
-git commit -m "refactor(#319): discard-all success -> 204"
+git add PRism.Web/Endpoints/PrSubmitEndpoints.cs tests/PRism.Web.Tests/Endpoints/PrSubmitDiscardEndpointTests.cs
+git commit -m "refactor(#319): foreign-pending-review discard -> 204 (matches own-discard twin)"
 ```
 
 ---
 
-## Task 10: body-cap constant unification (+ best-effort 413 probe)
+## Task 10: body-cap constant unification (constant only)
 
 **Files:**
 - Create: `PRism.Web/Endpoints/Shared/EndpointExtensions.cs`
-- Modify: `Program.cs` (the `const long Cap = 16 * 1024;` at ~274 → use the shared const), `PrDetailEndpoints.cs:185,251` (the `16384` literals → shared const)
-- Test: `tests/PRism.Web.Tests/Endpoints/RequestSizeLimitTests.cs` (the 413 probe, if attempting metadata migration)
+- Modify: `Program.cs` (the `const long Cap = 16 * 1024;` at ~274 → shared const), `PrDetailEndpoints.cs:185,251` (the `16384` literals → shared const)
 
-- [ ] **Step 1: Create `EndpointExtensions.cs` (the single source of truth for the cap)**
+> **ce-doc-review scope + security: the metadata-migration probe is DROPPED.** `RequestSizeLimitTests`
+> documents the attribute doesn't fire pre-binding for minimal APIs (so the migration is expected to
+> fail), and the revert path risked shipping an endpoint uncapped. This task does **constant
+> unification only** — the `Program.cs` `UseWhen` predicate is **unchanged**. `comment/post` and
+> `preferences` remain uncapped exactly as on `main` (pre-existing; filed as a §10 follow-up, not
+> this PR). Invariant: no currently-capped endpoint loses its cap.
+
+- [ ] **Step 1: Create `EndpointExtensions.cs` (single source for the cap value)**
 
 ```csharp
 using Microsoft.AspNetCore.Mvc;
@@ -714,12 +782,12 @@ namespace PRism.Web.Endpoints;
 
 internal static class EndpointExtensions
 {
-    internal const int MutatingBodyCapBytes = 16 * 1024; // 16 KiB — single source of truth
+    internal const int MutatingBodyCapBytes = 16 * 1024; // 16 KiB - single source of truth
 
-    /// <summary>Attaches the mutating-endpoint body cap as routing metadata. NOTE: per
-    /// RequestSizeLimitTests, RequestSizeLimitAttribute does not fire pre-binding for minimal
-    /// APIs — this is provided for endpoints proven (by a 413 test) to honor it; the Program.cs
-    /// middleware predicate remains the load-bearing cap for the rest.</summary>
+    /// <summary>Attaches the body cap as routing metadata. NOTE: RequestSizeLimitAttribute does
+    /// not fire pre-binding for minimal APIs (see RequestSizeLimitTests) - the Program.cs
+    /// middleware predicate is the load-bearing cap. Defined for future use; NOT wired to any
+    /// route in this PR.</summary>
     internal static RouteHandlerBuilder WithBodyCap(this RouteHandlerBuilder builder) =>
         builder.WithMetadata(new RequestSizeLimitAttribute(MutatingBodyCapBytes));
 }
@@ -727,28 +795,23 @@ internal static class EndpointExtensions
 
 - [ ] **Step 2: Replace the three literals with the const**
 
-`Program.cs` (~274): `const long Cap = 16 * 1024;` → `const long Cap = EndpointExtensions.MutatingBodyCapBytes;` (or reference it directly in the comparison).
+`Program.cs` (~274): `const long Cap = 16 * 1024;` → `const long Cap = EndpointExtensions.MutatingBodyCapBytes;`.
 `PrDetailEndpoints.cs:185,251`: `new RequestSizeLimitAttribute(16384)` → `new RequestSizeLimitAttribute(EndpointExtensions.MutatingBodyCapBytes)`.
+
+> Do **not** change the `Program.cs` `UseWhen` predicate. Do **not** wire `.WithBodyCap()` to any
+> route. This task only collapses three literals to one named constant.
 
 - [ ] **Step 3: Build + run the body-cap suite — verify green (no behavior change)**
 
 Run: `dotnet build PRism.Web/PRism.Web.csproj -c Release` → 0 warnings.
 Run: `dotnet test tests/PRism.Web.Tests --filter "FullyQualifiedName~RequestSizeLimit|FullyQualifiedName~BodySize" -v minimal`
-Expected: PASS — pure constant substitution; the `UseWhen` predicate is unchanged.
+Expected: PASS — pure constant substitution; predicate and all 413 behavior unchanged.
 
-- [ ] **Step 4: Attempt the metadata migration ONLY if a 413 test passes (expected: it won't)**
-
-Write a probe test (oversized body → 413) for ONE candidate endpoint via `.WithBodyCap()` metadata **without** the predicate. Run it:
-- If 413 holds → migrate that endpoint off the predicate, keep the test, repeat per endpoint.
-- If it 500s / 200s (the documented minimal-API behavior) → **revert the probe**, leave the predicate in place, and record in the PR `## Proof` that predicate removal is not feasible (constant unification is the delivered win).
-
-> Do not delete or shrink the `Program.cs` predicate unless a per-endpoint 413 test proves the metadata path. The spec's AC explicitly permits "predicate retained." No mutating endpoint may end with zero cap coverage — if you remove a predicate entry, its `.WithBodyCap()` 413 test must be green first.
-
-- [ ] **Step 5: Commit**
+- [ ] **Step 4: Commit**
 
 ```bash
-git add PRism.Web/Endpoints/ PRism.Web/Program.cs PRism.Web/Endpoints/PrDetailEndpoints.cs tests/PRism.Web.Tests/Endpoints/RequestSizeLimitTests.cs
-git commit -m "refactor(#319): unify body-cap value (MutatingBodyCapBytes); predicate retained"
+git add PRism.Web/Endpoints/Shared/EndpointExtensions.cs PRism.Web/Program.cs PRism.Web/Endpoints/PrDetailEndpoints.cs
+git commit -m "refactor(#319): unify body-cap value to MutatingBodyCapBytes (predicate unchanged)"
 ```
 
 ---
@@ -792,19 +855,21 @@ git commit -m "chore(#319): pre-push verification (frontend untouched, suites gr
 ## Self-Review
 
 **Spec coverage (§9 ACs → tasks):**
-- One definition each (error map / subscribed-guard / session upsert / path / SHA / tab-stamp / JSON-read) → Tasks 2, 7, 1, 4, 3, 5, 6. ✓
+- One definition each (error map / subscribed-guard / session upsert / path / SHA / tab-stamp / JSON-read) → Tasks 2, 7, 1, 4, 3 (incl. PrDetail), 5, 6. ✓
 - Preferences 400 invalid-json (red-on-main) → Task 6. ✓
-- Draft path byte-count (multi-byte test) → Task 4. ✓
-- Status numbers (not-subscribed 403 / no-session 404 / discard 204; markAllRead 404 carve-out) → Tasks 7, 8, 9. ✓
-- Body-cap value defined once; predicate retained unless 413 test passes → Task 10. ✓
-- SHA case-insensitive `[GeneratedRegex]` → Task 3. ✓
+- Draft path byte-count + 4096 length cap (empty-segment red-on-main test) → Task 4. ✓
+- Status numbers (not-subscribed 403 / no-session 404 / foreign-discard 204; markAllRead 404 + bulk discard-all 200 carve-outs) → Tasks 7, 8, 9. ✓
+- Body-cap value defined once; predicate **unchanged** (constant-only) → Task 10. ✓
+- SHA case-insensitive `[GeneratedRegex]` (PrDraft + PrReload + **PrDetail**) → Task 3. ✓
 - Tab-stamp write + header + cap once (incl. test hook) → Task 5. ✓
 - Full `dotnet test` green; no FE regression → Task 11. ✓
 
-**§8 tests-that-must-change coverage:** PrSubmitDiscardEndpointTests (T7), PrCommentEndpointTests (T7), PrRootCommentEndpointTests 401 (T7) + no-session (T8), PrSubmitEndpointsTests no-session (T8), PrDraftsDiscardAllEndpointTests (T9), PrReloadEndpoint uppercase (T3, as an add not a flip — deviation documented). Do-not-touch `Missing_session_token_returns_401` (T11 Step 3). ✓
+**§8 tests-that-must-change coverage:** flip-to-403 — PrSubmitDiscardEndpointTests, PrCommentEndpointTests, PrRootCommentEndpointTests (T7); flip-to-404 — PrSubmitEndpointsTests no-session, PrRootCommentEndpointTests no-session (T8). **New tests authored:** discard-all 403 (T7), foreign-pending-discard 204 (T9), empty-segment 422 (T4), uppercase-SHA accept (T3), preferences 400 (T6). Do-not-touch: `Missing_session_token_returns_401` and `PrDraftsDiscardAllEndpointTests:35,53,69` (bulk discard-all stays 200). ✓
 
-**Out-of-scope honored:** AuthEndpoints (T6 routes only Preferences+PrDraft), SubmitPipeline (T1 Step 5 note), markAllRead 404 (T7 Step 4 + T11 Step 2), frontend (T11 verify-only). ✓
+**Out-of-scope honored:** AuthEndpoints (T6 routes only Preferences+PrDraft), SubmitPipeline (T1 Step 5 note), markAllRead 404 (T7 Step 4), bulk `/drafts/discard-all` 200 (T9), `comment/post`/`preferences` body cap (T10 follow-up), frontend (T11 verify-only). ✓
 
-**Type consistency:** `AppState.WithSession(string, ReviewSessionState)` (T1) used identically at all call sites; `GitHubErrorMapper.ToResult(Exception)` (T2); `RequireSubscribed.Check(IActivePrCache, PrRef) → IResult?` (T7); `HttpJson.TryReadJsonObjectAsync → JsonObjectReadResult` with `JsonReadError` (T6); `PathValidation.Canonicalize(string) → string?` (T4); `SharedRegexes.Sha40()/Sha64()` (T3); `TabStamps.Write/.TabIdHeader/.MaxTabStamps` (T5); `EndpointExtensions.MutatingBodyCapBytes/.WithBodyCap()` (T10). Consistent across tasks. ✓
+**Type consistency:** `AppState.WithSession(string, ReviewSessionState)` (T1); `GitHubErrorMapper.ToResult(Exception)` (T2); `RequireSubscribed.Check(IActivePrCache, PrReference) → IResult?` (T7 — `PrReference`, not `PrRef`); `HttpJson.TryReadJsonObjectAsync → JsonObjectReadResult` with `JsonReadError` (T6); `PathValidation.Canonicalize(string) → string?` (T4); `SharedRegexes.Sha40()/Sha64()` (T3); `TabStamps.Write/.TabIdHeader/.MaxTabStamps` (T5); `EndpointExtensions.MutatingBodyCapBytes/.WithBodyCap()` (T10). Consistent across tasks. ✓
 
-**Placeholder scan:** No TBD/TODO. Two steps carry explicit implementer-verification notes (T4 Step 2 red-on-main input choice; T9 target endpoint) because the exact red-on-main input / endpoint must be confirmed against live code — each names the concrete fallback (empty-segment input; pin-the-test-to-the-changed-endpoint), not a vague "handle it."
+**Placeholder scan:** No TBD/TODO. Implementer-verification notes remain where the exact arrange/helper must be matched to a test file's house style (T4, T7, T9 new tests) — each names the concrete pattern to mirror, not a vague "handle it."
+
+**ce-doc-review round 2 (plan review) — dispositions:** Applied — `PrRef`→`PrReference` + namespaces (T7); 4096 length-cap restored inline (T4, security); Task 9 retargeted to `:559` foreign-discard + new test (was wrong endpoint); PrDetail SHA migration added (T3); discard-all 403 test added (T7); all-callers enumerated (T1); wrong `SubmitErrorDto` using dropped (T2/T7); empty-segment as primary red-on-main (T4); test-helper refs fixed (T6). Applied scope call — Task 10 reduced to constant-only (metadata probe dropped; pre-existing uncapped endpoints → follow-up). All five personas' confidence-100 findings actioned.

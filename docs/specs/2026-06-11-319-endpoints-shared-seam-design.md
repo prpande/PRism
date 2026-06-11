@@ -262,13 +262,22 @@ not "opportunistic." The six endpoint copies are the deliverable.
 
 `PRism.Web/Endpoints/Shared/PathValidation.cs`
 
-Adopts `PrDetailEndpoints.CanonicalizePath` (`:273-304`) as the single definition:
-**UTF-8 byte-count** cap, **segment-split** `..`/`.` rejection (strictly stronger than
-PrDraft's substring `"/../"` match — it also rejects a bare `..` segment), C0/C1 control-char
-rejection, backslash rejection, empty-segment rejection, and the **NFC byte-length-mismatch**
-guard. Returns the NFC-normalized canonical string, or `null` if invalid. Security note: the
-adopted validator rejects a **superset** of what PrDraft rejected — no traversal input that
-PrDraft blocked becomes accepted.
+Adopts `PrDetailEndpoints.CanonicalizePath` (`:273-304`) as the single definition,
+**plus an explicit 4096-byte length cap added inside the helper**: **UTF-8 byte-count**
+length cap, **segment-split** `..`/`.` rejection (strictly stronger than PrDraft's substring
+`"/../"` match — it also rejects a bare `..` segment), C0/C1 control-char rejection, backslash
+rejection, empty-segment rejection, and the **NFC byte-length-mismatch** guard. Returns the
+NFC-normalized canonical string, or `null` if invalid.
+
+> **Length-cap note (ce-doc-review security catch).** `PrDetailEndpoints.CanonicalizePath`
+> has **no** length check of its own — the `/viewed` route enforces the 4096-byte cap as a
+> *separate* pre-check at its call site (`PrDetailEndpoints.cs:199`). PrDraft's
+> `IsCanonicalFilePath` enforces `path.Length > 4096` **inside** the validator. To avoid
+> regressing the draft side from a 4096-cap to unbounded (a DoS — a megabyte `FilePath`
+> persisted to `AppState`), the shared `PathValidation.Canonicalize` adds
+> `if (Encoding.UTF8.GetByteCount(path) > 4096) return null;` as its first check. With that
+> addition the validator rejects a genuine **superset** of what PrDraft rejected — no traversal
+> input *or* oversized path that PrDraft blocked becomes accepted.
 
 ```csharp
 internal static class PathValidation
@@ -343,11 +352,11 @@ drift), the bare literal `8` ×3, and the `"X-PRism-Tab-Id"` literal at
 helper pure and testable. `if (count > 8)` becomes `while (count > MaxTabStamps)` —
 behavior-identical for the single-insert pattern (count exceeds the cap by at most one).
 
-### Seam 8 — body-cap constant unification (+ best-effort metadata migration)
+### Seam 8 — body-cap constant unification
 
 `PRism.Web/Endpoints/Shared/EndpointExtensions.cs`
 
-**Primary deliverable: a single source for the cap value.** The `16 * 1024` at
+**Deliverable: a single source for the cap value, and nothing else.** The `16 * 1024` at
 `Program.cs:274` and the `16384` ×2 at `PrDetailEndpoints.cs:185,251` are the same spec value
 as three unconnected literals. They collapse to one constant:
 
@@ -355,21 +364,21 @@ as three unconnected literals. They collapse to one constant:
 internal const int MutatingBodyCapBytes = 16 * 1024; // 16 KiB — single source of truth
 ```
 
-**Predicate removal is best-effort, gated on a 413 test — and expected NOT to fully land.**
-The first draft claimed `PrDetailEndpoints.cs:185,251` "prove the metadata mechanism works in
-production." It does not: those two routes carry `RequestSizeLimitAttribute(16384)` but are
-**absent from the `Program.cs` predicate and have no oversized-body 413 test**, and
-`RequestSizeLimitTests.cs` documents that the attribute **"doesn't fire pre-binding for
-minimal-API endpoints"** — which is precisely why the middleware exists. Every passing 413
-today (submit/reload/draft/feedback) comes from the middleware's Content-Length pre-check, not
-from attribute metadata.
+**No predicate change, no metadata migration (ce-doc-review scope + security catch).** The
+first draft proposed a best-effort `.WithBodyCap()` metadata migration. Two findings killed it:
+(1) `RequestSizeLimitTests.cs` documents that the attribute **"doesn't fire pre-binding for
+minimal-API endpoints"** — every passing 413 today comes from the middleware's Content-Length
+pre-check, not metadata, so the migration is expected to fail anyway; and (2) the
+revert-on-failure path risked shipping an endpoint uncapped. The disciplined outcome for a
+code-quality refactor is to **leave the `Program.cs` `UseWhen` predicate exactly as-is** and
+only unify the literal. The `.WithBodyCap()` extension is still defined (for future use) but is
+**not wired to any route in this PR**.
 
-Therefore seam #8 does **not** assume `.WithBodyCap()` metadata can replace the middleware. The
-plan adds an explicit **"oversized body → 413"** test for a candidate endpoint; the migration
-proceeds **only** for endpoints that pass it. Per the evidence above, the expected outcome is
-that the **middleware predicate is retained** and the win is the constant unification, not
-predicate removal. The seam is **never** allowed to silently downgrade a 413 to a 500 or to
-leave a mutating endpoint with no cap (see §7).
+**Pre-existing uncapped endpoints are out of scope.** `POST /api/pr/.../comment/post` and
+`POST /api/preferences` are absent from the predicate **on `main` today** — they are uncapped
+now and stay uncapped (no regression). Closing that gap is a separate concern filed as a
+follow-up (§10); this PR does not expand the predicate. The invariant this PR guarantees is
+narrower and verifiable: **no endpoint that is capped today loses its cap.**
 
 ## 6. Status-code unification (status numbers only)
 
@@ -379,8 +388,16 @@ leave a mutating endpoint with no cap (see §7).
 | not-subscribed (draft `markAllRead`) | 404 `{error:"not-subscribed"}` | **unchanged (404)** | `sendPatch` derives `.kind` from status; changing it flips the FE branch (§3.2) — deliberately excluded |
 | no-session (submit **and** root-comment) | 400 `no-session` | **404** (body code `"no-session"` kept) | submit/root-comment parsers read `.code`, not status |
 | no-session (reload) | 404 `session-not-found` | unchanged (404) | already 404 |
-| discard-success (foreign discard-all) | 200 empty | **204** | client treats 200/204 identically (`client.ts:87`) |
-| discard-success (own discard) | 204 | unchanged (204) | already 204 |
+| discard-success — foreign-pending-review discard (`PrSubmitEndpoints.cs:559`, `DiscardForeignPendingReviewAsync`) | 200 empty | **204** | the "twin" of own-pending discard (`:396`), which already returns 204; client treats 200/204 identically (`client.ts:87`) |
+| discard-success — own-pending-review discard (`PrSubmitEndpoints.cs:396`) | 204 | unchanged (204) | already 204 — this is the value the foreign twin aligns to |
+
+> **Correction (ce-doc-review).** An earlier draft mislabeled this row "foreign discard-all"
+> and pinned the test to `PrDraftsDiscardAllEndpointTests:35`. That is a **different endpoint**
+> (`POST /drafts/discard-all` → `PrDraftsDiscardAllEndpoint.cs:105`, also 200, with three
+> passing tests) and is **not** the drift the issue flagged. The issue's "twin discard ops"
+> (`:559` vs `:396`) are the foreign- and own-pending-review discards. Only `:559` changes
+> (200→204); the bulk `/drafts/discard-all` is untouched. `DiscardForeignPendingReviewAsync`
+> has **no existing test**, so the plan authors one (red-on-main: asserts 204, main returns 200).
 
 **Three no-session emitters, not two.** `PrSubmitEndpoints.cs:129` **and**
 `PrRootCommentEndpoints.cs:100-101` both emit `SubmitErrorDto("no-session", …)` at 400; both
@@ -394,10 +411,10 @@ the table above move.
 
 | Risk | Mitigation |
 |------|-----------|
-| **Body-cap (seam #8)** | Constant-unification is the committed win; metadata migration gated behind an oversized→413 test and expected to leave the middleware predicate in place. The seam may not remove unbounded-body exposure on any endpoint: the plan verifies **every** mutating endpoint (incl. `comment/post` and `preferences`, both absent from today's predicate) ends with cap coverage via the predicate. No endpoint may fall through both mechanisms. |
+| **Body-cap (seam #8)** | Constant-unification only — the `Program.cs` predicate is **unchanged**, so no endpoint's cap behavior moves. The pre-existing uncapped endpoints (`comment/post`, `preferences`) stay as-is on `main` (no regression; closing that gap is the §10 follow-up). Invariant: no currently-capped endpoint loses its cap. |
 | not-subscribed FE regression | Resolved by design: status-only 401→403, code `"unauthorized"` preserved, `markAllRead` 404 untouched. Plan still greps the FE for `case 'unauthorized'` / `KNOWN_SUBMIT_ERROR_CODES` membership / `=== 'unauthorized'` to confirm no site degrades. |
 | Existing tests encode the old contract | §8 enumerates the test-migration set; the plan separates contract-encoding edits from accidental breakage. |
-| Path byte-count rejects a previously-valid draft path | Only multi-byte paths near the 4096 boundary differ; the adopted validator rejects a superset of traversal inputs (no security regression); regression test covers multi-byte. |
+| Path validation regresses the length cap | `PathValidation.Canonicalize` includes the 4096-byte cap inline (the draft side previously enforced it via `path.Length`); without it the draft side would go unbounded → DoS. Red-on-main test uses the empty-segment input (`src//foo.cs`), the reliably-red case. |
 | `markAllRead` 404 SessionToken-auth vs not-subscribed conflation | `PrDraftEndpointTests` `Missing_session_token_returns_401` is the SessionToken **auth** 401, NOT the not-subscribed guard — must not be swept to 403. Called out in §8. |
 | GraphQL/transport untouched | Seam #1 extracts only the error switch; no submit-transport change (keeps #320's byte-identity intact). |
 
@@ -407,27 +424,36 @@ the table above move.
 
 - **Red-on-main regression** (AC §9): `POST /api/preferences` with a malformed body returns
   **400 `invalid-json`** (fails on `main` today — 500).
-- not-subscribed → **403** (code `"unauthorized"`) for submit, comment, root-comment,
-  drafts/discard-all. `markAllRead` stays **404** (assert unchanged).
+- not-subscribed → **403** (code `"unauthorized"`) for submit, comment, root-comment, **and
+  drafts/discard-all** (the discard-all guard needs a *new* 403 test — none exists today).
+  `markAllRead` stays **404** (assert unchanged).
 - no-session → **404** for submit **and** root-comment (reload already 404).
-- discard (foreign discard-all) → **204**.
-- Draft path validation with a **multi-byte** input (byte-count semantics).
-- SHA: `POST /reload` accepts an **uppercase** 40-hex SHA.
-- Seam #8: **oversized body → 413** for the candidate endpoint (gate for metadata migration);
-  plus a coverage check that no mutating endpoint is uncapped.
+- discard — foreign-pending-review discard (`PrSubmitEndpoints.cs:559`) → **204** (a *new*
+  test — `DiscardForeignPendingReviewAsync` has no existing coverage). Bulk `/drafts/discard-all`
+  is **not** changed.
+- Draft path validation with the **empty-segment** input `src//foo.cs` → 422 (the reliably
+  red-on-main byte/segment-rule case; the decomposed-Unicode input is already rejected on main).
+- SHA: `POST /reload` **accepts** an uppercase 40-hex SHA (a *new* red-on-main test; the
+  existing `"not-a-sha"` reject test stays green and is not flipped).
+- Body cap: pure constant substitution — existing `RequestSizeLimit`/body-size tests stay green
+  (no new behavior).
 
 **Tests that must change (encode the old contract — intended red, then updated):**
 
 - `PrSubmitDiscardEndpointTests.cs:188-190` — asserts 401 + code `"unauthorized"` (test named
   `*_returns_401`) → **403**, code unchanged; rename.
 - `PrCommentEndpointTests.cs:237-239` — 401 not-subscribed → **403**.
-- `PrRootCommentEndpointTests.cs:259` — 401 not-subscribed → **403**.
+- `PrRootCommentEndpointTests.cs:257-259` — 401 not-subscribed → **403**.
 - `PrSubmitEndpointsTests.cs:289-290` — 400 + `"no-session"` → **404**, code unchanged.
-- `PrRootCommentEndpointTests` no-session (the 400 + `"no-session"` assertion) → **404**.
-- `PrDraftsDiscardAllEndpointTests.cs:35` — asserts 200/OK on the foreign discard-all → **204**.
-- `PrReloadEndpoint` SHA-reject test — uppercase SHA now **accepted** (flip the reject case).
+- `PrRootCommentEndpointTests` `PostRootComment_no_session_returns_400_no_session` → **404**.
+- **Do NOT touch** `PrDraftsDiscardAllEndpointTests.cs:35,53,69` (bulk discard-all, stays 200 —
+  the earlier draft wrongly listed `:35` here).
 - **Do NOT touch** `PrDraftEndpointTests.cs:86` `Missing_session_token_returns_401`
   (SessionToken auth 401, unrelated to not-subscribed).
+
+**New tests to author:** a 403 not-subscribed test for `/drafts/discard-all`; a 204 test for
+`DiscardForeignPendingReviewAsync` (`:559`); a 422 empty-segment path test; an uppercase-SHA
+accept test; the preferences malformed-body 400 test.
 
 **Behavior-preserving seams (1, 3-draft side, 4, 5-mechanics, 7):** existing `PRism.Web` /
 `PRism.Core` / `PRism.GitHub` suites stay green except the contract-encoding tests listed above.
@@ -442,11 +468,14 @@ the table above move.
       red-on-main).
 - [ ] Draft-side path validation uses byte-count semantics (test with multi-byte input).
 - [ ] Status numbers unified: not-subscribed (submit family) → 403 with code `"unauthorized"`
-      preserved; no-session (submit + root-comment) → 404; discard-success → 204. Draft
-      `markAllRead` stays 404 (documented carve-out).
-- [ ] Body-cap value defined once (`MutatingBodyCapBytes`); every mutating endpoint retains
-      413 coverage; `Program.cs` predicate removed **only** for endpoints whose oversized→413
-      test passes (expected: predicate retained, constant unified).
+      preserved; no-session (submit + root-comment) → 404; foreign-pending discard
+      (`:559`) → 204. Draft `markAllRead` stays 404; bulk `/drafts/discard-all` stays 200
+      (documented carve-outs).
+- [ ] Body-cap value defined once (`MutatingBodyCapBytes`); `Program.cs` predicate unchanged;
+      no currently-capped endpoint loses its cap. (Pre-existing uncapped `comment/post` /
+      `preferences` are a §10 follow-up, not this PR.)
+- [ ] `PathValidation.Canonicalize` enforces the 4096-byte length cap inline (no draft-side
+      length regression).
 - [ ] SHA regex case rule unified (case-insensitive, `[GeneratedRegex]`).
 - [ ] Tab-stamp write + `X-PRism-Tab-Id` header + cap (8) each defined once, including the
       test hook.
@@ -461,6 +490,8 @@ the table above move.
   replace; not a guaranteed win).
 - **True single-code not-subscribed unification** (folding draft `markAllRead` into 403) —
   deferred; needs a coordinated `sendPatch` `.kind` mapping + consumer change.
+- **Body cap for `comment/post` + `preferences`** — pre-existing gap (uncapped on `main`); file
+  a follow-up to add them to the `Program.cs` predicate (16 KiB) with 413 tests. Not this PR.
 - The per-verb not-subscribed messages collapse to one generic message; trivially restorable
   if a per-verb message proves worth keeping.
 
@@ -499,3 +530,16 @@ not applied, with reason.
   exact contract-encoding edits. A gated reviewer can separate the ~6 status-number edits from
   mechanical churn via the §8 list without paying the cost of two PRs churning the same files.
   Surfaced to the owner as a decision; will split if the owner prefers.
+
+### Round 2 — corrections from the *plan* `ce-doc-review` (these amended the spec)
+
+- **APPLIED — discard target was the wrong endpoint (feasibility + adversarial, conf 100).** The
+  spec's §6 "foreign discard-all" / `PrDraftsDiscardAllEndpointTests:35` conflated two endpoints.
+  The issue's "twin discard" drift is foreign-pending (`:559`, 200) vs own-pending (`:396`, 204).
+  Corrected §6/§8: change `:559`→204 (author a new test); bulk `/drafts/discard-all` untouched.
+- **APPLIED — `PathValidation` dropped the 4096 length cap (security-lens, conf 100).** Added an
+  inline `Encoding.UTF8.GetByteCount(path) > 4096` guard to `Canonicalize` (Seam 5, §7, AC) — the
+  draft side would otherwise regress from a 4096-cap to unbounded (DoS).
+- **APPLIED — body-cap metadata migration risked uncapping endpoints (security-lens, conf 100).**
+  Dropped the migration entirely; Seam 8 is now constant-unification only, predicate unchanged.
+  Pre-existing uncapped `comment/post`/`preferences` moved to a §10 follow-up.
