@@ -17,12 +17,13 @@ const pr = { owner: 'o', repo: 'r', number: 1 };
 describe('getAiSummaryResult', () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it('maps 200 to ok', async () => {
+  it('maps 200 to ok and targets the canonical endpoint path', async () => {
     getMock.mockResolvedValue({ body: 'b', category: 'fix' });
     expect(await getAiSummaryResult(pr)).toEqual({
       kind: 'ok',
       summary: { body: 'b', category: 'fix' },
     });
+    expect(getMock).toHaveBeenCalledWith('/api/pr/o/r/1/ai/summary');
   });
 
   it('maps 204 (undefined) to absent', async () => {
