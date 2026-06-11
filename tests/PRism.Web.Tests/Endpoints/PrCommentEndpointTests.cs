@@ -259,6 +259,25 @@ public class PrCommentEndpointTests
         message.Should().NotContain("RAW_SECRET_UPSTREAM_BODY", "raw upstream body must not leak to the client");
     }
 
+    // ── 8b. GitHub malformed-2xx (GitHubRestContractException) → same 502 as a transport error ──
+
+    [Fact]
+    public async Task PostComment_inline_contract_exception_maps_to_502_github_network_error()
+    {
+        using var ctx = CommentTestContext.Create();
+        await ctx.SeedSessionAsync("o", "r", 1, SessionWithInlineDraft());
+        ctx.Submitter.InjectReviewCommentFailure(
+            new PRism.GitHub.GitHubRestContractException("missing 'id'"));
+
+        var resp = await ctx.Post(1, "d1");
+
+        // GitHubRestContractException is not an HttpRequestException ⇒ it hits the endpoint's
+        // catch-all, producing the same 502 / github-network-error as a transport failure.
+        resp.StatusCode.Should().Be(HttpStatusCode.BadGateway);
+        var body = await resp.Content.ReadFromJsonAsync<JsonElement>(CamelCase);
+        body.GetProperty("code").GetString().Should().Be("github-network-error");
+    }
+
     // ── 9. Lock held → 409 submit-in-progress ─────────────────────────────────
 
     [Fact]
