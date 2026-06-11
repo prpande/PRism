@@ -46,6 +46,7 @@ This is a **concise index** — one line per spec, grouped by status. The per-sp
 - [`2026-05-28-v1-completion-roadmap-design.md`](2026-05-28-v1-completion-roadmap-design.md) — post-S6 v1 ship phases (README restructure, publish workflow, first tag). Deferrals sidecar present.
 - [`2026-06-02-electron-desktop-shell-design.md`](2026-06-02-electron-desktop-shell-design.md) — v0.2.0 Electron desktop shell (.NET sidecar, single-instance, Host-header defense). Deferrals sidecar present.
 - [`2026-06-07-agent-detached-launcher-design.md`](2026-06-07-agent-detached-launcher-design.md) — `serve-detached.ps1` health-gated detached dev-server launcher (#266/#269).
+- [`2026-06-11-desktop-launchers-design.md`](2026-06-11-desktop-launchers-design.md) — from-source detached desktop launchers (`run-desktop.ps1` / `run-desktop.sh`), Windows + macOS (#306); manual validation tracked in [#369](https://github.com/prpande/PRism/issues/369).
 
 ### PR-detail & diff
 
