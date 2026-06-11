@@ -283,7 +283,7 @@ app.UseWhen(
     },
     branch => branch.Use(async (ctx, next) =>
     {
-        const long Cap = 16 * 1024;
+        const long Cap = EndpointExtensions.MutatingBodyCapBytes;
         var feat = ctx.Features.Get<Microsoft.AspNetCore.Http.Features.IHttpMaxRequestBodySizeFeature>();
         if (feat is not null && !feat.IsReadOnly) feat.MaxRequestBodySize = Cap;
         if (ctx.Request.ContentLength is { } cl && cl > Cap)

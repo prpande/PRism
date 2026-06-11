@@ -177,7 +177,7 @@ internal static partial class PrDetailEndpoints
                 }
 
                 return Results.NoContent();
-            }).WithMetadata(new RequestSizeLimitAttribute(16384));   // P2.3 — 16 KiB cap
+            }).WithMetadata(new RequestSizeLimitAttribute(EndpointExtensions.MutatingBodyCapBytes));   // P2.3 — 16 KiB cap
 
         app.MapPost("/api/pr/{owner}/{repo}/{number:int}/files/viewed",
             async (string owner, string repo, int number,
@@ -243,7 +243,7 @@ internal static partial class PrDetailEndpoints
                 }
 
                 return capExceeded ?? Results.NoContent();
-            }).WithMetadata(new RequestSizeLimitAttribute(16384));
+            }).WithMetadata(new RequestSizeLimitAttribute(EndpointExtensions.MutatingBodyCapBytes));
 
         return app;
     }
