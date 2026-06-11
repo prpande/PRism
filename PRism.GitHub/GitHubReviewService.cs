@@ -359,8 +359,7 @@ public sealed partial class GitHubReviewService : IReviewAuth, IPrDiscovery, IPr
         // Independent GraphQL fetch — does NOT call GetPrDetailAsync. The two methods share
         // parsing helpers but each issues its own round-trip; siblings rather than parent-child
         // makes their failure modes independent. Spec § 6.4 / plan Step 3.4.
-        const string query = TimelineQuery;
-        var raw = await PostGraphQLAsync(query, new { owner = reference.Owner, repo = reference.Repo, number = reference.Number }, ct).ConfigureAwait(false);
+        var raw = await PostGraphQLAsync(TimelineQuery, new { owner = reference.Owner, repo = reference.Repo, number = reference.Number }, ct).ConfigureAwait(false);
 
         using var doc = JsonDocument.Parse(raw);
         // Surface execution-level GraphQL errors as an exception when no usable data
@@ -951,8 +950,7 @@ public sealed partial class GitHubReviewService : IReviewAuth, IPrDiscovery, IPr
         DateTimeOffset GetDate(string name) =>
             pull.TryGetProperty(name, out var el) && el.ValueKind != JsonValueKind.Null
                 ? el.GetDateTimeOffset() : default;
-        string Author() => ReadActor(pull).Login;
-        string? AvatarUrl() => ReadActor(pull).AvatarUrl;
+        var (author, avatarUrl) = ReadActor(pull);
         string? HtmlUrl()
         {
             var url = GetStr("url");
@@ -982,7 +980,7 @@ public sealed partial class GitHubReviewService : IReviewAuth, IPrDiscovery, IPr
             reference,
             Title: GetStr("title"),
             Body: GetStr("body"),
-            Author: Author(),
+            Author: author,
             State: state,
             HeadSha: GetStr("headRefOid"),
             BaseSha: GetStr("baseRefOid"),
@@ -995,7 +993,7 @@ public sealed partial class GitHubReviewService : IReviewAuth, IPrDiscovery, IPr
             OpenedAt: GetDate("createdAt"),
             MergedAt: mergedAt,
             ClosedAt: closedAt,
-            AvatarUrl: AvatarUrl(),
+            AvatarUrl: avatarUrl,
             HtmlUrl: HtmlUrl());
     }
 
