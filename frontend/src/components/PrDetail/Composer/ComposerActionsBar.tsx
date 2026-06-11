@@ -1,5 +1,5 @@
 import { AiComposerAssistant } from '../../Ai/AiComposerAssistant';
-import type { ComposerSaveBadge } from '../../../hooks/useComposerAutoSave';
+import { badgeLabel, type ComposerSaveBadge } from '../../../hooks/useComposerAutoSave';
 
 export interface ComposerActionsBarProps {
   previewMode: boolean;
@@ -54,7 +54,7 @@ export function ComposerActionsBar({
         role="status"
         data-testid="composer-badge"
       >
-        {badge}
+        {badgeLabel(badge)}
       </span>
 
       <AiComposerAssistant />

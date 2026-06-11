@@ -182,8 +182,8 @@ describe('DraftsTab', () => {
     });
     renderDraftsTab({ session, status: 'ready' });
     // Two file group headers
-    expect(screen.getByText('src/Foo.cs')).toBeInTheDocument();
-    expect(screen.getByText('src/Bar.cs')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'src/Foo.cs' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'src/Bar.cs' })).toBeInTheDocument();
     expect(screen.getByTestId('drafts-tab-root')).toBeInTheDocument();
   });
 
@@ -438,7 +438,7 @@ describe('DraftsTab', () => {
       draftComments: [mkComment({ id: 'a', bodyMarkdown: 'body to confirm' })],
     });
     renderDraftsTab({ session, status: 'ready' });
-    await userEvent.click(screen.getByRole('button', { name: /^delete$/i }));
+    await userEvent.click(screen.getByRole('button', { name: /^discard$/i }));
     const dialog = await screen.findByRole('dialog');
     expect(dialog).toHaveTextContent(/Discard this draft/i);
     expect(dialog).toHaveTextContent(/body to confirm/i);
@@ -453,7 +453,7 @@ describe('DraftsTab', () => {
     const refetch = vi.fn(() => Promise.resolve());
     vi.spyOn(draftApi, 'sendPatch').mockResolvedValue({ ok: true, assignedId: null });
     renderDraftsTab({ session, status: 'ready', refetch });
-    await userEvent.click(screen.getByRole('button', { name: /^delete$/i }));
+    await userEvent.click(screen.getByRole('button', { name: /^discard$/i }));
     // Empty body → no confirm modal → direct delete → refetch.
     await waitFor(() => expect(refetch).toHaveBeenCalledTimes(1));
   });
@@ -499,7 +499,7 @@ describe('DraftsTab', () => {
     });
     const spy = vi.spyOn(draftApi, 'sendPatch').mockResolvedValue({ ok: true, assignedId: null });
     renderDraftsTab({ session, status: 'ready' });
-    await userEvent.click(screen.getByRole('button', { name: /^delete$/i }));
+    await userEvent.click(screen.getByRole('button', { name: /^discard$/i }));
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     await waitFor(() => expect(spy).toHaveBeenCalledTimes(1));
     expect(spy).toHaveBeenCalledWith(ref, {
@@ -514,7 +514,7 @@ describe('DraftsTab', () => {
     });
     const spy = vi.spyOn(draftApi, 'sendPatch').mockResolvedValue({ ok: true, assignedId: null });
     renderDraftsTab({ session, status: 'ready' });
-    await userEvent.click(screen.getByRole('button', { name: /^delete$/i }));
+    await userEvent.click(screen.getByRole('button', { name: /^discard$/i }));
     const dialog = await screen.findByRole('dialog');
     await userEvent.click(within(dialog).getByRole('button', { name: /^discard$/i }));
     await waitFor(() => expect(spy).toHaveBeenCalledTimes(1));
@@ -531,7 +531,7 @@ describe('DraftsTab', () => {
     renderDraftsTab({ session, status: 'ready', readOnly: true });
     // Action buttons must not be present
     expect(screen.queryByRole('button', { name: /^edit$/i })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /^delete$/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^discard$/i })).not.toBeInTheDocument();
     // Body text is still rendered (selectable)
     expect(screen.getByText(/needs work/i)).toBeInTheDocument();
   });
@@ -551,6 +551,6 @@ describe('DraftsTab', () => {
     // readOnly omitted → defaults to false → buttons present
     renderDraftsTab({ session, status: 'ready' });
     expect(screen.getByRole('button', { name: /^edit$/i })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /^delete$/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^discard$/i })).toBeInTheDocument();
   });
 });

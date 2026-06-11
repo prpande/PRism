@@ -1,59 +1,62 @@
-/* DraftListItem — production-only card-row. Visual language derived from
-   handoff `.stale-row` (chips at top, body in middle, actions at bottom).
-   Mounted as children of .draftsTabFileGroup.
+/* DraftListItem — production-only card-row. Reuses the CommentCard shell
+   (composes: card / body) with a draft-native band (chip + file·line) and an
+   Edit/Discard footer (#354). Mounted as children of .draftsTabFileGroup.
 
    Also authors the two single-consumer chip variants per D47 (the literal
    classes are emitted via dynamic interpolation `chip-status-${status.modifier}`
-   at DraftListItem.tsx:81; literal-class-and-module pattern means the literal
+   in DraftListItem.tsx; literal-class-and-module pattern means the literal
    in JSX continues to compose AND the .module.css rule applies via Vite's
    CSS-modules injection order). */
 
 .draftListItem {
-  display: flex;
-  flex-direction: column;
-  gap: var(--s-2);
-  padding: var(--s-3) var(--s-4);
-  background: var(--surface-2);
-  border: 1px solid var(--border-1);
-  border-radius: var(--radius-2);
+  /* Share the CommentCard shell (surface-1 / border-1 / radius-3 / shadow-2 /
+     overflow:hidden) — single source of truth, #354. Cross-file composes; if
+     the build rejects it, replace this line with the four shell properties:
+     background: var(--surface-1); border: 1px solid var(--border-1);
+     border-radius: var(--radius-3); box-shadow: var(--shadow-2); overflow: hidden; */
+  composes: card from '../Comment/CommentCard.module.css';
 }
 
-.draftListItemHeader {
+/* Band — CommentCard band tokens, padding tuned for a chip row (matches
+   CommentCard compact-density band) so a chip-only PR-root band isn't tall. */
+.draftBand {
   display: flex;
   align-items: center;
   gap: var(--s-2);
   flex-wrap: wrap;
   font-size: var(--text-xs);
+  padding: var(--s-1) var(--s-3);
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--border-1);
 }
-
-.draftListItemPreview {
-  font-size: var(--text-sm);
-  color: var(--text-1);
-  line-height: 1.55;
-}
-
-.draftListItemPreview p {
-  margin: 0 0 var(--s-2);
-}
-
-.draftListItemPreview p:last-child {
-  margin: 0;
-}
-
-.draftListItemPreview code {
+.fileref {
   font-family: var(--font-mono);
-  font-size: 0.92em;
-  padding: 1px 5px;
-  background: var(--surface-3);
-  border-radius: 3px;
-  color: var(--text-1);
+  color: var(--text-2);
+}
+.fileRefLine {
+  color: var(--text-3);
 }
 
-.draftListItemActions {
+/* Body — composes CommentCard's body block (padding / font / line-height /
+   prose rules) so the draft body matches a posted comment. The base `.body`
+   only gains `overflow-x: auto` under `[data-density='compact']`, which the
+   draft card never sets; without it a wide code block would be clipped by the
+   card's `overflow: hidden` instead of scrolling. Re-add it here so the draft
+   body scrolls its own overflow. */
+.draftBody {
+  composes: body from '../Comment/CommentCard.module.css';
+  overflow-x: auto;
+}
+
+/* Footer — action strip mirroring .composer-frame .composer-actions. */
+.draftFooter {
   display: flex;
-  gap: var(--s-2);
   justify-content: flex-end;
+  gap: var(--s-2);
   flex-wrap: wrap;
+  padding: var(--s-2) var(--s-3);
+  border-top: 1px solid var(--border-1);
+  background: var(--surface-2);
 }
 
 /* D47: single-consumer chip variants stay LOCAL.

@@ -1,14 +1,15 @@
 .prRootReplyComposer {
-  padding: var(--s-2);
-  background: var(--surface-2);
-  border-radius: var(--radius-2);
-  border: 1px solid var(--border-1);
+  /* The shared .composer-frame provides surface-1 / border-2 / radius-3 /
+     shadow-1 / overflow:hidden — keep only the column layout here. */
   display: flex;
   flex-direction: column;
   gap: var(--s-2);
 }
 
 .postError {
+  /* Match the input well's side gutter (added in a later task) so the banner
+     aligns with the textarea and keeps a gap above the footer strip. */
+  margin: 0 var(--s-2) var(--s-2);
   padding: var(--s-1) var(--s-2);
   border-radius: var(--radius-1);
   background: var(--surface-danger, var(--surface-2));
