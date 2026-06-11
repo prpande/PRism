@@ -425,6 +425,7 @@ internal static class PrRefreshEndpoints
                         : Results.Ok();                            // fresh snapshot committed (incl. no-change)
                 }
                 catch (OperationCanceledException) { throw; }      // client aborted; not an error
+#pragma warning disable CA1031 // intentional honest-completion catch-all; mirrors InboxEndpoints /refresh
                 catch (Exception)
                 {
                     // Honest-completion (semantic C, same as /api/inbox/refresh). ANY throw lands
@@ -437,6 +438,7 @@ internal static class PrRefreshEndpoints
                         ? Results.Problem(title: "PR refresh failed", statusCode: 503, type: "/pr/refresh-failed")
                         : Results.Ok();
                 }
+#pragma warning restore CA1031
             });
 
         return app;
@@ -771,6 +773,34 @@ describe('usePrDetailRefresh', () => {
     expect(spy).toHaveBeenCalledTimes(1);
     vi.useRealTimers();
   });
+
+  it('timeout: aborts after TIMEOUT_MS and calls onError', async () => {
+    vi.useFakeTimers();
+    // Reject when the hook's AbortController fires (mirrors fetch's abort behavior).
+    vi.spyOn(prDetailApi, 'refreshPrDetail').mockImplementation(
+      (_pr, signal) =>
+        new Promise<void>((_, reject) => {
+          signal?.addEventListener('abort', () =>
+            reject(new DOMException('aborted', 'AbortError')),
+          );
+        }),
+    );
+    const onError = vi.fn();
+    const { result } = renderHook(() =>
+      usePrDetailRefresh({ prRef: PR, reload: vi.fn(), clearUpdates: vi.fn(), onError }),
+    );
+
+    let p!: Promise<void>;
+    act(() => { p = result.current.refresh(); });
+    await act(async () => {
+      vi.advanceTimersByTime(30_000); // past TIMEOUT_MS → controller.abort() → mock rejects
+      await p;
+    });
+
+    expect(onError).toHaveBeenCalledWith("Couldn't refresh this PR. Try again.");
+    expect(result.current.isRefreshing).toBe(false);
+    vi.useRealTimers();
+  });
 });
 ```
 
@@ -897,9 +927,21 @@ it('clicking Refresh calls onRefresh', async () => {
   await userEvent.click(screen.getByTestId('pr-refresh-button'));
   expect(onRefresh).toHaveBeenCalledTimes(1);
 });
+
+it('does not unmount the Refresh button across refresh state transitions (spec §4.3 focus guarantee)', () => {
+  // The button is rendered unconditionally (gated only on `onRefresh`), so it must persist as the
+  // SAME DOM node across isRefreshing true→false — never conditionally unmounted, so keyboard
+  // focus is never lost to document-top on the error/success paths.
+  const base = { loading: false, onRefresh: vi.fn() };
+  const { rerender } = renderPrHeader({ ...base, isRefreshing: true, justRefreshed: false });
+  const node = screen.getByTestId('pr-refresh-button');
+  // Re-render through the error path (isRefreshing → false, justRefreshed stays false).
+  rerender(<PrHeader {...buildPrHeaderProps({ ...base, isRefreshing: false, justRefreshed: false })} />);
+  expect(screen.getByTestId('pr-refresh-button')).toBe(node); // same node ⇒ not remounted
+});
 ```
 
-(Match the test file's existing render helper name/signature; if it builds props inline, add the three new props there.)
+(Match the test file's existing render helper name/signature — `renderPrHeader`/`buildPrHeaderProps` are placeholders for whatever the file already uses; if it builds props inline, add the three new props there. The `rerender` form depends on the helper; the assertion that matters is **node identity persists** across the transition.)
 
 Run (from `frontend/`): `frontend/node_modules/.bin/vitest run src/components/PrDetail/PrHeader.test.tsx`
 Expected: FAIL — no `pr-refresh-button`.
@@ -983,9 +1025,21 @@ it('clicking Refresh posts /refresh then re-GETs the detail', async () => {
   // getPrDetail called again after the refresh (initial load + reload)
   await waitFor(() => expect(getPrDetailSpy).toHaveBeenCalledTimes(2));
 });
+
+it('shows the per-tab loading bar during an in-flight refresh (initial load already settled)', async () => {
+  // Never-resolving refresh → isRefreshing stays true while isLoading is already false. Proves the
+  // LoadingBar `active={active && (isLoading || isRefreshing)}` term is wired (guards the || isRefreshing).
+  vi.spyOn(prDetailApi, 'refreshPrDetail').mockImplementation(() => new Promise<void>(() => {}));
+  // ...render + wait for initial load so the cold-load bar is already inactive...
+  await userEvent.click(screen.getByTestId('pr-refresh-button'));
+  // Assert the LoadingBar for this tab is in its active state. Use LoadingBar's existing
+  // active-state signal (the same one the inbox test asserts on `inbox-loading-bar`); the
+  // testid is `pr-loading-bar:<refKey>`.
+  await waitFor(() => expect(screen.getByTestId(`pr-loading-bar:${expectedRefKey}`)).toBeActiveLoadingBar());
+});
 ```
 
-(Use the file's existing spies/harness for `getPrDetail`; add a `refreshPrDetail` spy.)
+(Use the file's existing spies/harness for `getPrDetail`; add a `refreshPrDetail` spy. `expectedRefKey` and the LoadingBar active assertion adapt to the file's harness + how `LoadingBar` renders `active` — mirror the inbox `inbox-loading-bar` assertion.)
 
 Run (from `frontend/`): `frontend/node_modules/.bin/vitest run src/components/PrDetail/PrDetailView.test.tsx`
 Expected: FAIL — no refresh button wired.
@@ -1075,9 +1129,13 @@ Expected: PASS.
 
 - [ ] **Step 3: Capture B1 screenshots (light + dark, before/after)**
 
-With the app running against a fixture PR, capture the PR-detail header in light and dark themes,
-before and after a refresh (idle arrow vs confirm checkmark), at 1920×1080. Save under a
-`review-assets/pr-344/` folder for the PR's `## Proof` Visual section.
+With the app running against a fixture PR, capture the PR-detail header in light and dark themes at
+1920×1080, in **three** states: idle (arrow), **in-flight (spinner)**, and just-refreshed (confirm
+checkmark). Capture the spinner state by delaying the `/refresh` response (e.g. Playwright
+`page.route` with a delay) so the header renders the spinner in the `prActions` cluster next to
+Open-in-GitHub / Review — this is the alignment/row-height-regression-risk state #291 styled the bar
+for, and the one the owner most needs to eyeball. Save all pairs under `review-assets/pr-344/` for
+the PR's `## Proof` Visual section.
 
 - [ ] **Step 4: Commit**
 

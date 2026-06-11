@@ -153,6 +153,7 @@ app.MapPost("/api/pr/{owner}/{repo}/{number:int}/refresh",
             : Results.Ok();                            // fresh snapshot committed (incl. no-change)
     }
     catch (OperationCanceledException) { throw; }       // client aborted; not an error
+#pragma warning disable CA1031 // intentional honest-completion catch-all; mirrors InboxEndpoints /refresh
     catch (Exception)
     {
         // Honest-completion (semantic C, same as /api/inbox/refresh). ANY throw lands here
@@ -171,6 +172,7 @@ app.MapPost("/api/pr/{owner}/{repo}/{number:int}/refresh",
             ? Results.Problem(title: "PR refresh failed", statusCode: 503, type: "/pr/refresh-failed")
             : Results.Ok();
     }
+#pragma warning restore CA1031
 });
 ```
 
