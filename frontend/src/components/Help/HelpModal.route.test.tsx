@@ -63,14 +63,7 @@ vi.mock('../../hooks/useCapabilities', () => ({
 }));
 
 import { App } from '../../App';
-
-class FakeEventSource {
-  close() {}
-  addEventListener() {}
-  removeEventListener() {}
-  onmessage = null;
-  onerror = null;
-}
+import { FakeEventSource } from '../../../__tests__/helpers/fakeEventSource';
 
 function renderAppAt(path: string) {
   return render(

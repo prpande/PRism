@@ -2,40 +2,10 @@ import { renderHook, waitFor } from '@testing-library/react';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import type { ReactNode } from 'react';
 import { EventStreamProvider, useEventSource } from '../src/hooks/useEventSource';
-
-class FakeEventSource {
-  static instances: FakeEventSource[] = [];
-  static get instance(): FakeEventSource {
-    return FakeEventSource.instances[FakeEventSource.instances.length - 1]!;
-  }
-  static CLOSED = 2;
-  readyState = 0;
-  onerror: ((e: Event) => void) | null = null;
-  listeners: Record<string, ((e: MessageEvent) => void)[]> = {};
-  closed = false;
-  url: string;
-  constructor(url: string) {
-    this.url = url;
-    FakeEventSource.instances.push(this);
-  }
-  addEventListener(type: string, cb: (e: MessageEvent) => void) {
-    (this.listeners[type] ??= []).push(cb);
-  }
-  close() {
-    this.closed = true;
-    this.readyState = FakeEventSource.CLOSED;
-  }
-  dispatch(type: string, data: unknown) {
-    this.listeners[type]?.forEach((cb) => cb({ data: JSON.stringify(data) } as MessageEvent));
-  }
-  dispatchRaw(type: string, raw: string) {
-    this.listeners[type]?.forEach((cb) => cb({ data: raw } as MessageEvent));
-  }
-}
+import { FakeEventSource, installFakeEventSource } from './helpers/fakeEventSource';
 
 beforeEach(() => {
-  FakeEventSource.instances = [];
-  (globalThis as unknown as { EventSource: unknown }).EventSource = FakeEventSource;
+  installFakeEventSource();
   vi.restoreAllMocks();
 });
 

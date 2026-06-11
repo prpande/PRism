@@ -4,33 +4,10 @@ import type { ReactNode } from 'react';
 import { useRootCommentPostedSubscriber } from '../src/hooks/useRootCommentPostedSubscriber';
 import { EventStreamProvider } from '../src/hooks/useEventSource';
 import type { PrReference, RootCommentPostedEvent } from '../src/api/types';
-
-class FakeEventSource {
-  static instances: FakeEventSource[] = [];
-  static get instance(): FakeEventSource {
-    return FakeEventSource.instances[FakeEventSource.instances.length - 1]!;
-  }
-  listeners: Record<string, ((e: MessageEvent) => void)[]> = {};
-  closed = false;
-  url: string;
-  constructor(url: string) {
-    this.url = url;
-    FakeEventSource.instances.push(this);
-  }
-  addEventListener(type: string, cb: (e: MessageEvent) => void) {
-    (this.listeners[type] ??= []).push(cb);
-  }
-  close() {
-    this.closed = true;
-  }
-  dispatch(type: string, data: unknown) {
-    this.listeners[type]?.forEach((cb) => cb({ data: JSON.stringify(data) } as MessageEvent));
-  }
-}
+import { FakeEventSource, installFakeEventSource } from './helpers/fakeEventSource';
 
 beforeEach(() => {
-  FakeEventSource.instances = [];
-  (globalThis as unknown as { EventSource: unknown }).EventSource = FakeEventSource;
+  installFakeEventSource();
   vi.restoreAllMocks();
 });
 
