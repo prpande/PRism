@@ -56,6 +56,21 @@ Assert-Equal 'win-x64' (Get-HostRid) "Windows RID is win-x64"
 $apphost = Get-SidecarApphostPath -PublishDir 'C:\repo\desktop\.dev-sidecar'
 Assert-Equal 'C:\repo\desktop\.dev-sidecar\PRism.Web.exe' $apphost "apphost is PRism.Web.exe under publish dir"
 
+Write-Host "New-DesktopLauncherWrapper" -ForegroundColor Cyan
+$wrapper = New-DesktopLauncherWrapper `
+    -ElectronExe 'C:\repo\desktop\node_modules\.bin\electron.cmd' `
+    -DesktopDir  'C:\repo\desktop' `
+    -SidecarBinary 'C:\repo\desktop\.dev-sidecar\PRism.Web.exe' `
+    -Log 'C:\data\run-desktop.log' `
+    -StartedUtc '2026-06-11T00:00:00Z'
+Assert-Match $wrapper "\`$env:PRISM_SIDECAR_BINARY = 'C:\\repo\\desktop\\\.dev-sidecar\\PRism\.Web\.exe'" "wrapper sets PRISM_SIDECAR_BINARY"
+Assert-Match $wrapper "Set-Location 'C:\\repo\\desktop'" "wrapper cd's to desktop dir"
+Assert-Match $wrapper "\*>> \`$log" "wrapper redirects electron output to log"
+Assert-Match $wrapper "electron\.cmd' \." "wrapper invokes electron with ."
+# Embedded single-quote in a path must be doubled (PowerShell literal escaping):
+$q = New-DesktopLauncherWrapper -ElectronExe "e" -DesktopDir "d'x" -SidecarBinary "s" -Log "l" -StartedUtc "t"
+Assert-Match $q "Set-Location 'd''x'" "single-quote in path is doubled"
+
 # --- footer: exit non-zero on any failure ---
 if ($script:Failures -gt 0) {
     Write-Host "$script:Failures test(s) failed" -ForegroundColor Red

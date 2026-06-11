@@ -80,6 +80,36 @@ function Get-SidecarApphostPath {
     return (Join-Path $PublishDir 'PRism.Web.exe')
 }
 
+function New-DesktopLauncherWrapper {
+    # Build the disposable wrapper .ps1 launched via WMI. A Win32_Process.Create
+    # command line carries NEITHER env vars NOR redirection operators, so the wrapper
+    # owns both: it sets PRISM_SIDECAR_BINARY, cd's to desktop/, and runs `electron .`
+    # with its own *>> redirection. Single-quote every interpolated path (doubling
+    # embedded quotes) so a space/quote in a path cannot break the script. Same
+    # technique as scripts/serve-detached.ps1:Write-WrapperScript.
+    param(
+        [string]$ElectronExe,
+        [string]$DesktopDir,
+        [string]$SidecarBinary,
+        [string]$Log,
+        [string]$StartedUtc
+    )
+    $qLog      = "'" + ($Log -replace "'", "''") + "'"
+    $qSidecar  = "'" + ($SidecarBinary -replace "'", "''") + "'"
+    $qDesktop  = "'" + ($DesktopDir -replace "'", "''") + "'"
+    $qElectron = "'" + ($ElectronExe -replace "'", "''") + "'"
+    return @"
+# run-desktop.wrapper.ps1 -- AUTHORED AT RUNTIME, disposable, overwritten each launch.
+# Owns its own env + redirection so the WMI command line carries none.
+`$ErrorActionPreference = 'Stop'
+`$log = $qLog
+`$env:PRISM_SIDECAR_BINARY = $qSidecar
+"=== run-desktop launch @ $StartedUtc ===" *>> `$log
+Set-Location $qDesktop
+& $qElectron . *>> `$log
+"@
+}
+
 function Invoke-Main {
     param([switch]$SkipBuild)
     throw "Invoke-Main not yet implemented"
