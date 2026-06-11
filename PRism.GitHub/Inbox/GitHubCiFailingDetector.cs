@@ -3,20 +3,30 @@ using System.Net.Http.Headers;
 using System.Text.Json;
 using PRism.Core.Contracts;
 using PRism.Core.Inbox;
+using PRism.Core.Time;
 
 namespace PRism.GitHub.Inbox;
 
 public sealed class GitHubCiFailingDetector : ICiFailingDetector
 {
     private const int ConcurrencyCap = 8;
+    // A cached terminal status re-validates after this TTL via the injected clock, so a same-SHA
+    // "Re-run failed jobs" auto-recovers without a manual Refresh. Pending is already never cached
+    // (#355); the TTL governs the terminal Passing/Failing/None entries uniformly. (#361)
+    private static readonly TimeSpan TerminalTtl = TimeSpan.FromMinutes(2);
     private readonly IHttpClientFactory _httpFactory;
     private readonly Func<Task<string?>> _readToken;
-    private readonly ConcurrentDictionary<(PrReference, string), CiStatus> _cache = new();
+    private readonly IClock _clock;
+    private readonly ConcurrentDictionary<(PrReference, string), CacheEntry> _cache = new();
 
-    public GitHubCiFailingDetector(IHttpClientFactory httpFactory, Func<Task<string?>> readToken)
+    private readonly record struct CacheEntry(CiStatus Status, DateTime CachedAtUtc);
+
+    public GitHubCiFailingDetector(
+        IHttpClientFactory httpFactory, Func<Task<string?>> readToken, IClock clock)
     {
         _httpFactory = httpFactory;
         _readToken = readToken;
+        _clock = clock;
     }
 
     public async Task<CiDetectResult> DetectAsync(
@@ -36,8 +46,12 @@ public sealed class GitHubCiFailingDetector : ICiFailingDetector
                 var key = (c.Reference, c.HeadSha);
                 // forceReprobe (the manual "Refresh now" path) skips the cache read so an
                 // unchanged head SHA re-reads CI; it still writes the fresh result below. (#355)
-                if (!forceReprobe && _cache.TryGetValue(key, out var cached))
-                    return (Item: c, Ci: cached, Degraded: false);
+                // A cached entry older than TerminalTtl is treated as a miss → re-probe, so a
+                // same-SHA CI re-run auto-recovers within one TTL window. (#361)
+                if (!forceReprobe
+                    && _cache.TryGetValue(key, out var entry)
+                    && _clock.UtcNow - entry.CachedAtUtc <= TerminalTtl)
+                    return (Item: c, Ci: entry.Status, Degraded: false);
 
                 var (ci, degraded) = await ProbeAsync(c.Reference, c.HeadSha, token, ct).ConfigureAwait(false);
                 // Cache only a complete, successful, NON-TRANSIENT read. A DEGRADED result
@@ -54,7 +68,7 @@ public sealed class GitHubCiFailingDetector : ICiFailingDetector
                 // degraded read does) until it goes terminal, then cache the terminal. (#355)
                 if (!degraded && ci != CiStatus.Pending)
                 {
-                    _cache[key] = ci;
+                    _cache[key] = new CacheEntry(ci, _clock.UtcNow);
                 }
                 else if (forceReprobe && !degraded && ci == CiStatus.Pending)
                 {
