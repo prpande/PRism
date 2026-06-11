@@ -1,5 +1,4 @@
 using System.Collections.Concurrent;
-using System.Net.Http.Headers;
 using System.Text.Json;
 using PRism.Core.Contracts;
 using PRism.Core.Inbox;
@@ -8,7 +7,6 @@ namespace PRism.GitHub.Inbox;
 
 public sealed class GitHubCiFailingDetector : ICiFailingDetector
 {
-    private const int ConcurrencyCap = 8;
     private readonly IHttpClientFactory _httpFactory;
     private readonly Func<Task<string?>> _readToken;
     private readonly ConcurrentDictionary<(PrReference, string), CiStatus> _cache = new();
@@ -25,7 +23,7 @@ public sealed class GitHubCiFailingDetector : ICiFailingDetector
         ArgumentNullException.ThrowIfNull(items);
         if (items.Count == 0) return new CiDetectResult(Array.Empty<(RawPrInboxItem, CiStatus)>(), true);
         var token = await _readToken().ConfigureAwait(false);
-        using var sem = new SemaphoreSlim(ConcurrencyCap);
+        using var sem = new SemaphoreSlim(GitHubHttp.ConcurrencyCap);
 
         var done = await Task.WhenAll(items.Select(async c =>
         {
@@ -124,19 +122,14 @@ public sealed class GitHubCiFailingDetector : ICiFailingDetector
         // GitHub paginates /check-runs when a PR has > per_page entries (monorepo
         // matrix builds routinely cross 100). Follow the rel="next" link until
         // exhausted, aggregating classification across all pages.
-        Uri? nextUri = null;
+        string? nextUrl = null;
         var initialUrl = $"repos/{pr.Owner}/{pr.Repo}/commits/{sha}/check-runs?per_page=100";
 
         for (var page = 0; page < MaxCheckRunPages; page++)
         {
-            using var resp = nextUri is null
-                ? await SendAsync(initialUrl, token, ct).ConfigureAwait(false)
-                : await SendAsync(nextUri, token, ct).ConfigureAwait(false);
+            using var resp = await SendAsync(nextUrl ?? initialUrl, token, ct).ConfigureAwait(false);
             if (resp.StatusCode == System.Net.HttpStatusCode.NotFound) return (CiStatus.None, false);
-            if (resp.StatusCode == System.Net.HttpStatusCode.TooManyRequests)
-                throw new RateLimitExceededException(
-                    "GitHub rate-limited (429); orchestrator should skip this tick.",
-                    resp.Headers.RetryAfter?.Delta);
+            GitHubHttp.ThrowIfRateLimited(resp);
             // Fine-grained PATs can't call the Checks API (GitHub returns 403). Degrade
             // to "no CI signal" rather than throwing. A throw propagates through
             // DetectAsync into InboxRefreshOrchestrator.RefreshAsync (no catch) and out to
@@ -203,8 +196,8 @@ public sealed class GitHubCiFailingDetector : ICiFailingDetector
                 // call tracked in #305, not an oversight. #264
             }
 
-            nextUri = TryGetNextLink(resp);
-            if (nextUri is null) break;
+            nextUrl = GitHubLinkHeader.TryGetRel(resp, "next", out var n) ? n : null;
+            if (nextUrl is null) break;
         }
 
         // A successful run with nothing failing/pending → Passing. Only conclusion=="success"
@@ -216,50 +209,12 @@ public sealed class GitHubCiFailingDetector : ICiFailingDetector
                 : anySuccess ? CiStatus.Passing : CiStatus.None, false);
     }
 
-    // Parses the GitHub Link response header and returns the URL whose attributes
-    // include rel="next", or null if no such link exists. Standard format:
-    //   <url1>; rel="next", <url2>; rel="last"
-    // Node IDs / URLs are treated as opaque — we hand the absolute URL straight
-    // back to HttpClient without parsing or rewriting.
-    private static Uri? TryGetNextLink(HttpResponseMessage resp)
-    {
-        if (!resp.Headers.TryGetValues("Link", out var values)) return null;
-        foreach (var header in values)
-        {
-            foreach (var part in header.Split(','))
-            {
-                var segments = part.Split(';');
-                if (segments.Length < 2) continue;
-                var urlSegment = segments[0].Trim();
-                if (!urlSegment.StartsWith('<') || !urlSegment.EndsWith('>')) continue;
-                var hasNext = false;
-                for (var i = 1; i < segments.Length; i++)
-                {
-                    var attr = segments[i].Trim();
-                    if (attr.Equals("rel=\"next\"", StringComparison.Ordinal)
-                        || attr.Equals("rel=next", StringComparison.Ordinal))
-                    {
-                        hasNext = true;
-                        break;
-                    }
-                }
-                if (!hasNext) continue;
-                var url = urlSegment[1..^1];
-                if (Uri.TryCreate(url, UriKind.Absolute, out var uri)) return uri;
-            }
-        }
-        return null;
-    }
-
     private async Task<(CiStatus Status, bool Degraded)> FetchCombinedStatusAsync(PrReference pr, string sha, string? token, CancellationToken ct)
     {
         var url = $"repos/{pr.Owner}/{pr.Repo}/commits/{sha}/status";
         using var resp = await SendAsync(url, token, ct).ConfigureAwait(false);
         if (resp.StatusCode == System.Net.HttpStatusCode.NotFound) return (CiStatus.None, false);
-        if (resp.StatusCode == System.Net.HttpStatusCode.TooManyRequests)
-            throw new RateLimitExceededException(
-                "GitHub rate-limited (429); orchestrator should skip this tick.",
-                resp.Headers.RetryAfter?.Delta);
+        GitHubHttp.ThrowIfRateLimited(resp);
         // Same graceful degradation as FetchChecksAsync (#213): a single non-2xx read is
         // degraded → None-but-not-cached, so it re-probes next tick.
         if (!resp.IsSuccessStatusCode) return (CiStatus.None, true);
@@ -303,25 +258,9 @@ public sealed class GitHubCiFailingDetector : ICiFailingDetector
         return hasStatuses || hasCount;
     }
 
-    private Task<HttpResponseMessage> SendAsync(string url, string? token, CancellationToken ct)
-        => SendCoreAsync(new HttpRequestMessage(HttpMethod.Get, url), token, ct);
-
-    // Pagination Link headers from GitHub are absolute URLs; HttpClient.SendAsync
-    // accepts an absolute Uri on the request even when the underlying client has
-    // a BaseAddress, so we hand the URL through unmodified.
-    private Task<HttpResponseMessage> SendAsync(Uri url, string? token, CancellationToken ct)
-        => SendCoreAsync(new HttpRequestMessage(HttpMethod.Get, url), token, ct);
-
-    private async Task<HttpResponseMessage> SendCoreAsync(HttpRequestMessage req, string? token, CancellationToken ct)
+    private async Task<HttpResponseMessage> SendAsync(string url, string? token, CancellationToken ct)
     {
         using var http = _httpFactory.CreateClient("github");
-        using (req)
-        {
-            if (!string.IsNullOrEmpty(token))
-                req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
-            req.Headers.UserAgent.ParseAdd("PRism/0.1");
-            req.Headers.Accept.ParseAdd("application/vnd.github+json");
-            return await http.SendAsync(req, ct).ConfigureAwait(false);
-        }
+        return await GitHubHttp.SendAsync(http, HttpMethod.Get, url, token, ct).ConfigureAwait(false);
     }
 }

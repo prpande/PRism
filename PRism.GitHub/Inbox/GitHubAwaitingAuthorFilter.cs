@@ -1,6 +1,5 @@
 using System.Collections.Concurrent;
 using System.Net;
-using System.Net.Http.Headers;
 using System.Text.Json;
 using PRism.Core.Contracts;
 using PRism.Core.Inbox;
@@ -9,7 +8,6 @@ namespace PRism.GitHub.Inbox;
 
 public sealed class GitHubAwaitingAuthorFilter : IAwaitingAuthorFilter
 {
-    private const int ConcurrencyCap = 8;
     private readonly IHttpClientFactory _httpFactory;
     private readonly Func<Task<string?>> _readToken;
     private readonly ConcurrentDictionary<(PrReference, string), string?> _lastReviewShaCache = new();
@@ -26,7 +24,7 @@ public sealed class GitHubAwaitingAuthorFilter : IAwaitingAuthorFilter
         ArgumentNullException.ThrowIfNull(candidates);
         if (candidates.Count == 0) return Array.Empty<RawPrInboxItem>();
         var token = await _readToken().ConfigureAwait(false);
-        using var sem = new SemaphoreSlim(ConcurrencyCap);
+        using var sem = new SemaphoreSlim(GitHubHttp.ConcurrencyCap);
 
         // 5xx / timeout from any per-PR probe propagates here — the orchestrator
         // decides whether to skip the tick. Unlike the section runner (which isolates
@@ -57,18 +55,9 @@ public sealed class GitHubAwaitingAuthorFilter : IAwaitingAuthorFilter
     {
         var url = $"repos/{pr.Owner}/{pr.Repo}/pulls/{pr.Number}/reviews?per_page=100";
         using var http = _httpFactory.CreateClient("github");
-        using var req = new HttpRequestMessage(HttpMethod.Get, url);
-        if (!string.IsNullOrEmpty(token))
-            req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
-        req.Headers.UserAgent.ParseAdd("PRism/0.1");
-        req.Headers.Accept.ParseAdd("application/vnd.github+json");
-
-        using var resp = await http.SendAsync(req, ct).ConfigureAwait(false);
+        using var resp = await GitHubHttp.SendAsync(http, HttpMethod.Get, url, token, ct).ConfigureAwait(false);
         if (resp.StatusCode == HttpStatusCode.NotFound) return null;
-        if (resp.StatusCode == HttpStatusCode.TooManyRequests)
-            throw new RateLimitExceededException(
-                "GitHub rate-limited (429); orchestrator should skip this tick.",
-                resp.Headers.RetryAfter?.Delta);
+        GitHubHttp.ThrowIfRateLimited(resp);
         resp.EnsureSuccessStatusCode();
 
         var body = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
