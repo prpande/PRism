@@ -9,7 +9,6 @@ import {
   SubmitConflictError,
   discardAllDrafts,
   isKnownSubmitErrorCode,
-  verdictToSubmitWire,
   type KnownSubmitErrorCode,
 } from '../../api/submit';
 import { useSubmit } from '../../hooks/useSubmit';
@@ -246,9 +245,7 @@ export function PrHeader({
     // R3 — re-enter the pipeline at Step 1's "match by ID" outcome via the
     // persisted pendingReviewId; default to Comment if no verdict was set.
     setDialogOpen(true);
-    void submit
-      .submit(verdictToSubmitWire(session?.draftVerdict ?? 'comment'))
-      .catch(surfaceSubmitError);
+    void submit.submit(session?.draftVerdict ?? 'comment').catch(surfaceSubmitError);
   };
 
   // Maps backend SubmitErrorDto.code values to user-facing toast copy. Keep in
