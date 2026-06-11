@@ -166,6 +166,34 @@ public sealed class PrDetailLoader : IDisposable
     }
 
     /// <summary>
+    /// Force-refreshes the snapshot for <paramref name="prRef"/>, bypassing the snapshot cache
+    /// (#344 manual Refresh). Re-fetches PR detail + timeline, re-clusters, and atomically
+    /// REPLACES the cached snapshot (overwrite, not GetOrAdd) so a warm cache with an unchanged
+    /// head SHA still yields fresh data — the proactive analog of the inbox's hardRefresh.
+    /// Returns null when the PR no longer exists (GetPrDetail => null), mapped to 404 by the
+    /// endpoint. Lock-free by design: the two ConcurrentDictionary writes are individually
+    /// atomic and any interleave self-heals on the next LoadAsync (see spec § 3.1).
+    /// </summary>
+    public async Task<PrDetailSnapshot?> RefreshAsync(PrReference prRef, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(prRef);
+        var generation = Volatile.Read(ref _generation);
+        var detail = await _review.GetPrDetailAsync(prRef, ct).ConfigureAwait(false);
+        if (detail is null) return null;
+
+        var snapshot = await ComposeSnapshotAsync(prRef, detail, generation, ct).ConfigureAwait(false);
+
+        // If InvalidateAll ran mid-flight (config hot-reload), our snapshot is keyed to a stale
+        // generation — return it uncached. Mirrors LoadAsync's generation re-check.
+        if (Volatile.Read(ref _generation) != generation) return snapshot;
+
+        var realKey = CacheKey(prRef, detail.Pr.HeadSha, generation);
+        _snapshots[realKey] = snapshot;          // overwrite — force-fresh wins
+        _snapshotKeyByPrRef[prRef] = realKey;
+        return snapshot;
+    }
+
+    /// <summary>
     /// Composes a <see cref="PrDetailSnapshot"/> from an already-fetched <paramref name="detail"/>:
     /// fetches the timeline, runs clustering, and folds the results into the snapshot. Extracted
     /// from <see cref="LoadAsync"/> (#344) so the force-fresh <see cref="RefreshAsync"/> path can
