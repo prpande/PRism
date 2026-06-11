@@ -81,8 +81,7 @@ internal static class PrDraftEndpoints
         var read = await HttpJson.TryReadJsonObjectAsync(httpContext, ct).ConfigureAwait(false);
         if (read.Error != JsonReadError.None)
             return Results.BadRequest(new { error = "patch-body-missing" }); // both InvalidJson and NotObject -> same body (preserved)
-        using var doc = read.Document!;
-
+        using (var doc = read.Document!)
         {
 
             // Resolve the single operation. "Real" ops: an object kind with an object value, a bool
