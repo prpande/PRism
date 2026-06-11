@@ -32,6 +32,20 @@ describe('useDraftBackedDisclosure', () => {
     expect(result.current.draftId).toBe('arrived');
   });
 
+  it('adopts a new id when the draft id changes while the composer stays open', () => {
+    const { result, rerender } = renderHook(
+      ({ draft }: { draft: { id: string } }) => useDraftBackedDisclosure(draft),
+      { initialProps: { draft: { id: 'a' } } },
+    );
+    expect(result.current.composerOpen).toBe(true);
+    expect(result.current.draftId).toBe('a');
+
+    // The effect is keyed on existingDraft?.id, so a changed id re-runs it.
+    rerender({ draft: { id: 'b' } });
+    expect(result.current.composerOpen).toBe(true);
+    expect(result.current.draftId).toBe('b');
+  });
+
   it('open() opens the composer; close() closes it without clearing draftId', () => {
     const { result } = renderHook(() => useDraftBackedDisclosure({ id: 'keep' }));
     expect(result.current.composerOpen).toBe(true);
