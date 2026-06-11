@@ -203,6 +203,20 @@ assertion (`Includes_pr_with_newer_commits_than_last_review`,
 `Page_cap_is_honored_and_does_not_loop_forever`, the cache/eviction/concurrency tests)
 stays valid. This is test-realism maintenance, not a semantics change to those cases.
 
+**Test-harness prerequisite (for test 3's no-log assertion).** The current `BuildSut`
+(`GitHubAwaitingAuthorFilterTests.cs:16-18`) is 2-arg and injects no logger, so the SUT
+runs under `NullLogger` and emits nothing observable. The SUT ctor already accepts an
+optional `ILogger<GitHubAwaitingAuthorFilter>` (`GitHubAwaitingAuthorFilter.cs:21-29`), so
+add a `BuildSut` overload that passes one in. Capture/assert via **Moq** (already a package
+ref in `PRism.GitHub.Tests`): `Mock<ILogger<GitHubAwaitingAuthorFilter>>`, then
+`logger.Verify(l => l.Log(LogLevel.Debug, It.IsAny<EventId>(), It.IsAny<It.IsAnyType>(),
+It.IsAny<Exception?>(), It.IsAny<Func<It.IsAnyType, Exception?, string>>()), Times.Never)`
+to assert `ReviewItemSkipped` did **not** fire. (`ReviewItemSkipped` is the source-gen
+`LoggerMessage` at `GitHubAwaitingAuthorFilter.cs:132-134`, `LogLevel.Debug`; the
+source-gen path lowers to that generic `ILogger.Log` overload, so the `Times.Never` verify
+must target it.) Do **not** depend on `PRism.Web.Tests`' `ListLoggerProvider` — it is in a
+different, unreferenced test project.
+
 **New tests** (all in `GitHubAwaitingAuthorFilterTests`):
 
 1. **Out-of-order array picks true-latest by timestamp.** A single page lists two viewer
@@ -217,16 +231,20 @@ stays valid. This is test-realism maintenance, not a semantics change to those c
    review is skipped; `best` = `"old"` ≠ `"new"` ⇒ PR **included** (awaiting author at
    the older reviewed head).
 
-3. **PENDING review (JSON-`null` `submitted_at`) with a `commit_id` is excluded — clean,
-   no malformed-log.** Two viewer reviews: a submitted one (`submitted_at` present,
-   `commit_id: "old"`) and a pending one with a literal `"submitted_at": null` (JSON null,
-   not an absent field) and `commit_id: "head"`. PR head is `"head"`. The pending review
-   is excluded by the `ValueKind` gate, so `best` = `"old"` ≠ `"head"` ⇒ PR **included**.
-   (Under today's rule the pending review's `"head"` would win ⇒ excluded — this test pins
-   R2.) Assert with a capturing logger that **no** `ReviewItemSkipped` ("malformed JSON
-   shape") entry is emitted — the pending review takes the normal `continue`, not the
-   exception path. This is the distinct null-kind path that test 5's non-date *string*
-   does not exercise.
+3. **PENDING review (JSON-`null` `submitted_at`) is dropped from selection — clean, no
+   malformed-log; the PR is still included via the prior review.** Two viewer reviews: a
+   submitted one (`submitted_at` present, `commit_id: "old"`) and a pending one with a
+   literal `"submitted_at": null` (JSON null, not an absent field) and `commit_id: "head"`.
+   PR head is `"head"`. The pending review is dropped from selection by the `ValueKind`
+   gate, so `best` = `"old"` ≠ `"head"` ⇒ **the PR is included**. (Under today's rule the
+   pending review's `"head"` would win ⇒ PR excluded — this test pins R2.) Assert (via the
+   Moq logger above) that **no** `ReviewItemSkipped` ("malformed JSON shape") entry is
+   emitted — the pending review takes the normal `continue`, not the exception path.
+   **The non-null `commit_id: "head"` is load-bearing:** under the commit_id-first gate a
+   fully-pending review (`commit_id: null`) would be skipped at the *commit_id* gate and
+   never reach the `ValueKind` check, so this fixture deliberately carries a non-null
+   `commit_id` to force the review onto the `ValueKind` path. This is the distinct
+   null-kind path that test 5's non-date *string* does not exercise.
 
 4. **Cross-page max-by-timestamp.** Page 1 holds the viewer review with the **newer**
    `submitted_at` (at head); page 2 holds an **older** `submitted_at` (at old sha), with
@@ -237,11 +255,14 @@ stays valid. This is test-realism maintenance, not a semantics change to those c
 5. **Malformed `submitted_at` (non-date *string*) skips one review via the guard, scan
    continues.** A page with one viewer review whose `submitted_at` is a non-date string
    (`"not-a-date"`, `JsonValueKind.String` so it passes the kind gate and reaches
-   `GetDateTimeOffset()`) and a second valid viewer review (`submitted_at` present,
-   `commit_id: "old"`). PR head `"new"`. The malformed review throws `FormatException`,
-   caught by `InboxJsonGuard.IsMalformedItem`; `best` = `"old"` ⇒ PR **included**; no
-   throw out of the filter. This pins the `FormatException` branch — distinct from test
-   3's clean `null`-kind exclusion.
+   `GetDateTimeOffset()`) **and carries a non-null `commit_id` (e.g. `"x"`)** so it
+   survives the commit_id-first gate and actually reaches the parse — plus a second valid
+   viewer review (`submitted_at` present, `commit_id: "old"`). PR head `"new"`. The
+   malformed review throws `FormatException`, caught by `InboxJsonGuard.IsMalformedItem`;
+   `best` = `"old"` ⇒ PR **included**; no throw out of the filter. (Without the non-null
+   `commit_id`, the review would be dropped at the commit_id gate before
+   `GetDateTimeOffset()`, leaving the `FormatException` branch — AC4 — unexercised.) This
+   pins the `FormatException` branch — distinct from test 3's clean `null`-kind exclusion.
 
 **Verification:** `dotnet build -c Release` (0/0) and `dotnet test -c Release` on
 `PRism.GitHub.Tests` green. Backend-only — no frontend files touched, so frontend
