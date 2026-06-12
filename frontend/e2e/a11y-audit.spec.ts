@@ -2,6 +2,7 @@ import { test, expect, type Route, type Page } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 import { resetBackendState, setupAndOpenScenarioPr } from './helpers/s4-setup';
 import { setupBaseRoutes } from './helpers/base-mocks';
+import { makeDefaultPreferences } from './fixtures/preferences';
 
 // ---------------------------------------------------------------------------
 // Spec § 6 — Accessibility baseline audit (Pass 1: automated axe-core).
@@ -21,23 +22,14 @@ import { setupBaseRoutes } from './helpers/base-mocks';
 // `prefers-reduced-motion: reduce`.
 // ---------------------------------------------------------------------------
 
+// Canonical preferences shape (#332), but with the deliberately synthetic
+// data-dir sentinels kept: the Settings page just renders these paths as
+// copyable strings, axe-core doesn't care, and a clearly fake value avoids
+// implying any real platform's data-dir layout.
 const defaultPreferences = {
-  ui: { theme: 'system', accent: 'indigo', aiPreview: false, density: 'comfortable' },
-  inbox: {
-    sections: {
-      'review-requested': true,
-      'awaiting-author': true,
-      'authored-by-me': true,
-      mentioned: true,
-      'recently-closed': true,
-    },
-    defaultSort: 'updated',
-  },
+  ...makeDefaultPreferences(),
   github: {
     host: 'https://github.com',
-    // Fixture-only sentinel paths — the Settings page just renders these as
-    // copyable strings, axe-core doesn't care, and using a clearly synthetic
-    // value avoids implying any real platform's data-dir layout.
     configPath: '<dataDir>/config.json',
     logsPath: '<dataDir>/logs',
   },
