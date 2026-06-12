@@ -203,6 +203,48 @@ public class PrDetailLoaderTests
     }
 
     [Fact]
+    public async Task LoadAsync_evicts_snapshot_after_SingleCommentPostedBusEvent()
+    {
+        // #450: a posted inline comment/reply does NOT change the head SHA, so the
+        // (prRef, headSha, generation) key would re-serve the stale pre-post snapshot on the
+        // SSE-driven reload — the new thread would be missing until a manual reload. The loader
+        // subscribes to SingleCommentPostedBusEvent and evicts immediately. (Invalidate, not
+        // RefreshAsync: the bus is synchronous and fires inside the comment-POST — see spec §2.2.)
+        var review = new FakePrDetailReviewService();
+        review.DefaultPollResponse = new ActivePrPollSnapshot("head1", "MERGEABLE", "OPEN", 0, 0);
+        review.DefaultDetailResponse = MakeDetail(headSha: "head1");
+        review.DefaultTimelineResponse = MakeTimeline(5);
+        var bus = new ReviewEventBus();
+        var loader = MakeLoader(review, bus: bus);
+
+        await loader.LoadAsync(Pr1, CancellationToken.None);
+        loader.TryGetCachedSnapshot(Pr1).Should().NotBeNull();
+
+        bus.Publish(new SingleCommentPostedBusEvent(Pr1, 0L));
+
+        loader.TryGetCachedSnapshot(Pr1).Should()
+            .BeNull("a posted single comment must evict the snapshot so the reload re-fetches fresh detail");
+    }
+
+    [Fact]
+    public async Task SingleCommentPostedBusEvent_for_other_prRef_does_not_evict_this_snapshot()
+    {
+        var review = new FakePrDetailReviewService();
+        review.DefaultPollResponse = new ActivePrPollSnapshot("head1", "MERGEABLE", "OPEN", 0, 0);
+        review.DefaultDetailResponse = MakeDetail(headSha: "head1");
+        review.DefaultTimelineResponse = MakeTimeline(5);
+        var bus = new ReviewEventBus();
+        var loader = MakeLoader(review, bus: bus);
+
+        await loader.LoadAsync(Pr1, CancellationToken.None);
+
+        bus.Publish(new SingleCommentPostedBusEvent(new PrReference("owner", "repo", 2), 0L));
+
+        loader.TryGetCachedSnapshot(Pr1).Should()
+            .NotBeNull("a different PR's single-comment post must not evict this PR's snapshot");
+    }
+
+    [Fact]
     public async Task LoadAsync_evicts_snapshot_after_DraftSubmitted()
     {
         // #392: a review submit posts threads/replies + the PR-root comment but does NOT change
