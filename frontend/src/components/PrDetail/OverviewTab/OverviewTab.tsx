@@ -22,7 +22,7 @@ export function OverviewTab() {
     summary: aiSummary,
     loading: aiLoading,
     error: aiError,
-  } = useAiSummary(prRef, aiOn, subscribed);
+  } = useAiSummary(prRef, aiOn, subscribed, /* baseShaChanged — threaded in Task 15 */ false);
 
   const filesCount = diff.data?.files.length ?? 0;
   const threadsCount = prDetail.reviewComments.length;

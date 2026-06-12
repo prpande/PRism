@@ -1,4 +1,4 @@
-import { renderHook, waitFor } from '@testing-library/react';
+import { renderHook, waitFor, act } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { useAiSummary } from '../src/hooks/useAiSummary';
 import * as api from '../src/api/aiSummary';
@@ -14,27 +14,31 @@ const otherRef: PrReference = { owner: 'octocat', repo: 'hello', number: 43 };
 vi.mock('../src/api/aiSummary');
 
 beforeEach(() => {
-  vi.restoreAllMocks();
+  vi.clearAllMocks();
 });
 
 afterEach(() => {
-  vi.restoreAllMocks();
+  vi.clearAllMocks();
 });
 
 describe('useAiSummary', () => {
   it('returns idle state and never calls the API when enabled is false', async () => {
     const spy = vi.spyOn(api, 'getAiSummaryResult');
-    const { result } = renderHook(() => useAiSummary(ref, false, false));
+    const { result } = renderHook(() => useAiSummary(ref, false, false, false));
     await Promise.resolve();
-    expect(result.current).toEqual({ summary: null, loading: false, error: false });
+    expect(result.current.summary).toBeNull();
+    expect(result.current.loading).toBe(false);
+    expect(result.current.error).toBe(false);
     expect(spy).not.toHaveBeenCalled();
   });
 
   it('stays idle until subscribed even if enabled', async () => {
     const spy = vi.spyOn(api, 'getAiSummaryResult');
-    const { result } = renderHook(() => useAiSummary(ref, true, false));
+    const { result } = renderHook(() => useAiSummary(ref, true, false, false));
     await Promise.resolve();
-    expect(result.current).toEqual({ summary: null, loading: false, error: false });
+    expect(result.current.summary).toBeNull();
+    expect(result.current.loading).toBe(false);
+    expect(result.current.error).toBe(false);
     expect(spy).not.toHaveBeenCalled();
   });
 
@@ -43,7 +47,7 @@ describe('useAiSummary', () => {
       kind: 'ok',
       summary: { body: 'Refactor the lease loop.', category: 'Refactor' },
     });
-    const { result } = renderHook(() => useAiSummary(ref, true, true));
+    const { result } = renderHook(() => useAiSummary(ref, true, true, false));
     await waitFor(() => expect(result.current.summary).not.toBeNull());
     expect(result.current.summary).toEqual({
       body: 'Refactor the lease loop.',
@@ -54,14 +58,14 @@ describe('useAiSummary', () => {
 
   it('sets error=true when result is kind:error', async () => {
     vi.spyOn(api, 'getAiSummaryResult').mockResolvedValue({ kind: 'error' });
-    const { result } = renderHook(() => useAiSummary(ref, true, true));
+    const { result } = renderHook(() => useAiSummary(ref, true, true, false));
     await waitFor(() => expect(result.current.error).toBe(true));
     expect(result.current.summary).toBeNull();
   });
 
   it('returns idle state when kind:absent (204)', async () => {
     vi.spyOn(api, 'getAiSummaryResult').mockResolvedValue({ kind: 'absent' });
-    const { result } = renderHook(() => useAiSummary(ref, true, true));
+    const { result } = renderHook(() => useAiSummary(ref, true, true, false));
     await waitFor(() => expect(result.current.loading).toBe(false));
     expect(result.current.summary).toBeNull();
     expect(result.current.error).toBe(false);
@@ -79,7 +83,7 @@ describe('useAiSummary', () => {
       if (prRef.number === ref.number) return firstPending;
       return Promise.resolve({ kind: 'ok', summary: secondSummary });
     });
-    const { result, rerender } = renderHook(({ prRef }) => useAiSummary(prRef, true, true), {
+    const { result, rerender } = renderHook(({ prRef }) => useAiSummary(prRef, true, true, false), {
       initialProps: { prRef: ref },
     });
     rerender({ prRef: otherRef });
@@ -88,5 +92,51 @@ describe('useAiSummary', () => {
     await Promise.resolve();
     await Promise.resolve();
     expect(result.current.summary).toEqual(secondSummary);
+  });
+
+  it('is not stale until baseShaChanged is true', async () => {
+    vi.spyOn(api, 'getAiSummaryResult').mockResolvedValue({ kind: 'ok', summary: { body: 'b', category: 'fix' } });
+    const { result, rerender } = renderHook(
+      ({ baseChanged }) => useAiSummary(ref, true, true, baseChanged),
+      { initialProps: { baseChanged: false } },
+    );
+    await waitFor(() => expect(result.current.summary).not.toBeNull());
+    expect(result.current.isStale).toBe(false);
+    rerender({ baseChanged: true });
+    expect(result.current.isStale).toBe(true);
+  });
+
+  it('does NOT auto-refetch when baseShaChanged flips (token discipline)', async () => {
+    const spy = vi.spyOn(api, 'getAiSummaryResult').mockResolvedValue({ kind: 'ok', summary: { body: 'b', category: 'fix' } });
+    const { rerender } = renderHook(
+      ({ baseChanged }) => useAiSummary(ref, true, true, baseChanged),
+      { initialProps: { baseChanged: false } },
+    );
+    await waitFor(() => expect(spy).toHaveBeenCalledTimes(1));
+    rerender({ baseChanged: true });
+    await Promise.resolve();
+    expect(spy).toHaveBeenCalledTimes(1); // no extra GET on a base-change event
+  });
+
+  it('regenerate() POSTs, replaces the summary on 200, and clears staleness', async () => {
+    vi.spyOn(api, 'getAiSummaryResult').mockResolvedValue({ kind: 'ok', summary: { body: 'old', category: 'fix' } });
+    const regen = vi.spyOn(api, 'regenerateAiSummary').mockResolvedValue({ kind: 'ok', summary: { body: 'new', category: 'fix' } });
+    const { result } = renderHook(() => useAiSummary(ref, true, true, true));
+    await waitFor(() => expect(result.current.summary).not.toBeNull());
+    expect(result.current.isStale).toBe(true);
+    await act(async () => { await result.current.regenerate(); });
+    expect(regen).toHaveBeenCalledTimes(1);
+    expect(result.current.summary).toEqual({ body: 'new', category: 'fix' });
+    expect(result.current.isStale).toBe(false);
+  });
+
+  it('regenerate() retains the present body on 503', async () => {
+    vi.spyOn(api, 'getAiSummaryResult').mockResolvedValue({ kind: 'ok', summary: { body: 'old', category: 'fix' } });
+    vi.spyOn(api, 'regenerateAiSummary').mockResolvedValue({ kind: 'error' });
+    const { result } = renderHook(() => useAiSummary(ref, true, true, true));
+    await waitFor(() => expect(result.current.summary).not.toBeNull());
+    await act(async () => { await result.current.regenerate(); });
+    expect(result.current.summary).toEqual({ body: 'old', category: 'fix' }); // body retained
+    expect(result.current.regenerateError).toBe(true);
   });
 });
