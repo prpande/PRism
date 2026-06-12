@@ -25,11 +25,14 @@ import { makeDefaultPreferences } from './fixtures/preferences';
 // Canonical preferences shape (#332), but with the deliberately synthetic
 // data-dir sentinels kept: the Settings page just renders these paths as
 // copyable strings, axe-core doesn't care, and a clearly fake value avoids
-// implying any real platform's data-dir layout.
+// implying any real platform's data-dir layout. Spread the canonical github
+// block (rather than replacing it) so any future wire field is inherited —
+// only the two path strings are overridden.
+const canonicalPreferences = makeDefaultPreferences();
 const defaultPreferences = {
-  ...makeDefaultPreferences(),
+  ...canonicalPreferences,
   github: {
-    host: 'https://github.com',
+    ...canonicalPreferences.github,
     configPath: '<dataDir>/config.json',
     logsPath: '<dataDir>/logs',
   },
