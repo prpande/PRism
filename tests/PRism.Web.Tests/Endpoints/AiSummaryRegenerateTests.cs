@@ -75,6 +75,24 @@ public sealed class AiSummaryRegenerateTests
     }
 
     [Fact]
+    public async Task Regenerate_live_subscribed_no_consent_returns_204_provider_not_called()
+    {
+        // POST-path parity with GET gate Case B: Live + subscribed but consent NOT seeded resolves to
+        // the Noop seam, so RegenerateAsync returns null → 204 and the provider is never called.
+        // Without this, a regression that spent on the regenerate path without consent would go undetected.
+        var provider = new FakeOkProvider();
+        using var ctx = new AiSummaryTestContext(provider, subscribeAll: true);
+        ctx.ModeState.Mode = AiMode.Live; // consent intentionally NOT seeded
+        using var client = ctx.CreateClient();
+
+        var resp = await client.PostAsync(new Uri("/api/pr/octo/repo/1/ai/summary/regenerate", UriKind.Relative), null);
+
+        resp.StatusCode.Should().Be(HttpStatusCode.NoContent,
+            "consent gate must block the real summarizer on the regenerate path when consent is absent");
+        provider.Calls.Should().Be(0, "Noop summarizer must not call through to the provider on regenerate");
+    }
+
+    [Fact]
     public async Task After_regenerate_a_subsequent_GET_is_a_cache_HIT()
     {
         // Guards against a systematic R7 false-reject on the regenerate path (ce-doc-review adversarial):
@@ -110,7 +128,7 @@ public sealed class AiSummaryRegenerateTests
         var provider = new FakeOkProvider();
         using var ctx = new AiSummaryTestContext(provider, subscribeAll: true);
         ctx.ModeState.Mode = AiMode.Live; ctx.SeedConsent();
-        var client = ctx.CreateClient();
+        using var client = ctx.CreateClient();
         client.DefaultRequestHeaders.Remove("Origin"); // POST is CSRF-covered by OriginCheckMiddleware
 
         var resp = await client.PostAsync(new Uri("/api/pr/octo/repo/1/ai/summary/regenerate", UriKind.Relative), null);
