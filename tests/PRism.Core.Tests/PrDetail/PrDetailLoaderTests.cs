@@ -159,6 +159,35 @@ public class PrDetailLoaderTests
     }
 
     [Fact]
+    public async Task LoadAsync_re_fetches_after_ActivePrUpdated_when_base_sha_changed()
+    {
+        // R2: a base-branch advance moves the diff (base..head) without a head-SHA change.
+        // The loader's (prRef, headSha, generation) key can't see it, so OnActivePrUpdated must
+        // evict on BaseShaChanged — otherwise the next load re-serves the stale base.
+        var review = new FakePrDetailReviewService();
+        review.DefaultPollResponse = new ActivePrPollSnapshot("head1", "base1", "MERGEABLE", "OPEN", 0, 0);
+        review.DefaultDetailResponse = MakeDetail(headSha: "head1", baseSha: "base1");
+        review.DefaultTimelineResponse = MakeTimeline(5);
+        var bus = new ReviewEventBus();
+        var loader = MakeLoader(review, bus: bus);
+
+        var first = await loader.LoadAsync(Pr1, CancellationToken.None);
+        first!.Detail.Pr.BaseSha.Should().Be("base1");
+        review.GetPrDetailCallCount.Should().Be(1);
+
+        // Base advances; head unchanged. The poller observes it and publishes BaseShaChanged.
+        review.DefaultDetailResponse = MakeDetail(headSha: "head1", baseSha: "base2");
+        bus.Publish(new ActivePrUpdated(
+            Pr1, HeadShaChanged: false, CommentCountChanged: false, NewHeadSha: null,
+            CommentCountDelta: 0, IsMerged: false, IsClosed: false,
+            BaseShaChanged: true, NewBaseSha: "base2"));
+
+        var second = await loader.LoadAsync(Pr1, CancellationToken.None);
+        second!.Detail.Pr.BaseSha.Should().Be("base2", "the base-change event evicted the stale snapshot");
+        review.GetPrDetailCallCount.Should().Be(2, because: "eviction forced a fresh fetch despite unchanged head");
+    }
+
+    [Fact]
     public async Task LoadAsync_evicts_snapshot_after_RootCommentPostedBusEvent()
     {
         // #353: a posted PR-root comment is a GitHub issue comment — it does NOT change the
