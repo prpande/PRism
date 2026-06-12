@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react';
 import { useCheatsheet } from './CheatsheetProvider';
 import { useCheatsheetShortcut } from '../../hooks/useCheatsheetShortcut';
 import { SHORTCUTS } from './shortcuts';
+import { KeyboardIcon } from './KeyboardIcon';
 import styles from './Cheatsheet.module.css';
 
 export function Cheatsheet() {
@@ -70,37 +71,46 @@ export function Cheatsheet() {
         >
           ×
         </button>
-        <h2 id="cheatsheet-heading" ref={headingRef} tabIndex={-1} className={styles.heading}>
-          Keyboard shortcuts
-        </h2>
-        {SHORTCUTS.map((group) => (
-          <section key={group.group} className={styles.group}>
-            <h3 className={styles.groupHeading}>{group.group}</h3>
-            <table className={styles.table}>
-              {/* Visually-hidden column headers so screen readers
-                  announce "Shortcut / Context / Action" before each data
-                  cell. Sighted users see the implicit column order. */}
-              <thead className={styles.srOnly}>
-                <tr>
-                  <th scope="col">Shortcut</th>
-                  <th scope="col">Context</th>
-                  <th scope="col">Action</th>
+        <div className={styles.headerRow}>
+          <KeyboardIcon />
+          <h2 id="cheatsheet-heading" ref={headingRef} tabIndex={-1} className={styles.heading}>
+            Keyboard shortcuts
+          </h2>
+        </div>
+        {/* One table for every group so the Shortcut / Context / Action columns
+            size once and stay aligned down the whole panel. Each group is its
+            own <tbody> with a column-group header row; per-group tables would
+            size their columns independently and go ragged. */}
+        <table className={styles.table}>
+          {/* Visually-hidden column headers so screen readers announce
+              "Shortcut / Context / Action" before each data cell. Sighted users
+              see the implicit column order. */}
+          <thead className={styles.srOnly}>
+            <tr>
+              <th scope="col">Shortcut</th>
+              <th scope="col">Context</th>
+              <th scope="col">Action</th>
+            </tr>
+          </thead>
+          {SHORTCUTS.map((group) => (
+            <tbody key={group.group}>
+              <tr>
+                <th scope="colgroup" colSpan={3} className={styles.groupHeading}>
+                  {group.group}
+                </th>
+              </tr>
+              {group.rows.map((row) => (
+                <tr key={`${group.group}-${row.keys}-${row.context}`}>
+                  <td className={styles.keys}>
+                    <kbd>{row.keys}</kbd>
+                  </td>
+                  <td className={styles.context}>{row.context}</td>
+                  <td className={styles.action}>{row.action}</td>
                 </tr>
-              </thead>
-              <tbody>
-                {group.rows.map((row) => (
-                  <tr key={`${group.group}-${row.keys}-${row.context}`}>
-                    <td className={styles.keys}>
-                      <kbd>{row.keys}</kbd>
-                    </td>
-                    <td className={styles.context}>{row.context}</td>
-                    <td className={styles.action}>{row.action}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </section>
-        ))}
+              ))}
+            </tbody>
+          ))}
+        </table>
       </div>
     </div>
   );
