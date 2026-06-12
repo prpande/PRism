@@ -3,6 +3,7 @@ import { Logo } from './Logo';
 import { WindowControls } from './WindowControls';
 import { GearIcon } from '../PrDetail/FilesTab/diffIcons';
 import { HelpIcon } from './HelpIcon';
+import { FeedbackIcon } from './FeedbackIcon';
 import styles from './Header.module.css';
 
 interface HeaderProps {
@@ -13,9 +14,11 @@ interface HeaderProps {
   isAuthed: boolean;
 }
 
-// Active-state (authed nav only — Inbox + Settings):
+// Active-state (authed nav only — Inbox, Settings, Help, Feedback):
 //   Inbox    → pathname === '/' || '/inbox'
 //   Settings → pathname === '/settings' || (pathname === '/setup' && ?replace=…)
+//   Help     → pathname === '/help'
+//   Feedback → pathname === '/feedback'
 // Replace-token UX is a Settings affordance, so /setup?replace=1 keeps Settings
 // active. There is no standalone Setup tab (#130): first-run hides the nav, and
 // re-running setup lives in Settings → Auth ("Replace token").
@@ -41,6 +44,7 @@ export function Header({ isAuthed }: HeaderProps) {
     pathname.startsWith('/settings/') ||
     (pathname === '/setup' && isReplaceMode);
   const helpActive = pathname === '/help';
+  const feedbackActive = pathname === '/feedback';
 
   const classFor = (active: boolean) => (active ? styles.tabActive : styles.tab);
 
@@ -80,6 +84,22 @@ export function Header({ isAuthed }: HeaderProps) {
           aria-label="Global search (placeholder)"
         />
       )}
+      {/* Right-side control cluster, left-to-right: Settings · Help · Feedback (#430).
+          Settings stays closest to the window controls (the "system" affordance);
+          Feedback is rightmost so the new entry point reads as its own thing rather than
+          burying it between the two existing icons. All three share .gear / .gearOn so
+          hover, focus, and route-active styling are identical. */}
+      {isAuthed && (
+        <Link
+          to="/settings/appearance"
+          state={{ backgroundLocation: location }}
+          className={settingsActive ? `${styles.gear} ${styles.gearOn}` : styles.gear}
+          aria-label="Settings"
+          aria-current={settingsActive ? 'page' : undefined}
+        >
+          <GearIcon />
+        </Link>
+      )}
       {isAuthed && (
         <Link
           to="/help"
@@ -93,13 +113,13 @@ export function Header({ isAuthed }: HeaderProps) {
       )}
       {isAuthed && (
         <Link
-          to="/settings/appearance"
+          to="/feedback"
           state={{ backgroundLocation: location }}
-          className={settingsActive ? `${styles.gear} ${styles.gearOn}` : styles.gear}
-          aria-label="Settings"
-          aria-current={settingsActive ? 'page' : undefined}
+          className={feedbackActive ? `${styles.gear} ${styles.gearOn}` : styles.gear}
+          aria-label="Send feedback"
+          aria-current={feedbackActive ? 'page' : undefined}
         >
-          <GearIcon />
+          <FeedbackIcon />
         </Link>
       )}
       {/* Desktop shell only — renders nothing in the browser. The theme/accent/AI
