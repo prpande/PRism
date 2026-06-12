@@ -13,8 +13,7 @@ public sealed class GitHubReviewServiceReviewCommentsContractTests
     private static PrReference Ref => new("owner", "repo", 42);
 
     private static GitHubReviewService NewService(HttpMessageHandler handler)
-        => new(new FakeHttpClientFactory(handler, new Uri("https://api.github.com/")),
-               () => Task.FromResult<string?>("ghp_test"), "https://github.com");
+        => GitHubReviewServiceFactory.Create(handler);
 
     private static ReviewCommentRequest SampleReq =>
         new(CommitOid: "deadbeef", FilePath: "src/Foo.cs", LineNumber: 42, Side: "RIGHT",
