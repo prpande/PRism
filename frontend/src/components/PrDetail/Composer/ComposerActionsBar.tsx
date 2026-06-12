@@ -1,3 +1,4 @@
+import { useId } from 'react';
 import { AiComposerAssistant } from '../../Ai/AiComposerAssistant';
 import { badgeLabel, type ComposerSaveBadge } from '../../../hooks/useComposerAutoSave';
 
@@ -38,8 +39,19 @@ export function ComposerActionsBar({
   onSaveClick,
   onPostNow,
 }: ComposerActionsBarProps) {
+  // #390 — on a merged/closed PR the inline "PR is merged …" note is gone. Keep
+  // the "posts immediately" context as (a) the button's tooltip for mouse users
+  // and (b) an `aria-describedby` sr-only description for keyboard/touch/SR users
+  // (title alone isn't reliably announced). "Comment" stays the accessible NAME
+  // (WCAG 2.5.3 label-in-name); the merged context is a description, not the name.
+  const mergedContext = closedBanner
+    ? `Post directly to this ${prState === 'closed' ? 'closed' : 'merged'} PR`
+    : undefined;
+  const postNowTitle = mergedContext ?? postNowTooltip;
+  const mergedContextId = useId();
   return (
     <div className="composer-actions">
+      {/* left group */}
       <button
         type="button"
         className="composer-preview-toggle"
@@ -49,6 +61,8 @@ export function ComposerActionsBar({
         {previewMode ? 'Edit' : 'Preview'}
       </button>
 
+      <AiComposerAssistant />
+
       <span
         className={`composer-badge composer-badge--${badge}`}
         role="status"
@@ -57,8 +71,9 @@ export function ComposerActionsBar({
         {badgeLabel(badge)}
       </span>
 
-      <AiComposerAssistant />
+      <span className="composer-actions-spacer" aria-hidden="true" />
 
+      {/* right group */}
       <button
         type="button"
         className="composer-discard"
@@ -85,15 +100,16 @@ export function ComposerActionsBar({
         type="button"
         className="composer-post-now"
         aria-disabled={postNowDisabled}
-        title={postNowTooltip}
+        title={postNowTitle}
+        aria-describedby={mergedContext ? mergedContextId : undefined}
         onClick={onPostNow}
         disabled={readOnly || posting}
       >
         {posting ? 'Posting…' : 'Comment'}
       </button>
-      {closedBanner && (
-        <span className="composer-merged-note">
-          {prState === 'closed' ? 'PR is closed' : 'PR is merged'} — comments post immediately
+      {mergedContext && (
+        <span id={mergedContextId} className="sr-only">
+          {mergedContext}
         </span>
       )}
       {postError && (
