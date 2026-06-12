@@ -20,6 +20,7 @@ import { useAiGate } from '../../../../hooks/useAiGate';
 import { useAiHunkAnnotations } from '../../../../hooks/useAiHunkAnnotations';
 import { useWholeFileContent } from '../../../../hooks/useWholeFileContent';
 import { useLockedPaneScroll } from '../../../../hooks/useLockedPaneScroll';
+import { useDiffViewportWidthVar } from '../../../../hooks/useDiffViewportWidthVar';
 import {
   useSyntaxTokens,
   normalizeEol,
@@ -308,6 +309,17 @@ export function DiffPane({
     wholeFileEnabled,
     allLines.length,
   ]);
+  // #390 — keep --diff-viewport-w in sync with the visible diff width so the
+  // sticky comment/composer wrapper pins to the viewport, not the over-wide
+  // table. Re-measures on file/mode/wrap AND content-height changes (a vertical
+  // scrollbar appearing shrinks clientWidth — a ResizeObserver blind spot).
+  useDiffViewportWidthVar(diffBodyRef, [
+    selectedPath,
+    isSplit,
+    lineWrap,
+    wholeFileEnabled,
+    allLines.length,
+  ]);
 
   // ---- Early-return guards (all hooks must be above here) ----
 
@@ -482,7 +494,9 @@ export function DiffPane({
         rows.push(
           <tr key={`widget-${idx}`} className={`diff-comment-row ${styles.diffCommentRow}`}>
             <td colSpan={colSpan}>
-              <ExistingCommentWidget threads={threads} replyContext={replyContext} />
+              <div className={styles.diffStickyViewport}>
+                <ExistingCommentWidget threads={threads} replyContext={replyContext} />
+              </div>
             </td>
           </tr>,
         );
@@ -492,7 +506,9 @@ export function DiffPane({
         if (node) {
           rows.push(
             <tr key={`composer-${idx}`} className={`diff-composer-row ${styles.diffComposerRow}`}>
-              <td colSpan={colSpan}>{node}</td>
+              <td colSpan={colSpan}>
+                <div className={styles.diffStickyViewport}>{node}</div>
+              </td>
             </tr>,
           );
         }
@@ -800,7 +816,9 @@ function DiffLineRow({
       {threadsAtLine && threadsAtLine.length > 0 && (
         <tr className={`diff-comment-row ${styles.diffCommentRow}`}>
           <td colSpan={colSpan}>
-            <ExistingCommentWidget threads={threadsAtLine} replyContext={replyContext} />
+            <div className={styles.diffStickyViewport}>
+              <ExistingCommentWidget threads={threadsAtLine} replyContext={replyContext} />
+            </div>
           </td>
         </tr>
       )}
@@ -1074,7 +1092,9 @@ function ComposerSlot({
   if (!node) return null;
   return (
     <tr className={`diff-composer-row ${styles.diffComposerRow}`}>
-      <td colSpan={colSpan}>{node}</td>
+      <td colSpan={colSpan}>
+        <div className={styles.diffStickyViewport}>{node}</div>
+      </td>
     </tr>
   );
 }
