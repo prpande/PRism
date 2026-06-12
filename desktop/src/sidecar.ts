@@ -2,6 +2,16 @@ import { spawn, ChildProcess } from "node:child_process";
 import * as path from "node:path";
 import { parsePortFromLine, pollHealth } from "./ports";
 
+/** Default budget for EACH startup phase (port-read, then health-poll), not the total.
+ *  The two phases run sequentially and each get their own budget, so the worst-case
+ *  cold-start wall-clock is ~2× this — deliberate headroom for a slow-to-bind backend
+ *  (cold .NET JIT / AV scan on a cold desktop; #282) that is healthy once it binds. */
+export const DEFAULT_PHASE_TIMEOUT_MS = 15_000;
+/** Grace period after SIGTERM before escalating to SIGKILL when stopping the child. */
+const KILL_GRACE_MS = 5_000;
+/** Bound on the captured stderr tail surfaced when startup fails. */
+const STDERR_TAIL_BYTES = 8_192;
+
 export interface Sidecar {
   baseUrl: string;
   stop(): Promise<void>;
@@ -13,6 +23,8 @@ export interface SidecarOptions {
    *  sidecar self-resolves its default (shared with the browser-tab build). */
   dataDir: string | null;
   parentPid: number;
+  /** Budget for EACH startup phase (port-read, then health-poll), in ms. Caps each phase
+   *  independently, not the total — see {@link DEFAULT_PHASE_TIMEOUT_MS}. Defaults to it. */
   startTimeoutMs?: number;
   /** Fired once the sidecar prints its port (region 4a boundary, #282 timing). */
   onPortReceived?: () => void;
@@ -90,15 +102,18 @@ export async function startSidecar(opts: SidecarOptions): Promise<Sidecar> {
   // bounded tail so the failure surfaces the actual output instead of just a timeout.
   let stderrTail = "";
   child.stderr?.on("data", (chunk: Buffer) => {
-    stderrTail = (stderrTail + chunk.toString("utf8")).slice(-8192);
+    stderrTail = (stderrTail + chunk.toString("utf8")).slice(-STDERR_TAIL_BYTES);
   });
 
   try {
-    const port = await readPortFromStdout(child, opts.startTimeoutMs ?? 15000);
+    // Each phase gets its own budget (model B): a slow port-read does not eat into the
+    // health-poll's time. See DEFAULT_PHASE_TIMEOUT_MS for the cold-start rationale.
+    const phaseTimeoutMs = opts.startTimeoutMs ?? DEFAULT_PHASE_TIMEOUT_MS;
+    const port = await readPortFromStdout(child, phaseTimeoutMs);
     fireTimingHook(opts.onPortReceived);
     const baseUrl = `http://127.0.0.1:${port}`;
 
-    const healthy = await pollHealth(baseUrl, opts.startTimeoutMs ?? 15000);
+    const healthy = await pollHealth(baseUrl, phaseTimeoutMs);
     if (!healthy) {
       throw new Error("PRism backend failed its health check.");
     }
@@ -121,7 +136,7 @@ export async function startSidecar(opts: SidecarOptions): Promise<Sidecar> {
   }
 }
 
-function readPortFromStdout(child: ChildProcess, timeoutMs: number): Promise<number> {
+export function readPortFromStdout(child: ChildProcess, timeoutMs: number): Promise<number> {
   return new Promise((resolve, reject) => {
     let buf = "";
     const cleanup = () => {
@@ -132,7 +147,14 @@ function readPortFromStdout(child: ChildProcess, timeoutMs: number): Promise<num
     };
     const onData = (chunk: Buffer) => {
       buf += chunk.toString("utf8");
-      for (const line of buf.split(/\r?\n/)) {
+      // Parse only COMPLETE (newline-terminated) lines. split() leaves the trailing
+      // partial line as the last element; retain it in buf so a chunk boundary that
+      // falls inside the port digits (…:51 + 83…) can't be mis-parsed as port 51. The
+      // listening line is Console.WriteLine-emitted (Program.cs), so it always arrives
+      // newline-terminated — the partial tail is always resolved by a later chunk.
+      const lines = buf.split(/\r?\n/);
+      buf = lines.pop() ?? "";
+      for (const line of lines) {
         const port = parsePortFromLine(line);
         if (port !== null) {
           cleanup();
@@ -174,13 +196,16 @@ function fireTimingHook(hook: (() => void) | undefined): void {
   }
 }
 
-async function stopChild(child: ChildProcess): Promise<void> {
-  if (child.exitCode !== null) return;
+export async function stopChild(child: ChildProcess): Promise<void> {
+  // A child terminated by a SIGNAL has exitCode === null but signalCode set. Guarding on
+  // exitCode alone let a signal-killed corpse fall through: kill("SIGTERM") no-ops, 'exit'
+  // never re-emits, and quit blocked the full KILL_GRACE_MS until the SIGKILL timer fired.
+  if (child.exitCode !== null || child.signalCode !== null) return;
   return new Promise((resolve) => {
     const force = setTimeout(() => {
       child.kill("SIGKILL");
       resolve();
-    }, 5000);
+    }, KILL_GRACE_MS);
     child.once("exit", () => {
       clearTimeout(force);
       resolve();
