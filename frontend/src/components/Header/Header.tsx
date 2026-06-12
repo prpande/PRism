@@ -47,6 +47,16 @@ export function Header({ isAuthed }: HeaderProps) {
   const helpActive = pathname === '/help';
   const feedbackActive = pathname === '/feedback';
 
+  // The page each cluster modal (Settings/Help/Feedback) should open OVER. On a
+  // real page this is the current location; but if a modal route is already the
+  // location (it carries its own backgroundLocation), forward THAT background so
+  // opening another modal doesn't nest the modal URL as the new background (which
+  // would snap the page behind the scrim back to a modal route). Mirrors the
+  // `bg ?? fallback` pattern in FeedbackModalRoutes / HelpModal.
+  const effectiveBg =
+    (location.state as { backgroundLocation?: typeof location } | null)?.backgroundLocation ??
+    location;
+
   const classFor = (active: boolean) => (active ? styles.tabActive : styles.tab);
 
   return (
@@ -85,29 +95,30 @@ export function Header({ isAuthed }: HeaderProps) {
           aria-label="Global search (placeholder)"
         />
       )}
-      {/* Right-side control cluster, left-to-right: Settings · Help · Feedback (#430).
-          Settings stays closest to the window controls (the "system" affordance);
-          Feedback is rightmost so the new entry point reads as its own thing rather than
-          burying it between the two existing icons. All three share .gear / .gearOn so
-          hover, focus, and route-active styling are identical — rendered via NavIconLink
-          so that shared shape lives in one place. */}
+      {/* Right-side control cluster, left-to-right: Settings · Help · Feedback ·
+          WindowControls (#430). Settings leads the cluster as the primary "system"
+          affordance; Feedback is rightmost (closest to the window controls) so the new
+          entry point reads as its own thing rather than burying it between the two
+          existing icons. All three share .gear / .gearOn so hover, focus, and
+          route-active styling are identical — rendered via NavIconLink so that shared
+          shape lives in one place. */}
       {isAuthed && (
         <NavIconLink
           to="/settings/appearance"
           label="Settings"
           active={settingsActive}
-          bg={location}
+          bg={effectiveBg}
         >
           <GearIcon />
         </NavIconLink>
       )}
       {isAuthed && (
-        <NavIconLink to="/help" label="Help" active={helpActive} bg={location}>
+        <NavIconLink to="/help" label="Help" active={helpActive} bg={effectiveBg}>
           <HelpIcon />
         </NavIconLink>
       )}
       {isAuthed && (
-        <NavIconLink to="/feedback" label="Send feedback" active={feedbackActive} bg={location}>
+        <NavIconLink to="/feedback" label="Send feedback" active={feedbackActive} bg={effectiveBg}>
           <FeedbackIcon />
         </NavIconLink>
       )}

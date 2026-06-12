@@ -51,8 +51,8 @@ async function setupInboxMock(page: import('@playwright/test').Page): Promise<vo
 
 test.describe('Feedback modal (#211)', () => {
   // #430: dedicated header entry point (bug icon), visible only when authed →
-  // opens the feedback modal over the inbox in one click. Mirrors the header ?
-  // (Help) icon test in help.spec.ts. Query by role=link: on /feedback the dialog
+  // opens the feedback modal over the inbox in one click. Mirrors the header
+  // Help-icon test in help.spec.ts. Query by role=link: on /feedback the dialog
   // and its submit button also carry a "send feedback" accessible name, so a bare
   // /feedback/i text query would be ambiguous once the modal mounts.
   test('authed user reaches /feedback via the header bug icon — modal opens over inbox', async ({
