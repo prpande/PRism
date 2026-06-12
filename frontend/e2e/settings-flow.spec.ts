@@ -1,28 +1,9 @@
 import { test, expect, type Route } from '@playwright/test';
+import { setupBaseRoutes } from './helpers/base-mocks';
 
 // ---------------------------------------------------------------------------
 // Fixtures
 // ---------------------------------------------------------------------------
-
-const authedAuthState = {
-  hasToken: true,
-  host: 'https://github.com',
-  hostMismatch: null,
-};
-
-const allOffCapabilities = {
-  ai: {
-    summary: false,
-    fileFocus: false,
-    hunkAnnotations: false,
-    preSubmitValidators: false,
-    composerAssist: false,
-    draftSuggestions: false,
-    draftReconciliation: false,
-    inboxEnrichment: false,
-    inboxRanking: false,
-  },
-};
 
 function makeDefaultPreferences() {
   return {
@@ -61,13 +42,7 @@ type SectionId = keyof Preferences['inbox']['sections'];
 async function setupSettingsMocks(page: import('@playwright/test').Page) {
   const store: Preferences = makeDefaultPreferences();
 
-  await page.route('**/api/auth/state', (route: Route) =>
-    route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify(authedAuthState),
-    }),
-  );
+  await setupBaseRoutes(page);
 
   await page.route('**/api/preferences', async (route: Route) => {
     if (route.request().method() === 'POST') {
@@ -97,18 +72,6 @@ async function setupSettingsMocks(page: import('@playwright/test').Page) {
       body: JSON.stringify(store),
     });
   });
-
-  await page.route('**/api/capabilities', (route: Route) =>
-    route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify(allOffCapabilities),
-    }),
-  );
-
-  await page.route('**/api/events', (route: Route) =>
-    route.fulfill({ status: 200, contentType: 'text/event-stream', body: ':heartbeat\n\n' }),
-  );
 
   return { store };
 }

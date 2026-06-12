@@ -1,4 +1,6 @@
 import { test, expect, type Route } from '@playwright/test';
+import { setupBaseRoutes } from './helpers/base-mocks';
+import { allOffCapabilities } from './fixtures/preferences';
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -32,12 +34,6 @@ const sampleInbox = {
   enrichments: {},
   lastRefreshedAt: new Date().toISOString(),
   tokenScopeFooterEnabled: true,
-};
-
-const authedAuthState = {
-  hasToken: true,
-  host: 'https://github.com',
-  hostMismatch: null,
 };
 
 // S6 PR1: GET /api/preferences widened from flat { theme, accent, aiPreview } to
@@ -78,69 +74,25 @@ const defaultPreferences = {
   },
 };
 
-const allOffCapabilities = {
-  ai: {
-    summary: false,
-    fileFocus: false,
-    hunkAnnotations: false,
-    preSubmitValidators: false,
-    composerAssist: false,
-    draftSuggestions: false,
-    draftReconciliation: false,
-    inboxEnrichment: false,
-    inboxRanking: false,
-  },
-};
-
 // ---------------------------------------------------------------------------
 // Shared mock wiring
 // ---------------------------------------------------------------------------
 
 /**
- * Registers route mocks common to most tests:
- *   /api/auth/state  — authenticated with github.com
- *   /api/preferences — GET returns defaultPreferences (or override); POST echoes back
- *   /api/capabilities — returns allOffCapabilities (or override)
- *   /api/events      — empty SSE heartbeat (keeps the connection-open semantics happy)
- *
- * Tests that need custom preferences/capabilities behaviour should either pass
- * overrides via `opts` or register their own route handlers before calling goto.
- * Playwright matches routes in reverse registration order, so a handler registered
- * after setupBaseMocks will shadow the one registered here for the same pattern.
+ * Wires the three constant read-side routes (auth/state, capabilities, events)
+ * via setupBaseRoutes, then the `/api/preferences` snapshot. Tests that need
+ * custom preferences register their own `/api/preferences` handler AFTER this
+ * call — Playwright matches routes in reverse registration order, so the later
+ * handler shadows this one.
  */
-async function setupBaseMocks(
-  page: import('@playwright/test').Page,
-  opts: {
-    preferences?: typeof defaultPreferences;
-    capabilities?: typeof allOffCapabilities;
-  } = {},
-) {
-  await page.route('**/api/auth/state', (route: Route) =>
+async function setupBaseMocks(page: import('@playwright/test').Page) {
+  await setupBaseRoutes(page);
+  await page.route('**/api/preferences', (route: Route) =>
     route.fulfill({
       status: 200,
       contentType: 'application/json',
-      body: JSON.stringify(authedAuthState),
+      body: JSON.stringify(defaultPreferences),
     }),
-  );
-  await page.route('**/api/preferences', (route: Route) => {
-    // POST: the client sends a partial patch; echo back the resolved preferences.
-    // GET: return current preferences snapshot.
-    return route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify(opts.preferences ?? defaultPreferences),
-    });
-  });
-  await page.route('**/api/capabilities', (route: Route) =>
-    route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify(opts.capabilities ?? allOffCapabilities),
-    }),
-  );
-  await page.route('**/api/events', (route: Route) =>
-    // Empty SSE stream — keeps the connection-open semantics happy without injecting events.
-    route.fulfill({ status: 200, contentType: 'text/event-stream', body: ':heartbeat\n\n' }),
   );
 }
 
@@ -291,13 +243,10 @@ test('activity rail is gated by inbox.showActivityRail, independent of AI previe
   // is deliberately no Settings UI for it).
   let showActivityRail = false;
 
-  await page.route('**/api/auth/state', (route: Route) =>
-    route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify(authedAuthState),
-    }),
-  );
+  // setupBaseRoutes wires auth/state + events (constant) + an all-off
+  // capabilities; this test overrides preferences and capabilities below
+  // (registered after, so LIFO route matching makes the overrides win).
+  await setupBaseRoutes(page);
   await page.route('**/api/preferences', async (route: Route) => {
     await route.fulfill({
       status: 200,
@@ -320,9 +269,6 @@ test('activity rail is gated by inbox.showActivityRail, independent of AI previe
         ai: { ...allOffCapabilities.ai, inboxRanking: true, inboxEnrichment: true },
       }),
     }),
-  );
-  await page.route('**/api/events', (route: Route) =>
-    route.fulfill({ status: 200, contentType: 'text/event-stream', body: ':heartbeat\n\n' }),
   );
   await page.route('**/api/inbox', (route: Route) =>
     route.fulfill({
