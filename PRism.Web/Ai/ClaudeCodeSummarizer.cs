@@ -18,10 +18,14 @@ namespace PRism.Web.Ai;
 /// already computed and egressed.</summary>
 internal sealed partial class ClaudeCodeSummarizer : IPrSummarizer
 {
-    /// <summary>Diff source: (prRef, ct) → (diff, title, description, headSha). Production wiring closes
-    /// over PrDetailLoader; tests inject a stub.</summary>
-    internal delegate Task<(string diff, string title, string description, string headSha)> DiffResolver(
+    /// <summary>Diff source: (prRef, ct) → (diff, title, description, baseSha, headSha). Production wiring
+    /// closes over PrDetailLoader; tests inject a stub.</summary>
+    internal delegate Task<(string diff, string title, string description, string baseSha, string headSha)> DiffResolver(
         PrReference pr, CancellationToken ct);
+
+    /// <summary>Structured cache key. Avoids the ambiguous-delimiter risk of appending a second '#'
+    /// to PrId (already "owner/repo#number"). Mirrors PrDetailLoader.DiffMemoKey.</summary>
+    internal readonly record struct SummaryCacheKey(PrReference PrRef, string BaseSha, string HeadSha);
 
     internal const string ClaudeProviderId = AiProviderIds.Claude;
     internal const string SummaryModel = "claude-sonnet-4-6"; // KTD-2 — tunable
@@ -39,7 +43,7 @@ internal sealed partial class ClaudeCodeSummarizer : IPrSummarizer
     private readonly DiffResolver _resolveDiff;
     private readonly ILogger<ClaudeCodeSummarizer> _logger;
     private readonly IAiInteractionLog _interactionLog;
-    private readonly ConcurrentDictionary<string, PrSummary> _cache = new();
+    private readonly ConcurrentDictionary<SummaryCacheKey, PrSummary> _cache = new();
 
     internal ClaudeCodeSummarizer(ILlmProvider provider, ITokenUsageTracker tracker, DiffResolver resolveDiff,
         ILogger<ClaudeCodeSummarizer> logger, IAiInteractionLog interactionLog)
@@ -54,8 +58,8 @@ internal sealed partial class ClaudeCodeSummarizer : IPrSummarizer
     public async Task<PrSummary?> SummarizeAsync(PrReference pr, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(pr);
-        var (diff, title, description, headSha) = await _resolveDiff(pr, ct).ConfigureAwait(false);
-        var key = $"{pr.PrId}#{headSha}"; // "owner/repo#number#headSha" — PrId is "owner/repo#number"; headSha appended as a per-commit suffix
+        var (diff, title, description, baseSha, headSha) = await _resolveDiff(pr, ct).ConfigureAwait(false);
+        var key = new SummaryCacheKey(pr, baseSha, headSha);
         if (_cache.TryGetValue(key, out var cached))
         {
             _interactionLog.Record(new AiInteractionRecord(
@@ -91,7 +95,7 @@ internal sealed partial class ClaudeCodeSummarizer : IPrSummarizer
 
         var (body, category) = PrCategoryParser.Parse(result.Text);
         var summary = new PrSummary(body, category);
-        _cache[key] = summary; // cache the successful result first — tracking is best-effort (spec §9)
+        _cache[key] = summary; // R7 compare-and-set added in Task 9
 
         _interactionLog.Record(new AiInteractionRecord(
             ComponentName, ClaudeProviderId, SummaryModel, pr.PrId, headSha,

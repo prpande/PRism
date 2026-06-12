@@ -87,7 +87,7 @@ public sealed class AiSummaryGateTests
             var stubSummarizer = new ClaudeCodeSummarizer(
                 provider,
                 new NullTracker(),
-                (_, _) => Task.FromResult(("+ added", "Title", "Desc", "sha1")),
+                (_, _) => Task.FromResult(("+ added", "Title", "Desc", "base1", "sha1")),
                 NullLogger<ClaudeCodeSummarizer>.Instance,
                 new NullAiInteractionLog());
 

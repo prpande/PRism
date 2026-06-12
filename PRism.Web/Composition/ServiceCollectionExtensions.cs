@@ -94,7 +94,7 @@ internal static class ServiceCollectionExtensions
                 var headSha = snapshot.Detail.Pr.HeadSha;
                 var diffDto = await loader.GetOrFetchDiffAsync(pr, new DiffRangeRequest(baseSha, headSha), ct).ConfigureAwait(false);
                 var diffText = PrDiffText.Render(diffDto);
-                return (diffText, snapshot.Detail.Pr.Title, snapshot.Detail.Pr.Body, headSha);
+                return (diffText, snapshot.Detail.Pr.Title, snapshot.Detail.Pr.Body, baseSha, headSha);
             };
             return new ClaudeCodeSummarizer(
                 sp.GetRequiredService<ILlmProvider>(),

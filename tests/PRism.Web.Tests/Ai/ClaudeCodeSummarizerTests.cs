@@ -45,12 +45,12 @@ public sealed class ClaudeCodeSummarizerTests
 
     private static readonly PrReference Pr = new("o", "r", 1);
 
-    // Test seam: the summarizer takes a Func that yields (diff, title, description, headSha) so the
+    // Test seam: the summarizer takes a Func that yields (diff, title, description, baseSha, headSha) so the
     // test bypasses PrDetailLoader. Production wiring closes over PrDetailLoader (Task 9).
     private static ClaudeCodeSummarizer Build(ILlmProvider p, ITokenUsageTracker t,
-        string diff = "+ added line", string title = "Fix poller", string desc = "Body", string headSha = "abc123",
-        IAiInteractionLog? log = null)
-        => new(p, t, (_, _) => Task.FromResult((diff, title, desc, headSha)),
+        string diff = "+ added line", string title = "Fix poller", string desc = "Body",
+        string baseSha = "base1", string headSha = "abc123", IAiInteractionLog? log = null)
+        => new(p, t, (_, _) => Task.FromResult((diff, title, desc, baseSha, headSha)),
             NullLogger<ClaudeCodeSummarizer>.Instance, log ?? new FakeAiInteractionLog());
 
     [Fact]
@@ -173,5 +173,33 @@ public sealed class ClaudeCodeSummarizerTests
         var summary2 = await s.SummarizeAsync(Pr, CancellationToken.None);
         summary2!.Body.Should().Be("Summary body.");
         p.Calls.Should().Be(1, "summary was cached despite tracker failure — second call is a cache hit");
+    }
+
+    [Fact]
+    public async Task Same_head_different_base_is_a_MISS_and_calls_provider_twice()
+    {
+        var provider = new FakeProvider();
+        var tracker = new FakeTracker();
+        // Two summarizers over the same provider, differing only in resolved baseSha.
+        var s1 = Build(provider, tracker, baseSha: "b1", headSha: "h1");
+        var s2 = Build(provider, tracker, baseSha: "b2", headSha: "h1");
+
+        await s1.SummarizeAsync(Pr, CancellationToken.None);
+        await s2.SummarizeAsync(Pr, CancellationToken.None);
+
+        provider.Calls.Should().Be(2, "a base move with unchanged head is a different diff → cache MISS");
+    }
+
+    [Fact]
+    public async Task Same_base_and_head_is_a_HIT_and_calls_provider_once()
+    {
+        var provider = new FakeProvider();
+        var tracker = new FakeTracker();
+        var summarizer = Build(provider, tracker, baseSha: "b1", headSha: "h1");
+
+        await summarizer.SummarizeAsync(Pr, CancellationToken.None);
+        await summarizer.SummarizeAsync(Pr, CancellationToken.None);
+
+        provider.Calls.Should().Be(1, "identical (base, head) is a cache HIT");
     }
 }
