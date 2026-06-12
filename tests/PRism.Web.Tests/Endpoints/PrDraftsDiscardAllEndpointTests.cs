@@ -12,7 +12,6 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 using PRism.Core.Events;
 using PRism.Core.PrDetail;
 using PRism.Core.State;
-using PRism.Web.Middleware;
 using PRism.Web.Tests.TestHelpers;
 
 namespace PRism.Web.Tests.Endpoints;
@@ -117,16 +116,8 @@ internal sealed class DiscardAllUnsubscribedContext : IDisposable
 
     public static DiscardAllUnsubscribedContext Create() => new();
 
-    public HttpClient CreateClient()
-    {
-        var token = _derived.Services.GetRequiredService<SessionTokenProvider>().Current;
-        var c = _derived.CreateClient();
-        c.DefaultRequestHeaders.Add("X-PRism-Session", token);
-        c.DefaultRequestHeaders.Add("Cookie", $"prism-session={token}");
-        var origin = c.BaseAddress?.GetLeftPart(UriPartial.Authority);
-        if (!string.IsNullOrEmpty(origin)) c.DefaultRequestHeaders.Add("Origin", origin);
-        return c;
-    }
+    public HttpClient CreateClient() =>
+        _derived.CreateAuthenticatedClient();
 
     public void Dispose()
     {

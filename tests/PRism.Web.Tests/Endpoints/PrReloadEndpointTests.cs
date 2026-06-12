@@ -10,7 +10,6 @@ using PRism.Core.Contracts;
 using PRism.Core.Json;
 using PRism.Core.PrDetail;
 using PRism.Web.Endpoints;
-using PRism.Web.Middleware;
 using PRism.Web.Tests.TestHelpers;
 
 namespace PRism.Web.Tests.Endpoints;
@@ -27,17 +26,8 @@ public class PrReloadEndpointTests : IClassFixture<PRismWebApplicationFactory>
         return c;
     }
 
-    private static HttpClient AuthedClient(WebApplicationFactory<Program> factory, string tabId)
-    {
-        var token = factory.Services.GetRequiredService<SessionTokenProvider>().Current;
-        var c = factory.CreateClient();
-        c.DefaultRequestHeaders.Add("X-PRism-Session", token);
-        c.DefaultRequestHeaders.Add("Cookie", $"prism-session={token}");
-        var origin = c.BaseAddress?.GetLeftPart(UriPartial.Authority);
-        if (!string.IsNullOrEmpty(origin)) c.DefaultRequestHeaders.Add("Origin", origin);
-        c.DefaultRequestHeaders.Add("X-PRism-Tab-Id", tabId);
-        return c;
-    }
+    private static HttpClient AuthedClient(WebApplicationFactory<Program> factory, string tabId) =>
+        factory.CreateAuthenticatedClient(tabId);
 
     private static async Task<T?> ReadApiJsonAsync<T>(HttpResponseMessage resp)
         => await resp.Content.ReadFromJsonAsync<T>(JsonSerializerOptionsFactory.Api).ConfigureAwait(false);

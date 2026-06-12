@@ -77,14 +77,8 @@ public class AuthReplaceEndpointTests
         {
             ArgumentNullException.ThrowIfNull(client);
             base.ConfigureClient(client);
-            // Mirror PRismWebApplicationFactory's auto-credential injection so tests don't
-            // each have to add Origin / X-PRism-Session.
-            var token = Services.GetRequiredService<SessionTokenProvider>().Current;
-            client.DefaultRequestHeaders.Add("X-PRism-Session", token);
-            client.DefaultRequestHeaders.Add("Cookie", $"prism-session={token}");
-            var origin = client.BaseAddress?.GetLeftPart(UriPartial.Authority);
-            if (!string.IsNullOrEmpty(origin))
-                client.DefaultRequestHeaders.Add("Origin", origin);
+            // Mirror PRismWebApplicationFactory's auto-credential injection.
+            client.AddPrismSessionHeaders(Services.GetRequiredService<SessionTokenProvider>().Current);
         }
 
         protected override void Dispose(bool disposing)
@@ -686,7 +680,7 @@ public class AuthReplaceEndpointTests
         {
             // Use the test factory's own DataDir convention; tests await InitWith*Async
             // before exercising. dataDir uniqueness per-test isolates the on-disk config.json.
-            var dataDir = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"PRism-replace-throw-{Guid.NewGuid():N}");
+            var dataDir = TempDataDir.NewPath("PRism-replace-throw");
             System.IO.Directory.CreateDirectory(dataDir);
             _inner = new PRism.Core.Config.ConfigStore(dataDir);
         }
