@@ -30,12 +30,14 @@ runs:
   steps:
     # Inputs are always strings; gate on the string 'true'. A caller's YAML boolean
     # `false` coerces to the string 'false', so == 'true' is the correct test.
-    - if: ${{ inputs.dotnet == 'true' }}
+    - name: Set up .NET SDK
+      if: ${{ inputs.dotnet == 'true' }}
       uses: actions/setup-dotnet@c2fa09f4bde5ebb9d1777cf28262a3eb3db3ced7  # actions/setup-dotnet v5.2.0
       with:
         dotnet-version: '10.0.x'
 
-    - if: ${{ inputs.node == 'true' }}
+    - name: Set up Node
+      if: ${{ inputs.node == 'true' }}
       uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e  # actions/setup-node v6.4.0
       with:
         node-version: '24'
