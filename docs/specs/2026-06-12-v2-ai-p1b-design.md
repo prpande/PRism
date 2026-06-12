@@ -38,14 +38,14 @@ P1a (First-Light) shipped the live PR summarizer with a per-process **in-memory*
 **Out of scope — deferred:**
 
 - **#397 (optimization / persistence)** — formal `IAiCache` + file-backed `<dataDir>/llm-cache` + restart survival; the per-PR **context artifact**; the **measured prompt-cache hit** (blocked on #379); and **identity-scoped cache invalidation** (a persistent cache that survives restart genuinely needs an `IdentityChanged` wipe; the in-memory cache clears on restart, so P1b-1 inherits P1a's accepted in-memory behavior unchanged). `IAiCache` is **not** introduced here — per P1a §4 its shape is driven by the disk impl's needs, which arrive with #397; the in-memory cache gains eviction **in place**.
-- **The disclosure-version 409 re-fetch / re-consent path** (P1a §7) — a consent-UX completeness item, unrelated to caching; tracked separately.
-- **Differentiated stale-reason copy** ("base updated" vs "new commits") — the chip is a single generic "Out of date" label this slice (§8); head changes already have their own reload affordance (`BannerRefresh`), so the stale chip is effectively the base-change surface.
+- **The disclosure-version 409 re-fetch / re-consent path** (P1a §7) — a consent-UX completeness item, unrelated to caching; tracked in #427.
+- **Differentiated stale-reason copy** ("base updated" vs "new commits") — the chip is a single generic "Out of date" label this slice (§8); head changes already have their own reload affordance (`BannerRefresh`), so the stale chip is effectively the base-change surface. Tracked in #428.
 
 **Non-goals:**
 
 - **Auto-regenerate.** Eviction never auto-calls the provider (§14). Roadmap §P1's "evicts **and regenerates**" is resolved as **user-triggered** Regenerate — consistent with the project's no-auto-retry / spend-only-while-viewing discipline.
 - **Inbox classifier + cross-surface reconciliation** (roadmap §3.2) — P2.
-- **Multi-provider; bounded LRU/TTL on the in-memory tier** (deferred to #397's cache); a permanent "revoke consent" action (P1a §5).
+- **Multi-provider; bounded LRU/TTL on the in-memory tier** (deferred to #397's cache); a permanent "revoke consent" action (P1a §5, tracked in #429).
 
 ## 3. Architecture overview
 
@@ -202,8 +202,8 @@ The regenerate-failure row is deliberately distinct from initial-load failure: a
 - **Identity-scoped invalidation deferred to #397 (post-review).** An earlier draft added an `IdentityChanged` cache wipe; review flagged it as orthogonal to R2 and as introducing a store-after-wipe race. The in-memory cache clears on restart (pre-existing P1a behavior), so the wipe is deferred to #397's persistent cache where it is genuinely required.
 - **Audit-log `baseSha` deferred to #397 (post-review)** — its only consumer (cache-hit correlation) lives there.
 - **R7 by SHA compare-and-set, not a generation counter (post-review)** — a generation counter would drop valid writes racing an unrelated eviction; the SHA compare-and-set rejects only genuinely-stale writes.
-- **Stale badge + Regenerate are Live-only** (staleness is moot for Preview sample data); chip copy is a generic **"Out of date"** (differentiated base-vs-head copy deferred — head changes have their own `BannerRefresh` reload path).
+- **Stale badge + Regenerate are Live-only** (staleness is moot for Preview sample data); chip copy is a generic **"Out of date"** (differentiated base-vs-head copy deferred to #428 — head changes have their own `BannerRefresh` reload path).
 - **Regenerate is `POST .../ai/summary/regenerate`** (state-changing re-spend, CSRF-covered, shared gate helper), recorded `IsRetry:true`.
 - **REST `base.sha` freshness is a required pre-implementation spike** with a committed GraphQL `baseRefOid` fallback (§5) — it is the producer's load-bearing assumption.
 - **No `DisclosureVersion` bump** — the data sent to the provider is unchanged; `baseSha` is keying/eviction metadata, never provider input. Guarded by a prompt-field allowlist trip-wire.
-- **The 409 disclosure re-consent path stays out** of P1b-1 (consent-UX, unrelated to caching; tracked separately).
+- **The 409 disclosure re-consent path stays out** of P1b-1 (consent-UX, unrelated to caching; tracked in #427).
