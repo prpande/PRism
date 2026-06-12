@@ -23,7 +23,10 @@ test("isOpenableUrl rejects javascript:", () => {
 });
 
 test("isOpenableUrl rejects data:", () => {
-  assert.equal(isOpenableUrl("data:text/html,<script>alert(1)</script>"), false);
+  assert.equal(
+    isOpenableUrl("data:text/html,<script>alert(1)</script>"),
+    false,
+  );
 });
 
 test("isOpenableUrl rejects malformed input", () => {
@@ -32,7 +35,10 @@ test("isOpenableUrl rejects malformed input", () => {
 });
 
 test("windowOpenDecision always denies the in-app window", () => {
-  assert.equal(windowOpenDecision("https://github.com/o/r/pull/1").action, "deny");
+  assert.equal(
+    windowOpenDecision("https://github.com/o/r/pull/1").action,
+    "deny",
+  );
   assert.equal(windowOpenDecision("javascript:alert(1)").action, "deny");
   assert.equal(windowOpenDecision("not a url").action, "deny");
 });

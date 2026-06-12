@@ -52,8 +52,9 @@ if (!gotLock) {
   // these channels act on the window, so only the window's own renderer should
   // reach them. It's a single-window app today, but this keeps the surface tight
   // if a second BrowserWindow/webview is ever added.
-  const fromMainWindow = (e: Electron.IpcMainEvent | Electron.IpcMainInvokeEvent) =>
-    mainWindow !== null && e.sender === mainWindow.webContents;
+  const fromMainWindow = (
+    e: Electron.IpcMainEvent | Electron.IpcMainInvokeEvent,
+  ) => mainWindow !== null && e.sender === mainWindow.webContents;
   ipcMain.on("window:minimize", (e) => {
     if (fromMainWindow(e)) mainWindow?.minimize();
   });
@@ -85,9 +86,17 @@ if (!gotLock) {
     }
   });
 
-  app.whenReady().then(bootstrap);
+  // bootstrap self-handles every failure (its catch emits the startup summary and
+  // quits), so the promise is intentionally not awaited here.
+  void app.whenReady().then(bootstrap);
 
   app.on("window-all-closed", () => app.quit());
+  // Async before-quit handler is deliberate and safe: preventDefault() runs
+  // SYNCHRONOUSLY before the first await, so the quit is reliably deferred; the
+  // awaited sidecar stop then runs and app.quit() re-triggers the (now sidecar-
+  // null) quit. Electron does not await the returned promise, which is exactly
+  // what we want — hence the targeted no-misused-promises suppression.
+  // eslint-disable-next-line @typescript-eslint/no-misused-promises
   app.on("before-quit", async (e) => {
     if (sidecar) {
       e.preventDefault();
@@ -200,7 +209,10 @@ async function bootstrap(): Promise<void> {
   // Tell the renderer when the window maximizes/unmaximizes so its maximize
   // button can switch to a restore glyph.
   const emitMaximized = () => {
-    mainWindow?.webContents.send("window:maximized-changed", mainWindow.isMaximized());
+    mainWindow?.webContents.send(
+      "window:maximized-changed",
+      mainWindow.isMaximized(),
+    );
   };
   mainWindow.on("maximize", emitMaximized);
   mainWindow.on("unmaximize", emitMaximized);
