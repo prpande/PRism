@@ -44,6 +44,11 @@ Infrastructure prerequisites. These items unblock everything in P1 and P2. Work 
 - Enables: every P1 and P2 AI item.
 - Pairs with: P0-2 (caching) — most AI features want both providers and caching.
 
+> **Streaming-path tracking (2026-06-12).** `V2` shipped only the one-shot `CompleteAsync` path. The
+> `IStreamingLlmProvider.StartSession` path described above is **unshipped** and tracked as a
+> separate roadmap root **P0-1b** (a hard prerequisite for P2-2 chat). See
+> [`specs/2026-06-12-ai-roadmap-issue-tracking-design.md`](../specs/2026-06-12-ai-roadmap-issue-tracking-design.md).
+
 ---
 
 ## P0-2: Real `IAiCache` implementation
