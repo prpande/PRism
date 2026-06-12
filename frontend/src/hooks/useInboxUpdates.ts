@@ -14,6 +14,14 @@ interface Options {
 //   last update). useInbox.reload already has a generation guard for setData races, so this guard
 //   exists only for trailing-coalescing correctness (spec §3.2).
 // - `announce` gives screen-reader users the signal the removed banner (role=status) carried.
+const ANNOUNCE_TEXT = 'Inbox updated';
+// A polite live region only re-announces when its text node changes. Every auto-refresh
+// announces the same words, so we alternate a trailing zero-width space (#450): the rendered
+// string differs each completed refresh (forcing a re-announce) while the spoken text stays
+// "Inbox updated". The deleted banner re-announced via its changing "N new updates" summary;
+// this preserves that parity without speaking a count.
+const ANNOUNCE_VARIANTS = [ANNOUNCE_TEXT, ANNOUNCE_TEXT + String.fromCharCode(0x200b)];
+
 export function useInboxUpdates({ onUpdate }: Options): { announce: string } {
   const stream = useEventSource();
   const [announce, setAnnounce] = useState('');
@@ -26,6 +34,7 @@ export function useInboxUpdates({ onUpdate }: Options): { announce: string } {
   const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const inFlight = useRef(false);
   const pending = useRef(false);
+  const announceCount = useRef(0);
 
   const run = useCallback(async () => {
     if (inFlight.current) {
@@ -35,7 +44,8 @@ export function useInboxUpdates({ onUpdate }: Options): { announce: string } {
     inFlight.current = true;
     try {
       await onUpdateRef.current();
-      setAnnounce('Inbox updated');
+      setAnnounce(ANNOUNCE_VARIANTS[announceCount.current % 2]);
+      announceCount.current += 1;
     } catch {
       // Swallow — keep current data, no banner/toast. Manual Refresh is the recovery path.
     } finally {

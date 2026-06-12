@@ -82,4 +82,29 @@ describe('useInboxUpdates (auto-refresh)', () => {
     });
     expect(onUpdate).toHaveBeenCalledTimes(2);
   });
+
+  it('varies the announce text between consecutive refreshes so the live region re-announces', async () => {
+    // A polite role=status region only re-announces when its text node changes. Every
+    // auto-refresh says the same words, so the hook must alternate the rendered string
+    // (a trailing zero-width space) or the 2nd+ refresh would be silent to a screen reader.
+    const onUpdate = vi.fn().mockResolvedValue(undefined);
+    const { result } = renderHook(() => useInboxUpdates({ onUpdate }), { wrapper });
+    await vi.waitFor(() => expect(FakeEventSource.instances).toHaveLength(1));
+
+    act(() => emit());
+    await act(async () => {
+      vi.advanceTimersByTime(500);
+    });
+    const first = result.current.announce;
+    expect(first).toContain('Inbox updated');
+
+    act(() => emit());
+    await act(async () => {
+      vi.advanceTimersByTime(500);
+    });
+    const second = result.current.announce;
+    expect(second).toContain('Inbox updated');
+    // Distinct string → the live region fires again; same spoken words to the user.
+    expect(second).not.toBe(first);
+  });
 });
