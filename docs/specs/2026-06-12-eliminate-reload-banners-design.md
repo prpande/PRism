@@ -87,27 +87,26 @@ event fires only on an actual post, so no quiet-event suppression is needed —
 same as `OnRootCommentPosted` / `OnDraftSubmitted`). The `NOT subscribed`
 carve-out comment at `PrDetailLoader.cs:96` is replaced with the subscription.
 
-**Refresh-in-place, not evict-to-null (resolves the #353 objection rather than
-restating it).** The root-comment handler uses `Invalidate`, which nulls the
-snapshot until the next GET re-populates it. For the diff tab that opens a real
-window where `/file` and `/viewed` (which read `TryGetCachedSnapshot`) return
-422 — see §2.3. The loader already has `RefreshAsync` (`PrDetailLoader.cs:196`,
-#344) which **overwrites** the snapshot in place (force-fresh, bypasses the
-head-SHA cache) with no null window. The handler should use the overwrite path,
-not `Invalidate`.
+**Decision (RESOLVED): refresh-in-place, not evict-to-null.** The owner's
+constraint is that the auto-reload must not change the user's view in any way
+(see §2.3 view-state preservation). The *only* user-visible difference between
+the two mechanisms is `Invalidate`'s diff-tab 422 window (silent viewed-checkbox
+revert / whole-file expand failure). That disqualifies it. The handler uses
+`RefreshAsync` (`PrDetailLoader.cs:196`, #344), which **overwrites** the snapshot
+in place (force-fresh, bypasses the head-SHA cache) with no null window — so
+`/file` and `/viewed` always see a valid snapshot and never 422. This resolves
+the #353 objection rather than restating it.
 
-- *Open implementation question (resolve in TDD):* `RefreshAsync` does a
-  synchronous GitHub re-fetch. `PrCommentEndpoints.Publish` is called inline
-  before the endpoint returns, so a synchronous handler would add re-fetch
-  latency to the comment-POST response. Resolve by either (a) dispatching the
-  refresh off the request thread (the bus already decouples publishers from
-  subscribers if `Publish` is async/queued — verify), or (b) keeping
-  `Invalidate` and accepting the quantified, gracefully-handled window in §2.3.
-  Prefer (a); fall back to (b) with the rationale recorded if the bus is
-  synchronous and off-thread refresh is out of scope.
-- *Depends on:* `IReviewEventBus`, `RefreshAsync` / `Invalidate`.
+- *Open implementation detail (no UX visibility; resolve in TDD):* `RefreshAsync`
+  does a synchronous GitHub re-fetch, and `PrCommentEndpoints.Publish` is called
+  inline before the endpoint returns. To keep the comment-POST fast, the refresh
+  must run **off the POST thread** — verify whether the bus dispatches
+  subscribers asynchronously/queued; if not, dispatch the refresh to a background
+  task. This is a latency concern only; it does not affect correctness or the
+  user's view.
+- *Depends on:* `IReviewEventBus`, `RefreshAsync`.
 - *Interface:* after a post, the next detail GET sees fresh `reviewComments`
-  (containing the new thread) — ideally with no intervening null-snapshot window.
+  (containing the new thread) with no intervening null-snapshot window.
 
 **Unit 1.3 — Frontend reload trigger.**
 - `events.ts`: add `single-comment-posted` to `EventPayloadByType`, `EVENT_TYPES`,
@@ -145,14 +144,24 @@ not `Invalidate`.
   gracefully, but that must be stated as an accepted cost, not parity.
 - **Diff content** comes from `/diff` (`useFileDiff`), not the snapshot, so the
   diff pane itself is unaffected by snapshot state either way.
-- **Scroll / focus / composer preservation.** `usePrDetail.reload()` keeps
-  `data` present (no skeleton, #180), and `FilesTab` is **not** unmounted — its
-  `selectedPath`, `useTabScrollMemory` scroll offset, and any open inline
-  composer are component state that survives the data swap. The post path closes
-  the composer (`onClose`) before the reload, so focus is not inside the
-  placeholder when it is de-duped away. Reconfirm both via test (see §4) so a
-  per-post reload never yanks the viewport or drops focus to `<body>`
-  (WCAG 2.4.3).
+- **View-state preservation — a HARD requirement (owner constraint).** The
+  auto-reload must not change the user's view in any way. This is guaranteed by
+  keep-alive, independent of the backend mechanism: `usePrDetail.reload()` keeps
+  `data` present (no skeleton, #180), so `FilesTab` is **not** unmounted, and
+  every piece of view state below is local component state / DOM, not derived
+  from `prDetail`, so the data swap leaves it untouched:
+  - **scroll offset** (`useTabScrollMemory` — only re-fires on tab switch, not a data swap)
+  - **selected file** (`selectedPath`); the diff file-set is unchanged by a
+    comment post, so the auto-select-first-file effect cannot reselect
+  - **viewed checkmarks** (`viewedPaths`)
+  - **diff mode / line-wrap / whole-file toggle / iteration range**
+  - **any open composer** (also closed by the post path before reload, so focus
+    is not inside the de-duped placeholder — no drop to `<body>`, WCAG 2.4.3)
+
+  The new thread's height was already added by the optimistic placeholder at post
+  time, so swapping placeholder→real adds no further shift — no scroll jump even
+  for a comment above the viewport. Every item above is locked by an explicit
+  test (§4); a regression fails the build.
 
 ## 3. Part 2 — Inbox: auto-refresh, remove the banner
 
@@ -253,6 +262,11 @@ apply) only if it proves annoying in practice.
   coverage if present, else add).
 - `PrDetailView` integration: a `single-comment-posted` frame triggers
   `usePrDetail.reload()`.
+- **View-state preservation across auto-reload (owner constraint, §2.3):** with
+  `FilesTab` on a selected non-first file, scrolled, with a viewed checkmark set,
+  diff mode toggled to unified, and whole-file on — fire a `single-comment-posted`
+  reload and assert each of `selectedPath`, scroll offset, `viewedPaths`, diff
+  mode, and whole-file are unchanged afterward, and the new thread is present.
 - `useInboxUpdates`: an `inbox-updated` frame triggers the debounced `onUpdate`;
   a burst coalesces to one call; an in-flight reload is not stacked.
 - Remove `InboxBanner.test.tsx`; update `InboxPage` tests that asserted the
