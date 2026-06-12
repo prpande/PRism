@@ -126,6 +126,35 @@ describe('AiSummaryCard', () => {
     );
     expect(screen.queryByText(/out of date/i)).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /regenerate summary/i })).not.toBeInTheDocument();
+    // The whole Live-only status region must be absent in Preview (it would otherwise steal the
+    // SampleBadge adjacency margin and present an empty live region to AT).
+    expect(screen.queryByRole('status')).not.toBeInTheDocument();
+  });
+
+  it('announces "Summary updated" in the status region after a successful regenerate', () => {
+    const { rerender } = render(
+      <AiSummaryCard {...baseProps} summary={{ body: 'b', category: 'fix' }} regenerating live />,
+    );
+    // regenerating true → false with no error = success transition
+    rerender(<AiSummaryCard {...baseProps} summary={{ body: 'b', category: 'fix' }} live />);
+    const region = screen.getByRole('status');
+    expect(within(region).getByText('Summary updated')).toBeInTheDocument();
+  });
+
+  it('does NOT announce "Summary updated" when regenerate ends in error', () => {
+    const { rerender } = render(
+      <AiSummaryCard {...baseProps} summary={{ body: 'b', category: 'fix' }} regenerating live />,
+    );
+    // regenerating true → false WITH error must NOT trigger the success announce
+    rerender(
+      <AiSummaryCard
+        {...baseProps}
+        summary={{ body: 'b', category: 'fix' }}
+        regenerateError
+        live
+      />,
+    );
+    expect(screen.queryByText('Summary updated')).not.toBeInTheDocument();
   });
 
   it('clicking Regenerate calls onRegenerate', () => {
