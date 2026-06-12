@@ -34,6 +34,7 @@
 **Part 2 — inbox (frontend):**
 - Modify `frontend/src/hooks/useInboxUpdates.ts` — debounced reload trigger.
 - Modify `frontend/__tests__/useInboxUpdates.test.tsx` — rewrite for new contract.
+- Modify the five other files that mock `useInboxUpdates` (old `{hasUpdate,summary,dismiss}` shape): `HelpModal.route.test.tsx`, `PrDetail/PrTabHost.test.tsx`, `pages/InboxPage.activityGate.test.tsx`, `pages/InboxPage.errorState.test.tsx`, `__tests__/app.test.tsx`.
 - Modify `frontend/src/hooks/useInboxRefresh.ts` — drop the `dismiss` prop.
 - Modify `frontend/__tests__/useInboxRefresh.test.tsx` — drop `dismiss` from setup.
 - Modify `frontend/src/pages/InboxPage.tsx` — auto-refresh wiring + aria-live; remove banner.
@@ -499,7 +500,7 @@ And the test (place near the other freshness tests):
 ```tsx
 test('a single-comment-posted event triggers usePrDetail.reload', () => {
   prDetailResult.current = { data: PR_DETAIL, isLoading: false, error: null };
-  renderActiveView(); // existing helper in this file that renders PrDetailView active
+  renderPrDetailView({ active: true }); // the file's active-render helper (defined ~line 191)
   reloadSpy.mockClear();
 
   expect(singleCommentOnPosted.current).toBeTypeOf('function');
@@ -508,8 +509,6 @@ test('a single-comment-posted event triggers usePrDetail.reload', () => {
   expect(reloadSpy).toHaveBeenCalledTimes(1);
 });
 ```
-
-> If the file's render helper has a different name than `renderActiveView`, use that file's existing active-render helper — do not invent one.
 
 - [ ] **Step 2: Run to verify it fails**
 
@@ -551,7 +550,7 @@ git commit -m "feat(pr-detail): reload on single-comment-posted so the new threa
 **Files:**
 - Create: `frontend/src/components/PrDetail/FilesTab/FilesTab.viewPreservation.test.tsx`
 
-A data swap (what `reload()` does — replace `prDetail`, no unmount) must preserve `selectedPath`, `viewedPaths`, and diff mode, while surfacing the new thread. This test re-renders the same `FilesTab` instance with an updated context value carrying an extra review thread. (Scroll preservation is asserted in the e2e Task 11 — jsdom has no layout.)
+A data swap (what `reload()` does — replace `prDetail`, no unmount) must preserve `selectedPath`, `viewedPaths`, and diff mode, while surfacing the new thread **with its reply affordance**. This test re-renders the same `FilesTab` instance with an updated context value carrying an extra review thread, and is the primary proof of the headline behavior ("reply-able without reload") — the live-browser e2e of the same chain is deferred (Task 13) behind a missing backend test hook. (Scroll preservation is asserted in e2e Task 13 — jsdom has no layout.)
 
 - [ ] **Step 1: Write the failing test.** Use the existing `makePrDetailDto` / context-render helpers (mirror `FilesTab.test.tsx`'s setup — import the same helpers it uses):
 
@@ -580,7 +579,7 @@ describe('FilesTab — view state survives a prDetail swap (auto-reload, #450)',
 });
 ```
 
-> Implementer: flesh out steps 1-4 using `FilesTab.test.tsx`'s existing fixtures and render wrapper. The placeholder assertion exists only to make the file parse; replace it. The real assertions are: `getByText(secondFileName)` selected state, the viewed checkmark `aria-checked`/class, the unified-mode marker, and `getByText(newThreadBody)`.
+> Implementer: flesh out steps 1-4 using `FilesTab.test.tsx`'s existing fixtures and render wrapper. The placeholder assertion exists only to make the file parse; replace it. The real assertions are: `getByText(secondFileName)` selected state, the viewed checkmark `aria-checked`/class, the unified-mode marker, `getByText(newThreadBody)`, AND that the new thread renders its reply affordance (e.g. `getByRole('button', { name: /reply/i })` or the `ExistingCommentWidget`'s reply control scoped to the new thread) — this is the headline "reply-able without reload" proof. The added thread fixture needs a real `id`/`threadId` so `ReplyComposer` has a `parentThreadId`.
 
 - [ ] **Step 2: Run to verify it fails** (then passes once written — this behavior already holds under keep-alive, so the test should pass immediately after correct wiring; if it FAILS, that's a real regression to fix).
 
@@ -775,10 +774,25 @@ export function useInboxUpdates({ onUpdate }: Options): { announce: string } {
 Run: `cd frontend && ./node_modules/.bin/vitest run __tests__/useInboxUpdates.test.tsx`
 Expected: PASS (all three tests).
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 5: Sweep the five other files that mock the OLD `useInboxUpdates` shape.** These `vi.mock('.../useInboxUpdates')` factories return `{ hasUpdate, summary, dismiss }`; the new return type is `{ announce }`, so the typed ones break `tsc -b` and the behavior mocks are stale. Update each factory to `() => ({ announce: '' })` (drop `hasUpdate`/`summary`/`dismiss`):
+  - `frontend/src/components/Help/HelpModal.route.test.tsx` (~line 55)
+  - `frontend/src/components/PrDetail/PrTabHost.test.tsx` (~line 57)
+  - `frontend/src/pages/InboxPage.activityGate.test.tsx` (~line 23)
+  - `frontend/src/pages/InboxPage.errorState.test.tsx` (~line 13)
+  - `frontend/__tests__/app.test.tsx` (~line 29)
+
+Run: `cd frontend && git grep -n "useInboxUpdates" -- '*.test.tsx'` to confirm none still return the old shape, then `npx tsc -b`.
+Expected: no `hasUpdate`/`summary`/`dismiss` left in any mock; typecheck PASS.
+
+- [ ] **Step 6: Commit**
 
 ```bash
-git add frontend/src/hooks/useInboxUpdates.ts frontend/__tests__/useInboxUpdates.test.tsx
+git add frontend/src/hooks/useInboxUpdates.ts frontend/__tests__/useInboxUpdates.test.tsx \
+  frontend/src/components/Help/HelpModal.route.test.tsx \
+  frontend/src/components/PrDetail/PrTabHost.test.tsx \
+  frontend/src/pages/InboxPage.activityGate.test.tsx \
+  frontend/src/pages/InboxPage.errorState.test.tsx \
+  frontend/__tests__/app.test.tsx
 git commit -m "feat(inbox): reframe useInboxUpdates into a debounced auto-refresh trigger (#450)"
 ```
 
@@ -821,7 +835,7 @@ git commit -m "refactor(inbox): drop dead dismiss prop from useInboxRefresh (#45
 - Modify: `frontend/src/pages/InboxPage.tsx`
 - Test: `frontend/src/pages/InboxPage.test.tsx`
 
-- [ ] **Step 1: Update `InboxPage.test.tsx`.** Remove the test(s) asserting the banner appears on `inbox-updated` and that clicking its Reload re-fetches. Add a test that an `inbox-updated` frame (after the debounce) calls the inbox reload. If these tests use a real `useInbox` + fake fetch, assert the inbox API is re-fetched; if they mock `useInboxUpdates`, assert the mocked `onUpdate` is invoked. Mirror the existing test harness in the file.
+- [ ] **Step 1: Update `InboxPage.test.tsx`.** Remove the test(s) asserting the banner appears on `inbox-updated` and that clicking its Reload re-fetches. Retype every `vi.mocked(useInboxUpdates).mockReturnValue({ hasUpdate, summary, dismiss })` call (the file has them at ~line 69 and ~line 345) to the new `{ announce: '' }` shape — leaving the old shape is a `tsc -b` error. Add a test that an `inbox-updated` frame (after the debounce) calls the inbox reload. If these tests use a real `useInbox` + fake fetch, assert the inbox API is re-fetched; if they mock `useInboxUpdates`, assert the mocked `onUpdate` is invoked. Mirror the existing test harness in the file.
 
 > Implementer: read `InboxPage.test.tsx` first; reuse its existing fake-event-source + inbox-fetch harness. Do not invent a new harness.
 
@@ -938,34 +952,34 @@ git commit -m "chore(inbox): delete unused InboxBanner component (#450)"
 
 ---
 
-### Task 13: e2e — reply-without-reload + scroll preservation
+### Task 13: e2e — scroll preserved across auto-reload (reply-affordance e2e deferred)
 
 **Files:**
 - Modify: `frontend/e2e/pr-detail-single-comment.spec.ts`
 
-- [ ] **Step 1: Add an e2e assertion.** After the existing post-now flow that posts an inline comment, assert (without any manual reload) that the new thread exposes a reply affordance, and that the diff scroll offset is unchanged across the auto-reload. Reuse the spec's existing fake-review harness + post flow:
+**Scope note (feasibility finding):** The headline "reply-able without reload" behavior is proven at the component level in Task 8 (the new thread + its reply affordance render on the data swap) and at the wiring level in Tasks 4/7 (post → `SingleCommentPostedBusEvent` → `Invalidate` + SSE → `reload`). A *live-browser* e2e of the full chain is **not feasible today**: the e2e fake backend `FakePrReader.GetPrDetailAsync` returns `ReviewComments: Array.Empty<ReviewThreadDto>()` and never reflects a posted comment back into PR detail — this file already carries a `test.fixme` documenting the missing `/test/seed-review-thread` hook. So this task asserts only what the fake backend can support: scroll preservation + the optimistic card surviving the auto-reload. The full reply-affordance e2e stays `fixme`, deferred to the issue that adds the seed hook.
+
+- [ ] **Step 1: Add the feasible e2e assertion.** After the existing post-now flow, assert the diff scroll offset is unchanged across the auto-reload and the optimistic inline card persists. Reuse the spec's existing fake-review harness + post flow + selectors:
 
 ```ts
-test('posted inline comment is reply-able without a manual reload, scroll preserved', async ({ page }) => {
-  // ... reuse this file's setup: open a PR on the Files tab, open the inline composer,
-  // type, and click the post-now ("Comment") button.
-  // 1. Capture the diff scroll offset before posting.
-  const scrollBefore = await page.locator('[data-app-scroll]').evaluate((el) => el.scrollTop);
+test('posting an inline comment preserves diff scroll across the auto-reload', async ({ page }) => {
+  // ... reuse this file's setup: open a PR on the Files tab, scroll the diff, open the
+  // inline composer, type, and click the post-now ("Comment") button.
+  const scroller = page.locator('[data-app-scroll]');
+  const scrollBefore = await scroller.evaluate((el) => el.scrollTop);
 
-  // 2. Post the comment (existing helper / steps in this file).
+  // ... post the comment (existing helper / steps in this file).
 
-  // 3. WITHOUT reloading, the new thread's reply composer affordance becomes available
-  //    once the single-comment-posted SSE drives usePrDetail.reload.
-  await expect(page.getByTestId('reply-composer').or(page.getByRole('button', { name: /reply/i })))
-    .toBeVisible({ timeout: 5000 });
+  // The optimistic inline card renders immediately and survives the single-comment-posted reload.
+  await expect(page.getByTestId('inline-comment-card-optimistic')).toBeVisible();
 
-  // 4. Scroll offset is preserved across the auto-reload.
-  const scrollAfter = await page.locator('[data-app-scroll]').evaluate((el) => el.scrollTop);
+  // Scroll offset is preserved across the auto-reload (no viewport yank).
+  const scrollAfter = await scroller.evaluate((el) => el.scrollTop);
   expect(Math.abs(scrollAfter - scrollBefore)).toBeLessThanOrEqual(2);
 });
 ```
 
-> Implementer: align selectors with this file's existing ones (it already drives post-now and the diff). The fake-review harness must emit `single-comment-posted` on the post — verify the test backend's `/comment/post` publishes it (it does via `PrCommentEndpoints.Publish`); if the e2e fake stubs the endpoint, ensure the stub also emits the SSE frame.
+> Implementer: align selectors with this file's existing ones (it already drives post-now and the diff). Confirm `data-app-scroll` is the diff scroll container in browser mode; if the Files-tab scroller differs, use the file's existing scroll-target selector. Do NOT add a reply-affordance assertion here — leave the existing `test.fixme` for that in place.
 
 - [ ] **Step 2: Run the spec**
 
@@ -976,7 +990,7 @@ Expected: PASS
 
 ```bash
 git add frontend/e2e/pr-detail-single-comment.spec.ts
-git commit -m "test(e2e): inline comment reply-able without reload, scroll preserved (#450)"
+git commit -m "test(e2e): inline comment post preserves diff scroll across auto-reload (#450)"
 ```
 
 ---
@@ -1011,12 +1025,14 @@ git commit -m "chore: format + lint pass (#450)"
 
 **Spec coverage:**
 - §2.2 Unit 1.1 (SSE projection) → Tasks 1, 3. Unit 1.2 (loader Invalidate) → Task 4. Unit 1.3 (frontend trigger) → Tasks 5, 6, 7.
-- §2.3 view-state preservation → Task 8 (component) + Task 13 (scroll e2e).
+- §2.3 view-state preservation → Task 8 (component, incl. reply-affordance proof) + Task 13 (scroll e2e). Live-browser reply-affordance e2e deferred (fake backend returns empty `ReviewComments`; needs a `/test/seed-review-thread` hook — matches the existing `test.fixme`).
 - §2.3 422 window accepted (no work) — intentionally no task; documented decision.
-- §3.2 Unit 2.1 (debounced reload, queue-not-skip, aria-live) → Task 9. Unit 2.2 (remove banner) → Tasks 11, 12. Unit 2.3 (`useInboxRefresh` dismiss drop) → Task 10.
+- §3.2 Unit 2.1 (debounced reload, queue-not-skip, aria-live) → Task 9 (incl. the 5-file stale-mock sweep). Unit 2.2 (remove banner) → Tasks 11, 12. Unit 2.3 (`useInboxRefresh` dismiss drop) → Task 10.
 - §4 testing → covered per-task; StateChangedSseTests fix → Task 2.
 - §5 `no-layout-shift-on-banner.spec.ts` NOT touched → confirmed Task 14 Step 3.
 
 **Type consistency:** `SingleCommentPostedBusEvent(PrReference, long ReviewCommentId)` (backend, exists) → wire `SingleCommentPostedWire(string PrRef, long ReviewCommentId)` → SSE `single-comment-posted` → frontend `SingleCommentPostedEvent { prRef: string; reviewCommentId: number }`. Hook `useSingleCommentPostedSubscriber({ prRef, onPosted })`. `useInboxUpdates({ onUpdate }): { announce }`. Consistent across tasks.
 
 **Placeholder scan:** Tasks 8 and 13 carry explicit "implementer: flesh out using existing fixtures" notes with the concrete assertions named — these are unavoidable because they reuse file-local test fixtures that must be read at implementation time, not copied blind. Every other task has complete code.
+
+**Post-review fixes (machine review pass on the plan):** Task 7 render helper corrected to `renderPrDetailView({ active: true })`; Task 9 extended with the 5-file stale-`useInboxUpdates`-mock sweep; Task 11 made the `vi.mocked(useInboxUpdates).mockReturnValue` retyping explicit; Task 13 rescoped to scroll/optimistic-card (the reply-affordance e2e is deferred behind a missing `/test/seed-review-thread` backend hook, with the headline behavior proven at component level in Task 8).
