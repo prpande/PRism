@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
 import { useFileDiff } from '../../../hooks/useFileDiff';
 import { useAiSummary } from '../../../hooks/useAiSummary';
-import { useAiGate } from '../../../hooks/useAiGate';
+import { useAiGate, useIsLiveMode } from '../../../hooks/useAiGate';
 import { usePrDetailContext } from '../prDetailContext';
 import { buildAllRange } from '../range';
 import { AiSummaryCard } from './AiSummaryCard';
@@ -13,16 +13,21 @@ import { prRootDraft } from '../draftKinds';
 import styles from './OverviewTab.module.css';
 
 export function OverviewTab() {
-  const { prRef, prDetail, draftSession, readOnly, onSelectSubTab, subscribed } =
+  const { prRef, prDetail, draftSession, readOnly, onSelectSubTab, subscribed, baseShaChanged } =
     usePrDetailContext();
   const aiOn = useAiGate('summary');
+  const live = useIsLiveMode();
 
   const diff = useFileDiff(prRef, buildAllRange(prDetail.pr));
   const {
     summary: aiSummary,
     loading: aiLoading,
     error: aiError,
-  } = useAiSummary(prRef, aiOn, subscribed, /* baseShaChanged — threaded in Task 15 */ false);
+    isStale: aiStale,
+    regenerating: aiRegenerating,
+    regenerateError: aiRegenerateError,
+    regenerate: aiRegenerate,
+  } = useAiSummary(prRef, aiOn, subscribed, baseShaChanged);
 
   const filesCount = diff.data?.files.length ?? 0;
   const threadsCount = prDetail.reviewComments.length;
@@ -76,7 +81,16 @@ export function OverviewTab() {
 
   return (
     <div className={`${styles.overviewTab} ${styles.overviewGrid}`} data-testid="overview-tab">
-      <AiSummaryCard summary={aiSummary} loading={aiLoading} error={aiError} />
+      <AiSummaryCard
+        summary={aiSummary}
+        loading={aiLoading}
+        error={aiError}
+        isStale={aiStale}
+        regenerating={aiRegenerating}
+        regenerateError={aiRegenerateError}
+        onRegenerate={aiRegenerate}
+        live={live}
+      />
       <PrDescription title={prDetail.pr.title} body={prDetail.pr.body} aiPreview={aiOn} />
       <StatsTiles
         filesCount={filesCount}

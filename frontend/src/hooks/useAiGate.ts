@@ -22,3 +22,10 @@ export function useIsSampleMode(): boolean {
   const { preferences } = usePreferences();
   return preferences?.ui.aiMode === 'preview';
 }
+
+// Live-mode predicate for Live-only UI (stale chip + Regenerate). True only in
+// Live; false in Off and Preview. Spec §8.
+export function useIsLiveMode(): boolean {
+  const { preferences } = usePreferences();
+  return preferences?.ui.aiMode === 'live';
+}

@@ -16,6 +16,7 @@ export interface PrDetailContextValue {
   // useActivePrUpdates). Gates AI fetches that must not fire before the
   // subscription is established (D111 204 race guard).
   subscribed: boolean;
+  baseShaChanged: boolean;
   // Switches the active sub-tab. Replaces the old navigate(`${base}/files`)
   // call sites (OverviewTab CTA, DraftsTab handleEdit, StaleDraftRow handleShowMe).
   onSelectSubTab: (tab: PrTabId) => void;
