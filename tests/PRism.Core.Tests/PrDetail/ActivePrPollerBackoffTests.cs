@@ -24,8 +24,8 @@ public class ActivePrPollerBackoffTests
         return (poller, review, bus, registry, cache);
     }
 
-    private static ActivePrPollSnapshot Snapshot(string headSha = "h1", int commentCount = 0, string prState = "OPEN") =>
-        new(headSha, "MERGEABLE", prState, commentCount, 0);
+    private static ActivePrPollSnapshot Snapshot(string headSha = "h1", string baseSha = "b1", int commentCount = 0, string prState = "OPEN") =>
+        new(headSha, baseSha, "MERGEABLE", prState, commentCount, 0);
 
     [Fact]
     public async Task Healthy_pr_continues_to_poll_while_other_pr_is_in_backoff()

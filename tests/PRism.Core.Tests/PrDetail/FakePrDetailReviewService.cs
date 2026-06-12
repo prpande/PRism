@@ -24,7 +24,7 @@ internal sealed class FakePrDetailReviewService : IPrReader
 
     // Default fallbacks used when the per-PR dict has no entry. Lets simple tests skip
     // per-PR scripting and use the default.
-    public ActivePrPollSnapshot? DefaultPollResponse { get; set; } = new("head1", "MERGEABLE", "OPEN", 0, 0);
+    public ActivePrPollSnapshot? DefaultPollResponse { get; set; } = new("head1", "base1", "MERGEABLE", "OPEN", 0, 0);
     public PrDetailDto? DefaultDetailResponse { get; set; }
     public ClusteringInput? DefaultTimelineResponse { get; set; }
 

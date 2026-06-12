@@ -488,6 +488,7 @@ public sealed partial class GitHubReviewService : IReviewAuth, IPrDiscovery, IPr
         // to emit pr-updated on an open→done transition even when head-sha is unchanged.
         return new ActivePrPollSnapshot(
             HeadSha: pull.HeadSha,
+            BaseSha: pull.BaseSha,
             Mergeability: pull.Mergeability,
             PrState: pull.Merged ? "merged" : pull.State,
             CommentCount: commentCount,
@@ -505,13 +506,15 @@ public sealed partial class GitHubReviewService : IReviewAuth, IPrDiscovery, IPr
         var root = doc.RootElement;
         var head = root.TryGetProperty("head", out var h) && h.TryGetProperty("sha", out var hs)
             ? hs.GetString() ?? "" : "";
+        var baseSha = root.TryGetProperty("base", out var b) && b.TryGetProperty("sha", out var bs)
+            ? bs.GetString() ?? "" : "";
         var state = root.TryGetProperty("state", out var s) ? s.GetString() ?? "" : "";
         var mergeable = root.TryGetProperty("mergeable_state", out var ms) ? ms.GetString() ?? "" : "";
         // merged_at is a root-level ISO-8601 string on a merged PR, JSON null otherwise.
         // REST `state` is only "open"/"closed" (a merged PR reports "closed"), so merged_at
         // is the sole signal that distinguishes a merge from a plain close.
         var merged = root.TryGetProperty("merged_at", out var ma) && ma.ValueKind == JsonValueKind.String;
-        return new PollPullMeta(head, state, mergeable, merged);
+        return new PollPullMeta(head, baseSha, state, mergeable, merged);
     }
 
     private async Task<int> FetchPagedCountAsync(string url, CancellationToken ct)
@@ -563,7 +566,7 @@ public sealed partial class GitHubReviewService : IReviewAuth, IPrDiscovery, IPr
         return false;
     }
 
-    private sealed record PollPullMeta(string HeadSha, string State, string Mergeability, bool Merged);
+    private sealed record PollPullMeta(string HeadSha, string BaseSha, string State, string Mergeability, bool Merged);
 
     // IReviewSubmitter is an empty seam in PR0a; the seven pending-review pipeline methods
     // land in PR1 on GitHubReviewService.Submit.cs.
