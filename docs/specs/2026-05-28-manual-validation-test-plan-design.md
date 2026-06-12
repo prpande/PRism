@@ -97,10 +97,11 @@ Start-Sleep -Seconds 1
 # 2. Move the data directory aside
 Move-Item "$env:LOCALAPPDATA\PRism" "$env:LOCALAPPDATA\PRism.bak.$(Get-Date -f yyyyMMdd-HHmmss)"
 
-# macOS
+# macOS (.NET maps LocalApplicationData to the XDG path, not ~/Library/Application Support)
 pkill -f PRism || true
 sleep 1
-mv "$HOME/Library/Application Support/PRism" "$HOME/Library/Application Support/PRism.bak.$(date +%Y%m%d-%H%M%S)"
+PRISM_DATA="${XDG_DATA_HOME:-$HOME/.local/share}/PRism"
+mv "$PRISM_DATA" "$PRISM_DATA.bak.$(date +%Y%m%d-%H%M%S)"
 ```
 
 The token is in the OS keychain — clear it via the Replace-token flow (after Recipe B is done) or via the keychain manager directly if a true cold boot is required.
@@ -1382,7 +1383,7 @@ Behaviors considered for the validation suite but excluded:
 | **Identity change** | The Replace-token flow detecting that the new PAT authenticates as a different GitHub login than the previous one |
 | **Cross-tab stamp (V6)** | The per-tab `TabStamps` map (state schema version 6) that gates redundant cross-tab echoes via BroadcastChannel |
 | **AI preview** | The `ui.aiPreview` flag-driven mode where AI capability flags return `true` and slots render canned placeholder data |
-| **`<dataDir>`** | PRism's data directory. Production: `%LOCALAPPDATA%\PRism` / `~/Library/Application Support/PRism`. Validation suite: per-run temp dir managed by the suite's `webServer` block |
+| **`<dataDir>`** | PRism's data directory. Production: `%LOCALAPPDATA%\PRism` (Windows) / `${XDG_DATA_HOME:-$HOME/.local/share}/PRism` (macOS + Linux). Validation suite: per-run temp dir managed by the suite's `webServer` block |
 | **Wedge** | The combination of features that motivates opening PRism instead of github.com — iteration tabs, file-by-file diff, stale-draft reconciliation, local-first authoring |
 | **Recipe A/B/C/D/E** | Pre-condition setup procedures defined in the recipes section |
 | **`injectRealFailure`** | The validation suite's helper that intercepts the response of a real GitHub HTTP call to simulate transient conditions. Calls `/test/real-inject/inject-failure` (Test-env setup endpoint) via raw fetch |
