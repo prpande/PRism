@@ -22,7 +22,11 @@ public sealed record AppConfig(
         new ReviewConfig(true, true),
         new IterationsConfig(60, ClusteringDisabled: false),
         new LoggingConfig("info", true, 30),
-        new UiConfig("system", "indigo", new AiConfig(AiMode.Preview), "comfortable", "m"),
+        // #283 flipped the out-of-the-box AI default Off → Preview (preview summaries on,
+        // zero egress). P1 keeps consent unrecorded (None) and every per-feature gate on
+        // (AllOn): Live egress still demands explicit opt-in + per-provider consent on top
+        // of this default. ContentScale "m" (#135) carried in from the merged base.
+        new UiConfig("system", "indigo", new AiConfig(AiMode.Preview, AiConsentConfig.None, AiFeaturesConfig.AllOn), "comfortable", "m"),
         new GithubConfig(new[]
         {
             new GithubAccountConfig(
@@ -75,7 +79,7 @@ public sealed record LoggingConfig(string Level, bool StateEvents, int StateEven
 public sealed record UiConfig(string Theme, string Accent, AiConfig Ai, string Density = "comfortable", string ContentScale = "m");
 
 /// <summary>AI mode config (spec §4). Persisted at <c>ui.ai.mode</c>.</summary>
-public sealed record AiConfig(AiMode Mode);
+public sealed record AiConfig(AiMode Mode, AiConsentConfig Consent, AiFeaturesConfig Features);
 
 public sealed record GithubConfig(IReadOnlyList<GithubAccountConfig> Accounts)
 {

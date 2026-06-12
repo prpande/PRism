@@ -20,10 +20,15 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<ICliProcessRunner, SystemCliProcessRunner>();
         services.AddSingleton<ILlmProvider, ClaudeCodeLlmProvider>();
         services.AddSingleton<ITokenUsageTracker>(_ => new JsonlTokenUsageTracker(usageDir));
-        services.AddSingleton<ILlmAvailabilityProbe>(sp => new ClaudeCodeAvailabilityProbe(
+        // Register the concrete type so Web's AddPrismAi can resolve it directly when
+        // wrapping it with CachedLlmAvailabilityProbe. The interface forwarding below keeps
+        // all other consumers (and test-factory RemoveAll<ILlmAvailabilityProbe>) unchanged.
+        services.AddSingleton(sp => new ClaudeCodeAvailabilityProbe(
             sp.GetRequiredService<ICliProcessRunner>(),
             sp.GetRequiredService<ClaudeCodeProviderOptions>(),
             identityMatches: ClaudeIdentity.SameOsUserAsCredentialStore));
+        services.AddSingleton<ILlmAvailabilityProbe>(
+            sp => sp.GetRequiredService<ClaudeCodeAvailabilityProbe>());
         services.AddSingleton(ClaudeProviderDescriptor.Create());
         return services;
     }

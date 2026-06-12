@@ -28,6 +28,7 @@ public sealed class ActivityProviderTests
         public Task InitAsync(CancellationToken ct) => throw new NotSupportedException();
         public Task PatchAsync(IReadOnlyDictionary<string, object?> patch, CancellationToken ct) => throw new NotSupportedException();
         public Task SetDefaultAccountLoginAsync(string login, CancellationToken ct) => throw new NotSupportedException();
+        public Task RecordAiConsentAsync(string providerId, string disclosureVersion, CancellationToken ct) => throw new NotSupportedException();
         public event EventHandler<ConfigChangedEventArgs>? Changed { add { } remove { } }
     }
 

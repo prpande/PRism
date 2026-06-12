@@ -13,11 +13,16 @@ import { prRootDraft } from '../draftKinds';
 import styles from './OverviewTab.module.css';
 
 export function OverviewTab() {
-  const { prRef, prDetail, draftSession, readOnly, onSelectSubTab } = usePrDetailContext();
+  const { prRef, prDetail, draftSession, readOnly, onSelectSubTab, subscribed } =
+    usePrDetailContext();
   const aiOn = useAiGate('summary');
 
   const diff = useFileDiff(prRef, buildAllRange(prDetail.pr));
-  const aiSummary = useAiSummary(prRef, aiOn);
+  const {
+    summary: aiSummary,
+    loading: aiLoading,
+    error: aiError,
+  } = useAiSummary(prRef, aiOn, subscribed);
 
   const filesCount = diff.data?.files.length ?? 0;
   const threadsCount = prDetail.reviewComments.length;
@@ -71,7 +76,7 @@ export function OverviewTab() {
 
   return (
     <div className={`${styles.overviewTab} ${styles.overviewGrid}`} data-testid="overview-tab">
-      <AiSummaryCard summary={aiSummary} />
+      <AiSummaryCard summary={aiSummary} loading={aiLoading} error={aiError} />
       <PrDescription title={prDetail.pr.title} body={prDetail.pr.body} aiPreview={aiOn} />
       <StatsTiles
         filesCount={filesCount}

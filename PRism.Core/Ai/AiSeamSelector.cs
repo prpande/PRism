@@ -1,13 +1,14 @@
 using System;
 using System.Collections.Generic;
+using PRism.Core.Config;
 
 namespace PRism.Core.Ai;
 
 /// <summary>
-/// Tri-state, per-feature seam selector. For the requested seam T it resolves by the current mode:
-/// Off → Noop; Preview → Placeholder; Live → the real impl IFF one is registered for T AND the
-/// provider is available, otherwise Noop (truthful-by-default §4 — never Placeholder in a Live slot).
-/// In P0 the real bag is empty, so Live collapses to Noop for every seam.
+/// Tri-state, per-feature seam selector. Off → Noop; Preview → Placeholder (unless the feature is
+/// user-disabled, then Noop — no sample); Live → the real impl IFF one is registered for T AND consent
+/// is recorded for the active provider AND the feature is user-enabled, otherwise Noop. The selector
+/// does NOT probe the provider (KTD-1): provider unreachability surfaces as a call-time exception → 503.
 /// </summary>
 public sealed class AiSeamSelector : IAiSeamSelector
 {
@@ -15,30 +16,39 @@ public sealed class AiSeamSelector : IAiSeamSelector
     private readonly IReadOnlyDictionary<Type, object> _noop;
     private readonly IReadOnlyDictionary<Type, object> _placeholder;
     private readonly IReadOnlyDictionary<Type, object> _real;
-    private readonly Func<bool> _liveAvailable;
+    private readonly AiConsentState _consent;
+    private readonly AiFeatureState _features;
 
     public AiSeamSelector(
         AiModeState state,
         IReadOnlyDictionary<Type, object> noop,
         IReadOnlyDictionary<Type, object> placeholder,
         IReadOnlyDictionary<Type, object> real,
-        Func<bool> liveAvailable)
+        AiConsentState consent,
+        AiFeatureState features)
     {
         _state = state;
         _noop = noop;
         _placeholder = placeholder;
         _real = real;
-        _liveAvailable = liveAvailable;
+        _consent = consent;
+        _features = features;
     }
 
     public T Resolve<T>() where T : class
     {
+        var featureKey = AiSeamFeatureKeys.ForSeam(typeof(T));
+        var featureOn = featureKey is null || _features.IsEnabled(featureKey);
+
         var bag = _state.Mode switch
         {
             AiMode.Off => _noop,
-            AiMode.Preview => _placeholder,
-            AiMode.Live => _real.ContainsKey(typeof(T)) && _liveAvailable() ? _real : _noop,
-            _ => _noop, // unknown/corrupt AiMode (e.g. (AiMode)99 from a malformed config deserialize) → safe Noop, never throw
+            AiMode.Preview => featureOn ? _placeholder : _noop,
+            AiMode.Live => featureOn
+                           && _real.ContainsKey(typeof(T))
+                           && _consent.IsConsented(AiProviderIds.Claude, AiDisclosure.CurrentVersion)
+                ? _real : _noop,
+            _ => _noop, // unknown/corrupt AiMode → safe Noop, never throw
         };
         if (!bag.TryGetValue(typeof(T), out var impl))
             throw new InvalidOperationException(

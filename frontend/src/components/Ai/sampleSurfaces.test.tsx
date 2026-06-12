@@ -27,7 +27,13 @@ describe('card sample surfaces carry SampleBadge (not the old hardcoded string)'
   it('AiSummaryCard shows the badge and no legacy string', () => {
     // Non-null summary is required: AiSummaryCard early-returns null when summary
     // is falsy (the badge lives in the non-null branch). PrSummary = { body, category }.
-    render(<AiSummaryCard summary={{ body: 'Sample summary', category: 'Refactor' }} />);
+    render(
+      <AiSummaryCard
+        summary={{ body: 'Sample summary', category: 'Refactor' }}
+        loading={false}
+        error={false}
+      />,
+    );
     expect(screen.getByTestId('sample-badge')).toBeInTheDocument();
     expect(screen.queryByText(/AI preview — sample content/i)).toBeNull();
   });

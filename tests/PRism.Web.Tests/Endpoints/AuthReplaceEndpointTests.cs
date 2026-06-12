@@ -754,6 +754,8 @@ public class AuthReplaceEndpointTests
             ShouldThrowOnSetDefault
                 ? throw new System.IO.IOException("simulated disk-full")
                 : _inner.SetDefaultAccountLoginAsync(login, ct);
+        public Task RecordAiConsentAsync(string providerId, string disclosureVersion, CancellationToken ct) =>
+            _inner.RecordAiConsentAsync(providerId, disclosureVersion, ct);
         public event EventHandler<PRism.Core.Config.ConfigChangedEventArgs>? Changed
         {
             add { _inner.Changed += value; }

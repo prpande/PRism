@@ -240,6 +240,11 @@ export interface PrSummary {
   category: string;
 }
 
+export type AiSummaryResult =
+  | { kind: 'ok'; summary: PrSummary }
+  | { kind: 'absent' }
+  | { kind: 'error' };
+
 // PR9b-ai-gating § 3.3. The backend `FocusLevel` enum carries 3 values;
 // today's PlaceholderFileFocusRanker emits High + Medium. Wire-shape:
 // kebab-case via JsonStringEnumConverter(new KebabCaseJsonNamingPolicy())

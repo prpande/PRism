@@ -1,6 +1,9 @@
+using Microsoft.AspNetCore.Http;
+using PRism.AI.ClaudeCode;
 using PRism.AI.Contracts.Seams;
 using PRism.Core.Ai;
 using PRism.Core.Contracts;
+using PRism.Core.PrDetail;
 
 namespace PRism.Web.Endpoints;
 
@@ -11,19 +14,30 @@ internal static class AiEndpoints
         ArgumentNullException.ThrowIfNull(app);
 
         // Spec § 7.3. The Overview tab's AiSummaryCard fetches its content here.
-        // The seam selector returns NoopPrSummarizer (→ null → 204) or
-        // PlaceholderPrSummarizer (→ canned PrSummary → 200) based on AiModeState.
-        // v2 swaps in a real summarizer at the same selector slot — this endpoint is
-        // unchanged.
+        // D111 (spec §6): tokens are only spent when someone is actively viewing the PR.
+        // If no subscriber is registered for the PR, returns 204 immediately without calling
+        // the seam. Provider failure is mapped to 503 (spec §7/§9) — never 500.
         app.MapGet("/api/pr/{owner}/{repo}/{number:int}/ai/summary",
             async (string owner, string repo, int number,
-                   IAiSeamSelector ai, CancellationToken ct) =>
+                   IAiSeamSelector ai, IActivePrCache activePrCache, CancellationToken ct) =>
             {
+                var prRef = new PrReference(owner, repo, number);
+                if (!activePrCache.IsSubscribed(prRef))
+                    return Results.NoContent();
+
                 var summarizer = ai.Resolve<IPrSummarizer>();
-                var summary = await summarizer
-                    .SummarizeAsync(new PrReference(owner, repo, number), ct)
-                    .ConfigureAwait(false);
-                return summary is null ? Results.NoContent() : Results.Ok(summary);
+                try
+                {
+                    var summary = await summarizer
+                        .SummarizeAsync(prRef, ct)
+                        .ConfigureAwait(false);
+                    return summary is null ? Results.NoContent() : Results.Ok(summary);
+                }
+                catch (LlmProviderException)
+                {
+                    // Gate was open but the provider failed → distinguishable failure (spec §7/§9). Never 500.
+                    return Results.StatusCode(StatusCodes.Status503ServiceUnavailable);
+                }
             });
 
         // PR9b-ai-gating § 3.2. Mirrors /ai/summary's seam-resolve-and-map.

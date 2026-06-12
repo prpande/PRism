@@ -26,10 +26,20 @@
   line-height: 1.55;
 }
 
-.aiSummaryCategory {
-  font-size: calc(var(--text-xs) * var(--content-scale));
-  color: var(--text-2);
-  margin-top: var(--s-2);
+.chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-radius: var(--radius-2);
+  font-size: var(--text-2xs);
+  font-weight: 500;
+}
+
+.aiSummaryError {
+  color: var(--text-3);
+  font-size: var(--text-sm);
 }
 
 /* Dormant: not yet rendered by production JSX. See D17 in deferrals. */

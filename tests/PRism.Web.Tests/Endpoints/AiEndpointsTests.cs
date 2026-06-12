@@ -3,7 +3,10 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using FluentAssertions;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using PRism.Core.Ai;
+using PRism.Core.PrDetail;
+using PRism.Web.Middleware;
 using PRism.Web.Tests.TestHelpers;
 using Xunit;
 
@@ -16,6 +19,10 @@ namespace PRism.Web.Tests.Endpoints;
 //     endpoint returns 204 No Content.
 //   - aiPreview on  → seam selector returns PlaceholderPrSummarizer; canned PrSummary
 //     comes back; endpoint returns 200 with { body, category }.
+//
+// D111: The /ai/summary endpoint now checks IActivePrCache.IsSubscribed before resolving
+// the seam. Tests that expect a 200 (placeholder body) must inject AllSubscribedActivePrCache
+// so the gate does not short-circuit to 204.
 public class AiEndpointsTests
 {
     [Fact]
@@ -34,9 +41,24 @@ public class AiEndpointsTests
     [Fact]
     public async Task Get_ai_summary_returns_200_with_placeholder_body_when_aiPreview_is_on()
     {
-        using var factory = new PRismWebApplicationFactory();
+        using var baseFactory = new PRismWebApplicationFactory();
+        // D111: inject AllSubscribedActivePrCache so the subscriber gate passes and the
+        // placeholder seam is reached.
+        using var factory = baseFactory.WithWebHostBuilder(b => b.ConfigureServices(s =>
+        {
+            s.RemoveAll<IActivePrCache>();
+            s.AddSingleton<IActivePrCache>(new AllSubscribedActivePrCache());
+        }));
         factory.Services.GetRequiredService<AiModeState>().Mode = AiMode.Preview;
+        // WithWebHostBuilder returns a vanilla WebApplicationFactory; CreateClient() does not
+        // auto-inject the session token the way PRismWebApplicationFactory.ConfigureClient does.
+        // Mirror the PRismWebApplicationFactory pattern: read the token and inject it manually.
+        var token = factory.Services.GetRequiredService<SessionTokenProvider>().Current;
         var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-PRism-Session", token);
+        client.DefaultRequestHeaders.Add("Cookie", $"prism-session={token}");
+        var origin = client.BaseAddress?.GetLeftPart(UriPartial.Authority);
+        if (!string.IsNullOrEmpty(origin)) client.DefaultRequestHeaders.Add("Origin", origin);
 
         var resp = await client.GetAsync(new Uri("/api/pr/octo/repo/1/ai/summary", UriKind.Relative));
 
@@ -49,9 +71,22 @@ public class AiEndpointsTests
     [Fact]
     public async Task Get_ai_summary_serializes_camelCase_properties()
     {
-        using var factory = new PRismWebApplicationFactory();
+        using var baseFactory = new PRismWebApplicationFactory();
+        // D111: inject AllSubscribedActivePrCache so the subscriber gate passes and the
+        // placeholder seam is reached.
+        using var factory = baseFactory.WithWebHostBuilder(b => b.ConfigureServices(s =>
+        {
+            s.RemoveAll<IActivePrCache>();
+            s.AddSingleton<IActivePrCache>(new AllSubscribedActivePrCache());
+        }));
         factory.Services.GetRequiredService<AiModeState>().Mode = AiMode.Preview;
+        // Same session-token injection as above.
+        var token = factory.Services.GetRequiredService<SessionTokenProvider>().Current;
         var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-PRism-Session", token);
+        client.DefaultRequestHeaders.Add("Cookie", $"prism-session={token}");
+        var origin = client.BaseAddress?.GetLeftPart(UriPartial.Authority);
+        if (!string.IsNullOrEmpty(origin)) client.DefaultRequestHeaders.Add("Origin", origin);
 
         var resp = await client.GetAsync(new Uri("/api/pr/octo/repo/1/ai/summary", UriKind.Relative));
 
