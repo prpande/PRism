@@ -102,13 +102,25 @@ export function InboxPage() {
           no width/position jump when the skeleton is replaced by content. */}
       <LoadingBar active={isLoading || isRefreshing} data-testid="inbox-loading-bar" />
       <main className={styles.page} data-testid="inbox-page" tabIndex={-1}>
+        {/* Two independent live regions. The manual-refresh announce is sticky
+            ('Inbox refreshed' until the next error), so OR-ing the two into one
+            region would let it permanently mask the auto-refresh signal (#450).
+            Keeping them separate guarantees each is announced on its own. */}
         <div
           className="sr-only"
           role="status"
           aria-live="polite"
           data-testid="inbox-refresh-status"
         >
-          {announce || autoRefresh.announce}
+          {announce}
+        </div>
+        <div
+          className="sr-only"
+          role="status"
+          aria-live="polite"
+          data-testid="inbox-autorefresh-status"
+        >
+          {autoRefresh.announce}
         </div>
         <InboxToolbar
           sections={sections}

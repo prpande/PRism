@@ -135,6 +135,9 @@ internal static class PrCommentEndpoints
                 statusCode: StatusCodes.Status409Conflict);
         if (isReply) await DeleteReply(store, sessionKey, draftId, ct).ConfigureAwait(false);
         else await DeleteComment(store, sessionKey, draftId, ct).ConfigureAwait(false);
+        // Idempotent re-post path: the comment already exists on GitHub and was already surfaced
+        // on its first post, so deliberately NO SingleCommentPostedBusEvent here (#450) — there is
+        // no fresh thread to evict-and-reload for. The 200 returns postedId for optimistic de-dup.
         bus.Publish(new StateChanged(prRef, FieldsTouched, SourceTabId: null));
         // 200 (not 204 like the root-comment precedent): the frontend needs postedCommentId to de-dup the optimistic placeholder.
         return Results.Json(new PostCommentOkDto(postedId));

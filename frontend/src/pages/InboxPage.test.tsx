@@ -251,6 +251,22 @@ describe('InboxPage', () => {
     expect(reload).toHaveBeenCalledTimes(1);
   });
 
+  it('announces auto-refresh in its own live region (not masked by the sticky manual announce) — #450', () => {
+    // useInboxRefresh.announce is sticky ('Inbox refreshed' until the next error), so a single
+    // `{announce || autoRefresh.announce}` region would let it permanently mask the auto-refresh
+    // signal once the user has manually refreshed even once. The auto-refresh announcement lives
+    // in its OWN role=status region so it is always announced.
+    setHooks({ data: sampleData });
+    vi.mocked(useInboxUpdates).mockReturnValue({ announce: 'Inbox updated' });
+    renderPage();
+
+    const region = screen.getByTestId('inbox-autorefresh-status');
+    expect(region).toHaveAttribute('role', 'status');
+    expect(region).toHaveTextContent('Inbox updated');
+    // It is a distinct node from the manual-refresh region (no OR-masking).
+    expect(region).not.toBe(screen.getByTestId('inbox-refresh-status'));
+  });
+
   it('renders ActivityRail when inbox.showActivityRail is on', () => {
     // #283 decoupled from AI: even with aiPreview off, the rail shows when its flag is on.
     mockViewportWide(true); // #300 rail also needs a wide viewport
