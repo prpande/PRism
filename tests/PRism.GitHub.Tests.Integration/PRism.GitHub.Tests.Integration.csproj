@@ -13,6 +13,10 @@
     <PackageReference Include="xunit.runner.visualstudio" />
     <PackageReference Include="FluentAssertions" />
   </ItemGroup>
+  <!-- Shared global using, mirroring the other three test projects. -->
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\PRism.GitHub\PRism.GitHub.csproj" />
     <ProjectReference Include="..\..\PRism.Core\PRism.Core.csproj" />

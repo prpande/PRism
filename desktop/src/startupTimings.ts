@@ -40,14 +40,22 @@ const FIELDS: readonly (keyof RegionAttribution)[] = [
 ];
 
 /** end - start when both marks are present, else null. */
-function span(marks: ReadonlyMap<Phase, number>, start: Phase, end: Phase): number | null {
+function span(
+  marks: ReadonlyMap<Phase, number>,
+  start: Phase,
+  end: Phase,
+): number | null {
   const a = marks.get(start);
   const b = marks.get(end);
   return a === undefined || b === undefined ? null : b - a;
 }
 
 /** mark - anchor when both are present, else null (anchor is process creation, not a Phase). */
-function fromAnchor(marks: ReadonlyMap<Phase, number>, mark: Phase, anchor: number | null): number | null {
+function fromAnchor(
+  marks: ReadonlyMap<Phase, number>,
+  mark: Phase,
+  anchor: number | null,
+): number | null {
   const m = marks.get(mark);
   return m === undefined || anchor === null ? null : m - anchor;
 }
