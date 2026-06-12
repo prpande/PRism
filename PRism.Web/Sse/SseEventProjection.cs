@@ -11,12 +11,12 @@ namespace PRism.Web.Sse;
 // investigation-finding.md). inbox-updated still serializes its record directly: it is
 // broadcast (not per-PR) and its frontend contract already matches the raw shape.
 //
-// Intentionally NOT in the switch: `DraftSubmitted` is declared in PRism.Core/Events and is
-// published by the S5 PR3 submit endpoint, but `SseChannel` does not subscribe to it — the
-// frontend learns a review was submitted via the `StateChanged` event that fires alongside.
-// If a future change subscribes SseChannel to DraftSubmitted, add the
-// `DraftSubmitted -> ("draft-submitted", ...)` arm here in lockstep so the default-arm
-// `ArgumentOutOfRangeException` doesn't fire at runtime.
+// #392: `DraftSubmitted` IS now in the switch. It is published on a full review-submit success
+// (after the pipeline's server-side draft clear); `SseChannel` subscribes to it and fans it out
+// per-PR as `draft-submitted`, which the frontend uses to invalidate-and-reload the PR detail so
+// the just-posted threads + Overview comment surface without a manual reload. The payload is
+// `prRef` only — the submit already posted everything server-side, so no review/comment id ships
+// (consistent with the submit-* threat-model defense below).
 //
 // Threat-model defense (spec § 7.4/§ 7.5/§ 17 #26): the submit-* payloads carry counts + the
 // minimum IDs the dialog UX needs and nothing more. No thread/reply bodies (those arrive only in
@@ -47,6 +47,11 @@ internal static class SseEventProjection
     // could use to deep-link, but the primary consumer only triggers a refetch.
     internal sealed record RootCommentPostedWire(string PrRef, long IssueCommentId);
 
+    // #392 — draft-submitted: prRef only. The submit already posted every thread/reply + the
+    // PR-root comment server-side, so the frontend just needs the signal to reload PR detail —
+    // no review/comment id is carried (threat-model minimal-payload posture).
+    internal sealed record DraftSubmittedWire(string PrRef);
+
     // S6 PR2 — global identity-change event. Minimal payload per spec § 3.2.1: login
     // strings stay server-side (forensic-log surface only); the wire carries just the
     // discriminator so the frontend can route to the right banner / re-validation flow.
@@ -74,6 +79,8 @@ internal static class SseEventProjection
 
         RootCommentPostedBusEvent e => ("root-comment-posted", new RootCommentPostedWire(
             e.PrRef.ToString(), e.IssueCommentId)),
+
+        DraftSubmitted e => ("draft-submitted", new DraftSubmittedWire(e.PrRef.ToString())),
 
         IdentityChanged _ => ("identity-changed", new IdentityChangedWire("identity-change")),
 

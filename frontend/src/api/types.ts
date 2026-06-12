@@ -494,6 +494,13 @@ export interface RootCommentPostedEvent {
   issueCommentId: number;
 }
 
+// #392 — draft-submitted: a review was submitted (full success, after the server-side draft
+// clear). Carries prRef only; the frontend uses it to reload PR detail so the just-posted
+// threads + Overview comment surface without a manual reload.
+export interface DraftSubmittedEvent {
+  prRef: string;
+}
+
 // S5 PR4 — submit-pipeline frontend types.
 
 // IPreSubmitValidator result (spec § 14.1). PoC's NoopPreSubmitValidator

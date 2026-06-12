@@ -152,12 +152,12 @@ public class StateChangedSseTests
     [Fact]
     public void Unhandled_event_type_throws()
     {
-        // DraftSubmitted is intentionally NOT in the projection switch — SseChannel does
-        // not subscribe to it (see SseEventProjection.cs header comment). Calling Project
-        // on it must throw the default-arm ArgumentOutOfRangeException so a future
-        // contributor adding a new IReviewEvent type without updating the projection
-        // switch hears about it loudly.
-        var evt = new DraftSubmitted(SamplePr);
+        // SingleCommentPostedBusEvent (#302 diff post-now) is intentionally NOT in the
+        // projection switch — SseChannel does not subscribe to it. Calling Project on it must
+        // throw the default-arm ArgumentOutOfRangeException so a future contributor adding a
+        // new IReviewEvent type without updating the projection switch hears about it loudly.
+        // (DraftSubmitted used to be the example here; #392 added its projection arm.)
+        var evt = new SingleCommentPostedBusEvent(SamplePr, ReviewCommentId: 42L);
 
         var act = () => Project(evt);
 

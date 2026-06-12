@@ -209,22 +209,28 @@ export function PrHeader({
   // be a no-op) and disables Submit Review (can't open a second dialog).
   const inSubmitFlow = submit.state.kind !== 'idle';
 
-  // A successful submit clears the session server-side; the own-tab SSE filter
-  // can swallow the pipeline's state-changed event, so refetch explicitly so the
-  // header (verdict picker, recovery badge, Submit button enable state) reflects
-  // the cleared session without a manual reload (adversarial #3). onSessionRefetch
-  // is intentionally not a dep — it's re-created each render by PrDetailPage.
+  // A successful submit clears the session server-side. The session refetch that
+  // reflects the cleared state in the header (verdict picker, recovery badge, Submit
+  // button enable state) is driven by the post-clear `draft-submitted` SSE event
+  // (PrDetailView.useDraftSubmittedSubscriber → draftSession.refetch) — NOT here.
+  // #392: the prior onSessionRefetch() call fired on the submit-progress
+  // Finalize/Succeeded SSE, which the pipeline reports BEFORE ClearSubmittedSession
+  // persists, so it read the un-cleared session and the submitted draft popped back
+  // into the composer. Removing it leaves no gap: `submit.state.kind === 'success'`
+  // is itself SSE-driven (useSubmit), so this effect never had a non-SSE path, and the
+  // post-clear draft-submitted + StateChanged(SourceTabId:null) refetches now own the
+  // composer-clear. clearLastResume stays — it is timing-independent.
   useEffect(() => {
     if (submit.state.kind === 'success') {
-      onSessionRefetch?.();
       // Imported drafts (if any) were adjudicated + submitted — the post-Resume
       // banner is moot now.
       submit.clearLastResume();
     }
-    // `onSessionRefetch` is intentionally omitted — it's re-created each render
-    // by PrDetailPage; including it would re-run the refetch every render while
-    // in `success`. `submit.clearLastResume` is stable (useCallback([])).
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- onSessionRefetch is re-created each render by PrDetailPage; including it would re-refetch every render while parked in `success` (see comment above). #327 / #331
+    // Depend on the transition trigger (`submit.state.kind`) and the stable
+    // `submit.clearLastResume` (useCallback([])), NOT the whole `submit` object —
+    // useSubmit returns a fresh object literal each render, so depending on it would
+    // re-run this effect every render while parked in `success`.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentionally narrowed to submit.state.kind + the stable submit.clearLastResume; the whole `submit` object is re-created each render (#331)
   }, [submit.state.kind, submit.clearLastResume]);
 
   // Dev-only signal: if a loaded PR (title present) has no htmlUrl, the escape-
