@@ -46,6 +46,7 @@ describe('MarkAllReadButton', () => {
       dispatchPrUpdated({
         prRef: 'octocat/hello/42',
         headShaChanged: false,
+        baseShaChanged: false,
         commentCountDelta: 0,
         isMerged: false,
         isClosed: false,
@@ -72,6 +73,7 @@ describe('MarkAllReadButton', () => {
       dispatchPrUpdated({
         prRef: 'octocat/hello/42',
         headShaChanged: false,
+        baseShaChanged: false,
         commentCountDelta: 0,
         isMerged: false,
         isClosed: false,
@@ -105,6 +107,7 @@ describe('MarkAllReadButton', () => {
       dispatchPrUpdated({
         prRef: 'octocat/hello/42',
         headShaChanged: false,
+        baseShaChanged: false,
         commentCountDelta: 0,
         isMerged: false,
         isClosed: false,
