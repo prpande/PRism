@@ -52,7 +52,7 @@ jobs:
       # composite. This job caches BOTH lockfiles — frontend (build) and desktop
       # (pack) — so it passes the multiline cache-dependency-path block through to
       # the composite's setup-node (the one caller that overrides the default).
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # actions/checkout v6.0.2
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # actions/checkout v6.0.3
       - uses: ./.github/actions/setup-toolchain
         with:
           cache-dependency-path: |
