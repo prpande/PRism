@@ -1,3 +1,4 @@
+import { useId } from 'react';
 import { AiComposerAssistant } from '../../Ai/AiComposerAssistant';
 import { badgeLabel, type ComposerSaveBadge } from '../../../hooks/useComposerAutoSave';
 
@@ -38,13 +39,16 @@ export function ComposerActionsBar({
   onSaveClick,
   onPostNow,
 }: ComposerActionsBarProps) {
-  // #390 — on a merged/closed PR the inline "PR is merged …" note is gone; keep
-  // the "posts immediately" context as the immediate-post button's tooltip
-  // (title, not aria-label, so the visible "Comment" text stays the accessible
-  // name — WCAG 2.5.3 label-in-name).
-  const postNowTitle = closedBanner
+  // #390 — on a merged/closed PR the inline "PR is merged …" note is gone. Keep
+  // the "posts immediately" context as (a) the button's tooltip for mouse users
+  // and (b) an `aria-describedby` sr-only description for keyboard/touch/SR users
+  // (title alone isn't reliably announced). "Comment" stays the accessible NAME
+  // (WCAG 2.5.3 label-in-name); the merged context is a description, not the name.
+  const mergedContext = closedBanner
     ? `Post directly to this ${prState === 'closed' ? 'closed' : 'merged'} PR`
-    : postNowTooltip;
+    : undefined;
+  const postNowTitle = mergedContext ?? postNowTooltip;
+  const mergedContextId = useId();
   return (
     <div className="composer-actions">
       {/* left group */}
@@ -97,11 +101,17 @@ export function ComposerActionsBar({
         className="composer-post-now"
         aria-disabled={postNowDisabled}
         title={postNowTitle}
+        aria-describedby={mergedContext ? mergedContextId : undefined}
         onClick={onPostNow}
         disabled={readOnly || posting}
       >
         {posting ? 'Posting…' : 'Comment'}
       </button>
+      {mergedContext && (
+        <span id={mergedContextId} className="sr-only">
+          {mergedContext}
+        </span>
+      )}
       {postError && (
         <div className="composer-error" role="alert">
           {postError}

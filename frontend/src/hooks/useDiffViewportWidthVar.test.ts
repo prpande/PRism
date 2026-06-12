@@ -1,11 +1,17 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterEach } from 'vitest';
 import { renderHook } from '@testing-library/react';
 import { useRef } from 'react';
 import { useDiffViewportWidthVar } from './useDiffViewportWidthVar';
 
 describe('useDiffViewportWidthVar', () => {
+  const realResizeObserver = (globalThis as { ResizeObserver?: unknown }).ResizeObserver;
+  afterEach(() => {
+    // Always restore the real ResizeObserver, even if a test threw before its own
+    // assertion completed — otherwise a mutated global leaks into later tests.
+    (globalThis as { ResizeObserver?: unknown }).ResizeObserver = realResizeObserver;
+  });
+
   it('does not throw when ResizeObserver is undefined (jsdom)', () => {
-    const orig = (globalThis as { ResizeObserver?: unknown }).ResizeObserver;
     (globalThis as { ResizeObserver?: unknown }).ResizeObserver = undefined;
     expect(() => {
       renderHook(() => {
@@ -13,7 +19,6 @@ describe('useDiffViewportWidthVar', () => {
         useDiffViewportWidthVar(ref, []);
       });
     }).not.toThrow();
-    (globalThis as { ResizeObserver?: unknown }).ResizeObserver = orig;
   });
 
   it('writes the element clientWidth to --diff-viewport-w when ResizeObserver exists', () => {
@@ -27,7 +32,6 @@ describe('useDiffViewportWidthVar', () => {
       observe(): void {}
       disconnect(): void {}
     }
-    const orig = (globalThis as { ResizeObserver?: unknown }).ResizeObserver;
     (globalThis as { ResizeObserver?: unknown }).ResizeObserver =
       RO as unknown as typeof ResizeObserver;
     renderHook(() => {
@@ -35,6 +39,5 @@ describe('useDiffViewportWidthVar', () => {
       useDiffViewportWidthVar(ref, []);
     });
     expect(el.style.getPropertyValue('--diff-viewport-w')).toBe('640px');
-    (globalThis as { ResizeObserver?: unknown }).ResizeObserver = orig;
   });
 });
