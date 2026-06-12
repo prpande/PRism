@@ -26,7 +26,6 @@ internal sealed class FakeInboxRefreshOrchestrator : IInboxRefreshOrchestrator
     public Func<CancellationToken, Task>? RefreshOverride { get; set; }
 
     public int RefreshCalls => Volatile.Read(ref _refreshCalls);
-    public bool? LastHardRefresh { get; private set; }
 
     public Task<bool> WaitForFirstSnapshotAsync(TimeSpan timeout, CancellationToken ct)
         => Task.FromResult(Current != null);
@@ -34,7 +33,6 @@ internal sealed class FakeInboxRefreshOrchestrator : IInboxRefreshOrchestrator
     public Task RefreshAsync(CancellationToken ct, bool hardRefresh = false)
     {
         Interlocked.Increment(ref _refreshCalls);
-        LastHardRefresh = hardRefresh;
         return RefreshOverride?.Invoke(ct) ?? Task.CompletedTask;
     }
 

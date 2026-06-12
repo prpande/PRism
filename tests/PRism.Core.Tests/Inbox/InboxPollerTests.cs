@@ -145,7 +145,7 @@ public sealed class InboxPollerTests
     [Fact]
     public async Task Refresh_exception_does_not_break_poller()
     {
-        var orchestrator = new FakeInboxRefreshOrchestrator();
+        var (poller, orchestrator, subs) = Build();
         var callCount = 0;
         orchestrator.RefreshOverride = _ =>
         {
@@ -153,13 +153,6 @@ public sealed class InboxPollerTests
             if (callCount == 1) throw new InvalidOperationException("transient error");
             return Task.CompletedTask;
         };
-
-        var subs = new InboxSubscriberCount();
-        var poller = new InboxPoller(
-            orchestrator,
-            subs,
-            FastConfig(),
-            NullLogger<InboxPoller>.Instance);
 
         using var cts = new CancellationTokenSource();
         await poller.StartAsync(cts.Token);
@@ -177,7 +170,7 @@ public sealed class InboxPollerTests
     [Fact]
     public async Task RefreshAsync_throws_RateLimitExceededException_then_next_delay_is_max_of_retry_after_and_cadence()
     {
-        var orchestrator = new FakeInboxRefreshOrchestrator();
+        var (poller, orchestrator, subs) = Build();
         var callTimes = new List<DateTime>();
         var callCount = 0;
         // Cadence = 0 (clamped to a 1s floor); Retry-After = 400ms. The poller should wait
@@ -193,13 +186,6 @@ public sealed class InboxPollerTests
             }
             return Task.CompletedTask;
         };
-
-        var subs = new InboxSubscriberCount();
-        var poller = new InboxPoller(
-            orchestrator,
-            subs,
-            FastConfig(),
-            NullLogger<InboxPoller>.Instance);
 
         using var cts = new CancellationTokenSource();
         await poller.StartAsync(cts.Token);
@@ -224,20 +210,13 @@ public sealed class InboxPollerTests
         // Regression: Polling.InboxSeconds=0 used to produce a tight loop because
         // TimeSpan.FromSeconds(0) → Task.Delay(0,...) returns immediately. The
         // poller now clamps to a 1s minimum (defensive against config typos).
-        var orchestrator = new FakeInboxRefreshOrchestrator();
+        var (poller, orchestrator, subs) = Build();
         var callTimes = new List<DateTime>();
         orchestrator.RefreshOverride = _ =>
         {
             callTimes.Add(DateTime.UtcNow);
             return Task.CompletedTask;
         };
-
-        var subs = new InboxSubscriberCount();
-        var poller = new InboxPoller(
-            orchestrator,
-            subs,
-            FastConfig(),
-            NullLogger<InboxPoller>.Instance);
 
         using var cts = new CancellationTokenSource();
         await poller.StartAsync(cts.Token);
