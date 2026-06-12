@@ -1,5 +1,5 @@
 import { renderHook, waitFor, act } from '@testing-library/react';
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { useAiSummary } from '../src/hooks/useAiSummary';
 import * as api from '../src/api/aiSummary';
 import type { PrReference } from '../src/api/types';
@@ -14,10 +14,6 @@ const otherRef: PrReference = { owner: 'octocat', repo: 'hello', number: 43 };
 vi.mock('../src/api/aiSummary');
 
 beforeEach(() => {
-  vi.clearAllMocks();
-});
-
-afterEach(() => {
   vi.clearAllMocks();
 });
 

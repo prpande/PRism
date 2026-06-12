@@ -46,6 +46,12 @@ export function useAiSummary(
     setSummary(null);
     setLoading(true);
     setError(false);
+    // Reset staleness + regenerate-error per fetch so each PR/enable change starts clean and the
+    // hook does not depend on the parent re-latching baseShaChanged to false on prRef change. A
+    // base-change SSE does NOT re-run this effect (baseShaChanged is out of deps), so this reset
+    // never fires on a base move — the rising-edge effect below owns that.
+    setStaleCleared(false);
+    setRegenerateError(false);
     getAiSummaryResult(prRef).then((r) => {
       if (cancelled) return;
       if (r.kind === 'ok') {
