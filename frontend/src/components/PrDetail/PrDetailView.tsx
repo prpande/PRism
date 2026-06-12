@@ -19,6 +19,7 @@ import { useToast } from '../Toast/useToast';
 import { useDraftSession } from '../../hooks/useDraftSession';
 import { useStateChangedSubscriber } from '../../hooks/useStateChangedSubscriber';
 import { useRootCommentPostedSubscriber } from '../../hooks/useRootCommentPostedSubscriber';
+import { useSingleCommentPostedSubscriber } from '../../hooks/useSingleCommentPostedSubscriber';
 import { useDraftSubmittedSubscriber } from '../../hooks/useDraftSubmittedSubscriber';
 import { useCrossTabPrPresence } from '../../hooks/useCrossTabPrPresence';
 import { useReconcile } from '../../hooks/useReconcile';
@@ -80,6 +81,11 @@ export function PrDetailView({
   // Task 14: reload PR detail when the root-comment draft is posted so the
   // posted comment appears in the conversation and the local draft clears.
   useRootCommentPostedSubscriber({ prRef, onPosted: reload });
+  // #450: when a single inline comment/reply is posted, reload PR detail so the new thread
+  // surfaces with its ReplyComposer — without a manual reload. Mirrors the root-comment
+  // subscriber above; the loader's matching SingleCommentPostedBusEvent → Invalidate guarantees
+  // the reload re-fetches fresh detail, not the stale head-SHA-keyed snapshot.
+  useSingleCommentPostedSubscriber({ prRef, onPosted: reload });
   // #392: when a review is submitted, reload PR detail (so the just-posted inline
   // threads + Overview comment surface) AND refetch the draft session (so the
   // submitted drafts clear from their composers) — without a manual reload. The
