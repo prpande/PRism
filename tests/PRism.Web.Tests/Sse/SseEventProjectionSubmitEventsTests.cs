@@ -125,4 +125,21 @@ public class SseEventProjectionSubmitEventsTests
         json.Should().Contain("\"prRef\":\"o/r/1\"");
         json.Should().Contain("\"issueCommentId\":987654321");
     }
+
+    // #392 — draft-submitted SSE projection. Minimal payload: prRef only (no review id; the
+    // submit posted everything server-side already). Drives the post-submit PR-detail reload.
+    [Fact]
+    public void DraftSubmitted_projects_to_draft_submitted_with_prref_only()
+    {
+        var evt = new DraftSubmitted(Pr);
+
+        var (name, json) = Project(evt);
+
+        name.Should().Be("draft-submitted");
+        json.Should().Contain("\"prRef\":\"o/r/1\"");
+        // No review / comment ids leak — consistent with the submit-* threat-model defense.
+        json.Should().NotContain("reviewId");
+        json.Should().NotContain("pendingReviewId");
+        json.Should().NotContain("issueCommentId");
+    }
 }

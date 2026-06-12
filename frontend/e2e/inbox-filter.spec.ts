@@ -1,5 +1,6 @@
 import { test, expect, type Page, type Route } from '@playwright/test';
 import { setupBaseRoutes } from './helpers/base-mocks';
+import { makeDefaultPreferences } from './fixtures/preferences';
 
 // ---------------------------------------------------------------------------
 // #262 PR2 — inbox filter/sort bar e2e.
@@ -147,28 +148,12 @@ const sampleInbox = {
   ciProbeComplete: true,
 };
 
-// Nested preferences shape (S6 PR1). `inbox.sections` carries the PR1 taxonomy
-// (no `ci-failing`, awaiting-author present). `ui.theme` is parametrized per
-// test so the filter behaviour is exercised in BOTH light and dark.
+// Canonical preferences shape (#332) with `ui.theme` parametrized per test so
+// the filter behaviour is exercised in BOTH light and dark. The canonical
+// `inbox.sections` is the PR1 taxonomy (no `ci-failing`, awaiting-author present).
 function preferencesFor(theme: 'light' | 'dark') {
-  return {
-    ui: { theme, accent: 'indigo', aiPreview: false, density: 'comfortable' },
-    inbox: {
-      sections: {
-        'review-requested': true,
-        'awaiting-author': true,
-        'authored-by-me': true,
-        mentioned: true,
-        'recently-closed': true,
-      },
-      defaultSort: 'updated',
-    },
-    github: {
-      host: 'https://github.com',
-      configPath: '/fake/config.json',
-      logsPath: '/fake/logs',
-    },
-  };
+  const base = makeDefaultPreferences();
+  return { ...base, ui: { ...base.ui, theme } };
 }
 
 // ---------------------------------------------------------------------------

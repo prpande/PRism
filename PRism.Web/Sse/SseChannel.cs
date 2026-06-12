@@ -46,9 +46,10 @@ internal sealed class SseChannel : IDisposable
     // S6 PR2 — global identity-change broadcast. Not per-PR; fans out to every connected
     // subscriber so every tab can re-validate against the new viewer login.
     private readonly IDisposable _busIdentityChanged;
-    // NOTE: DraftSubmitted intentionally NOT subscribed — the submit endpoint publishes it
-    // for forward-compat (spec § 17 #25) but the frontend reacts to the StateChanged that
-    // fires alongside; there is no SseEventProjection arm for it.
+    // #392 — draft-submitted: a review was submitted (full success, after the server-side draft
+    // clear). Fans out per-PR so every subscriber for the PR reloads PR detail and the just-posted
+    // threads + Overview comment surface without a manual reload.
+    private readonly IDisposable _busDraftSubmitted;
 
     public SseChannel(
         IReviewEventBus bus,
@@ -72,6 +73,7 @@ internal sealed class SseChannel : IDisposable
         _busSubmitOrphanCleanupFailed = bus.Subscribe<SubmitOrphanCleanupFailedBusEvent>(OnSubmitOrphanCleanupFailed);
         _busSubmitDuplicateMarkerDetected = bus.Subscribe<SubmitDuplicateMarkerDetectedBusEvent>(OnSubmitDuplicateMarkerDetected);
         _busRootCommentPosted = bus.Subscribe<RootCommentPostedBusEvent>(OnRootCommentPosted);
+        _busDraftSubmitted = bus.Subscribe<DraftSubmitted>(OnDraftSubmitted);
         _busIdentityChanged = bus.Subscribe<IdentityChanged>(OnIdentityChanged);
     }
 
@@ -300,6 +302,7 @@ internal sealed class SseChannel : IDisposable
     private void OnSubmitOrphanCleanupFailed(SubmitOrphanCleanupFailedBusEvent evt) => FanoutProjected(evt, evt.PrRef);
     private void OnSubmitDuplicateMarkerDetected(SubmitDuplicateMarkerDetectedBusEvent evt) => FanoutProjected(evt, evt.PrRef);
     private void OnRootCommentPosted(RootCommentPostedBusEvent evt) => FanoutProjected(evt, evt.PrRef);
+    private void OnDraftSubmitted(DraftSubmitted evt) => FanoutProjected(evt, evt.PrRef);
 
     // Per-PR fanout for events that carry a PrReference and use the projection wire shape
     // (prRef as "owner/repo/number" string per spec § 4.5). Mirrors OnActivePrUpdated's
@@ -378,6 +381,7 @@ internal sealed class SseChannel : IDisposable
         _busSubmitOrphanCleanupFailed.Dispose();
         _busSubmitDuplicateMarkerDetected.Dispose();
         _busRootCommentPosted.Dispose();
+        _busDraftSubmitted.Dispose();
         _busIdentityChanged.Dispose();
     }
 

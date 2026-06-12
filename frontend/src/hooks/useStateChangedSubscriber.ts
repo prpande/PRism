@@ -1,7 +1,7 @@
 import { useEffect } from 'react';
 import { useEventSource } from './useEventSource';
 import { getTabId } from '../api/draft';
-import type { PrReference } from '../api/types';
+import { prRefKey, type PrReference } from '../api/types';
 
 export interface UseStateChangedSubscriberOptions {
   prRef: PrReference | null;
@@ -29,7 +29,7 @@ export function useStateChangedSubscriber({
   const stream = useEventSource();
   useEffect(() => {
     if (!stream || !prRef) return;
-    const prRefStr = `${prRef.owner}/${prRef.repo}/${prRef.number}`;
+    const prRefStr = prRefKey(prRef);
     return stream.on('state-changed', (event) => {
       if (event.sourceTabId === getTabId()) return;
       if (event.prRef !== prRefStr) return;

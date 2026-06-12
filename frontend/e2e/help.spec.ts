@@ -9,29 +9,14 @@
 
 import { test, expect, type Route } from '@playwright/test';
 import { setupBaseRoutes } from './helpers/base-mocks';
+import { makeDefaultPreferences } from './fixtures/preferences';
 
 // ---------------------------------------------------------------------------
-// Shared mock fixtures (matches inbox.spec.ts shape)
+// Shared mock fixtures — canonical preferences (#332); these tests never assert
+// the github paths, so the canonical values stand in for the old /fake/* ones.
 // ---------------------------------------------------------------------------
 
-const defaultPreferences = {
-  ui: { theme: 'system', accent: 'indigo', aiPreview: false, density: 'comfortable' },
-  inbox: {
-    sections: {
-      'review-requested': true,
-      'awaiting-author': true,
-      'authored-by-me': true,
-      mentioned: true,
-      'recently-closed': true,
-    },
-    defaultSort: 'updated',
-  },
-  github: {
-    host: 'https://github.com',
-    configPath: '/fake/config.json',
-    logsPath: '/fake/logs',
-  },
-};
+const defaultPreferences = makeDefaultPreferences();
 
 async function setupBaseMocks(page: import('@playwright/test').Page): Promise<void> {
   await setupBaseRoutes(page);

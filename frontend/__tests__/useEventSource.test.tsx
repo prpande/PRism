@@ -139,6 +139,29 @@ describe('useEventSource / EventStreamProvider', () => {
     }
   });
 
+  it('delivers draft-submitted frames to on() listeners (EVENT_TYPES wiring, #392)', async () => {
+    // Guards the silent-no-op failure mode: connect() only calls addEventListener for names
+    // in EVENT_TYPES, so a 'draft-submitted' key in EventPayloadByType without the matching
+    // EVENT_TYPES entry would compile and pass type-only checks while the live stream never
+    // delivers the frame. Dispatch through the real openEventStream + FakeEventSource so the
+    // assertion fails if 'draft-submitted' is missing from EVENT_TYPES.
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <EventStreamProvider>{children}</EventStreamProvider>
+    );
+    const { result } = renderHook(() => useEventSource(), { wrapper });
+    await waitFor(() => expect(FakeEventSource.instances).toHaveLength(1));
+
+    const cb = vi.fn();
+    const off = result.current!.on('draft-submitted', cb);
+    try {
+      FakeEventSource.instance.dispatch('draft-submitted', { prRef: 'acme/api/7' });
+      expect(cb).toHaveBeenCalledTimes(1);
+      expect(cb).toHaveBeenCalledWith({ prRef: 'acme/api/7' });
+    } finally {
+      off();
+    }
+  });
+
   it('dispatches prism-events-reconnected on a subsequent subscriber-assigned (reconnect path)', async () => {
     // Companion to the test above: AFTER the first subscriber-assigned flips
     // the hasEverConnected flag, the next subscriber-assigned on the same
