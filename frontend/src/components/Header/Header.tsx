@@ -5,6 +5,7 @@ import { WindowControls } from './WindowControls';
 import { GearIcon } from '../PrDetail/FilesTab/diffIcons';
 import { HelpIcon } from './HelpIcon';
 import { FeedbackIcon } from './FeedbackIcon';
+import { useEffectiveLocation, type EffectiveLocation } from '../../hooks/useEffectiveLocation';
 import styles from './Header.module.css';
 
 interface HeaderProps {
@@ -47,15 +48,13 @@ export function Header({ isAuthed }: HeaderProps) {
   const helpActive = pathname === '/help';
   const feedbackActive = pathname === '/feedback';
 
-  // The page each cluster modal (Settings/Help/Feedback) should open OVER. On a
-  // real page this is the current location; but if a modal route is already the
-  // location (it carries its own backgroundLocation), forward THAT background so
-  // opening another modal doesn't nest the modal URL as the new background (which
-  // would snap the page behind the scrim back to a modal route). Mirrors the
-  // `bg ?? fallback` pattern in FeedbackModalRoutes / HelpModal.
-  const effectiveBg =
-    (location.state as { backgroundLocation?: typeof location } | null)?.backgroundLocation ??
-    location;
+  // The page each cluster modal (Settings/Help/Feedback) should open OVER. The
+  // shared hook returns the real background: the forwarded backgroundLocation when
+  // a modal route is already open, the synthetic Inbox for a cold deep-link to a
+  // modal route, else the current page. Using it (rather than a bare `location`)
+  // keeps a modal URL from being nested as the next modal's background — the same
+  // reason SettingsLink uses it for intra-Settings navigation.
+  const effectiveBg = useEffectiveLocation();
 
   const classFor = (active: boolean) => (active ? styles.tabActive : styles.tab);
 
@@ -146,7 +145,7 @@ function NavIconLink({
   to: string;
   label: string;
   active: boolean;
-  bg: ReturnType<typeof useLocation>;
+  bg: EffectiveLocation;
   children: ReactNode;
 }) {
   return (
