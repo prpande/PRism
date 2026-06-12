@@ -390,8 +390,6 @@ public sealed class GitHubSectionQueryRunnerTests
         result["review-requested"][0].Reference.Number.Should().Be(9);
     }
 
-    private static HttpResponseMessage Respond(HttpStatusCode code, string body) => new(code)
-    {
-        Content = new StringContent(body, Encoding.UTF8, "application/json"),
-    };
+    private static HttpResponseMessage Respond(HttpStatusCode code, string body)
+        => JsonHttpResponse.Create(code, body);
 }
