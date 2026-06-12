@@ -81,6 +81,9 @@ export function OverviewTab() {
         filesCount={filesCount}
         draftsCount={draftsCount}
         threadsCount={threadsCount}
+        // Intentional stub: the "Viewed" tile reads 0/N until wired to the persisted
+        // per-file viewed state (which DOES round-trip via postMarkViewed). Tracked
+        // by #442 — deferred from #330 to keep this a drift/correctness pass.
         viewedCount={0}
       />
       <PrRootConversation comments={prDetail.rootComments} replyContext={replyContext} />

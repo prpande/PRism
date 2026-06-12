@@ -56,8 +56,9 @@ export function AppearancePane() {
   };
   // No extra rollback needed (unlike theme/accent/density): those re-apply to
   // documentElement on failure because they wrote a DOM side-effect optimistically.
-  // aiPreview has no such DOM write — usePreferences.set reverts its own state on a
-  // failed POST (+ error toast), so the controlled Switch reflects the revert.
+  // aiPreview has no such DOM write — usePreferences.set is apply-on-success (NOT
+  // optimistic), so on a failed POST local state never changed and the controlled
+  // Switch keeps showing the prior value (+ error toast). Nothing to revert.
   // #221: the AI gates now derive from this shared preference (useCapabilities), so
   // the toggle propagates reactively — no capabilities refetch to chase.
   const onAiToggle = (next: boolean) => {

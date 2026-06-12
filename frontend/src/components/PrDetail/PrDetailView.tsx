@@ -274,22 +274,32 @@ export function PrDetailView({
     ? 'pr-detail-page pr-detail-page-readonly'
     : 'pr-detail-page';
 
-  // Provider value for the direct-rendered sub-tabs. `prDetail` is
-  // non-nullable in the context shape, so this is only consumed inside the
-  // `data ?` gate below where `data!` is guaranteed present. The always-visible
-  // chrome (UnresolvedPanel → StaleDraftRow) gets `onSelectSubTab` as an
-  // explicit prop instead, so it renders crash-free during the pre-load window
-  // when `data === null`.
-  const ctxValue = useMemo<PrDetailContextValue>(
-    () => ({
-      prRef,
-      prDetail: data!,
-      draftSession,
-      readOnly: presence.readOnly,
-      onSelectSubTab: selectSubTab,
-    }),
+  // Provider value for the direct-rendered sub-tabs. `prDetail` is non-nullable in
+  // the context shape, so the value is `null` during the pre-load window (data ===
+  // null) and the render gates on `ctxValue` below — building it here without a
+  // `data!` assertion that a future consumer rendered outside the gate could crash
+  // on. The always-visible chrome (UnresolvedPanel → StaleDraftRow) gets
+  // `onSelectSubTab` as an explicit prop instead, so it renders crash-free pre-load.
+  const ctxValue = useMemo<PrDetailContextValue | null>(
+    () =>
+      data
+        ? {
+            prRef,
+            prDetail: data,
+            draftSession,
+            readOnly: presence.readOnly,
+            onSelectSubTab: selectSubTab,
+          }
+        : null,
     [prRef, data, draftSession, presence.readOnly, selectSubTab],
   );
+
+  // Stable identity for PrHeader's onSessionRefetch — an inline arrow would hand
+  // PrHeader a fresh function each render, churning its effect/memo dep hygiene.
+  const handleSessionRefetch = useCallback(() => {
+    void draftSession.refetch();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- depends on the stable draftSession.refetch useCallback, not the per-render draftSession object literal (#331)
+  }, [draftSession.refetch]);
 
   return (
     <div className={pageClassName} data-prref={refKey} hidden={!active}>
@@ -331,7 +341,7 @@ export function PrDetailView({
         readOnly={presence.readOnly}
         registerOpenComposer={draftSession.registerOpenComposer}
         getPrRootHolder={draftSession.getPrRootHolder}
-        onSessionRefetch={() => void draftSession.refetch()}
+        onSessionRefetch={handleSessionRefetch}
         onRefresh={prRefresh.refresh}
         isRefreshing={prRefresh.isRefreshing}
         justRefreshed={prRefresh.justRefreshed}
@@ -408,10 +418,11 @@ export function PrDetailView({
           covers the background-reload case visually.) */}
       {!data && isLoading ? (
         <PrDetailSkeleton />
-      ) : data ? (
+      ) : ctxValue ? (
         // Direct keep-alive sub-tab rendering. Each visited sub-tab stays
         // mounted; `hidden` hides the inactive ones. Unvisited sub-tabs are
-        // not in the DOM at all until first selected.
+        // not in the DOM at all until first selected. Gated on `ctxValue` (non-null
+        // iff `data` is) so the provider value is typed non-null without an assertion.
         <PrDetailContextProvider value={ctxValue}>
           {visited.current.has('overview') && (
             <div data-subtab="overview" hidden={subTab !== 'overview'}>
