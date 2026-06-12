@@ -249,4 +249,41 @@ public class ActivePrPollerBackoffTests
         await poller.TickAsync(T0.AddSeconds(60), default);
         bus.Published.Should().ContainSingle("the first poll publishes a hydration event; identical subsequent snapshots do not");
     }
+
+    [Fact]
+    public async Task Publishes_ActivePrUpdated_when_base_sha_changes_with_unchanged_head()
+    {
+        var (poller, review, bus, registry, _) = Build();
+        var pr = new PrReference("o", "r", 1);
+        registry.Add("sub1", pr);
+
+        review.SetSnapshot(pr, Snapshot(headSha: "h1", baseSha: "b1"));
+        await poller.TickAsync(T0, default);  // first poll → hydration event, BaseShaChanged false
+        bus.Published.Should().ContainSingle("first poll publishes a hydration event");
+        ((ActivePrUpdated)bus.Published[0]).BaseShaChanged.Should().BeFalse("no prior base to diff");
+
+        // Base branch advances; head unchanged.
+        review.SetSnapshot(pr, Snapshot(headSha: "h1", baseSha: "b2"));
+        await poller.TickAsync(T0.AddSeconds(30), default);
+
+        bus.Published.Should().HaveCount(2, "a same-head base-only move must be published, not swallowed");
+        var deltaEvt = (ActivePrUpdated)bus.Published[1];
+        deltaEvt.HeadShaChanged.Should().BeFalse();
+        deltaEvt.BaseShaChanged.Should().BeTrue();
+        deltaEvt.NewBaseSha.Should().Be("b2");
+    }
+
+    [Fact]
+    public async Task FirstPoll_hydrates_LastBaseSha_without_emitting_BaseShaChanged()
+    {
+        var (poller, review, bus, registry, _) = Build();
+        var pr = new PrReference("o", "r", 1);
+        registry.Add("sub1", pr);
+        review.SetSnapshot(pr, Snapshot(headSha: "h1", baseSha: "b1"));
+
+        await poller.TickAsync(T0, default);
+
+        bus.Published.Should().ContainSingle();
+        ((ActivePrUpdated)bus.Published[0]).BaseShaChanged.Should().BeFalse();
+    }
 }
