@@ -15,6 +15,7 @@ namespace PRism.Core.Tests.TestHelpers;
 internal sealed class FakeInboxRefreshOrchestrator : IInboxRefreshOrchestrator
 {
     private int _refreshCalls;
+    private int _coldStartKicked;
 
     public InboxSnapshot? Current { get; set; }
 
@@ -36,5 +37,12 @@ internal sealed class FakeInboxRefreshOrchestrator : IInboxRefreshOrchestrator
         return RefreshOverride?.Invoke(ct) ?? Task.CompletedTask;
     }
 
-    public void TryColdStartRefresh() => RefreshAsync(CancellationToken.None);
+    // Honor the IInboxRefreshOrchestrator contract: fire exactly once per lifetime;
+    // subsequent calls are no-ops (CAS guard mirrors the Web.Tests fake). The Task is
+    // intentionally discarded — cold-start is fire-and-forget.
+    public void TryColdStartRefresh()
+    {
+        if (Interlocked.CompareExchange(ref _coldStartKicked, 1, 0) != 0) return;
+        _ = RefreshAsync(CancellationToken.None);
+    }
 }
