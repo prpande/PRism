@@ -1,6 +1,6 @@
 import { test, expect, type Route } from '@playwright/test';
 import { setupBaseRoutes } from './helpers/base-mocks';
-import { allOffCapabilities } from './fixtures/preferences';
+import { allOffCapabilities, makeDefaultPreferences } from './fixtures/preferences';
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -36,43 +36,13 @@ const sampleInbox = {
   tokenScopeFooterEnabled: true,
 };
 
-// S6 PR1: GET /api/preferences widened from flat { theme, accent, aiPreview } to
-// nested { ui, inbox, github } (spec § 2.4). Playwright frontend consumers
-// (HeaderControls, InboxPage, …) now read preferences.ui.theme etc., so the
-// Playwright fixture must mirror the new shape or the React tree crashes when
-// HeaderControls.applyToDocument(undefined, undefined) → ACCENT_HUES[undefined].h
-// throws. Caught by Playwright on PR #69 (4 inbox tests failed at "Refactor auth
-// flow" never rendering).
-const defaultPreferences = {
-  // aiPreview is a deliberate client-side override (false) for these mock-driven tests
-  // even though the backend default is now true (#283); contentScale + sectionOrder are
-  // always present on the real GET /api/preferences wire, so keep the fixture in contract
-  // (Copilot PR #309).
-  ui: {
-    theme: 'system',
-    accent: 'indigo',
-    aiPreview: false,
-    density: 'comfortable',
-    contentScale: 'm',
-  },
-  inbox: {
-    sections: {
-      'review-requested': true,
-      'awaiting-author': true,
-      'authored-by-me': true,
-      mentioned: true,
-      'recently-closed': true,
-    },
-    defaultSort: 'updated',
-    sectionOrder: 'review-requested,awaiting-author,authored-by-me,mentioned',
-    showActivityRail: false, // #283 rail decoupled from AI, default off
-  },
-  github: {
-    host: 'https://github.com',
-    configPath: '/fake/config.json',
-    logsPath: '/fake/logs',
-  },
-};
+// The canonical mocked-mode preferences shape (#332). It mirrors the real
+// nested GET /api/preferences wire (ui / inbox / github) so the React tree
+// hydrates — a flat-shaped fixture crashes HeaderControls.applyToDocument
+// (ACCENT_HUES[undefined].h throws; caught by Playwright on PR #69). The
+// activity-rail test below spreads this base and overrides ui.aiPreview /
+// inbox.showActivityRail.
+const defaultPreferences = makeDefaultPreferences();
 
 // ---------------------------------------------------------------------------
 // Shared mock wiring

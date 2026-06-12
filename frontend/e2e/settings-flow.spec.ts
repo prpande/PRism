@@ -1,35 +1,11 @@
 import { test, expect, type Route } from '@playwright/test';
 import { setupBaseRoutes } from './helpers/base-mocks';
+import { makeDefaultPreferences } from './fixtures/preferences';
 
 // ---------------------------------------------------------------------------
-// Fixtures
+// Fixtures — the preferences shape is the canonical one (#332); this spec adds
+// only the mutable-store POST handler below so toggles persist across reloads.
 // ---------------------------------------------------------------------------
-
-function makeDefaultPreferences() {
-  return {
-    ui: {
-      theme: 'system' as const,
-      accent: 'indigo' as const,
-      aiPreview: false,
-      density: 'comfortable' as const,
-    },
-    inbox: {
-      sections: {
-        'review-requested': true,
-        'awaiting-author': true,
-        'authored-by-me': true,
-        mentioned: true,
-        'recently-closed': true,
-      },
-      defaultSort: 'updated',
-    },
-    github: {
-      host: 'https://github.com',
-      configPath: '/Users/x/AppData/Local/PRism/config.json',
-      logsPath: '/Users/x/AppData/Local/PRism/logs',
-    },
-  };
-}
 
 type Preferences = ReturnType<typeof makeDefaultPreferences>;
 type SectionId = keyof Preferences['inbox']['sections'];
