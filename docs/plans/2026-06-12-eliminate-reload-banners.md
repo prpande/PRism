@@ -957,7 +957,7 @@ git commit -m "chore(inbox): delete unused InboxBanner component (#450)"
 **Files:**
 - Modify: `frontend/e2e/pr-detail-single-comment.spec.ts`
 
-**Scope note (feasibility finding):** The headline "reply-able without reload" behavior is proven at the component level in Task 8 (the new thread + its reply affordance render on the data swap) and at the wiring level in Tasks 4/7 (post → `SingleCommentPostedBusEvent` → `Invalidate` + SSE → `reload`). A *live-browser* e2e of the full chain is **not feasible today**: the e2e fake backend `FakePrReader.GetPrDetailAsync` returns `ReviewComments: Array.Empty<ReviewThreadDto>()` and never reflects a posted comment back into PR detail — this file already carries a `test.fixme` documenting the missing `/test/seed-review-thread` hook. So this task asserts only what the fake backend can support: scroll preservation + the optimistic card surviving the auto-reload. The full reply-affordance e2e stays `fixme`, deferred to the issue that adds the seed hook.
+**Scope note (feasibility finding):** The headline "reply-able without reload" behavior is proven at the component level in Task 8 (the new thread + its reply affordance render on the data swap) and at the wiring level in Tasks 4/7 (post → `SingleCommentPostedBusEvent` → `Invalidate` + SSE → `reload`). A *live-browser* e2e of the full chain is **not feasible today**: the e2e fake backend `FakePrReader.GetPrDetailAsync` returns `ReviewComments: Array.Empty<ReviewThreadDto>()` and never reflects a posted comment back into PR detail — this file already carries a `test.fixme` documenting the missing `/test/seed-review-thread` hook. So this task asserts only what the fake backend can support: scroll preservation + the optimistic card surviving the auto-reload. The full reply-affordance e2e stays `fixme`, deferred to **#453** (adds the seed hook + enables the live-browser reply-affordance e2e).
 
 - [ ] **Step 1: Add the feasible e2e assertion.** After the existing post-now flow, assert the diff scroll offset is unchanged across the auto-reload and the optimistic inline card persists. Reuse the spec's existing fake-review harness + post flow + selectors:
 
@@ -1025,7 +1025,7 @@ git commit -m "chore: format + lint pass (#450)"
 
 **Spec coverage:**
 - §2.2 Unit 1.1 (SSE projection) → Tasks 1, 3. Unit 1.2 (loader Invalidate) → Task 4. Unit 1.3 (frontend trigger) → Tasks 5, 6, 7.
-- §2.3 view-state preservation → Task 8 (component, incl. reply-affordance proof) + Task 13 (scroll e2e). Live-browser reply-affordance e2e deferred (fake backend returns empty `ReviewComments`; needs a `/test/seed-review-thread` hook — matches the existing `test.fixme`).
+- §2.3 view-state preservation → Task 8 (component, incl. reply-affordance proof) + Task 13 (scroll e2e). Live-browser reply-affordance e2e deferred to **#453** (fake backend returns empty `ReviewComments`; needs a `/test/seed-review-thread` hook — matches the existing `test.fixme`).
 - §2.3 422 window accepted (no work) — intentionally no task; documented decision.
 - §3.2 Unit 2.1 (debounced reload, queue-not-skip, aria-live) → Task 9 (incl. the 5-file stale-mock sweep). Unit 2.2 (remove banner) → Tasks 11, 12. Unit 2.3 (`useInboxRefresh` dismiss drop) → Task 10.
 - §4 testing → covered per-task; StateChangedSseTests fix → Task 2.
