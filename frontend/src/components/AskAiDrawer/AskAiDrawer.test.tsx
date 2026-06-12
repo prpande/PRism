@@ -285,3 +285,52 @@ describe('AskAiDrawer composer', () => {
     expect(textarea.value).toBe('');
   });
 });
+
+// #330: the drawer reads useEffectiveLocation, not raw useLocation. When a
+// Settings/Help/Feedback modal route is open OVER a PR, the live pathname is
+// /settings/* (which carries no prRef) but `state.backgroundLocation` still points
+// at the PR. With raw useLocation the drawer would null out prRef → blank its thread
+// + disable its composer until the modal closed. These tests pin the fix: the drawer
+// keeps tracking the underlying PR behind the scrim.
+function ModalOverPrHarness({ handle }: { handle: { current: SeedHandle | null } }) {
+  return (
+    <MemoryRouter
+      initialEntries={[
+        { pathname: '/settings', state: { backgroundLocation: { pathname: '/pr/acme/api/1' } } },
+      ]}
+    >
+      <AskAiDrawerProvider>
+        <ApiProbe handle={handle} />
+        <AskAiDrawer />
+      </AskAiDrawerProvider>
+    </MemoryRouter>
+  );
+}
+
+describe('AskAiDrawer effective location (#330)', () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  it('keeps the underlying PR thread visible while a Settings modal route is open', () => {
+    const handle = { current: null as SeedHandle | null };
+    render(<ModalOverPrHarness handle={handle} />);
+    // Seed a user message on the PR's thread while the live URL is /settings — the
+    // effective location resolves prRef from backgroundLocation, so the thread exists.
+    seed(handle, [{ role: 'user', body: 'still tracking the PR?' }]);
+    expect(screen.getByText('still tracking the PR?')).toBeInTheDocument();
+  });
+
+  it('keeps the composer enabled (not blanked) under a modal route', () => {
+    const handle = { current: null as SeedHandle | null };
+    render(<ModalOverPrHarness handle={handle} />);
+    act(() => handle.current!.toggle());
+    const textarea = screen.getByRole('textbox');
+    // With raw useLocation prKey would be '' → onChange a no-op and the controlled
+    // value would stay empty. Under the fix the keystroke lands and Send enables.
+    act(() => {
+      fireEvent.change(textarea, { target: { value: 'hi' } });
+    });
+    expect((textarea as HTMLTextAreaElement).value).toBe('hi');
+    expect(screen.getByRole('button', { name: 'Send' })).toBeEnabled();
+  });
+});

@@ -1,5 +1,5 @@
-import { render, waitFor } from '@testing-library/react';
-import { afterEach, describe, expect, it } from 'vitest';
+import { act, render, waitFor } from '@testing-library/react';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { setupServer } from 'msw/node';
 import { http, HttpResponse } from 'msw';
 import { AppearanceSync } from './AppearanceSync';
@@ -109,6 +109,83 @@ describe('AppearanceSync', () => {
       expect(container).toBeEmptyDOMElement();
     } finally {
       server.close();
+    }
+  });
+});
+
+// #330: with theme === 'system', applyThemeToDocument samples prefers-color-scheme
+// at call time. AppearanceSync subscribes to the media query so an OS light↔dark
+// switch re-resolves live instead of waiting for the next preference refetch. The
+// global setup.ts matchMedia stub has a no-op addEventListener, so this installs a
+// controllable one that can actually fire 'change'.
+function installControllableMatchMedia(initialDark: boolean) {
+  let matches = initialDark;
+  const listeners = new Set<() => void>();
+  const mql = {
+    get matches() {
+      return matches;
+    },
+    media: '(prefers-color-scheme: dark)',
+    onchange: null,
+    addEventListener: (_: string, cb: () => void) => listeners.add(cb),
+    removeEventListener: (_: string, cb: () => void) => listeners.delete(cb),
+    addListener: (cb: () => void) => listeners.add(cb),
+    removeListener: (cb: () => void) => listeners.delete(cb),
+    dispatchEvent: () => false,
+  };
+  Object.defineProperty(window, 'matchMedia', {
+    writable: true,
+    configurable: true,
+    value: vi.fn().mockReturnValue(mql),
+  });
+  return {
+    setDark(next: boolean) {
+      matches = next;
+      listeners.forEach((cb) => cb());
+    },
+  };
+}
+
+function restoreInertMatchMedia() {
+  Object.defineProperty(window, 'matchMedia', {
+    writable: true,
+    configurable: true,
+    value: (query: string) => ({
+      matches: false,
+      media: query,
+      onchange: null,
+      addListener: () => {},
+      removeListener: () => {},
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      dispatchEvent: () => false,
+    }),
+  });
+}
+
+describe('AppearanceSync — live system-theme switch (#330)', () => {
+  it('re-resolves the system theme when the OS switches light→dark', async () => {
+    const os = installControllableMatchMedia(false); // OS starts light
+    try {
+      render(
+        <PreferencesContext.Provider
+          value={{
+            preferences: prefs('m'), // theme is 'system' in the prefs() helper
+            error: null,
+            refetch: async () => {},
+            set: async () => prefs('m'),
+          }}
+        >
+          <AppearanceSync />
+        </PreferencesContext.Provider>,
+      );
+      await waitFor(() => expect(document.documentElement.dataset.theme).toBe('light'));
+
+      act(() => os.setDark(true)); // OS flips to dark
+
+      await waitFor(() => expect(document.documentElement.dataset.theme).toBe('dark'));
+    } finally {
+      restoreInertMatchMedia();
     }
   });
 });
