@@ -22,6 +22,8 @@ public sealed class AiSeamSelectorGateTests
     {
         public Task<PrSummary?> SummarizeAsync(PrReference pr, CancellationToken ct)
             => Task.FromResult<PrSummary?>(null);
+        public Task<PrSummary?> RegenerateAsync(PrReference pr, CancellationToken ct)
+            => Task.FromResult<PrSummary?>(null);
     }
 
     private static AiSeamSelector Build(AiMode mode, AiConsentState consent, AiFeatureState features, object realSummarizer)

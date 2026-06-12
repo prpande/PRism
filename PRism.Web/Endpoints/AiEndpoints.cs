@@ -18,27 +18,13 @@ internal static class AiEndpoints
         // If no subscriber is registered for the PR, returns 204 immediately without calling
         // the seam. Provider failure is mapped to 503 (spec §7/§9) — never 500.
         app.MapGet("/api/pr/{owner}/{repo}/{number:int}/ai/summary",
-            async (string owner, string repo, int number,
-                   IAiSeamSelector ai, IActivePrCache activePrCache, CancellationToken ct) =>
-            {
-                var prRef = new PrReference(owner, repo, number);
-                if (!activePrCache.IsSubscribed(prRef))
-                    return Results.NoContent();
+            (string owner, string repo, int number, IAiSeamSelector ai, IActivePrCache activePrCache, CancellationToken ct) =>
+                ResolveSummaryAsync(new PrReference(owner, repo, number), ai, activePrCache, regenerate: false, ct));
 
-                var summarizer = ai.Resolve<IPrSummarizer>();
-                try
-                {
-                    var summary = await summarizer
-                        .SummarizeAsync(prRef, ct)
-                        .ConfigureAwait(false);
-                    return summary is null ? Results.NoContent() : Results.Ok(summary);
-                }
-                catch (LlmProviderException)
-                {
-                    // Gate was open but the provider failed → distinguishable failure (spec §7/§9). Never 500.
-                    return Results.StatusCode(StatusCodes.Status503ServiceUnavailable);
-                }
-            });
+        // Deliberate re-spend (state-changing) → POST, CSRF-covered by OriginCheckMiddleware.
+        app.MapPost("/api/pr/{owner}/{repo}/{number:int}/ai/summary/regenerate",
+            (string owner, string repo, int number, IAiSeamSelector ai, IActivePrCache activePrCache, CancellationToken ct) =>
+                ResolveSummaryAsync(new PrReference(owner, repo, number), ai, activePrCache, regenerate: true, ct));
 
         // PR9b-ai-gating § 3.2. Mirrors /ai/summary's seam-resolve-and-map.
         // D111: No per-PR IsSubscribed check while seam is canned-data only.
@@ -98,5 +84,28 @@ internal static class AiEndpoints
             });
 
         return app;
+    }
+
+    // Shared gate chain (spec §7): D111 IsSubscribed → seam resolve (Off/Preview/Live gating lives in
+    // Resolve) → Summarize/Regenerate. Provider failure → 503 (never 500). regenerate=true forces a
+    // fresh, IsRetry-tagged re-spend.
+    internal static async Task<IResult> ResolveSummaryAsync(
+        PrReference prRef, IAiSeamSelector ai, IActivePrCache activePrCache, bool regenerate, CancellationToken ct)
+    {
+        if (!activePrCache.IsSubscribed(prRef))
+            return Results.NoContent();
+
+        var summarizer = ai.Resolve<IPrSummarizer>();
+        try
+        {
+            var summary = regenerate
+                ? await summarizer.RegenerateAsync(prRef, ct).ConfigureAwait(false)
+                : await summarizer.SummarizeAsync(prRef, ct).ConfigureAwait(false);
+            return summary is null ? Results.NoContent() : Results.Ok(summary);
+        }
+        catch (LlmProviderException)
+        {
+            return Results.StatusCode(StatusCodes.Status503ServiceUnavailable);
+        }
     }
 }

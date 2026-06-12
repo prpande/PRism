@@ -62,7 +62,17 @@ internal sealed partial class ClaudeCodeSummarizer : IPrSummarizer, IDisposable
         _busSubscription = bus.Subscribe<ActivePrUpdated>(OnActivePrUpdated);
     }
 
-    public async Task<PrSummary?> SummarizeAsync(PrReference pr, CancellationToken ct)
+    public Task<PrSummary?> SummarizeAsync(PrReference pr, CancellationToken ct)
+        => SummarizeCoreAsync(pr, isRetry: false, ct);
+
+    public Task<PrSummary?> RegenerateAsync(PrReference pr, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(pr);
+        EvictForPr(pr);                       // force a fresh provider call (deliberate re-spend)
+        return SummarizeCoreAsync(pr, isRetry: true, ct);
+    }
+
+    private async Task<PrSummary?> SummarizeCoreAsync(PrReference pr, bool isRetry, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(pr);
         var (diff, title, description, baseSha, headSha) = await _resolveDiff(pr, ct).ConfigureAwait(false);
@@ -125,7 +135,7 @@ internal sealed partial class ClaudeCodeSummarizer : IPrSummarizer, IDisposable
                 Feature: "pr-summary", ProviderId: ClaudeProviderId,
                 InputTokens: result.InputTokens, OutputTokens: result.OutputTokens,
                 CacheReadInputTokens: result.CacheReadInputTokens,
-                EstimatedCostUsd: result.EstimatedCostUsd, IsRetry: false), ct).ConfigureAwait(false);
+                EstimatedCostUsd: result.EstimatedCostUsd, IsRetry: isRetry), ct).ConfigureAwait(false);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
