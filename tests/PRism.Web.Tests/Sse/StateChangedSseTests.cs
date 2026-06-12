@@ -149,15 +149,16 @@ public class StateChangedSseTests
         json.Should().Contain("\"isMerged\":false");
     }
 
+    // A test-only IReviewEvent that the projection switch will never handle — keeps the
+    // default-arm coverage stable even as real events (e.g. #450's SingleCommentPostedBusEvent)
+    // gain projection arms. (DraftSubmitted, then SingleCommentPostedBusEvent, used to be the
+    // examples here; both now project, so we use a synthetic type instead.)
+    private sealed record UnprojectedTestEvent(PrReference PrRef) : IReviewEvent;
+
     [Fact]
     public void Unhandled_event_type_throws()
     {
-        // SingleCommentPostedBusEvent (#302 diff post-now) is intentionally NOT in the
-        // projection switch — SseChannel does not subscribe to it. Calling Project on it must
-        // throw the default-arm ArgumentOutOfRangeException so a future contributor adding a
-        // new IReviewEvent type without updating the projection switch hears about it loudly.
-        // (DraftSubmitted used to be the example here; #392 added its projection arm.)
-        var evt = new SingleCommentPostedBusEvent(SamplePr, ReviewCommentId: 42L);
+        var evt = new UnprojectedTestEvent(SamplePr);
 
         var act = () => Project(evt);
 
