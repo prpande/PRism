@@ -37,10 +37,21 @@ The backlog's own [`00-priority-methodology.md`](../backlog/00-priority-methodol
 data should override the speculative ordering"). Filing 25 fully-spec'd tickets would create a
 second source of truth that drifts from the backlog docs.
 
-Coarse roots resolve this: the root issue holds only stable metadata (tier, flag, seam,
-dependencies, a link to the backlog section). All volatile detail lives either in the backlog
-`.md` (the source of truth) or in just-in-time child issues created at brainstorm time. The root
-does not drift because it carries almost nothing that *can* drift.
+Coarse roots **shrink** the drift surface — they do not eliminate it. A root holds stable metadata
+(tier, capability flag, seam interface, the backlog link) *plus* a small mirrored slice (effort
+estimate, dependency edges) that can still drift when the backlog is re-shaped — the backlog itself
+revises these (e.g. P0-2 "revised from S", P0-7 "revised down from L"). The volatile detail (full
+implementation notes, acceptance criteria) lives in the backlog `.md` (source of truth) or in
+just-in-time child issues. So the honest claim is: far less drifts than a fully-spec'd ticket, and
+the mirrored slice needs the manual re-sync called out in [§ Maintenance](#maintenance) when the
+backlog changes shape.
+
+One thing pre-filing *does* commit is the **selection and ordering** into GitHub — which is the part
+the methodology actually warns against ("pick by what's missing most in your daily use"). The owner
+has accepted this deliberately for the durable-mirror aim: all three tiers are filed now, blocked
+roots included, so the exercise is not repeated. The mitigation: the epic's order is a *default
+suggestion, not a committed queue* — the actual next pick is still driven by daily-use signal, and
+the dependency edges only constrain what is *possible* to start, not what *should* be started first.
 
 ### Alternatives considered
 
@@ -92,6 +103,10 @@ Tier labels use **words, not `p0/p1/p2`**, to avoid confusion with the existing 
 `priority:p1` / `priority:p2` (which mean correctness/UX severity, an orthogonal axis). The backlog
 tier (P0/P1/P2) is still named in each issue's title and body for traceability.
 
+All four are **new** and confirmed collision-free (`gh label list`, 2026-06-12). Root issues *also*
+carry two **existing** labels — `area:ai` and `needs-design` — as the template shows; the table
+above lists only the labels this design introduces.
+
 ### Root-issue template
 
 ```
@@ -112,6 +127,19 @@ numbers). "Soft" marks a dependency the feature works without but pays for in co
 cache, P0-2); only hard blockers gate readiness.
 
 ## Root-issue inventory (20 new roots)
+
+Three reading rules for the tables below:
+
+- **`Depends on` lists hard blockers only** — build-order prerequisites that must ship first.
+- **P0-2 (cache) is a *soft* dependency for every LLM feature, not listed per-row.** The backlog
+  files P0-2 under "Direct dependencies" for the P1/P2 features, but that coupling is cost/latency,
+  not build-order: **P1-1 already shipped on `V2` against a per-process dictionary with no real
+  `IAiCache`**, which proves a feature can ship before P0-2. This doc therefore reinterprets that
+  edge as soft (cite for the reinterpretation: P0-2's own backlog note, "without it they all double
+  the API spend"). Soft means "works without it, pays in cost/latency" — it does not gate readiness.
+- **The `Status` column is a filing-time snapshot (2026-06-12).** The single *live* readiness view
+  is the epic ([§ The master epic](#the-master-epic)); per [§ Maintenance](#maintenance), status is
+  maintained there, not in this doc or on per-issue labels.
 
 ### Foundations — `ai:foundation` (5 roots)
 
@@ -141,9 +169,9 @@ P1-1 (summarizer) is shipped.
 
 | Root | Status | Depends on | Effort |
 |---|---|---|---|
-| **P1-2** — File focus ranker | 🟢 ready (relates #136 hotspots) | P0-1 ✅ ; P0-2 (soft) | M |
-| **P1-3** — Inbox ranker (absorbs duplicate P2-13) | 🟢 ready | P0-1 ✅ ; P0-2 (soft) | S |
-| **P1-4** — Inbox item enricher | 🟢 ready | P0-1 ✅ ; P0-2 (soft) | M |
+| **P1-2** — File focus ranker | 🟢 ready (relates #136 hotspots) | P0-1 ✅ | M |
+| **P1-3** — Inbox ranker (absorbs duplicate P2-13) | 🟢 ready | P0-1 ✅ | S |
+| **P1-4** — Inbox item enricher | 🟢 ready | P0-1 ✅ | M |
 
 > **P2-13 is a duplicate of P1-3** (both are "register a real `IInboxRanker`"). Folded into the
 > P1-3 root; not filed separately.
@@ -154,12 +182,12 @@ P2-13 folded into P1-3; P2-14 shipped (#286).
 
 | Root | Status | Depends on | Effort |
 |---|---|---|---|
-| **P2-1** — Composer assistant ("Refine with AI") | 🟢 ready | P0-1 ✅ ; P0-2 (soft) | M |
+| **P2-1** — Composer assistant ("Refine with AI") | 🟢 ready | P0-1 ✅ | M |
 | **P2-2** — PR chat service *(headline)* | ⛔ blocked | P0-1b, P0-4, P0-7 | L |
-| **P2-3** — Pre-submit validators | 🟢 ready | P0-1 ✅ ; P0-2 (soft) | M |
+| **P2-3** — Pre-submit validators | 🟢 ready | P0-1 ✅ | M |
 | **P2-4** — Hunk annotator | ⛔ soft-blocked | P1-2 (recommended for cost control) | M |
-| **P2-5** — Draft reconciliation assistant | 🟢 ready | P0-1 ✅ ; P0-2 (soft) | S |
-| **P2-6** — Draft comment suggester | 🟢 ready (ship last — lowest trust) | P0-1 ✅ ; P0-2 (soft) | M |
+| **P2-5** — Draft reconciliation assistant | 🟢 ready | P0-1 ✅ | S |
+| **P2-6** — Draft comment suggester | 🟢 ready (ship last — lowest trust) | P0-1 ✅ | M |
 | **P2-7** — Per-iteration summarizer | 🟢 ready (small extension of P1-1) | P1-1 ✅ | S |
 | **P2-8** — Whitespace-noise categorization | 🟢 ready (may be non-LLM) | P0-1 ✅ | S |
 | **P2-9** — File-purpose categorization | 🟢 ready | P0-1 ✅ | S |
@@ -234,10 +262,18 @@ Next up: any 🟢 in Foundations or Core. Chat (P2-2) unblocks after P0-1b + P0-
 - When a root is picked up: brainstorm → spec → child issues linked on the root → flip the epic
   line as children land.
 - When the backlog changes shape (per its own "When a slice changes shape" rule): update the
-  affected root's backlog link and acceptance sketch; the epic line tracks status only, so most
-  backlog edits need no epic change.
-- Readiness (🟢/⛔) is maintained **only in the epic**, not as per-issue labels — labels go stale
-  as dependencies close; the epic is the single readiness view.
+  affected root's backlog link and acceptance sketch, and re-sync the mirrored fields (effort,
+  dependency edges) that can drift; the stable fields (flag, seam, backlog link) need no touch. The
+  epic line tracks status only, so most backlog edits need no epic change.
+- **Source-of-truth conflict rule:** on any disagreement between a root issue and its linked
+  backlog section, the backlog `.md` wins. The root's flag / seam / dependency / effort fields are a
+  convenience snapshot re-synced at pickup; never treat the GitHub root as canonical over the
+  backlog.
+- Readiness (🟢/⛔) is maintained **only in the epic**, not as per-issue labels — labels go stale as
+  dependencies close. This is a manual edit, accepted knowingly: in practice only the four ⛔ lines
+  (P2-2, P2-4, P2-10, P2-11) plus the flip-on-ship transitions ever change, so the hand-maintained
+  surface is ~5 lines, not 21. A stale epic gives a confidently-wrong "next up," so flipping the
+  line is part of closing a blocker, not optional.
 
 ## Net
 
