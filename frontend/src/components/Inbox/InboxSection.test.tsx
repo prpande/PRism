@@ -1,37 +1,42 @@
-import { describe, it, expect } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
-import { OpenTabsProvider } from '../../contexts/OpenTabsContext';
+import userEvent from '@testing-library/user-event';
+import { describe, it, expect } from 'vitest';
 import { InboxSection } from './InboxSection';
-import type { PrInboxItem, InboxSection as InboxSectionDto } from '../../api/types';
+import { OpenTabsProvider } from '../../contexts/OpenTabsContext';
+import type { InboxSection as InboxSectionDto, PrInboxItem } from '../../api/types';
 
-function prFor(owner: string, repo: string, n: number): PrInboxItem {
-  return {
-    reference: { owner, repo, number: n },
-    title: `PR ${n}`,
-    author: 'a',
-    repo: `${owner}/${repo}`,
-    updatedAt: '2026-05-01T00:00:00Z',
-    pushedAt: '2026-05-01T00:00:00Z',
-    iterationNumber: 1,
-    commentCount: 0,
-    additions: 0,
-    deletions: 0,
-    headSha: 'x',
-    ci: 'none',
-    lastViewedHeadSha: null,
-    lastSeenCommentId: null,
-    mergedAt: null,
-    closedAt: null,
-  };
-}
-function makeSection(id: string, items: PrInboxItem[]): InboxSectionDto {
-  return { id, label: id, items };
-}
-function renderSection(
-  section: InboxSectionDto,
-  props?: { defaultOpen?: boolean; groupByRepo?: boolean },
-) {
+const examplePr: PrInboxItem = {
+  reference: { owner: 'acme', repo: 'api', number: 42 },
+  title: 'Refactor auth flow',
+  author: 'amelia',
+  repo: 'acme/api',
+  updatedAt: new Date().toISOString(),
+  pushedAt: new Date().toISOString(),
+  iterationNumber: 1,
+  commentCount: 0,
+  additions: 5,
+  deletions: 2,
+  headSha: 'abc',
+  ci: 'none',
+  lastViewedHeadSha: null,
+  lastSeenCommentId: null,
+  mergedAt: null,
+  closedAt: null,
+};
+
+const emptySection: InboxSectionDto = {
+  id: 'awaiting-author',
+  label: 'Awaiting author',
+  items: [],
+};
+const populatedSection: InboxSectionDto = {
+  id: 'review-requested',
+  label: 'Review requested',
+  items: [examplePr],
+};
+
+function renderSection(section: InboxSectionDto, opts: { defaultOpen?: boolean } = {}) {
   return render(
     <MemoryRouter>
       <OpenTabsProvider>
@@ -39,130 +44,109 @@ function renderSection(
           section={section}
           enrichments={{}}
           showCategoryChip={false}
-          maxDiff={100}
-          defaultOpen={props?.defaultOpen ?? true}
-          groupByRepo={props?.groupByRepo}
+          maxDiff={10}
+          defaultOpen={opts.defaultOpen}
         />
       </OpenTabsProvider>
     </MemoryRouter>,
   );
 }
 
-function renderForceOpen(
-  section: InboxSectionDto,
-  props: { defaultOpen?: boolean; forceOpen?: boolean },
-) {
-  const tree = (p: { defaultOpen?: boolean; forceOpen?: boolean }) => (
-    <MemoryRouter>
-      <OpenTabsProvider>
-        <InboxSection
-          section={section}
-          enrichments={{}}
-          showCategoryChip={false}
-          maxDiff={100}
-          defaultOpen={p.defaultOpen ?? true}
-          forceOpen={p.forceOpen}
-        />
-      </OpenTabsProvider>
-    </MemoryRouter>
-  );
-  const { rerender } = render(tree(props));
-  return {
-    rerender: (p: { defaultOpen?: boolean; forceOpen?: boolean }) => rerender(tree(p)),
-  };
-}
-
-describe('InboxSection grouping', () => {
-  it('renders a RepoGroupAccordion per repo for a multi-repo section (repos open by default)', () => {
-    renderSection(
-      makeSection('review-requested', [prFor('acme', 'api', 1), prFor('acme', 'web', 2)]),
-    );
-    expect(screen.getByRole('button', { name: /acme\/api, 1 pull request/i })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /acme\/web, 1 pull request/i })).toBeInTheDocument();
-    expect(screen.getByText('PR 1')).toBeInTheDocument();
+describe('InboxSection', () => {
+  it('renders label and item count', () => {
+    renderSection(populatedSection);
+    expect(screen.getByText('Review requested')).toBeInTheDocument();
+    expect(screen.getByText('1')).toBeInTheDocument();
   });
 
-  it('renders flat rows (no accordion) for a single-repo section', () => {
-    renderSection(
-      makeSection('review-requested', [prFor('acme', 'api', 1), prFor('acme', 'api', 2)]),
-    );
-    expect(screen.queryByRole('button', { name: /pull requests?/i })).not.toBeInTheDocument();
-    expect(screen.getByText('PR 1')).toBeInTheDocument();
-    expect(screen.getAllByText('acme/api').length).toBeGreaterThan(0);
+  it('renders section-specific empty copy by id', () => {
+    renderSection(emptySection);
+    expect(screen.getByText('Nothing needs re-review.')).toBeInTheDocument();
   });
 
-  it('renders flat rows (no accordion) for a multi-repo section when groupByRepo is off (#219)', () => {
-    renderSection(
-      makeSection('review-requested', [prFor('acme', 'api', 1), prFor('acme', 'web', 2)]),
-      { groupByRepo: false },
-    );
-    // No repo accordions — every PR is a flat InboxRow.
-    expect(screen.queryByRole('button', { name: /pull requests?/i })).not.toBeInTheDocument();
-    expect(screen.getByText('PR 1')).toBeInTheDocument();
-    expect(screen.getByText('PR 2')).toBeInTheDocument();
-    // Flat rows keep the repo name (InboxRow showRepo default stays true).
-    expect(screen.getAllByText('acme/api').length).toBeGreaterThan(0);
-    expect(screen.getAllByText('acme/web').length).toBeGreaterThan(0);
+  it('falls back to generic empty copy for unknown section ids', () => {
+    renderSection({ id: 'unknown-section', label: 'Unknown', items: [] });
+    expect(screen.getByText('Nothing here.')).toBeInTheDocument();
   });
 
-  it('groupByRepo defaults on: multi-repo section still groups when the prop is omitted (#219)', () => {
-    renderSection(
-      makeSection('review-requested', [prFor('acme', 'api', 1), prFor('acme', 'web', 2)]),
-    );
-    expect(screen.getByRole('button', { name: /acme\/api, 1 pull request/i })).toBeInTheDocument();
+  it('toggles open/closed on header click', async () => {
+    renderSection(populatedSection);
+    const user = userEvent.setup();
+    expect(screen.getByText('Refactor auth flow')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: /review requested/i }));
+    expect(screen.queryByText('Refactor auth flow')).not.toBeInTheDocument();
   });
 
-  it('recently-closed repo groups start collapsed and the caption renders', () => {
-    renderSection(
-      makeSection('recently-closed', [prFor('acme', 'api', 1), prFor('acme', 'web', 2)]),
-      { defaultOpen: true },
-    );
-    expect(screen.queryByText('PR 1')).not.toBeInTheDocument();
-    expect(screen.getByText(/most recent first/i)).toBeInTheDocument();
+  it('renders rows when items exist', () => {
+    renderSection(populatedSection);
+    expect(screen.getByText('Refactor auth flow')).toBeInTheDocument();
   });
-});
 
-describe('InboxSection forceOpen (expand-on-reveal)', () => {
-  const section = makeSection('review-requested', [prFor('acme', 'api', 1)]);
-
-  it('renders collapsed when forceOpen is false and defaultOpen is false', () => {
-    renderForceOpen(section, { defaultOpen: false, forceOpen: false });
-    expect(screen.queryByText('PR 1')).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /review-requested/i })).toHaveAttribute(
+  it('is collapsed when defaultOpen is false', () => {
+    const closedSection: InboxSectionDto = {
+      id: 'recently-closed',
+      label: 'Recently closed',
+      items: [examplePr],
+    };
+    renderSection(closedSection, { defaultOpen: false });
+    expect(screen.queryByText('Refactor auth flow')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /recently closed/i })).toHaveAttribute(
       'aria-expanded',
       'false',
     );
   });
 
-  it('expands when forceOpen flips true even though defaultOpen is false', () => {
-    const { rerender } = renderForceOpen(section, { defaultOpen: false, forceOpen: false });
-    expect(screen.queryByText('PR 1')).not.toBeInTheDocument();
-    rerender({ defaultOpen: false, forceOpen: true });
-    expect(screen.getByText('PR 1')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /review-requested/i })).toHaveAttribute(
+  it('is expanded by default when defaultOpen is omitted', () => {
+    renderSection(populatedSection);
+    expect(screen.getByText('Refactor auth flow')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /review requested/i })).toHaveAttribute(
       'aria-expanded',
       'true',
     );
   });
 
-  it('a manual collapse during forceOpen wins over forceOpen', () => {
-    renderForceOpen(section, { defaultOpen: false, forceOpen: true });
-    expect(screen.getByText('PR 1')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: /review-requested/i }));
-    expect(screen.queryByText('PR 1')).not.toBeInTheDocument();
+  it('shows the recently-closed caption unconditionally for any non-empty recently-closed section', () => {
+    const items: PrInboxItem[] = Array.from({ length: 30 }, (_, i) => ({
+      ...examplePr,
+      reference: { owner: 'acme', repo: 'api', number: 100 + i },
+      title: `Closed PR ${i}`,
+    }));
+    const section: InboxSectionDto = {
+      id: 'recently-closed',
+      label: 'Recently closed',
+      items,
+    };
+    renderSection(section);
+    expect(screen.getByText(/most recent first/i)).toBeInTheDocument();
   });
 
-  it('clearing forceOpen resets the section to its defaultOpen (drops manual-toggle memory)', () => {
-    const { rerender } = renderForceOpen(section, { defaultOpen: false, forceOpen: true });
-    // Manually collapse while forced open.
-    fireEvent.click(screen.getByRole('button', { name: /review-requested/i }));
-    expect(screen.queryByText('PR 1')).not.toBeInTheDocument();
-    // Filter releases the section: forceOpen → false drops the manual memory,
-    // so it returns to defaultOpen (false) → still collapsed here.
-    rerender({ defaultOpen: false, forceOpen: false });
-    expect(screen.queryByText('PR 1')).not.toBeInTheDocument();
-    // Re-revealing forces it open again from the clean default.
-    rerender({ defaultOpen: false, forceOpen: true });
-    expect(screen.getByText('PR 1')).toBeInTheDocument();
+  it('shows the recently-closed caption even when fewer than 30 items', () => {
+    const items: PrInboxItem[] = Array.from({ length: 5 }, (_, i) => ({
+      ...examplePr,
+      reference: { owner: 'acme', repo: 'api', number: 100 + i },
+      title: `Closed PR ${i}`,
+    }));
+    const section: InboxSectionDto = {
+      id: 'recently-closed',
+      label: 'Recently closed',
+      items,
+    };
+    renderSection(section);
+    expect(screen.getByText(/most recent first/i)).toBeInTheDocument();
+  });
+
+  it('does not show the truncation hint for a non-recently-closed section with 30 items', () => {
+    const items: PrInboxItem[] = Array.from({ length: 30 }, (_, i) => ({
+      ...examplePr,
+      reference: { owner: 'acme', repo: 'api', number: 100 + i },
+      title: `Open PR ${i}`,
+    }));
+    const section: InboxSectionDto = {
+      id: 'review-requested',
+      label: 'Review requested',
+      items,
+    };
+    renderSection(section);
+    expect(screen.queryByText(/most recent/)).toBeNull();
   });
 });

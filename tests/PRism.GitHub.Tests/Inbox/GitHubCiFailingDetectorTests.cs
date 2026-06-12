@@ -22,10 +22,8 @@ public sealed class GitHubCiFailingDetectorTests
             0, 0, 0, headSha, 1);
     }
 
-    private static HttpResponseMessage Respond(HttpStatusCode code, string body) => new(code)
-    {
-        Content = new StringContent(body, Encoding.UTF8, "application/json"),
-    };
+    private static HttpResponseMessage Respond(HttpStatusCode code, string body)
+        => JsonHttpResponse.Create(code, body);
 
     private static GitHubCiFailingDetector BuildSut(FakeHttpMessageHandler handler, IClock? clock = null) =>
         new(new FakeHttpClientFactory(handler, new Uri("https://api.github.com/")),

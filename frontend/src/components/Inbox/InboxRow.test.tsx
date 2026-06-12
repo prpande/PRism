@@ -4,7 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Routes, Route, useLocation } from 'react-router-dom';
 import { OpenTabsProvider, useOpenTabs } from '../../contexts/OpenTabsContext';
 import { InboxRow } from './InboxRow';
-import type { PrInboxItem } from '../../api/types';
+import type { PrInboxItem, InboxItemEnrichment } from '../../api/types';
 
 const PR: PrInboxItem = {
   reference: { owner: 'acme', repo: 'api', number: 99 },
@@ -123,9 +123,10 @@ describe('InboxRow PR-state leading icon', () => {
     expect(screen.getByRole('button').getAttribute('aria-label')).toContain('· merged');
   });
 
-  it('renders the closed glyph + aria for a closed PR', () => {
+  it('renders the closed glyph + aria for a closed PR (no text badge)', () => {
     const { container } = renderInboxRow({ ...PR, closedAt: new Date().toISOString() });
     expect(container.querySelector('[data-pr-state="closed"]')).not.toBeNull();
+    expect(screen.queryByText('Closed')).toBeNull();
     expect(screen.getByRole('button').getAttribute('aria-label')).toContain('· closed');
   });
 
@@ -272,5 +273,93 @@ describe('InboxRow chip + badge placement (on the meta line, not the metrics tai
     expect(container.querySelector('[data-pr-state="merged"]')).not.toBeNull();
     expect(screen.queryByText('Merged')).toBeNull();
     expect(screen.getByRole('button').getAttribute('aria-label')).toContain('· merged');
+  });
+});
+
+// Merged here from the former frontend/__tests__/InboxRow.test.tsx. The
+// navigate-on-click, CI-failing-glyph, shows-merged-state, category-chip-when-true,
+// and no-CI-on-done cases from that file were assertion-subsets of the cases above
+// (opens-tab, the CI-suffix-glyph block, the PR-state-leading-icon block, the
+// chip+badge-placement test, and the CI-suffix done case), so only the unique
+// unread / New-badge / age coverage is carried over.
+describe('InboxRow unread bar, New-badge removal, and age', () => {
+  it('renders title, repo, author, age', () => {
+    renderInboxRow(PR);
+    expect(screen.getByText('Add user pagination')).toBeInTheDocument();
+    expect(screen.getByText('acme/api')).toBeInTheDocument();
+    expect(screen.getByText('alice')).toBeInTheDocument();
+  });
+
+  // #121/#122: the "New" badge is gone; the left accent bar (data-unread) is the
+  // single new-activity indicator, driven by "commits since you last viewed",
+  // not 30-min recency.
+  it('no longer renders the "New" badge', () => {
+    renderInboxRow(PR);
+    expect(screen.queryByText('New')).toBeNull();
+  });
+
+  it('marks unread when the head moved since last view', () => {
+    renderInboxRow({ ...PR, lastViewedHeadSha: 'old', headSha: 'new' });
+    const row = screen.getByRole('button');
+    expect(row).toHaveAttribute('data-unread', 'true');
+    expect(row.getAttribute('aria-label')).toContain('unread');
+  });
+
+  it('is NOT unread when viewed head matches current head', () => {
+    renderInboxRow({ ...PR, lastViewedHeadSha: 'same', headSha: 'same' });
+    const row = screen.getByRole('button');
+    expect(row).toHaveAttribute('data-unread', 'false');
+    expect(row.getAttribute('aria-label')).not.toContain('unread');
+  });
+
+  it('IS unread for a never-opened PR (lastViewedHeadSha null) — its current state is unseen', () => {
+    renderInboxRow({ ...PR, lastViewedHeadSha: null, headSha: 'abc' });
+    const row = screen.getByRole('button');
+    expect(row).toHaveAttribute('data-unread', 'true');
+    expect(row.getAttribute('aria-label')).toContain('unread');
+  });
+
+  it('is NOT unread for a merged PR even if the head moved', () => {
+    renderInboxRow({
+      ...PR,
+      lastViewedHeadSha: 'old',
+      headSha: 'new',
+      mergedAt: new Date().toISOString(),
+    });
+    const row = screen.getByRole('button');
+    expect(row).toHaveAttribute('data-unread', 'false');
+    expect(row.getAttribute('aria-label')).not.toContain('unread');
+  });
+
+  it('is NOT unread for a closed PR even if the head moved', () => {
+    renderInboxRow({
+      ...PR,
+      lastViewedHeadSha: 'old',
+      headSha: 'new',
+      closedAt: new Date().toISOString(),
+    });
+    expect(screen.getByRole('button')).toHaveAttribute('data-unread', 'false');
+  });
+
+  it('does not render category chip when showCategoryChip is false', () => {
+    const enrichment: InboxItemEnrichment = {
+      prId: 'acme/api#99',
+      categoryChip: 'Refactor',
+      hoverSummary: null,
+    };
+    renderInboxRow(PR, { showCategoryChip: false, enrichment });
+    expect(screen.queryByText('Refactor')).not.toBeInTheDocument();
+  });
+
+  it('renders friendly age text for very recent PRs', () => {
+    renderInboxRow({ ...PR, updatedAt: new Date().toISOString() });
+    expect(screen.getByText(/just now/i)).toBeInTheDocument();
+  });
+
+  it('does not show the New chip on a done row even when lastViewedHeadSha is null', () => {
+    renderInboxRow({ ...PR, lastViewedHeadSha: null, mergedAt: new Date().toISOString() });
+    expect(screen.queryByText('New')).not.toBeInTheDocument();
+    // ...and the unread bar is suppressed too (done rows never flag).
+    expect(screen.getByRole('button')).toHaveAttribute('data-unread', 'false');
   });
 });

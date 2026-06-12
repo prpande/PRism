@@ -1,6 +1,6 @@
 import { render } from '@testing-library/react';
 import { describe, it, expect, vi } from 'vitest';
-import type { FileChange, PrReference } from '../src/api/types';
+import type { FileChange, PrReference } from '../../../../api/types';
 
 // MergedPairedContent has a correctness-critical drift guard: when the syntax
 // tokens for a paired line do NOT concatenate to that side's content, it must
@@ -11,8 +11,8 @@ import type { FileChange, PrReference } from '../src/api/types';
 // asserts the real line content renders (via the overlay) and the bogus token
 // text does not. The mock is isolated to this file so the real-token tests in
 // DiffPane.highlight.test.tsx keep using the genuine hook.
-vi.mock('../src/hooks/useSyntaxTokens', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../src/hooks/useSyntaxTokens')>();
+vi.mock('../../../../hooks/useSyntaxTokens', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../../../hooks/useSyntaxTokens')>();
   return {
     ...actual, // keep the real normalizeEol (DiffPane imports it from here)
     useSyntaxTokens: () => ({
@@ -26,7 +26,7 @@ vi.mock('../src/hooks/useSyntaxTokens', async (importOriginal) => {
 });
 
 // Import AFTER the mock is registered.
-const { DiffPane } = await import('../src/components/PrDetail/FilesTab/DiffPane/DiffPane');
+const { DiffPane } = await import('./DiffPane');
 
 const prRef: PrReference = { owner: 'o', repo: 'r', number: 1 };
 const paired = {
