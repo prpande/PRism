@@ -180,7 +180,7 @@ describe('Header feedback', () => {
   // Query by role=link: on /feedback the modal's dialog + submit button also carry a
   // "send feedback" accessible name, so a bare /feedback/i text query would be ambiguous.
   it('renders a Send feedback link to /feedback when authed', () => {
-    at('/');
+    renderAt('/');
     expect(screen.getByRole('link', { name: /send feedback/i })).toHaveAttribute(
       'href',
       '/feedback',
@@ -188,7 +188,7 @@ describe('Header feedback', () => {
   });
 
   it('marks the Feedback link active on /feedback', () => {
-    at('/feedback');
+    renderAt('/feedback');
     expect(screen.getByRole('link', { name: /send feedback/i })).toHaveAttribute(
       'aria-current',
       'page',
@@ -196,12 +196,12 @@ describe('Header feedback', () => {
   });
 
   it('hides the Feedback link when not authed', () => {
-    at('/', false);
+    renderAt('/', false);
     expect(screen.queryByRole('link', { name: /send feedback/i })).toBeNull();
   });
 
   it('orders the right-side cluster Settings · Help · Feedback', () => {
-    at('/');
+    renderAt('/');
     const cluster = screen
       .getAllByRole('link')
       .map((l) => l.getAttribute('aria-label') ?? l.textContent)
