@@ -1,9 +1,9 @@
 import { render, screen } from '@testing-library/react';
 import { describe, it, expect } from 'vitest';
-import { ExistingCommentWidget } from '../src/components/PrDetail/FilesTab/DiffPane/ExistingCommentWidget';
-import type { ReviewThreadDto, ReviewCommentDto } from '../src/api/types';
-import type { ExistingCommentWidgetReplyContext } from '../src/components/PrDetail/FilesTab/DiffPane/ExistingCommentWidget';
-import type { OptimisticComment } from '../src/components/PrDetail/FilesTab/optimisticComment';
+import { ExistingCommentWidget } from './ExistingCommentWidget';
+import type { ReviewThreadDto, ReviewCommentDto } from '../../../../api/types';
+import type { ExistingCommentWidgetReplyContext } from './ExistingCommentWidget';
+import type { OptimisticComment } from '../optimisticComment';
 
 function comment(over: Partial<ReviewCommentDto> = {}): ReviewCommentDto {
   return {

@@ -1,5 +1,4 @@
 using FluentAssertions;
-using Moq;
 using PRism.AI.Contracts.Dtos;
 using PRism.AI.Contracts.Noop;
 using PRism.AI.Contracts.Seams;
@@ -10,6 +9,8 @@ using PRism.Core.Contracts;
 using PRism.Core.Events;
 using PRism.Core.Inbox;
 using PRism.Core.State;
+using PRism.Core.Tests.PrDetail;
+using PRism.Core.Tests.Submit.Pipeline.Fakes;
 
 namespace PRism.Core.Tests.Inbox;
 
@@ -153,20 +154,14 @@ public sealed class InboxRefreshOrchestratorTests
                 RecentlyClosedWindowDays: recentlyClosedWindowDays)
         };
 
-    private static Mock<IConfigStore> ConfigStoreMock(AppConfig? config = null)
-    {
-        var mock = new Mock<IConfigStore>();
-        mock.SetupGet(c => c.Current).Returns(config ?? DefaultConfig());
-        return mock;
-    }
+    // Real in-project doubles (house rule: test real classes against real
+    // collaborators; mock only external boundaries). FakeConfigStore exposes a
+    // settable Current; InMemoryAppStateStore serves LoadAsync from its seeded state.
+    private static FakeConfigStore ConfigStoreFake(AppConfig? config = null)
+        => new() { Current = config ?? DefaultConfig() };
 
-    private static Mock<IAppStateStore> StateStoreMock(AppState? state = null)
-    {
-        var mock = new Mock<IAppStateStore>();
-        mock.Setup(s => s.LoadAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(state ?? AppState.Default);
-        return mock;
-    }
+    private static InMemoryAppStateStore StateStoreFake(AppState? state = null)
+        => new(state ?? AppState.Default);
 
     /// <summary>
     /// Returns a dictionary with the given section IDs populated with <paramref name="prsPerSection"/> items each.
@@ -196,7 +191,7 @@ public sealed class InboxRefreshOrchestratorTests
         IAppStateStore? stateStore = null,
         Func<string>? viewerLogin = null)
         => new(
-            config ?? ConfigStoreMock().Object,
+            config ?? ConfigStoreFake(),
             sections ?? new FakeSectionQueryRunner(_ =>
                 new Dictionary<string, IReadOnlyList<RawPrInboxItem>>()),
             enricher ?? new IdentityPrEnricher(),
@@ -205,7 +200,7 @@ public sealed class InboxRefreshOrchestratorTests
             dedupe ?? new InboxDeduplicator(),
             aiSelector ?? new FakeAiSeamSelector(new NoopInboxItemEnricher()),
             events ?? new RecordingEventBus(),
-            stateStore ?? StateStoreMock().Object,
+            stateStore ?? StateStoreFake(),
             viewerLogin ?? (() => "testuser"));
 
     // Convenience overload that wraps a section factory into FakeSectionQueryRunner and
@@ -216,7 +211,7 @@ public sealed class InboxRefreshOrchestratorTests
         IConfigStore? config = null,
         IReviewEventBus? events = null)
         => Build(
-            config: config ?? ConfigStoreMock().Object,
+            config: config ?? ConfigStoreFake(),
             sections: new FakeSectionQueryRunner(sections),
             ciDetector: ciDetector,
             events: events);
@@ -230,9 +225,9 @@ public sealed class InboxRefreshOrchestratorTests
         var sectionIds = new[] { "review-requested", "awaiting-author", "authored-by-me", "mentioned" };
         var sections = new FakeSectionQueryRunner(_ => AllSections(2, sectionIds));
 
-        var configMock = ConfigStoreMock(ConfigWithSections());
+        var configFake = ConfigStoreFake(ConfigWithSections());
         using var sut = Build(
-            config: configMock.Object,
+            config: configFake,
             sections: sections,
             events: bus);
 
@@ -254,10 +249,10 @@ public sealed class InboxRefreshOrchestratorTests
         var sectionIds = new[] { "review-requested", "authored-by-me" };
         var sections = new FakeSectionQueryRunner(_ => AllSections(2, sectionIds));
 
-        var configMock = ConfigStoreMock(ConfigWithSections(
+        var configFake = ConfigStoreFake(ConfigWithSections(
             reviewRequested: true, awaitingAuthor: false, authoredByMe: true,
             mentioned: false));
-        using var sut = Build(config: configMock.Object, sections: sections, events: bus);
+        using var sut = Build(config: configFake, sections: sections, events: bus);
 
         await sut.RefreshAsync(CancellationToken.None);
         await sut.RefreshAsync(CancellationToken.None);
@@ -283,10 +278,10 @@ public sealed class InboxRefreshOrchestratorTests
         var sections = new FakeSectionQueryRunner(_ =>
             ++call == 1 ? firstSections : secondSections);
 
-        var configMock = ConfigStoreMock(ConfigWithSections(
+        var configFake = ConfigStoreFake(ConfigWithSections(
             reviewRequested: true, awaitingAuthor: false, authoredByMe: false,
             mentioned: false));
-        using var sut = Build(config: configMock.Object, sections: sections, events: bus);
+        using var sut = Build(config: configFake, sections: sections, events: bus);
 
         await sut.RefreshAsync(CancellationToken.None);
         await sut.RefreshAsync(CancellationToken.None);
@@ -306,10 +301,10 @@ public sealed class InboxRefreshOrchestratorTests
             return new Dictionary<string, IReadOnlyList<RawPrInboxItem>>();
         });
 
-        var configMock = ConfigStoreMock(ConfigWithSections(
+        var configFake = ConfigStoreFake(ConfigWithSections(
             reviewRequested: true, awaitingAuthor: false, authoredByMe: true,
             mentioned: false));
-        using var sut = Build(config: configMock.Object, sections: sections);
+        using var sut = Build(config: configFake, sections: sections);
 
         await sut.RefreshAsync(CancellationToken.None);
 
@@ -399,10 +394,10 @@ public sealed class InboxRefreshOrchestratorTests
             };
         });
 
-        var configMock = ConfigStoreMock(ConfigWithSections(
+        var configFake = ConfigStoreFake(ConfigWithSections(
             reviewRequested: true, awaitingAuthor: false, authoredByMe: false,
             mentioned: false));
-        using var sut = Build(config: configMock.Object, sections: sections);
+        using var sut = Build(config: configFake, sections: sections);
 
         await sut.RefreshAsync(CancellationToken.None);
 
@@ -569,10 +564,10 @@ public sealed class InboxRefreshOrchestratorTests
             };
         });
 
-        var configMock = ConfigStoreMock(ConfigWithSections(
+        var configFake = ConfigStoreFake(ConfigWithSections(
             reviewRequested: true, awaitingAuthor: false, authoredByMe: false,
             mentioned: false));
-        using var sut = Build(config: configMock.Object, sections: sections, events: bus);
+        using var sut = Build(config: configFake, sections: sections, events: bus);
 
         await sut.RefreshAsync(CancellationToken.None); // first
         await sut.RefreshAsync(CancellationToken.None); // second: both PRs gone
@@ -634,11 +629,11 @@ public sealed class InboxRefreshOrchestratorTests
             ["awaiting-author"] = new[] { dual },
         });
 
-        var configMock = ConfigStoreMock(ConfigWithSections(
+        var configFake = ConfigStoreFake(ConfigWithSections(
             reviewRequested: false, awaitingAuthor: true, authoredByMe: true,
             mentioned: false));
         using var sut = Build(
-            config: configMock.Object,
+            config: configFake,
             sections: sections,
             aiSelector: new FakeAiSeamSelector(new PlaceholderInboxItemEnricher()));
 
@@ -675,8 +670,8 @@ public sealed class InboxRefreshOrchestratorTests
             ["review-requested"] = new[] { RawPr(1, "sha-head") }
         });
 
-        var stateStoreMock = StateStoreMock(appState);
-        using var sut = Build(sections: sections, stateStore: stateStoreMock.Object);
+        var stateStoreFake = StateStoreFake(appState);
+        using var sut = Build(sections: sections, stateStore: stateStoreFake);
 
         await sut.RefreshAsync(CancellationToken.None);
 
@@ -697,8 +692,8 @@ public sealed class InboxRefreshOrchestratorTests
             _ => new Dictionary<string, IReadOnlyList<RawPrInboxItem>>(),
             closed: new[] { RawClosed(1, older, older), RawClosed(2, newer, newer) });
 
-        var configMock = ConfigStoreMock(ConfigWithSections(recentlyClosed: true));
-        using var sut = Build(config: configMock.Object, sections: sections);
+        var configFake = ConfigStoreFake(ConfigWithSections(recentlyClosed: true));
+        using var sut = Build(config: configFake, sections: sections);
 
         await sut.RefreshAsync(CancellationToken.None);
 
@@ -715,8 +710,8 @@ public sealed class InboxRefreshOrchestratorTests
             _ => new Dictionary<string, IReadOnlyList<RawPrInboxItem>>(),
             closed: new[] { RawClosed(7, when, when, headSha: "") });
 
-        var configMock = ConfigStoreMock(ConfigWithSections(recentlyClosed: true));
-        using var sut = Build(config: configMock.Object, sections: sections);
+        var configFake = ConfigStoreFake(ConfigWithSections(recentlyClosed: true));
+        using var sut = Build(config: configFake, sections: sections);
 
         await sut.RefreshAsync(CancellationToken.None);
 
@@ -737,7 +732,7 @@ public sealed class InboxRefreshOrchestratorTests
             closed: new[] { rawClosed });
 
         using var sut = Build(
-            config: ConfigStoreMock(ConfigWithSections(recentlyClosed: true)).Object,
+            config: ConfigStoreFake(ConfigWithSections(recentlyClosed: true)),
             sections: sections,
             enricher: new DropEnricher(7)); // #7 enrichment drops → fallback to raw
 
@@ -761,7 +756,7 @@ public sealed class InboxRefreshOrchestratorTests
             .ToArray();
         var sections = new FakeSectionQueryRunner(
             _ => new Dictionary<string, IReadOnlyList<RawPrInboxItem>>(), closed: closed);
-        using var sut = Build(config: ConfigStoreMock(ConfigWithSections(recentlyClosed: true)).Object, sections: sections);
+        using var sut = Build(config: ConfigStoreFake(ConfigWithSections(recentlyClosed: true)), sections: sections);
 
         await sut.RefreshAsync(CancellationToken.None);
 
@@ -786,7 +781,7 @@ public sealed class InboxRefreshOrchestratorTests
         };
         var sections = new FakeSectionQueryRunner(
             _ => new Dictionary<string, IReadOnlyList<RawPrInboxItem>>(), closed: closed);
-        using var sut = Build(config: ConfigStoreMock(ConfigWithSections(recentlyClosed: true)).Object, sections: sections);
+        using var sut = Build(config: ConfigStoreFake(ConfigWithSections(recentlyClosed: true)), sections: sections);
 
         await sut.RefreshAsync(CancellationToken.None);
 
@@ -806,7 +801,7 @@ public sealed class InboxRefreshOrchestratorTests
         };
         var sections = new FakeSectionQueryRunner(
             _ => new Dictionary<string, IReadOnlyList<RawPrInboxItem>>(), closed: closed);
-        using var sut = Build(config: ConfigStoreMock(ConfigWithSections(recentlyClosed: true)).Object, sections: sections);
+        using var sut = Build(config: ConfigStoreFake(ConfigWithSections(recentlyClosed: true)), sections: sections);
 
         await sut.RefreshAsync(CancellationToken.None);
 
@@ -824,8 +819,8 @@ public sealed class InboxRefreshOrchestratorTests
             closed: new[] { RawClosed(9, when, when) },
             onClosedQueried: () => queried = true);
 
-        var configMock = ConfigStoreMock(ConfigWithSections(recentlyClosed: false));
-        using var sut = Build(config: configMock.Object, sections: sections);
+        var configFake = ConfigStoreFake(ConfigWithSections(recentlyClosed: false));
+        using var sut = Build(config: configFake, sections: sections);
 
         await sut.RefreshAsync(CancellationToken.None);
 
@@ -839,8 +834,8 @@ public sealed class InboxRefreshOrchestratorTests
         var sections = new FakeSectionQueryRunner(
             _ => new Dictionary<string, IReadOnlyList<RawPrInboxItem>>(),
             closed: Array.Empty<RawPrInboxItem>());
-        var configMock = ConfigStoreMock(ConfigWithSections(recentlyClosed: true, recentlyClosedWindowDays: 30));
-        using var sut = Build(config: configMock.Object, sections: sections);
+        var configFake = ConfigStoreFake(ConfigWithSections(recentlyClosed: true, recentlyClosedWindowDays: 30));
+        using var sut = Build(config: configFake, sections: sections);
 
         await sut.RefreshAsync(CancellationToken.None);
 
