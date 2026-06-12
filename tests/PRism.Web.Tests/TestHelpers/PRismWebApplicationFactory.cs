@@ -59,7 +59,7 @@ public sealed class PRismWebApplicationFactory : WebApplicationFactory<Program>
             }
             else if (ValidateOverride is not null)
             {
-                ReplaceSingleton<IReviewAuth>(services, new StubReviewService(ValidateOverride));
+                ReplaceSingleton<IReviewAuth>(services, new StubReviewAuth(ValidateOverride));
             }
 
             // Replace IInboxRefreshOrchestrator with a fake when FakeOrchestrator is set.
@@ -116,15 +116,4 @@ public sealed class PRismWebApplicationFactory : WebApplicationFactory<Program>
         catch { }
 #pragma warning restore CA1031
     }
-}
-
-// Auth-only stub. Wired in by PRismWebApplicationFactory.ValidateOverride for /api/auth/*
-// tests; only ValidateCredentialsAsync is meaningful. The other capability interfaces stay
-// bound to GitHubReviewService (never resolved in these tests).
-internal sealed class StubReviewService : IReviewAuth
-{
-    private readonly Func<Task<AuthValidationResult>> _validate;
-    public StubReviewService(Func<Task<AuthValidationResult>> validate) { _validate = validate; }
-
-    public Task<AuthValidationResult> ValidateCredentialsAsync(CancellationToken ct, bool skipCredentialHealth = false) => _validate();
 }

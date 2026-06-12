@@ -74,13 +74,6 @@ public class AuthEndpointsLoggingTests
         }
     }
 
-    private sealed class StubReviewAuth : IReviewAuth
-    {
-        private readonly Func<Task<AuthValidationResult>> _validate;
-        public StubReviewAuth(Func<Task<AuthValidationResult>> validate) { _validate = validate; }
-        public Task<AuthValidationResult> ValidateCredentialsAsync(CancellationToken ct, bool skipCredentialHealth = false) => _validate();
-    }
-
     [Fact]
     public async Task ConnectHappyPath_LogsCommittedLogin_NotRedacted()
     {
@@ -155,43 +148,5 @@ public class AuthEndpointsLoggingTests
 
         public HttpClient CreateClient() => _f.CreateClient();
         public void Dispose() { /* HarnessFactory disposes via its own using; provider disposed with factory */ }
-    }
-
-    private sealed class KvCapturingLoggerProvider : ILoggerProvider
-    {
-        public List<KvRecord> Records { get; } = new();
-        public ILogger CreateLogger(string categoryName) => new KvLogger(categoryName, Records);
-        public void Dispose() { }
-
-        public sealed record KvRecord(string Category, IReadOnlyDictionary<string, object?> Args)
-        {
-            public IEnumerable<string> Keys => Args.Keys;
-            public object? GetValue(string key) => Args.TryGetValue(key, out var v) ? v : null;
-        }
-
-        private sealed class KvLogger : ILogger
-        {
-            private readonly string _category;
-            private readonly List<KvRecord> _records;
-            public KvLogger(string category, List<KvRecord> records) { _category = category; _records = records; }
-            public IDisposable BeginScope<TState>(TState state) where TState : notnull => NullScope.Instance;
-            public bool IsEnabled(LogLevel logLevel) => true;
-            public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
-            {
-                if (state is IReadOnlyList<KeyValuePair<string, object?>> kvList)
-                {
-                    var dict = new Dictionary<string, object?>(StringComparer.Ordinal);
-                    foreach (var kv in kvList)
-                        if (!string.Equals(kv.Key, "{OriginalFormat}", StringComparison.Ordinal))
-                            dict[kv.Key] = kv.Value;
-                    lock (_records) { _records.Add(new KvRecord(_category, dict)); }
-                }
-            }
-            private sealed class NullScope : IDisposable
-            {
-                public static readonly NullScope Instance = new();
-                public void Dispose() { }
-            }
-        }
     }
 }

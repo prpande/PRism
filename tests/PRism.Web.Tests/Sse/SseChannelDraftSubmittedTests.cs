@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using System.IO;
 using FluentAssertions;
 using Microsoft.AspNetCore.Http;
@@ -8,6 +7,7 @@ using PRism.Core.Events;
 using PRism.Core.Inbox;
 using PRism.Core.PrDetail;
 using PRism.Web.Sse;
+using PRism.Web.Tests.TestHelpers;
 
 namespace PRism.Web.Tests.Sse;
 
@@ -18,26 +18,13 @@ namespace PRism.Web.Tests.Sse;
 // finding that the new subscription must be released on channel teardown.
 public class SseChannelDraftSubmittedTests
 {
-    private sealed class CapturingLogger : ILogger<SseChannel>
-    {
-        public ConcurrentBag<string> Messages { get; } = new();
-        public IDisposable BeginScope<TState>(TState state) where TState : notnull => NullScope.Instance;
-        public bool IsEnabled(LogLevel logLevel) => true;
-        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
-        {
-            ArgumentNullException.ThrowIfNull(formatter);
-            if (eventId.Id == 5) Messages.Add(formatter(state, exception));
-        }
-        private sealed class NullScope : IDisposable { public static readonly NullScope Instance = new(); public void Dispose() { } }
-    }
-
     [Fact]
     public async Task DraftSubmitted_fans_out_to_subscribed_pr()
     {
         var bus = new ReviewEventBus();
         var subs = new InboxSubscriberCount();
         var registry = new ActivePrSubscriberRegistry();
-        var logger = new CapturingLogger();
+        var logger = new CapturingLogger(5);
         using var channel = new SseChannel(bus, subs, registry, logger);
 
         var ctx = new DefaultHttpContext { Response = { Body = new MemoryStream() } };
@@ -70,7 +57,7 @@ public class SseChannelDraftSubmittedTests
         var bus = new ReviewEventBus();
         var subs = new InboxSubscriberCount();
         var registry = new ActivePrSubscriberRegistry();
-        var logger = new CapturingLogger();
+        var logger = new CapturingLogger(5);
         var channel = new SseChannel(bus, subs, registry, logger);
 
         var ctx = new DefaultHttpContext { Response = { Body = new MemoryStream() } };
