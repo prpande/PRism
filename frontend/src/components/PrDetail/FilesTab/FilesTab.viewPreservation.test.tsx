@@ -5,8 +5,15 @@ import { FilesTab } from './FilesTab';
 import { PrDetailContextProvider } from '../prDetailContext';
 import type { PrDetailContextValue } from '../prDetailContext';
 import { makePrDetailDto, makePr } from '../../../../__tests__/helpers/prDetail';
+import { makePrDetailContextValue } from '../testUtils';
 import type { DiffDto, FileChange, ReviewThreadDto } from '../../../api/types';
 import type { UseDraftSessionResult } from '../../../hooks/useDraftSession';
+
+// SHA constants kept coupled so the DIFF range and the makePr head/base SHAs
+// (which FilesTab reconciles) cannot drift apart silently.
+const BASE_SHA = 'basesha';
+const HEAD_SHA = 'headsha';
+const DIFF_RANGE = `${BASE_SHA}..${HEAD_SHA}`;
 
 // FilesTab pulls its file set from the range-keyed diff hooks (NOT from
 // context). Stub them to a deterministic 2-file diff so the tree + diff render
@@ -39,7 +46,7 @@ const FILE_B: FileChange = {
   ],
 };
 
-const DIFF: DiffDto = { range: 'basesha..headsha', files: [FILE_A, FILE_B], truncated: false };
+const DIFF: DiffDto = { range: DIFF_RANGE, files: [FILE_A, FILE_B], truncated: false };
 
 vi.mock('../../../hooks/useFileDiff', () => ({
   useFileDiff: () => ({ data: DIFF, isLoading: false, showSkeleton: false, error: null }),
@@ -70,8 +77,17 @@ vi.mock('../../../api/fileViewed', () => ({
 // cleanup return is used in a ReplyComposer effect).
 function makeDraftSession(): UseDraftSessionResult {
   return {
-    session: { draftComments: [], draftReplies: [] } as unknown as UseDraftSessionResult['session'],
-    status: 'ready' as UseDraftSessionResult['status'],
+    session: {
+      draftVerdict: null,
+      draftVerdictStatus: 'draft',
+      draftComments: [],
+      draftReplies: [],
+      iterationOverrides: [],
+      pendingReviewId: null,
+      pendingReviewCommitOid: null,
+      fileViewState: { viewedFiles: {} },
+    },
+    status: 'ready',
     error: null,
     refetch: vi.fn().mockResolvedValue(undefined),
     registerOpenComposer: vi.fn().mockReturnValue(() => {}),
@@ -85,16 +101,16 @@ function makeDraftSession(): UseDraftSessionResult {
 }
 
 function makeContextValue(threads: ReviewThreadDto[]): PrDetailContextValue {
-  return {
+  return makePrDetailContextValue({
     prRef: { owner: 'octocat', repo: 'hello', number: 42 },
     prDetail: makePrDetailDto({
-      pr: makePr({ headSha: 'headsha', baseSha: 'basesha', htmlUrl: 'https://example.com/pr/42' }),
+      pr: makePr({ headSha: HEAD_SHA, baseSha: BASE_SHA, htmlUrl: 'https://example.com/pr/42' }),
       reviewComments: threads,
     }),
+    // A real callable draftSession — testUtils' default is a typed stub that
+    // FilesTab would call into; override it with our complete fixture.
     draftSession: makeDraftSession(),
-    readOnly: false,
-    onSelectSubTab: vi.fn(),
-  };
+  });
 }
 
 // The just-arrived thread, anchored to FILE_B line 2 (the paired insert
@@ -118,6 +134,9 @@ const NEW_THREAD: ReviewThreadDto = {
   ],
 };
 
+const getRow = (path: string) =>
+  screen.getAllByTestId('files-tab-tree-row').find((r) => r.getAttribute('data-path') === path);
+
 describe('FilesTab — view state survives a prDetail swap (auto-reload, #450)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -135,21 +154,14 @@ describe('FilesTab — view state survives a prDetail swap (auto-reload, #450)',
 
     // The first file (src/a.ts) auto-selects on mount.
     await waitFor(() => {
-      const rowA = screen
-        .getAllByTestId('files-tab-tree-row')
-        .find((r) => r.getAttribute('data-path') === 'src/a.ts');
-      expect(rowA).toHaveAttribute('data-selected', 'true');
+      expect(getRow('src/a.ts')).toHaveAttribute('data-selected', 'true');
     });
 
     // 2a. Select the SECOND file (src/b.ts).
-    const rows = screen.getAllByTestId('files-tab-tree-row');
-    const rowB = rows.find((r) => r.getAttribute('data-path') === 'src/b.ts')!;
-    await user.click(rowB);
-    expect(
-      screen
-        .getAllByTestId('files-tab-tree-row')
-        .find((r) => r.getAttribute('data-path') === 'src/b.ts'),
-    ).toHaveAttribute('data-selected', 'true');
+    const rowB = getRow('src/b.ts');
+    expect(rowB).toBeDefined();
+    await user.click(rowB!);
+    expect(getRow('src/b.ts')).toHaveAttribute('data-selected', 'true');
 
     // 2b. Toggle the SECOND file viewed (its checkbox in the fixed check column).
     const viewedB = screen.getByRole('checkbox', { name: 'Viewed src/b.ts' });
@@ -175,11 +187,7 @@ describe('FilesTab — view state survives a prDetail swap (auto-reload, #450)',
     );
 
     // 4a. The SECOND file is still selected (component state survived the swap).
-    expect(
-      screen
-        .getAllByTestId('files-tab-tree-row')
-        .find((r) => r.getAttribute('data-path') === 'src/b.ts'),
-    ).toHaveAttribute('data-selected', 'true');
+    expect(getRow('src/b.ts')).toHaveAttribute('data-selected', 'true');
 
     // 4b. Its viewed checkmark is still set.
     expect(screen.getByRole('checkbox', { name: 'Viewed src/b.ts' })).toBeChecked();
