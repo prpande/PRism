@@ -9,7 +9,10 @@
  * non-Windows platform — including Linux and Intel macOS — fell through to the
  * osx-arm64 binary and then failed opaquely at spawn time).
  */
-export function sidecarBinaryName(platform: NodeJS.Platform, arch: string): string {
+export function sidecarBinaryName(
+  platform: NodeJS.Platform,
+  arch: string,
+): string {
   if (platform === "win32" && arch === "x64") return "PRism-win-x64.exe";
   if (platform === "darwin" && arch === "arm64") return "PRism-osx-arm64";
   throw new Error(

@@ -1,0 +1,18 @@
+{
+  // Lint-only project for type-aware ESLint (#335). The build tsconfigs are
+  // narrow — tsconfig.json covers src/**, tsconfig.test.json covers src + test/**
+  // — and neither includes the root config files. typescript-eslint needs ONE
+  // project that spans EVERY linted file, so this widens include to all of them.
+  // noEmit + rootDir:"." because linting type-checks, it never emits.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "rootDir": ".",
+    "noEmit": true
+  },
+  "include": [
+    "src/**/*.ts",
+    "test/**/*.ts",
+    "global-setup.ts",
+    "playwright.config.ts"
+  ]
+}

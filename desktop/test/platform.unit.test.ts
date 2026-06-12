@@ -11,15 +11,24 @@ test("sidecarBinaryName returns the osx-arm64 binary on Apple Silicon", () => {
 });
 
 test("sidecarBinaryName throws on an unsupported OS (e.g. Linux)", () => {
-  assert.throws(() => sidecarBinaryName("linux", "x64"), /Unsupported platform\/arch/);
+  assert.throws(
+    () => sidecarBinaryName("linux", "x64"),
+    /Unsupported platform\/arch/,
+  );
 });
 
 test("sidecarBinaryName throws on an unsupported Windows arch (e.g. arm64)", () => {
-  assert.throws(() => sidecarBinaryName("win32", "arm64"), /Unsupported platform\/arch/);
+  assert.throws(
+    () => sidecarBinaryName("win32", "arm64"),
+    /Unsupported platform\/arch/,
+  );
 });
 
 test("sidecarBinaryName throws on an unsupported macOS arch (Intel x64 — not a publish target)", () => {
-  assert.throws(() => sidecarBinaryName("darwin", "x64"), /Unsupported platform\/arch/);
+  assert.throws(
+    () => sidecarBinaryName("darwin", "x64"),
+    /Unsupported platform\/arch/,
+  );
 });
 
 test("sidecarBinaryName names the offending platform/arch in the error", () => {
