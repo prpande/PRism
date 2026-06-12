@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 import { useEventSource } from './useEventSource';
-import type { PrReference } from '../api/types';
+import { prRefKey, type PrReference } from '../api/types';
 
 export interface UseRootCommentPostedSubscriberOptions {
   prRef: PrReference | null;
@@ -19,7 +19,7 @@ export function useRootCommentPostedSubscriber({
   const stream = useEventSource();
   useEffect(() => {
     if (!stream || !prRef) return;
-    const prRefStr = `${prRef.owner}/${prRef.repo}/${prRef.number}`;
+    const prRefStr = prRefKey(prRef);
     return stream.on('root-comment-posted', (event) => {
       if (event.prRef !== prRefStr) return;
       onPosted();
