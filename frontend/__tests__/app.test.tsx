@@ -26,7 +26,7 @@ vi.mock('../src/hooks/useInbox', () => ({
   useInbox: vi.fn(() => inboxSnapshot),
 }));
 vi.mock('../src/hooks/useInboxUpdates', () => ({
-  useInboxUpdates: vi.fn(() => ({ hasUpdate: false, summary: '', dismiss: vi.fn() })),
+  useInboxUpdates: vi.fn(() => ({ announce: '' })),
 }));
 vi.mock('../src/hooks/useEventSource', () => ({
   EventStreamProvider: ({ children }: { children: React.ReactNode }) => children,
