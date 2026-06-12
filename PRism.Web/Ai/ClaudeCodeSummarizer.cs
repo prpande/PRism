@@ -33,6 +33,10 @@ internal sealed partial class ClaudeCodeSummarizer : IPrSummarizer, IDisposable
     internal const string SummaryModel = "claude-sonnet-4-6"; // KTD-2 — tunable
     private const string ComponentName = "summary"; // AI-audit component tag (matches the FE feature key)
 
+    // EGRESS ALLOWLIST (spec §11 / P1a §5 change-control): the ONLY PR-derived fields sent to the
+    // provider. Adding a field here widens what leaves the device and MUST bump DisclosureVersion.
+    internal static readonly IReadOnlyList<string> PromptFieldAllowlist = new[] { "diff", "title", "description" };
+
     private const string SystemPromptV1 =
         "You summarize a GitHub pull request for a reviewer. Output, in order:\n" +
         "1. A first line exactly `CATEGORY: <x>` where <x> is ONE of: feature, fix, refactor, docs, test, chore, revert. " +

@@ -272,6 +272,28 @@ public sealed class ClaudeCodeSummarizerTests
         public void Clear() => Snapshot = null;
     }
 
+    // --- Egress allowlist trip-wire (spec §11 / Task 11) ---
+
+    [Fact]
+    public void Prompt_field_allowlist_is_exactly_diff_title_description()
+    {
+        ClaudeCodeSummarizer.PromptFieldAllowlist.Should().BeEquivalentTo(new[] { "diff", "title", "description" },
+            "widening egress requires a visible constant edit + a DisclosureVersion bump (spec §11)");
+    }
+
+    [Fact]
+    public async Task Provider_prompt_contains_only_allowlisted_fields_and_never_baseSha()
+    {
+        var provider = new FakeProvider();
+        using var summarizer = Build(provider, new FakeTracker(), diff: "DIFFTOKEN", title: "TITLETOKEN",
+            desc: "DESCTOKEN", baseSha: "BASESHATOKEN", headSha: "h1");
+
+        await summarizer.SummarizeAsync(Pr, CancellationToken.None);
+
+        provider.Last!.UserContent.Should().Contain("DIFFTOKEN").And.Contain("TITLETOKEN").And.Contain("DESCTOKEN");
+        provider.Last!.UserContent.Should().NotContain("BASESHATOKEN", "baseSha is a cache key, never provider input");
+    }
+
     [Fact]
     public async Task R7_store_is_skipped_when_active_snapshot_SHAs_no_longer_match()
     {
