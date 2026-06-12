@@ -49,18 +49,17 @@ export function useInboxUpdates({ onUpdate }: Options): { announce: string } {
 
   useEffect(() => {
     if (!stream) return;
-    return stream.on('inbox-updated', () => {
+    const unsubscribe = stream.on('inbox-updated', () => {
       if (debounceTimer.current) clearTimeout(debounceTimer.current);
       debounceTimer.current = setTimeout(() => void run(), DEBOUNCE_MS);
     });
-  }, [stream, run]);
-
-  useEffect(
-    () => () => {
+    return () => {
+      unsubscribe();
+      // Cancel a pending debounce too, so a timer started under a now-stale stream
+      // (reconnect) or at unmount can't fire a reload after teardown.
       if (debounceTimer.current) clearTimeout(debounceTimer.current);
-    },
-    [],
-  );
+    };
+  }, [stream, run]);
 
   return { announce };
 }

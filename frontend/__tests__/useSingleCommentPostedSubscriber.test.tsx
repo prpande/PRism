@@ -1,5 +1,5 @@
 import { renderHook, act, waitFor } from '@testing-library/react';
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { ReactNode } from 'react';
 import { useSingleCommentPostedSubscriber } from '../src/hooks/useSingleCommentPostedSubscriber';
 import { EventStreamProvider } from '../src/hooks/useEventSource';
@@ -10,8 +10,9 @@ const wrapper = ({ children }: { children: ReactNode }) => (
 );
 
 describe('useSingleCommentPostedSubscriber', () => {
+  beforeEach(() => installFakeEventSource());
+
   it('fires onPosted for a matching prRef', async () => {
-    installFakeEventSource();
     const onPosted = vi.fn();
     const prRef = { owner: 'acme', repo: 'api', number: 7 };
     renderHook(() => useSingleCommentPostedSubscriber({ prRef, onPosted }), { wrapper });
@@ -28,7 +29,6 @@ describe('useSingleCommentPostedSubscriber', () => {
   });
 
   it('ignores a non-matching prRef', async () => {
-    installFakeEventSource();
     const onPosted = vi.fn();
     const prRef = { owner: 'acme', repo: 'api', number: 7 };
     renderHook(() => useSingleCommentPostedSubscriber({ prRef, onPosted }), { wrapper });
