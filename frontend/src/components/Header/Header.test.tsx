@@ -175,3 +175,37 @@ describe('Header help', () => {
     expect(screen.queryByRole('link', { name: 'Help' })).toBeNull();
   });
 });
+
+describe('Header feedback', () => {
+  // Query by role=link: on /feedback the modal's dialog + submit button also carry a
+  // "send feedback" accessible name, so a bare /feedback/i text query would be ambiguous.
+  it('renders a Send feedback link to /feedback when authed', () => {
+    renderAt('/');
+    expect(screen.getByRole('link', { name: /send feedback/i })).toHaveAttribute(
+      'href',
+      '/feedback',
+    );
+  });
+
+  it('marks the Feedback link active on /feedback', () => {
+    renderAt('/feedback');
+    expect(screen.getByRole('link', { name: /send feedback/i })).toHaveAttribute(
+      'aria-current',
+      'page',
+    );
+  });
+
+  it('hides the Feedback link when not authed', () => {
+    renderAt('/', false);
+    expect(screen.queryByRole('link', { name: /send feedback/i })).toBeNull();
+  });
+
+  it('orders the right-side cluster Settings · Help · Feedback', () => {
+    renderAt('/');
+    const cluster = screen
+      .getAllByRole('link')
+      .map((l) => l.getAttribute('aria-label') ?? l.textContent)
+      .filter((name) => name === 'Settings' || name === 'Help' || name === 'Send feedback');
+    expect(cluster).toEqual(['Settings', 'Help', 'Send feedback']);
+  });
+});
