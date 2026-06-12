@@ -38,8 +38,16 @@ export function ComposerActionsBar({
   onSaveClick,
   onPostNow,
 }: ComposerActionsBarProps) {
+  // #390 — on a merged/closed PR the inline "PR is merged …" note is gone; keep
+  // the "posts immediately" context as the immediate-post button's tooltip
+  // (title, not aria-label, so the visible "Comment" text stays the accessible
+  // name — WCAG 2.5.3 label-in-name).
+  const postNowTitle = closedBanner
+    ? `Post directly to this ${prState === 'closed' ? 'closed' : 'merged'} PR`
+    : postNowTooltip;
   return (
     <div className="composer-actions">
+      {/* left group */}
       <button
         type="button"
         className="composer-preview-toggle"
@@ -49,6 +57,8 @@ export function ComposerActionsBar({
         {previewMode ? 'Edit' : 'Preview'}
       </button>
 
+      <AiComposerAssistant />
+
       <span
         className={`composer-badge composer-badge--${badge}`}
         role="status"
@@ -57,8 +67,9 @@ export function ComposerActionsBar({
         {badgeLabel(badge)}
       </span>
 
-      <AiComposerAssistant />
+      <span className="composer-actions-spacer" aria-hidden="true" />
 
+      {/* right group */}
       <button
         type="button"
         className="composer-discard"
@@ -85,17 +96,12 @@ export function ComposerActionsBar({
         type="button"
         className="composer-post-now"
         aria-disabled={postNowDisabled}
-        title={postNowTooltip}
+        title={postNowTitle}
         onClick={onPostNow}
         disabled={readOnly || posting}
       >
         {posting ? 'Posting…' : 'Comment'}
       </button>
-      {closedBanner && (
-        <span className="composer-merged-note">
-          {prState === 'closed' ? 'PR is closed' : 'PR is merged'} — comments post immediately
-        </span>
-      )}
       {postError && (
         <div className="composer-error" role="alert">
           {postError}

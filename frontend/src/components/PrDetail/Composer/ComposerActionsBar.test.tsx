@@ -31,10 +31,17 @@ describe('ComposerActionsBar', () => {
     // AiComposerAssistant renders null (AI gate off in tests); badge is a span, not a button.
     expect(buttons).toEqual(['Preview', 'Discard', 'Add to review', 'Comment']);
   });
-  it('hides the save button when closedBanner and shows the merged note', () => {
+  it('hides the save button and the merged note when closedBanner', () => {
     render(<ComposerActionsBar {...baseProps} closedBanner prState="merged" />);
     expect(screen.queryByRole('button', { name: 'Add to review' })).toBeNull();
-    expect(screen.getByText(/comments post immediately/)).toBeInTheDocument();
+    expect(screen.queryByText(/comments post immediately/)).toBeNull();
+    // The merged context is preserved as the button's TOOLTIP (title), not its
+    // accessible name: visible text "Comment" outranks `title` in the ARIA name
+    // computation, and keeping "Comment" as the name preserves WCAG 2.5.3.
+    expect(screen.getByRole('button', { name: 'Comment' })).toHaveAttribute(
+      'title',
+      'Post directly to this merged PR',
+    );
   });
   it('renders postError as an alert', () => {
     render(<ComposerActionsBar {...baseProps} postError="boom" />);
