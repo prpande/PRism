@@ -7,7 +7,6 @@ import { useAiGate } from '../hooks/useAiGate';
 import { usePreferences } from '../hooks/usePreferences';
 import { useMediaQuery } from '../hooks/useMediaQuery';
 import { INBOX_RAIL_MIN_WIDTH } from '../components/Inbox/inboxLayout';
-import { InboxBanner } from '../components/Inbox/InboxBanner';
 import { orderInboxSections } from '../components/Inbox/sectionOrder';
 import { InboxToolbar } from '../components/Inbox/InboxToolbar';
 import { InboxSection } from '../components/Inbox/InboxSection';
@@ -23,11 +22,13 @@ import styles from './InboxPage.module.css';
 
 export function InboxPage() {
   const { data, error, isLoading, reload } = useInbox();
-  const updates = useInboxUpdates();
+  // #450 — an inbox-updated frame now silently auto-refreshes (debounced) instead of
+  // surfacing the old reload banner. `announce` carries the screen-reader signal the
+  // removed banner's role=status region used to provide.
+  const autoRefresh = useInboxUpdates({ onUpdate: reload });
   const toast = useToast();
   const { isRefreshing, justRefreshed, announce, refresh } = useInboxRefresh({
     reload,
-    dismiss: updates.dismiss,
     onError: (message) => toast.show({ kind: 'error', message }),
   });
   const { preferences } = usePreferences();
@@ -93,11 +94,6 @@ export function InboxPage() {
     );
   if (!data) return null;
 
-  const onReload = async () => {
-    await reload();
-    updates.dismiss();
-  };
-
   return (
     <>
       {/* Background reload (data present, isLoading): the bar is the non-intrusive
@@ -112,11 +108,8 @@ export function InboxPage() {
           aria-live="polite"
           data-testid="inbox-refresh-status"
         >
-          {announce}
+          {announce || autoRefresh.announce}
         </div>
-        {updates.hasUpdate && (
-          <InboxBanner summary={updates.summary} onReload={onReload} onDismiss={updates.dismiss} />
-        )}
         <InboxToolbar
           sections={sections}
           initialSort={initialSort}

@@ -51,7 +51,6 @@ function setHooks(
     data?: InboxResponse | null;
     isLoading?: boolean;
     error?: unknown;
-    hasUpdate?: boolean;
     aiPreview?: boolean;
     inboxEnrichment?: boolean;
     // #283 the ActivityRail is gated on preferences.inbox.showActivityRail (default false),
@@ -60,17 +59,14 @@ function setHooks(
     sectionOrder?: string;
   } = {},
 ) {
+  const reload = vi.fn().mockResolvedValue(undefined);
   vi.mocked(useInbox).mockReturnValue({
     data: opts.data ?? null,
     isLoading: opts.isLoading ?? false,
     error: opts.error ?? null,
-    reload: vi.fn().mockResolvedValue(undefined),
+    reload,
   });
-  vi.mocked(useInboxUpdates).mockReturnValue({
-    hasUpdate: opts.hasUpdate ?? false,
-    summary: opts.hasUpdate ? '3 new updates' : '',
-    dismiss: vi.fn(),
-  });
+  vi.mocked(useInboxUpdates).mockReturnValue({ announce: '' });
   // InboxPage uses useAiGate for the AI gates, and calls usePreferences directly for
   // the initial sort + activity-rail visibility, so its mock below is load-bearing.
   // useCapabilities is NOT called directly (only transitively via useAiGate, which is
@@ -119,6 +115,7 @@ function setHooks(
     if (key === 'inboxEnrichment') return opts.inboxEnrichment ?? false;
     return false;
   });
+  return { reload };
 }
 
 const sampleData: InboxResponse = {
@@ -230,11 +227,28 @@ describe('InboxPage', () => {
     expect(screen.getByText(/nothing in your inbox right now/i)).toBeInTheDocument();
   });
 
-  it('renders banner when updates are pending', () => {
-    setHooks({ data: sampleData, hasUpdate: true });
+  it('wires the inbox reload as the auto-refresh onUpdate (no banner) — #450', () => {
+    // #450 the reload banner is gone; an inbox-updated frame now triggers a silent
+    // auto-refresh. InboxPage delegates that to useInboxUpdates({ onUpdate: reload }).
+    // The debounce + coalescing mechanics are covered in useInboxUpdates' own test
+    // (__tests__/useInboxUpdates.test.tsx); here we lock the page-level wiring:
+    // the page hands its inbox `reload` to the hook, and invoking that callback
+    // re-fetches the inbox.
+    const { reload } = setHooks({ data: sampleData });
     renderPage();
-    expect(screen.getByText(/3 new updates/i)).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /reload/i })).toBeInTheDocument();
+
+    // No banner / Reload affordance survives.
+    expect(screen.queryByText(/new updates/i)).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /reload/i })).not.toBeInTheDocument();
+
+    // The hook received the inbox reload as its onUpdate.
+    const onUpdate = vi.mocked(useInboxUpdates).mock.calls.at(-1)?.[0]?.onUpdate;
+    expect(onUpdate).toBe(reload);
+
+    // Firing it (as the debounced hook would, post-500ms) re-fetches the inbox.
+    expect(reload).not.toHaveBeenCalled();
+    void onUpdate?.();
+    expect(reload).toHaveBeenCalledTimes(1);
   });
 
   it('renders ActivityRail when inbox.showActivityRail is on', () => {
@@ -342,11 +356,7 @@ describe('InboxPage — useAiGate migrations', () => {
       error: null,
       reload: vi.fn().mockResolvedValue(undefined),
     });
-    vi.mocked(useInboxUpdates).mockReturnValue({
-      hasUpdate: false,
-      summary: '',
-      dismiss: vi.fn(),
-    });
+    vi.mocked(useInboxUpdates).mockReturnValue({ announce: '' });
     // These mocks are only needed if InboxPage still calls them directly.
     // After migration they become no-ops, but the vi.mock() hoisting keeps them registered.
     vi.mocked(useCapabilities).mockReturnValue({
