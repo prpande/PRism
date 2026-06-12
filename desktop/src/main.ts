@@ -5,6 +5,7 @@ import { startSidecar, Sidecar } from "./sidecar";
 import { sidecarBinaryName } from "./platform";
 import { isOpenableUrl, windowOpenDecision } from "./urls";
 import { attribute, formatSummary, Phase } from "./startupTimings";
+import { applicationMenuTemplate, editableContextMenuTemplate } from "./menu";
 
 let sidecar: Sidecar | null = null;
 let mainWindow: BrowserWindow | null = null;
@@ -30,10 +31,11 @@ if (!gotLock) {
     }
   });
 
-  // The SPA navbar IS the title bar (titleBarStyle: "hidden" below), so the
-  // default Electron application menu (File/Edit/View/Window/Help) is redundant
-  // chrome — remove it app-wide so the navbar is the topmost UI.
-  Menu.setApplicationMenu(null);
+  // The SPA navbar is the visible title bar, so we drop Electron's default menu
+  // chrome everywhere except macOS, where the app-level Edit menu is what wires
+  // standard text selectors like ⌘V / ⌘A into focused inputs.
+  const appMenu = applicationMenuTemplate(process.platform);
+  Menu.setApplicationMenu(appMenu ? Menu.buildFromTemplate(appMenu) : null);
 
   // Windows groups taskbar buttons by AppUserModelID and reads the icon from it.
   // Without an explicit ID, an unpackaged dev run groups under electron.exe and
@@ -198,6 +200,12 @@ async function bootstrap(): Promise<void> {
     const { action, open } = windowOpenDecision(url);
     if (open) void shell.openExternal(url);
     return { action };
+  });
+  mainWindow.webContents.on("context-menu", (_event, params) => {
+    if (!params.isEditable || !mainWindow) return;
+    Menu.buildFromTemplate(editableContextMenuTemplate()).popup({
+      window: mainWindow,
+    });
   });
 
   // macOS: "hidden" still shows the native traffic lights. Hide them so the SPA's
