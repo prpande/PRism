@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
 using PRism.Web.TestHooks;
+using PRism.Web.Tests.TestHelpers;
 using Xunit;
 
 namespace PRism.Web.Tests.TestHooks;
@@ -68,7 +69,7 @@ public sealed class RealInjectAppFactory : WebApplicationFactory<Program>
 
     public RealInjectAppFactory()
     {
-        _dataDir = Path.Combine(Path.GetTempPath(), $"PRism-real-inject-test-{Guid.NewGuid():N}");
+        _dataDir = TempDataDir.Create("PRism-real-inject-test");
         Directory.CreateDirectory(_dataDir);
         Environment.SetEnvironmentVariable("PRISM_E2E_REAL_INJECT", "1");
     }
