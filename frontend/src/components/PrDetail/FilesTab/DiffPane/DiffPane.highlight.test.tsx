@@ -1,8 +1,8 @@
 import { render, waitFor } from '@testing-library/react';
 import { describe, it, expect } from 'vitest';
-import { DiffPane } from '../src/components/PrDetail/FilesTab/DiffPane/DiffPane';
-import { getHighlighterAsync } from '../src/components/Markdown/shikiInstance';
-import type { FileChange, PrReference } from '../src/api/types';
+import { DiffPane } from './DiffPane';
+import { getHighlighterAsync } from '../../../Markdown/shikiInstance';
+import type { FileChange, PrReference } from '../../../../api/types';
 
 const prRef: PrReference = { owner: 'o', repo: 'r', number: 1 };
 const file = {

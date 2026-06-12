@@ -1,17 +1,17 @@
 import { render as rtlRender, screen, fireEvent, within } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { PrHeader } from '../src/components/PrDetail/PrHeader';
-import { ToastProvider } from '../src/components/Toast/useToast';
-import { ToastContainer } from '../src/components/Toast/ToastContainer';
-import { AskAiDrawerProvider } from '../src/contexts/AskAiDrawerContext';
-import { SubmitConflictError } from '../src/api/submit';
+import { PrHeader } from './PrHeader';
+import { ToastProvider } from '../Toast/useToast';
+import { ToastContainer } from '../Toast/ToastContainer';
+import { AskAiDrawerProvider } from '../../contexts/AskAiDrawerContext';
+import { SubmitConflictError } from '../../api/submit';
 import type { ReactNode } from 'react';
 import type {
   AiCapabilities,
   PrReference,
   PreferencesResponse,
   ReviewSessionDto,
-} from '../src/api/types';
+} from '../../api/types';
 
 // vi.hoisted so the mock factories (themselves hoisted above the imports) can
 // read these mutable containers without a TDZ error.
@@ -21,14 +21,14 @@ const { capabilitiesValue, preferencesValue, submitReviewMock } = vi.hoisted(() 
   submitReviewMock: vi.fn(),
 }));
 
-vi.mock('../src/hooks/useCapabilities', () => ({
+vi.mock('../../hooks/useCapabilities', () => ({
   useCapabilities: () => ({
     capabilities: capabilitiesValue.capabilities,
     error: null,
     refetch: () => {},
   }),
 }));
-vi.mock('../src/hooks/usePreferences', () => ({
+vi.mock('../../hooks/usePreferences', () => ({
   usePreferences: () => ({
     preferences: preferencesValue.preferences,
     error: null,
@@ -39,8 +39,8 @@ vi.mock('../src/hooks/usePreferences', () => ({
 
 // Real SubmitConflictError kept; only the network call is stubbed so the catch
 // in PrHeader runs against a real thrown error type.
-vi.mock('../src/api/submit', async () => {
-  const actual = await vi.importActual<typeof import('../src/api/submit')>('../src/api/submit');
+vi.mock('../../api/submit', async () => {
+  const actual = await vi.importActual<typeof import('../../api/submit')>('../../api/submit');
   return {
     ...actual,
     submitReview: (...args: unknown[]) => submitReviewMock(...args),
@@ -54,7 +54,7 @@ vi.mock('../src/api/submit', async () => {
 
 // Drains the PUT /draft summary-flush + any other fire-and-forget calls fired
 // from SubmitDialog.handleConfirm so they don't error in tests.
-vi.mock('../src/api/draft', () => ({
+vi.mock('../../api/draft', () => ({
   sendPatch: vi.fn().mockResolvedValue(undefined),
   getTabId: () => 'test-tab',
 }));

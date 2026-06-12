@@ -1,14 +1,14 @@
 import { render } from '@testing-library/react';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { DiffPane } from '../src/components/PrDetail/FilesTab/DiffPane/DiffPane';
-import type { FileChange, ReviewThreadDto, PrReference } from '../src/api/types';
-import { useAiGate } from '../src/hooks/useAiGate';
-import { useAiHunkAnnotations } from '../src/hooks/useAiHunkAnnotations';
-import { useWholeFileContent } from '../src/hooks/useWholeFileContent';
+import { DiffPane } from './DiffPane';
+import type { FileChange, ReviewThreadDto, PrReference } from '../../../../api/types';
+import { useAiGate } from '../../../../hooks/useAiGate';
+import { useAiHunkAnnotations } from '../../../../hooks/useAiHunkAnnotations';
+import { useWholeFileContent } from '../../../../hooks/useWholeFileContent';
 
-vi.mock('../src/hooks/useAiGate');
-vi.mock('../src/hooks/useAiHunkAnnotations');
-vi.mock('../src/hooks/useWholeFileContent');
+vi.mock('../../../../hooks/useAiGate');
+vi.mock('../../../../hooks/useAiHunkAnnotations');
+vi.mock('../../../../hooks/useWholeFileContent');
 
 const prRef: PrReference = { owner: 'octocat', repo: 'hello', number: 42 };
 

@@ -1,11 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook } from '@testing-library/react';
-import { useAiGate } from '../src/hooks/useAiGate';
-import { useCapabilities } from '../src/hooks/useCapabilities';
-import { usePreferences } from '../src/hooks/usePreferences';
+import { useAiGate } from './useAiGate';
+import { useCapabilities } from './useCapabilities';
+import { usePreferences } from './usePreferences';
 
-vi.mock('../src/hooks/useCapabilities');
-vi.mock('../src/hooks/usePreferences');
+vi.mock('./useCapabilities');
+vi.mock('./usePreferences');
 
 describe('useAiGate', () => {
   beforeEach(() => {
