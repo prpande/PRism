@@ -7,6 +7,7 @@ using PRism.AI.Contracts.Provider;
 using PRism.AI.Contracts.Seams;
 using PRism.Core.Ai;
 using PRism.Core.Contracts;
+using PRism.Core.Events;
 
 namespace PRism.Web.Ai;
 
@@ -16,7 +17,7 @@ namespace PRism.Web.Ai;
 /// endpoint) and are NOT cached, so reopening the PR re-invokes. Token-tracker failures are logged
 /// and non-fatal (spec §9): a failed usage write must not deny the user a valid summary that was
 /// already computed and egressed.</summary>
-internal sealed partial class ClaudeCodeSummarizer : IPrSummarizer
+internal sealed partial class ClaudeCodeSummarizer : IPrSummarizer, IDisposable
 {
     /// <summary>Diff source: (prRef, ct) → (diff, title, description, baseSha, headSha). Production wiring
     /// closes over PrDetailLoader; tests inject a stub.</summary>
@@ -44,15 +45,17 @@ internal sealed partial class ClaudeCodeSummarizer : IPrSummarizer
     private readonly ILogger<ClaudeCodeSummarizer> _logger;
     private readonly IAiInteractionLog _interactionLog;
     private readonly ConcurrentDictionary<SummaryCacheKey, PrSummary> _cache = new();
+    private readonly IDisposable _busSubscription;
 
     internal ClaudeCodeSummarizer(ILlmProvider provider, ITokenUsageTracker tracker, DiffResolver resolveDiff,
-        ILogger<ClaudeCodeSummarizer> logger, IAiInteractionLog interactionLog)
+        ILogger<ClaudeCodeSummarizer> logger, IAiInteractionLog interactionLog, IReviewEventBus bus)
     {
         _provider = provider;
         _tracker = tracker;
         _resolveDiff = resolveDiff;
         _logger = logger;
         _interactionLog = interactionLog;
+        _busSubscription = bus.Subscribe<ActivePrUpdated>(OnActivePrUpdated);
     }
 
     public async Task<PrSummary?> SummarizeAsync(PrReference pr, CancellationToken ct)
@@ -124,6 +127,25 @@ internal sealed partial class ClaudeCodeSummarizer : IPrSummarizer
 
         return summary;
     }
+
+    // Invalidation, not mutable-state-in-key (roadmap §6). A base OR head move makes the cached
+    // (prRef, baseSha, headSha) entries describe a superseded diff; drop the PR's entries wholesale.
+    // The quiet first-poll event (neither flag) must NOT evict — mirrors PrDetailLoader.OnActivePrUpdated.
+    // Synchronous bus: this runs on the publisher's thread and does in-memory dict removal only — cheap.
+    private void OnActivePrUpdated(ActivePrUpdated e)
+    {
+        if (e.HeadShaChanged || e.BaseShaChanged)
+            EvictForPr(e.PrRef);
+    }
+
+    private void EvictForPr(PrReference prRef)
+    {
+        foreach (var key in _cache.Keys)
+            if (key.PrRef == prRef)
+                _cache.TryRemove(key, out _);
+    }
+
+    public void Dispose() => _busSubscription.Dispose();
 
     private static long ElapsedMs(long startTimestamp) =>
         (long)Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds;

@@ -12,6 +12,7 @@ using PRism.AI.Contracts.Provider;
 using PRism.Core.Ai;
 using PRism.Core.Config;
 using PRism.Core.Contracts;
+using PRism.Core.Events;
 using PRism.Core.PrDetail;
 using PRism.Web.Ai;
 using PRism.Web.Middleware;
@@ -89,7 +90,8 @@ public sealed class AiSummaryGateTests
                 new NullTracker(),
                 (_, _) => Task.FromResult(("+ added", "Title", "Desc", "base1", "sha1")),
                 NullLogger<ClaudeCodeSummarizer>.Instance,
-                new NullAiInteractionLog());
+                new NullAiInteractionLog(),
+                new PRism.Core.Events.ReviewEventBus()); // fresh bus — see note
 
             _base = new PRismWebApplicationFactory();
             _derived = _base.WithWebHostBuilder(b => b.ConfigureServices(s =>

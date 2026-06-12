@@ -11,6 +11,7 @@ using PRism.AI.Contracts.Seams;
 using PRism.AI.Placeholder;
 using PRism.Core.Ai;
 using PRism.Core.Contracts;
+using PRism.Core.Events;
 using PRism.Core.Json;
 using PRism.Core.PrDetail;
 using PRism.Web.Ai;
@@ -101,7 +102,8 @@ internal static class ServiceCollectionExtensions
                 sp.GetRequiredService<ITokenUsageTracker>(),
                 resolve,
                 sp.GetRequiredService<ILogger<ClaudeCodeSummarizer>>(),
-                sp.GetRequiredService<IAiInteractionLog>());
+                sp.GetRequiredService<IAiInteractionLog>(),
+                sp.GetRequiredService<IReviewEventBus>());
         });
 
         var realSeams = new Dictionary<Type, object>();   // P1: populated below with the first real impl

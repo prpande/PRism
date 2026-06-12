@@ -6,6 +6,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using PRism.AI.Contracts.Observability;
 using PRism.AI.Contracts.Provider;
 using PRism.Core.Contracts;
+using PRism.Core.Events;
 using PRism.Web.Ai;
 using Xunit;
 
@@ -49,9 +50,11 @@ public sealed class ClaudeCodeSummarizerTests
     // test bypasses PrDetailLoader. Production wiring closes over PrDetailLoader (Task 9).
     private static ClaudeCodeSummarizer Build(ILlmProvider p, ITokenUsageTracker t,
         string diff = "+ added line", string title = "Fix poller", string desc = "Body",
-        string baseSha = "base1", string headSha = "abc123", IAiInteractionLog? log = null)
+        string baseSha = "base1", string headSha = "abc123", IAiInteractionLog? log = null,
+        IReviewEventBus? bus = null)
         => new(p, t, (_, _) => Task.FromResult((diff, title, desc, baseSha, headSha)),
-            NullLogger<ClaudeCodeSummarizer>.Instance, log ?? new FakeAiInteractionLog());
+            NullLogger<ClaudeCodeSummarizer>.Instance, log ?? new FakeAiInteractionLog(),
+            bus ?? new ReviewEventBus());
 
     [Fact]
     public async Task Success_ParsesCategory_RecordsUsage()
@@ -201,5 +204,50 @@ public sealed class ClaudeCodeSummarizerTests
         await summarizer.SummarizeAsync(Pr, CancellationToken.None);
 
         provider.Calls.Should().Be(1, "identical (base, head) is a cache HIT");
+    }
+
+    [Fact]
+    public async Task Evicts_cached_summary_on_BaseShaChanged_then_recomputes()
+    {
+        var provider = new FakeProvider();
+        var bus = new ReviewEventBus();
+        using var summarizer = Build(provider, new FakeTracker(), baseSha: "b1", headSha: "h1", bus: bus);
+
+        await summarizer.SummarizeAsync(Pr, CancellationToken.None); // provider call 1, cached under (Pr,b1,h1)
+        bus.Publish(new ActivePrUpdated(Pr, HeadShaChanged: false, CommentCountChanged: false,
+            NewHeadSha: null, CommentCountDelta: 0, BaseShaChanged: true, NewBaseSha: "b2"));
+        await summarizer.SummarizeAsync(Pr, CancellationToken.None); // entry evicted → provider call 2
+
+        provider.Calls.Should().Be(2, "BaseShaChanged evicts the PR's summary entries");
+    }
+
+    [Fact]
+    public async Task Evicts_cached_summary_on_HeadShaChanged()
+    {
+        var provider = new FakeProvider();
+        var bus = new ReviewEventBus();
+        using var summarizer = Build(provider, new FakeTracker(), bus: bus);
+
+        await summarizer.SummarizeAsync(Pr, CancellationToken.None);
+        bus.Publish(new ActivePrUpdated(Pr, HeadShaChanged: true, CommentCountChanged: false,
+            NewHeadSha: "h2", CommentCountDelta: 0));
+        await summarizer.SummarizeAsync(Pr, CancellationToken.None);
+
+        provider.Calls.Should().Be(2);
+    }
+
+    [Fact]
+    public async Task Quiet_first_poll_event_does_not_evict()
+    {
+        var provider = new FakeProvider();
+        var bus = new ReviewEventBus();
+        using var summarizer = Build(provider, new FakeTracker(), bus: bus);
+
+        await summarizer.SummarizeAsync(Pr, CancellationToken.None);
+        bus.Publish(new ActivePrUpdated(Pr, HeadShaChanged: false, CommentCountChanged: false,
+            NewHeadSha: null, CommentCountDelta: 0)); // hydration: neither flag set
+        await summarizer.SummarizeAsync(Pr, CancellationToken.None);
+
+        provider.Calls.Should().Be(1, "a quiet hydration event must not drop a just-cached summary");
     }
 }
