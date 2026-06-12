@@ -494,6 +494,13 @@ export interface RootCommentPostedEvent {
   issueCommentId: number;
 }
 
+// #450 — single-comment-posted: a single inline comment/reply was posted directly.
+// Frontend triggers a PR-detail reload; reviewCommentId is carried for completeness/de-dup.
+export interface SingleCommentPostedEvent {
+  prRef: string;
+  reviewCommentId: number;
+}
+
 // #392 — draft-submitted: a review was submitted (full success, after the server-side draft
 // clear). Carries prRef only; the frontend uses it to reload PR detail so the just-posted
 // threads + Overview comment surface without a manual reload.

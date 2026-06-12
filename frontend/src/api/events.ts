@@ -4,6 +4,7 @@ import type {
   DraftSubmittedEvent,
   InboxUpdatedEvent,
   RootCommentPostedEvent,
+  SingleCommentPostedEvent,
   StateChangedEvent,
   SubmitDuplicateMarkerDetectedEvent,
   SubmitForeignPendingReviewEvent,
@@ -23,6 +24,7 @@ export type {
   SubmitOrphanCleanupFailedEvent,
   SubmitDuplicateMarkerDetectedEvent,
   RootCommentPostedEvent,
+  SingleCommentPostedEvent,
   DraftSubmittedEvent,
 };
 
@@ -53,6 +55,7 @@ export type EventPayloadByType = {
   'submit-duplicate-marker-detected': SubmitDuplicateMarkerDetectedEvent;
   'identity-changed': IdentityChangedEvent;
   'root-comment-posted': RootCommentPostedEvent;
+  'single-comment-posted': SingleCommentPostedEvent;
   'draft-submitted': DraftSubmittedEvent;
 };
 
@@ -72,6 +75,7 @@ const EVENT_TYPES = [
   'submit-duplicate-marker-detected',
   'identity-changed',
   'root-comment-posted',
+  'single-comment-posted',
   'draft-submitted',
 ] as const satisfies readonly (keyof EventPayloadByType)[];
 
