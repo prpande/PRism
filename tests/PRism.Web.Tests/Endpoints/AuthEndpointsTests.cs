@@ -412,13 +412,6 @@ public class AuthEndpointsTests
         }
     }
 
-    private sealed class StubReviewAuth : IReviewAuth
-    {
-        private readonly Func<Task<AuthValidationResult>> _validate;
-        public StubReviewAuth(Func<Task<AuthValidationResult>> validate) { _validate = validate; }
-        public Task<AuthValidationResult> ValidateCredentialsAsync(CancellationToken ct, bool skipCredentialHealth = false) => _validate();
-    }
-
     // Counts Reset() calls. GetActivityAsync is never exercised by these tests (the auth
     // handlers only call Reset), so it returns an empty response.
     private sealed class SpyActivityProvider : IActivityProvider
