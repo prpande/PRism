@@ -1,4 +1,5 @@
 import { apiClient, ApiError } from './client';
+import { coerceToKnownCode } from './errorCodes';
 import type { PrReference } from './types';
 
 // Error codes that POST /api/pr/{ref}/root-comment/post can emit.
@@ -28,16 +29,6 @@ export const KNOWN_POST_ROOT_COMMENT_ERROR_CODES = [
 ] as const;
 
 export type PostRootCommentErrorCode = (typeof KNOWN_POST_ROOT_COMMENT_ERROR_CODES)[number];
-
-function asPostRootCommentErrorCode(code: string): PostRootCommentErrorCode {
-  // Validate the server string against the known set rather than casting it: an
-  // unknown future code (schema-bump window) must NOT be laundered into the union,
-  // where a downstream exhaustive switch would silently mis-bucket it. It falls
-  // back to github-network-error; the server `message` still surfaces verbatim.
-  return (KNOWN_POST_ROOT_COMMENT_ERROR_CODES as readonly string[]).includes(code)
-    ? (code as PostRootCommentErrorCode)
-    : 'github-network-error';
-}
 
 export interface PostRootCommentResult {
   ok: true;
@@ -70,8 +61,10 @@ export async function postRootComment(
   } catch (e) {
     if (e instanceof ApiError) {
       const body = e.body as { code?: unknown; message?: unknown; postedCommentId?: unknown };
-      const code = asPostRootCommentErrorCode(
-        typeof body?.code === 'string' ? body.code : 'github-network-error',
+      const code = coerceToKnownCode(
+        KNOWN_POST_ROOT_COMMENT_ERROR_CODES,
+        body?.code,
+        'github-network-error',
       );
       const message = (typeof body?.message === 'string' ? body.message : null) ?? e.message;
       const postedCommentId =

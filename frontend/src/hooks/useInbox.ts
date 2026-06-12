@@ -9,12 +9,14 @@ export function useInbox() {
   const [data, setData] = useState<InboxResponse | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [isLoading, setIsLoading] = useState(true);
-  // Monotonic generation guard (the pattern every sibling data hook carries —
-  // usePrDetail/useActivity/useFileDiff/useSubmitInFlight). Each reload() bumps it
-  // and captures its own value; a slower in-flight attempt — e.g. an older 503-retry
-  // chain that a banner-triggered reload overlapped — checks isCurrent() across every
-  // await and bails instead of clobbering fresher data. The unmount cleanup bumps it
-  // too, so a late resolve can't setState on an unmounted component.
+  // Monotonic generation guard. Sibling data hooks (usePrDetail/useActivity/
+  // useFileDiff) use an effect-scoped `cancelled` boolean; this hook needs a ref-keyed
+  // generation instead because `reload` is ALSO called imperatively (banner retry /
+  // manual refresh) outside the mount effect — a closure flag can't invalidate a later
+  // overlapping reload mid-503-retry. Each reload() bumps the ref and captures its own
+  // value; a slower in-flight attempt checks isCurrent() across every await and bails
+  // instead of clobbering fresher data. The unmount cleanup bumps it too, so a late
+  // resolve can't setState on an unmounted component.
   const generationRef = useRef(0);
 
   const reload = useCallback(async () => {

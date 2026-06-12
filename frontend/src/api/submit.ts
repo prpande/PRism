@@ -1,4 +1,5 @@
 import { apiClient, ApiError } from './client';
+import { coerceToKnownCode } from './errorCodes';
 import { TAB_ID_HEADER, getTabId } from './draft';
 import type { DraftVerdict, PrReference, ResumeForeignPendingReviewResponse } from './types';
 
@@ -141,16 +142,6 @@ export const KNOWN_DISCARD_OWN_PENDING_REVIEW_ERROR_CODES = [
 export type DiscardOwnPendingReviewErrorCode =
   (typeof KNOWN_DISCARD_OWN_PENDING_REVIEW_ERROR_CODES)[number];
 
-function asDiscardOwnPendingReviewErrorCode(code: string): DiscardOwnPendingReviewErrorCode {
-  // Validate against the known set rather than casting: an unknown future code must
-  // not be laundered into the union (a downstream exhaustive switch would silently
-  // mis-bucket it). Falls back to github-network-error; server `message` still
-  // surfaces verbatim. Mirrors isKnownSubmitErrorCode's intent for SubmitConflictError.
-  return (KNOWN_DISCARD_OWN_PENDING_REVIEW_ERROR_CODES as readonly string[]).includes(code)
-    ? (code as DiscardOwnPendingReviewErrorCode)
-    : 'github-network-error';
-}
-
 export interface DiscardOwnPendingReviewResult {
   ok: true;
 }
@@ -177,8 +168,10 @@ export async function discardOwnPendingReview(
   } catch (e) {
     if (e instanceof ApiError) {
       const body = e.body as { code?: unknown; message?: unknown };
-      const code = asDiscardOwnPendingReviewErrorCode(
-        typeof body?.code === 'string' ? body.code : 'github-network-error',
+      const code = coerceToKnownCode(
+        KNOWN_DISCARD_OWN_PENDING_REVIEW_ERROR_CODES,
+        body?.code,
+        'github-network-error',
       );
       const message = (typeof body?.message === 'string' ? body.message : null) ?? e.message;
       return {
