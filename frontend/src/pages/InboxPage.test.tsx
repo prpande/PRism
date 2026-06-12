@@ -71,11 +71,11 @@ function setHooks(
     summary: opts.hasUpdate ? '3 new updates' : '',
     dismiss: vi.fn(),
   });
-  // InboxPage now uses useAiGate for both gates.
-  // useCapabilities / usePreferences are no longer called directly by InboxPage
-  // but are kept to satisfy the transitive mock chain (useAiGate internally calls
-  // both; its mock here short-circuits that, but the registrations prevent
-  // "unmocked module" warnings from other test paths).
+  // InboxPage uses useAiGate for the AI gates, and calls usePreferences directly for
+  // the initial sort + activity-rail visibility, so its mock below is load-bearing.
+  // useCapabilities is NOT called directly (only transitively via useAiGate, which is
+  // mocked per-test); its registration is kept so the transitive mock chain stays
+  // satisfied and no "unmocked module" warning fires from other test paths.
   vi.mocked(useCapabilities).mockReturnValue({
     capabilities: {
       inboxEnrichment: opts.inboxEnrichment ?? false,
