@@ -52,6 +52,13 @@ assert_rc "non-PRism leaf -> unsafe"                1 data_dir_cleanable "/Users
 assert_rc "too-shallow (one segment) -> unsafe"     1 data_dir_cleanable "/PRism"
 assert_rc "\$HOME itself -> unsafe"                 1 data_dir_cleanable "$HOME"
 
+# pid_is_live (single-instance liveness check; format gate guards kill -0 0 / -1)
+assert_rc "live current PID (\$\$) -> live"          0 pid_is_live "$$"
+assert_rc "empty pid -> not live"                   1 pid_is_live ""
+assert_rc "pid 0 -> not live (kill -0 0 hits group)" 1 pid_is_live "0"
+assert_rc "negative pid -> not live (kill -0 -1)"   1 pid_is_live "-1"
+assert_rc "non-numeric pid -> not live"             1 pid_is_live "abc"
+
 # remediation text
 assert_match "$(node_remediation 2>&1)"   "brew install node" "node remediation names brew"
 assert_match "$(dotnet_remediation 2>&1)" "\.NET 10"          "dotnet remediation references .NET 10"

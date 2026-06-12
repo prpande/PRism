@@ -68,6 +68,10 @@ resolve_args() {
 # but a recursive delete is catastrophic on an empty/relative/too-shallow path. Returns 0
 # (safe) ONLY when $1 is an absolute path whose leaf is 'PRism', is not $HOME, and is at least
 # two segments deep. Bash parallel of run-desktop.ps1:Test-CleanTargetSafe / run.ps1 guard.
+# Only $HOME is named as a protected root (the PS sibling also names UserProfile +
+# LocalApplicationData): the leaf=='PRism' and >=2-segment checks already reject every
+# dangerous shallow path, and $XDG_DATA_HOME/PRism (incl. the $HOME/.local/share default)
+# IS the intended delete target, so guarding $XDG_DATA_HOME separately would be wrong.
 data_dir_cleanable() {
   local path="${1:-}"
   [[ -n "$path" ]] || return 1
@@ -78,6 +82,18 @@ data_dir_cleanable() {
   local rest="${norm#/}"                           # drop leading slash
   [[ "$rest" == */* ]] || return 1                 # >=2 segments (so '/PRism' is rejected)
   return 0
+}
+
+# Liveness check for the single-instance pidfile. Returns 0 (live) only when $1 is a
+# positive-integer PID of a running process. The format gate is load-bearing, not cosmetic:
+# `kill -0 0` (signal to the caller's process group) and `kill -0 -1` (signal to every
+# process) both SUCCEED, so a pidfile containing 0 or a negative value would otherwise be
+# read as "app is running" and wrongly block a relaunch or --clean. Mirrors the integer
+# validation the Windows sibling does before trusting its pidfile (run-desktop.ps1).
+pid_is_live() {
+  local pid="${1:-}"
+  [[ "$pid" =~ ^[1-9][0-9]*$ ]] || return 1        # reject empty / 0 / negative / non-numeric
+  kill -0 "$pid" 2>/dev/null
 }
 
 main() {
@@ -131,7 +147,7 @@ main() {
     # backstop, and the message prints the pidfile path so a recycled-PID false
     # positive is self-recoverable. (A name check is a macOS-tester follow-up; the
     # Windows sibling checks the process name via Get-Process.)
-    if [[ -n "$existing_pid" ]] && kill -0 "$existing_pid" 2>/dev/null; then
+    if pid_is_live "$existing_pid"; then
       if [[ "$clean_state" -eq 1 ]]; then
         echo "PRism desktop is running (pid $existing_pid); close the window before a --clean run. Refusing to wipe $data_dir out from under a live app." >&2
         exit 1

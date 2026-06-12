@@ -300,7 +300,7 @@ function Invoke-Main {
         } finally { Pop-Location }
 
         # 2. Sidecar: clean publish dir, then framework-dependent win-x64 publish.
-        if (Test-Path -LiteralPath $publishDir) { Remove-Item -Recurse -Force $publishDir }
+        if (Test-Path -LiteralPath $publishDir) { Remove-Item -LiteralPath $publishDir -Recurse -Force }
         dotnet publish (Join-Path $repoRoot 'PRism.Web/PRism.Web.csproj') `
             -c Release -r (Get-HostRid) --self-contained false -o $publishDir
         if ($LASTEXITCODE -ne 0) { throw "dotnet publish failed ($LASTEXITCODE)." }
