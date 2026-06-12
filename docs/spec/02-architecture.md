@@ -308,7 +308,7 @@ The default startup auto-launches the system browser at `http://localhost:<port>
 
 ## Locations on disk
 
-All paths use `Environment.GetFolderPath(SpecialFolder.LocalApplicationData)` (cross-platform; resolves to `%LOCALAPPDATA%` on Windows, and the XDG data path `${XDG_DATA_HOME:-~/.local/share}` on both macOS and Linux). On macOS .NET maps `LocalApplicationData` to the XDG path, **not** `~/Library/Application Support` — see [`TESTING.md`](../../TESTING.md).
+All paths use `Environment.GetFolderPath(SpecialFolder.LocalApplicationData)` (cross-platform; resolves to `%LOCALAPPDATA%` on Windows, and the XDG data path `${XDG_DATA_HOME:-$HOME/.local/share}` on both macOS and Linux). On macOS .NET maps `LocalApplicationData` to the XDG path, **not** `~/Library/Application Support` — see [`TESTING.md`](../../TESTING.md).
 
 ```
 <LocalApplicationData>/PRism/
