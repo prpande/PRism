@@ -12,3 +12,14 @@ export async function getAiSummaryResult(prRef: PrReference): Promise<AiSummaryR
     return { kind: 'error' };
   }
 }
+
+export async function regenerateAiSummary(prRef: PrReference): Promise<AiSummaryResult> {
+  try {
+    const result = await apiClient.post<PrSummary | undefined>(
+      `/api/pr/${prRef.owner}/${prRef.repo}/${prRef.number}/ai/summary/regenerate`,
+    );
+    return result ? { kind: 'ok', summary: result } : { kind: 'absent' };
+  } catch {
+    return { kind: 'error' };
+  }
+}
