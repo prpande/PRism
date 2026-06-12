@@ -1,7 +1,9 @@
 #!/usr/bin/env pwsh
-#requires -Version 7
 # Dot-source assertion harness for run-desktop.ps1's pure functions. No Pester
-# (the repo has none; only Pester 3.4.0 ships). Run: pwsh -File scripts/run-desktop.Tests.ps1
+# (the repo has none; only Pester 3.4.0 ships). No #requires: the script under test
+# targets Windows PowerShell 5.1, so the harness must run there too — exercise it under
+# both hosts: powershell.exe -File scripts/run-desktop.Tests.ps1 (5.1) and
+# pwsh -File scripts/run-desktop.Tests.ps1 (7+).
 $ErrorActionPreference = 'Stop'
 
 # Dot-source the script under test. When dot-sourced, $MyInvocation.InvocationName is
@@ -51,6 +53,37 @@ $dnMsg = Get-DotnetRemediation
 Assert-Match $dnMsg 'Microsoft\.DotNet\.SDK\.10' "dotnet remediation names SDK 10 winget package"
 Assert-Match $dnMsg '\.NET 10' "dotnet remediation names .NET 10"
 
+Write-Host "Test-OnWindows (5.1-safe platform check)" -ForegroundColor Cyan
+Assert-True  (Test-OnWindows -OsEnv 'Windows_NT')        "Windows_NT -> on Windows (5.1 and 7)"
+Assert-True  (-not (Test-OnWindows -OsEnv ''))           "empty OS env (macOS/Linux pwsh) -> not Windows"
+Assert-True  (-not (Test-OnWindows -OsEnv 'Darwin'))     "non-Windows OS env -> not Windows"
+# Real host: this harness only runs on Windows, so the live check must agree.
+Assert-True  (Test-OnWindows)                            "live host is detected as Windows"
+
+Write-Host "Get-PowerShellHostPath (current-host spawn, no PS7 needed)" -ForegroundColor Cyan
+# A resolvable host path is returned verbatim (the current pwsh/powershell that launched us).
+$hostExe = Get-PowerShellHostPath
+Assert-True  ([bool]$hostExe)                            "returns a non-empty host path"
+Assert-True  (Test-Path -LiteralPath $hostExe)           "returned host path exists on disk"
+# An injected, existing path is honored (proves it spawns the SAME host, not hardcoded pwsh).
+$injected = (Get-Process -Id $PID).Path
+Assert-Equal $injected (Get-PowerShellHostPath -CurrentHostPath $injected) "honors an existing injected host path"
+# An unresolvable host path falls back to powershell.exe (always present on Windows) so a
+# 5.1 tester never needs PowerShell 7 installed.
+Assert-Match (Get-PowerShellHostPath -CurrentHostPath 'Z:\does\not\exist\nope.exe') 'powershell(\.exe)?$' "falls back to powershell.exe when host path unresolvable"
+
+Write-Host "Test-CleanTargetSafe (-Clean recursive-delete guard)" -ForegroundColor Cyan
+$lad = [Environment]::GetFolderPath('LocalApplicationData')
+Assert-True  (Test-CleanTargetSafe -Path (Join-Path $lad 'PRism')) "real %LOCALAPPDATA%\PRism is a safe target"
+Assert-True  (Test-CleanTargetSafe -Path 'C:\Users\me\AppData\Local\PRism') "deep PRism path is safe"
+Assert-True  (-not (Test-CleanTargetSafe -Path ''))            "empty path -> unsafe"
+Assert-True  (-not (Test-CleanTargetSafe -Path '   '))         "whitespace path -> unsafe"
+Assert-True  (-not (Test-CleanTargetSafe -Path 'PRism'))       "relative path -> unsafe"
+Assert-True  (-not (Test-CleanTargetSafe -Path 'C:\Users\me\AppData\Local\Foo')) "non-PRism leaf -> unsafe"
+Assert-True  (-not (Test-CleanTargetSafe -Path 'C:\PRism'))    "too-shallow (one level below root) -> unsafe"
+Assert-True  (-not (Test-CleanTargetSafe -Path $lad))          "%LOCALAPPDATA% itself -> unsafe (protected + non-PRism leaf)"
+Assert-True  (-not (Test-CleanTargetSafe -Path ([Environment]::GetFolderPath('UserProfile')))) "user profile -> unsafe"
+
 Write-Host "Get-HostRid / Get-SidecarApphostPath" -ForegroundColor Cyan
 Assert-Equal 'win-x64' (Get-HostRid) "Windows RID is win-x64"
 $apphost = Get-SidecarApphostPath -PublishDir 'C:\repo\desktop\.dev-sidecar'
@@ -82,6 +115,9 @@ try {
     Write-LauncherPidfile -PidfilePath $pf -ProcessId $PID
     $thisName = (Get-Process -Id $PID).Name
     Assert-True (Test-LauncherAlreadyRunning -PidfilePath $pf -ExpectedNames @($thisName)) "live PID with matching name -> running"
+    # The DEFAULT expected set must recognize the live PowerShell host (pwsh OR powershell),
+    # so the single-instance short-circuit keeps working when launched from 5.1.
+    Assert-True (Test-LauncherAlreadyRunning -PidfilePath $pf) "default expected set recognizes the live host"
     # A bogus/dead PID -> not running.
     Write-LauncherPidfile -PidfilePath $pf -ProcessId 999999
     Assert-True (-not (Test-LauncherAlreadyRunning -PidfilePath $pf)) "dead PID -> not running"
