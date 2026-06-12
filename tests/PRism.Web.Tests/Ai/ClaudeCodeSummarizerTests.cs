@@ -184,18 +184,25 @@ public sealed class ClaudeCodeSummarizerTests
     }
 
     [Fact]
-    public async Task Same_head_different_base_is_a_MISS_and_calls_provider_twice()
+    public async Task Same_head_different_base_is_a_MISS_on_one_instance_and_calls_provider_twice()
     {
         var provider = new FakeProvider();
-        var tracker = new FakeTracker();
-        // Two summarizers over the same provider, differing only in resolved baseSha.
-        var s1 = Build(provider, tracker, baseSha: "b1", headSha: "h1");
-        var s2 = Build(provider, tracker, baseSha: "b2", headSha: "h1");
+        // ONE summarizer, ONE cache. The resolver returns the SAME head but a DIFFERENT base on the
+        // second call, so the only thing that can force a MISS is baseSha being part of SummaryCacheKey.
+        // (A two-instance variant would pass even if the key IGNORED base — each instance has its own
+        // cache, so it proves nothing about key discrimination. This is the real R2 invariant.)
+        var bases = new Queue<string>(new[] { "b1", "b2" });
+        using var summarizer = new ClaudeCodeSummarizer(
+            provider, new FakeTracker(),
+            (_, _) => Task.FromResult(("+ added line", "Fix poller", "Body", bases.Dequeue(), "h1")),
+            NullLogger<ClaudeCodeSummarizer>.Instance, new FakeAiInteractionLog(),
+            new ReviewEventBus(), new StubActivePrCache()); // null snapshot → R7 store proceeds both times
 
-        await s1.SummarizeAsync(Pr, CancellationToken.None);
-        await s2.SummarizeAsync(Pr, CancellationToken.None);
+        await summarizer.SummarizeAsync(Pr, CancellationToken.None); // (Pr,b1,h1) MISS → provider call 1
+        await summarizer.SummarizeAsync(Pr, CancellationToken.None); // (Pr,b2,h1) MISS → provider call 2
 
-        provider.Calls.Should().Be(2, "a base move with unchanged head is a different diff → cache MISS");
+        provider.Calls.Should().Be(2,
+            "same head + different base is a different SummaryCacheKey → MISS on the same cache");
     }
 
     [Fact]
@@ -238,7 +245,7 @@ public sealed class ClaudeCodeSummarizerTests
             NewHeadSha: "h2", CommentCountDelta: 0));
         await summarizer.SummarizeAsync(Pr, CancellationToken.None);
 
-        provider.Calls.Should().Be(2);
+        provider.Calls.Should().Be(2, "HeadShaChanged evicts the PR's summary entries");
     }
 
     [Fact]
