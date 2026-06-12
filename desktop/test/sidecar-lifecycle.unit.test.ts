@@ -37,7 +37,7 @@ test("readPortFromStdout still parses a port delivered as one whole line", async
 test("DEFAULT_PHASE_TIMEOUT_MS is the named per-phase startup budget (15s)", () => {
   // Model B: the magic 15000 is hoisted to a named constant and applied per phase, not
   // as a single total budget — preserving the ~2× cold-start headroom (#282).
-  assert.equal(DEFAULT_PHASE_TIMEOUT_MS, 15_000);
+  assert.equal(DEFAULT_PHASE_TIMEOUT_MS, 15000);
 });
 
 test("readPortFromStdout honors its own phase budget (rejects on timeout, no port)", async () => {

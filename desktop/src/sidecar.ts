@@ -6,11 +6,11 @@ import { parsePortFromLine, pollHealth } from "./ports";
  *  The two phases run sequentially and each get their own budget, so the worst-case
  *  cold-start wall-clock is ~2× this — deliberate headroom for a slow-to-bind backend
  *  (cold .NET JIT / AV scan on a cold desktop; #282) that is healthy once it binds. */
-export const DEFAULT_PHASE_TIMEOUT_MS = 15_000;
+export const DEFAULT_PHASE_TIMEOUT_MS = 15000;
 /** Grace period after SIGTERM before escalating to SIGKILL when stopping the child. */
-const KILL_GRACE_MS = 5_000;
+const KILL_GRACE_MS = 5000;
 /** Bound on the captured stderr tail surfaced when startup fails. */
-const STDERR_TAIL_BYTES = 8_192;
+const STDERR_TAIL_BYTES = 8192;
 
 export interface Sidecar {
   baseUrl: string;
