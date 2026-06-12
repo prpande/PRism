@@ -12,7 +12,7 @@ namespace PRism.Web.Tests.TestHelpers;
 
 public sealed class PRismWebApplicationFactory : WebApplicationFactory<Program>
 {
-    public string DataDir { get; } = TempDataDir.Create("PRism-test");
+    public string DataDir { get; } = TempDataDir.NewPath("PRism-test");
     public Func<Task<AuthValidationResult>>? ValidateOverride { get; set; }
     public FakeInboxRefreshOrchestrator? FakeOrchestrator { get; set; }
 

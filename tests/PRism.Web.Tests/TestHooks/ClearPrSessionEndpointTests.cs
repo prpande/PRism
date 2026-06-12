@@ -96,7 +96,7 @@ internal sealed class TestEnvAppFactory : WebApplicationFactory<Program>
 
     public TestEnvAppFactory()
     {
-        _dataDir = TempDataDir.Create("PRism-clear-prsess-test");
+        _dataDir = TempDataDir.NewPath("PRism-clear-prsess-test");
         Directory.CreateDirectory(_dataDir);
     }
 

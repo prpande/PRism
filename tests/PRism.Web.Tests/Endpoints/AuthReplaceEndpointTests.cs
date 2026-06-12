@@ -680,7 +680,7 @@ public class AuthReplaceEndpointTests
         {
             // Use the test factory's own DataDir convention; tests await InitWith*Async
             // before exercising. dataDir uniqueness per-test isolates the on-disk config.json.
-            var dataDir = TempDataDir.Create("PRism-replace-throw");
+            var dataDir = TempDataDir.NewPath("PRism-replace-throw");
             System.IO.Directory.CreateDirectory(dataDir);
             _inner = new PRism.Core.Config.ConfigStore(dataDir);
         }

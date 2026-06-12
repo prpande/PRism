@@ -20,7 +20,7 @@ public sealed class FakeActivityProviderGuardTests
         // Each test run needs a private DataDir so the LockfileManager (which runs in
         // non-Test environments) writes to an isolated path and never collides with a
         // running dev server or a parallel test.
-        var dataDir = TempDataDir.Create("PRism-prod-guard");
+        var dataDir = TempDataDir.NewPath("PRism-prod-guard");
         Directory.CreateDirectory(dataDir);
         try
         {
