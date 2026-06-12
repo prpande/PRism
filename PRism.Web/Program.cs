@@ -317,15 +317,11 @@ app.Use(async (ctx, next) =>
             });
 
             // #433: a response carrying the per-process security cookie must never be
-            // cached. Without this, Electron's persistent HTTP cache serves a 304 /
-            // from-cache index.html on cold relaunch — which carries no fresh Set-Cookie
-            // — so the SPA presents the previous launch's stale cookie and the new
-            // process 401s. no-store forces a full 200 text/html re-fetch (and cookie
-            // re-stamp) each launch. Bound to the same text/html predicate as the cookie
-            // so the two can't drift, and route-agnostic (applies whether MapStaticAssets
-            // or MapFallbackToFile served index.html). Overwrite (assign), not append:
-            // OnStarting fires last — just before headers flush — so this wins over any
-            // Cache-Control a static-file handler set earlier in the pipeline.
+            // cached, or Electron's persistent HTTP cache serves a stale index.html on
+            // cold relaunch (no fresh Set-Cookie → stale-cookie 401). Overwrite (assign),
+            // not append: OnStarting fires last, so this wins over any Cache-Control a
+            // static-file handler set — route-agnostic across MapStaticAssets/MapFallbackToFile.
+            // Full rationale: docs/specs/2026-06-12-coldstart-stale-cookie-design.md.
             ctx.Response.Headers.CacheControl = "no-store";
         }
         return Task.CompletedTask;
