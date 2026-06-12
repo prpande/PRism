@@ -305,10 +305,10 @@ test('manual Refresh button drives the loading bar and re-enables', async ({ pag
 
 // ---------------------------------------------------------------------------
 
-test.skip('SSE banner appears on inbox-updated event', () => {
-  // Deferred: Playwright's route mocking does not naturally support streaming
-  // SSE responses. Driving an event mid-test would require a fake EventSource
-  // injected via page.addInitScript before the SPA mounts. Out of scope for
-  // S2 E2E; covered by the Vitest tests in useInboxUpdates.test.tsx and the
-  // backend EventsEndpointsTests integration tests.
-});
+// NOTE: "SSE banner appears on inbox-updated event" is intentionally NOT an E2E
+// test. Playwright's route mocking does not naturally support streaming SSE
+// responses, and driving an event mid-test would require a fake EventSource
+// injected via page.addInitScript before the SPA mounts. That behavior is covered
+// by the Vitest tests in useInboxUpdates.test.tsx and the backend
+// EventsEndpointsTests integration tests, so no permanently-skipped placeholder is
+// kept here (#334).

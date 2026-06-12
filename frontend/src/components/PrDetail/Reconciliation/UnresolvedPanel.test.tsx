@@ -2,16 +2,16 @@ import { render, screen, waitFor, within, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
-import { UnresolvedPanel } from '../src/components/PrDetail/Reconciliation/UnresolvedPanel';
-import * as draftApi from '../src/api/draft';
-import type { DraftCommentDto, PrReference, ReviewSessionDto } from '../src/api/types';
-import styles from '../src/components/PrDetail/Reconciliation/UnresolvedPanel.module.css';
-import staleStyles from '../src/components/PrDetail/Reconciliation/StaleDraftRow.module.css';
-import { useAiGate } from '../src/hooks/useAiGate';
-import { useAiDraftSuggestions } from '../src/hooks/useAiDraftSuggestions';
+import { UnresolvedPanel } from './UnresolvedPanel';
+import * as draftApi from '../../../api/draft';
+import type { DraftCommentDto, PrReference, ReviewSessionDto } from '../../../api/types';
+import styles from './UnresolvedPanel.module.css';
+import staleStyles from './StaleDraftRow.module.css';
+import { useAiGate } from '../../../hooks/useAiGate';
+import { useAiDraftSuggestions } from '../../../hooks/useAiDraftSuggestions';
 
-vi.mock('../src/hooks/useAiGate');
-vi.mock('../src/hooks/useAiDraftSuggestions');
+vi.mock('../../../hooks/useAiGate');
+vi.mock('../../../hooks/useAiDraftSuggestions');
 
 const ref: PrReference = { owner: 'octocat', repo: 'hello', number: 42 };
 
