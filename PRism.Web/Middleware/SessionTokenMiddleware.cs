@@ -11,9 +11,13 @@ namespace PRism.Web.Middleware;
 // non-asset endpoint), and the EventSource implicitly carries the cookie on
 // GET /api/events (EventSource cannot set custom request headers).
 //
-// Backend restart rotates the token, so an old SPA's stale cookie 401s and the
-// SPA force-reloads to get the freshly-stamped one. This is the per-launch
-// freshness invariant the threat model relies on.
+// Backend restart rotates the token, so an old SPA's stale cookie 401s. The freshness
+// recovery is structural, not a runtime reload: index.html is served `Cache-Control:
+// no-store` (Program.cs, the same text/html branch that stamps the cookie), so each
+// launch re-fetches a fresh 200 that re-stamps the cookie with the new token rather
+// than serving a cached copy. This is the per-launch freshness invariant the threat
+// model relies on. (#433: before no-store, Electron's persistent HTTP cache could 304
+// index.html and strand the previous launch's stale cookie → a cold-start 401.)
 [SuppressMessage("Performance", "CA1812:Avoid uninstantiated internal classes",
     Justification = "Activated by UseMiddleware<T>() via reflection.")]
 internal sealed class SessionTokenMiddleware
