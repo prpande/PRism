@@ -308,7 +308,7 @@ The default startup auto-launches the system browser at `http://localhost:<port>
 
 ## Locations on disk
 
-All paths use `Environment.GetFolderPath(SpecialFolder.LocalApplicationData)` (cross-platform; resolves to `%LOCALAPPDATA%` on Windows, `~/Library/Application Support` on macOS, `~/.local/share` on Linux).
+All paths use `Environment.GetFolderPath(SpecialFolder.LocalApplicationData)` (cross-platform; resolves to `%LOCALAPPDATA%` on Windows, and the XDG data path `${XDG_DATA_HOME:-$HOME/.local/share}` on both macOS and Linux). On macOS .NET maps `LocalApplicationData` to the XDG path, **not** `~/Library/Application Support` — see [`TESTING.md`](../../TESTING.md).
 
 ```
 <LocalApplicationData>/PRism/
@@ -318,7 +318,7 @@ All paths use `Environment.GetFolderPath(SpecialFolder.LocalApplicationData)` (c
 └── logs/                    ← rolling text logs
 ```
 
-Token storage is in the OS keychain via MSAL Extensions, NOT in the data directory.
+Token storage goes through MSAL Extensions, which picks a platform-native store: **macOS** — the OS Keychain; **Linux** — `libsecret`; **Windows** — a DPAPI-encrypted cache file (`PRism.tokens.cache`) inside the data directory. So on macOS/Linux the token lives outside the data dir, but on Windows it lives within it (which is why the desktop launcher's `-Clean` wipe removes the Windows token by deleting the data dir, yet must clear the Keychain item explicitly on macOS).
 
 ### Platform caveats for keychain access
 
