@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import { Link, useLocation, useSearchParams } from 'react-router-dom';
 import { Logo } from './Logo';
 import { WindowControls } from './WindowControls';
@@ -88,39 +89,27 @@ export function Header({ isAuthed }: HeaderProps) {
           Settings stays closest to the window controls (the "system" affordance);
           Feedback is rightmost so the new entry point reads as its own thing rather than
           burying it between the two existing icons. All three share .gear / .gearOn so
-          hover, focus, and route-active styling are identical. */}
+          hover, focus, and route-active styling are identical — rendered via NavIconLink
+          so that shared shape lives in one place. */}
       {isAuthed && (
-        <Link
+        <NavIconLink
           to="/settings/appearance"
-          state={{ backgroundLocation: location }}
-          className={settingsActive ? `${styles.gear} ${styles.gearOn}` : styles.gear}
-          aria-label="Settings"
-          aria-current={settingsActive ? 'page' : undefined}
+          label="Settings"
+          active={settingsActive}
+          bg={location}
         >
           <GearIcon />
-        </Link>
+        </NavIconLink>
       )}
       {isAuthed && (
-        <Link
-          to="/help"
-          state={{ backgroundLocation: location }}
-          className={helpActive ? `${styles.gear} ${styles.gearOn}` : styles.gear}
-          aria-label="Help"
-          aria-current={helpActive ? 'page' : undefined}
-        >
+        <NavIconLink to="/help" label="Help" active={helpActive} bg={location}>
           <HelpIcon />
-        </Link>
+        </NavIconLink>
       )}
       {isAuthed && (
-        <Link
-          to="/feedback"
-          state={{ backgroundLocation: location }}
-          className={feedbackActive ? `${styles.gear} ${styles.gearOn}` : styles.gear}
-          aria-label="Send feedback"
-          aria-current={feedbackActive ? 'page' : undefined}
-        >
+        <NavIconLink to="/feedback" label="Send feedback" active={feedbackActive} bg={location}>
           <FeedbackIcon />
-        </Link>
+        </NavIconLink>
       )}
       {/* Desktop shell only — renders nothing in the browser. The theme/accent/AI
           quick toggles that used to live here were removed (they're in Settings);
@@ -128,5 +117,36 @@ export function Header({ isAuthed }: HeaderProps) {
           headless <AppearanceSync /> mounted by App. */}
       <WindowControls />
     </header>
+  );
+}
+
+// One icon-link in the right-side .gear cluster (Settings / Help / Feedback). They
+// differ only by route, label, icon, and active flag; the route-modal `state`, the
+// .gear/.gearOn class swap, and the aria-current coupling are identical, so they live
+// here once. `bg` is forwarded as the modal's backgroundLocation so each opens over the
+// current page rather than snapping to the Inbox.
+function NavIconLink({
+  to,
+  label,
+  active,
+  bg,
+  children,
+}: {
+  to: string;
+  label: string;
+  active: boolean;
+  bg: ReturnType<typeof useLocation>;
+  children: ReactNode;
+}) {
+  return (
+    <Link
+      to={to}
+      state={{ backgroundLocation: bg }}
+      className={active ? `${styles.gear} ${styles.gearOn}` : styles.gear}
+      aria-label={label}
+      aria-current={active ? 'page' : undefined}
+    >
+      {children}
+    </Link>
   );
 }
