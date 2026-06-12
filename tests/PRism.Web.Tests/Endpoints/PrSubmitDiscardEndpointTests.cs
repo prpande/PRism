@@ -15,7 +15,6 @@ using PRism.Core.PrDetail;
 using PRism.Core.State;
 using PRism.Core.Submit;
 using PRism.Web.Endpoints;
-using PRism.Web.Middleware;
 using PRism.Web.Submit;
 using PRism.Web.Tests.TestHelpers;
 
@@ -389,17 +388,8 @@ internal sealed class DiscardTestContext : IDisposable
 
     private IAppStateStore StateStore => _derived.Services.GetRequiredService<IAppStateStore>();
 
-    public HttpClient CreateClient(string? tabId = "tab-test")
-    {
-        var token = _derived.Services.GetRequiredService<SessionTokenProvider>().Current;
-        var c = _derived.CreateClient();
-        c.DefaultRequestHeaders.Add("X-PRism-Session", token);
-        c.DefaultRequestHeaders.Add("Cookie", $"prism-session={token}");
-        var origin = c.BaseAddress?.GetLeftPart(UriPartial.Authority);
-        if (!string.IsNullOrEmpty(origin)) c.DefaultRequestHeaders.Add("Origin", origin);
-        if (!string.IsNullOrEmpty(tabId)) c.DefaultRequestHeaders.Add("X-PRism-Tab-Id", tabId);
-        return c;
-    }
+    public HttpClient CreateClient(string? tabId = "tab-test") =>
+        _derived.CreateAuthenticatedClient(tabId);
 
     public async Task<HttpResponseMessage> Discard(int number, string owner = "o", string repo = "r",
         TimeSpan? timeout = null)
