@@ -1,6 +1,6 @@
 // frontend/src/components/AskAiDrawer/AskAiDrawer.tsx
 import { useCallback, useEffect, useId, useRef } from 'react';
-import { useLocation } from 'react-router-dom';
+import { useEffectiveLocation } from '../../hooks/useEffectiveLocation';
 import { useAskAiDrawer } from '../../contexts/AskAiDrawerContext';
 import { parsePrRefFromPathname } from './parsePrRefFromPathname';
 import { prRefKey } from '../../api/types';
@@ -8,7 +8,12 @@ import styles from './AskAiDrawer.module.css';
 
 export function AskAiDrawer() {
   const { isOpen, close, getThread, setInput, sendMessage } = useAskAiDrawer();
-  const { pathname } = useLocation();
+  // useEffectiveLocation (not raw useLocation): when a Settings/Help/Feedback modal
+  // route is open over a PR, the live pathname is /settings/* and would null out
+  // prRef — blanking the open drawer's thread + disabling its composer. The
+  // effective location keeps tracking the underlying PR behind the scrim (the hook
+  // names this drawer explicitly; DrawerEffects already uses it). (#330)
+  const { pathname } = useEffectiveLocation();
   const titleId = useId();
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const previouslyFocused = useRef<HTMLElement | null>(null);

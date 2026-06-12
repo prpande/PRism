@@ -129,13 +129,27 @@ export async function discardForeignPendingReview(
 //   - github-validation-error   : 502 via MapGithubError (422 from GitHub)
 //   - github-network-error      : 502 via MapGithubError fallback + catch-all Exception
 //                                 (also used as the client-side fallback for non-ApiError throws)
+export const KNOWN_DISCARD_OWN_PENDING_REVIEW_ERROR_CODES = [
+  'unauthorized',
+  'pipeline-cancellation-timeout',
+  'github-forbidden',
+  'github-unauthorized',
+  'github-validation-error',
+  'github-network-error',
+] as const;
+
 export type DiscardOwnPendingReviewErrorCode =
-  | 'unauthorized'
-  | 'pipeline-cancellation-timeout'
-  | 'github-forbidden'
-  | 'github-unauthorized'
-  | 'github-validation-error'
-  | 'github-network-error';
+  (typeof KNOWN_DISCARD_OWN_PENDING_REVIEW_ERROR_CODES)[number];
+
+function asDiscardOwnPendingReviewErrorCode(code: string): DiscardOwnPendingReviewErrorCode {
+  // Validate against the known set rather than casting: an unknown future code must
+  // not be laundered into the union (a downstream exhaustive switch would silently
+  // mis-bucket it). Falls back to github-network-error; server `message` still
+  // surfaces verbatim. Mirrors isKnownSubmitErrorCode's intent for SubmitConflictError.
+  return (KNOWN_DISCARD_OWN_PENDING_REVIEW_ERROR_CODES as readonly string[]).includes(code)
+    ? (code as DiscardOwnPendingReviewErrorCode)
+    : 'github-network-error';
+}
 
 export interface DiscardOwnPendingReviewResult {
   ok: true;
@@ -163,11 +177,13 @@ export async function discardOwnPendingReview(
   } catch (e) {
     if (e instanceof ApiError) {
       const body = e.body as { code?: unknown; message?: unknown };
-      const code = (typeof body?.code === 'string' ? body.code : null) ?? 'github-network-error';
+      const code = asDiscardOwnPendingReviewErrorCode(
+        typeof body?.code === 'string' ? body.code : 'github-network-error',
+      );
       const message = (typeof body?.message === 'string' ? body.message : null) ?? e.message;
       return {
         ok: false,
-        code: code as DiscardOwnPendingReviewErrorCode,
+        code,
         message,
       };
     }

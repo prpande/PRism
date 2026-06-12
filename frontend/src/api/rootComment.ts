@@ -14,17 +14,30 @@ import type { PrReference } from './types';
 //   - github-validation-error: 502 via MapGithubError (422 from GitHub)
 //   - github-network-error   : 502 via MapGithubError fallback + catch-all Exception
 //                              (also used as the client-side fallback for non-ApiError throws)
-export type PostRootCommentErrorCode =
-  | 'unauthorized'
-  | 'submit-in-progress'
-  | 'no-session'
-  | 'no-root-draft'
-  | 'body-too-large'
-  | 'already-posted-body-mismatch'
-  | 'github-forbidden'
-  | 'github-unauthorized'
-  | 'github-validation-error'
-  | 'github-network-error';
+export const KNOWN_POST_ROOT_COMMENT_ERROR_CODES = [
+  'unauthorized',
+  'submit-in-progress',
+  'no-session',
+  'no-root-draft',
+  'body-too-large',
+  'already-posted-body-mismatch',
+  'github-forbidden',
+  'github-unauthorized',
+  'github-validation-error',
+  'github-network-error',
+] as const;
+
+export type PostRootCommentErrorCode = (typeof KNOWN_POST_ROOT_COMMENT_ERROR_CODES)[number];
+
+function asPostRootCommentErrorCode(code: string): PostRootCommentErrorCode {
+  // Validate the server string against the known set rather than casting it: an
+  // unknown future code (schema-bump window) must NOT be laundered into the union,
+  // where a downstream exhaustive switch would silently mis-bucket it. It falls
+  // back to github-network-error; the server `message` still surfaces verbatim.
+  return (KNOWN_POST_ROOT_COMMENT_ERROR_CODES as readonly string[]).includes(code)
+    ? (code as PostRootCommentErrorCode)
+    : 'github-network-error';
+}
 
 export interface PostRootCommentResult {
   ok: true;
@@ -57,13 +70,15 @@ export async function postRootComment(
   } catch (e) {
     if (e instanceof ApiError) {
       const body = e.body as { code?: unknown; message?: unknown; postedCommentId?: unknown };
-      const code = (typeof body?.code === 'string' ? body.code : null) ?? 'github-network-error';
+      const code = asPostRootCommentErrorCode(
+        typeof body?.code === 'string' ? body.code : 'github-network-error',
+      );
       const message = (typeof body?.message === 'string' ? body.message : null) ?? e.message;
       const postedCommentId =
         typeof body?.postedCommentId === 'number' ? body.postedCommentId : undefined;
       return {
         ok: false,
-        code: code as PostRootCommentErrorCode,
+        code,
         message,
         postedCommentId,
       };
