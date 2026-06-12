@@ -120,6 +120,8 @@ public sealed partial class ActivePrPoller : BackgroundService
                 // the first successful poll for a newly-subscribed PR. Without this,
                 // a quiet PR with no head-SHA or comment-count changes never produces
                 // an event, leaving the gate closed indefinitely.
+                // LastBaseSha follows the same first-poll null pattern as LastHeadSha/LastCommentCount:
+                // it is null on the first poll, so baseChanged short-circuits to false (no hydration false-fire).
                 var firstPoll = state.LastHeadSha is null && state.LastCommentCount is null;
                 var headChanged = state.LastHeadSha is { } prev && prev != snapshot.HeadSha;
                 var baseChanged = state.LastBaseSha is { } prevBase && prevBase != snapshot.BaseSha;
@@ -133,7 +135,7 @@ public sealed partial class ActivePrPoller : BackgroundService
                 var stateChanged = state.LastPrState is { } prevState
                     && !string.Equals(prevState, snapshot.PrState, StringComparison.OrdinalIgnoreCase);
 
-                LogPollSnapshot(_logger, prRef, snapshot.HeadSha, state.LastHeadSha, firstPoll, headChanged, commentChanged, stateChanged);
+                LogPollSnapshot(_logger, prRef, snapshot.HeadSha, state.LastHeadSha, firstPoll, headChanged, baseChanged, commentChanged, stateChanged);
 
                 if (firstPoll || headChanged || baseChanged || commentChanged || stateChanged)
                 {
@@ -215,7 +217,7 @@ public sealed partial class ActivePrPoller : BackgroundService
             "ActivePrPoller tick failed");
 
     [LoggerMessage(EventId = 3, EventName = "ActivePrPollSnapshot", Level = LogLevel.Information,
-        Message = "Active-PR poll snapshot {PrRef}: head={HeadSha} prevHead={PrevHeadSha} firstPoll={FirstPoll} headChanged={HeadChanged} commentChanged={CommentChanged} stateChanged={StateChanged}")]
+        Message = "Active-PR poll snapshot {PrRef}: head={HeadSha} prevHead={PrevHeadSha} firstPoll={FirstPoll} headChanged={HeadChanged} baseChanged={BaseChanged} commentChanged={CommentChanged} stateChanged={StateChanged}")]
     private static partial void LogPollSnapshot(
         ILogger logger,
         PrReference prRef,
@@ -223,6 +225,7 @@ public sealed partial class ActivePrPoller : BackgroundService
         string? prevHeadSha,
         bool firstPoll,
         bool headChanged,
+        bool baseChanged,
         bool commentChanged,
         bool stateChanged);
 }
