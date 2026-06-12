@@ -1,15 +1,11 @@
 namespace PRism.GitHub.Tests.TestHelpers;
 
 /// <summary>
-/// Builds a <see cref="GitHubReviewService"/> over a fake transport for the canonical
-/// github.com test setup: an <c>api.github.com/</c> base address, the <c>https://github.com</c>
-/// host, and a <c>ghp_test</c> token. The vast majority of the service's tests share this exact
-/// wiring; they previously each declared an identical local <c>NewService(handler)</c> helper.
-/// <para>
-/// Host-parameterized tests (multi-host credential validation, PR-URL parsing) and the
-/// DI-built validate-skip test construct the service directly — they vary the host / ApiBase
-/// (via <c>HostUrlResolver.ApiBase</c>) and are intentionally not served by this factory.
-/// </para>
+/// Canonical github.com test wiring for <see cref="GitHubReviewService"/>: an
+/// <c>api.github.com/</c> base address, the <c>https://github.com</c> host, and a
+/// <c>ghp_test</c> token. Host-parameterized constructions (multi-host credential validation,
+/// PR-URL parsing) and the DI-built validate-skip test vary the host / ApiBase and are
+/// intentionally not served here.
 /// </summary>
 internal static class GitHubReviewServiceFactory
 {
