@@ -81,32 +81,41 @@ Three isolated units:
 - *Interface:* publishes a `single-comment-posted` named SSE frame to the
   posting PR's subscribers.
 
-**Unit 1.2 — Loader snapshot refresh (backend).**
-`PrDetailLoader` subscribes `SingleCommentPostedBusEvent`, unconditional (the
-event fires only on an actual post, so no quiet-event suppression is needed —
-same as `OnRootCommentPosted` / `OnDraftSubmitted`). The `NOT subscribed`
-carve-out comment at `PrDetailLoader.cs:96` is replaced with the subscription.
+**Unit 1.2 — Loader invalidation (backend).**
+`PrDetailLoader` subscribes `SingleCommentPostedBusEvent → Invalidate(prRef)`,
+unconditional (the event fires only on an actual post, so no quiet-event
+suppression is needed — same as `OnRootCommentPosted` / `OnDraftSubmitted`). The
+`NOT subscribed` carve-out comment at `PrDetailLoader.cs:96` is replaced with the
+subscription. This is byte-for-byte the root-comment pattern.
 
-**Decision (RESOLVED): refresh-in-place, not evict-to-null.** The owner's
-constraint is that the auto-reload must not change the user's view in any way
-(see §2.3 view-state preservation). The *only* user-visible difference between
-the two mechanisms is `Invalidate`'s diff-tab 422 window (silent viewed-checkbox
-revert / whole-file expand failure). That disqualifies it. The handler uses
-`RefreshAsync` (`PrDetailLoader.cs:196`, #344), which **overwrites** the snapshot
-in place (force-fresh, bypasses the head-SHA cache) with no null window — so
-`/file` and `/viewed` always see a valid snapshot and never 422. This resolves
-the #353 objection rather than restating it.
+**Decision (RESOLVED): `Invalidate`, not `RefreshAsync`.** Two constraints were
+weighed — "the reload must not change the user's view" and "performance is a
+major concern" — against the verified fact that `ReviewEventBus.Publish` is
+**synchronous** (`ReviewEventBus.cs`: handlers are `Action<TEvent>`, invoked
+inline) and is called *inside* the comment-POST before it returns
+(`PrCommentEndpoints.PostInlineAsync`). Consequences:
 
-- *Open implementation detail (no UX visibility; resolve in TDD):* `RefreshAsync`
-  does a synchronous GitHub re-fetch, and `PrCommentEndpoints.Publish` is called
-  inline before the endpoint returns. To keep the comment-POST fast, the refresh
-  must run **off the POST thread** — verify whether the bus dispatches
-  subscribers asynchronously/queued; if not, dispatch the refresh to a background
-  task. This is a latency concern only; it does not affect correctness or the
-  user's view.
-- *Depends on:* `IReviewEventBus`, `RefreshAsync`.
-- *Interface:* after a post, the next detail GET sees fresh `reviewComments`
-  (containing the new thread) with no intervening null-snapshot window.
+- `RefreshAsync` would run a full GitHub re-fetch **on the POST thread**, so the
+  user's "Comment" click hangs until it completes (most-visible-possible lag, and
+  sync-over-async on a request thread). Pushing it to a background `Task` instead
+  races the reload GET (the SSE fires in the same synchronous loop) and can
+  intermittently re-serve a stale snapshot — reintroducing #353 flakily.
+- A hybrid (`Invalidate` + background `RefreshAsync`) does **not** help: the
+  snapshot is null from `Invalidate` until the background re-fetch overwrites it,
+  so the 422 window is unchanged (its length is the fetch, not the trigger); it
+  only starts repopulation ~one round-trip earlier — negligible on a local-first
+  tool — while adding a double-fetch race against the reload GET's `LoadAsync`.
+
+`Invalidate` is an instant in-process dictionary removal: zero cost on the POST
+thread (fast post), and the expensive re-fetch lands on the **reload GET**, which
+is off the user's critical path and visually bridged by the optimistic
+placeholder + keep-alive. The eviction always completes before the reload GET
+arrives (in-process removal beats a network round-trip), exactly as the
+root-comment path ships today.
+
+- *Depends on:* `IReviewEventBus`, existing `Invalidate`.
+- *Interface:* the PR's snapshot is evicted on post, so the next detail GET
+  re-fetches fresh `reviewComments` (containing the new thread).
 
 **Unit 1.3 — Frontend reload trigger.**
 - `events.ts`: add `single-comment-posted` to `EventPayloadByType`, `EVENT_TYPES`,
@@ -126,28 +135,30 @@ the #353 objection rather than restating it.
 - **Own-tab + cross-tab:** the posting tab and any other tab viewing the same PR
   both receive the SSE frame and reload. This matches the root-comment behavior.
   A *passive* tab (viewing the same PR's diff but not the poster) is exposed to
-  the same snapshot window as the posting tab — another reason to prefer the
-  refresh-in-place path in Unit 1.2 over evict-to-null.
+  the same brief snapshot window as the posting tab; the same graceful 422
+  handling below covers it.
 - **Optimistic placeholder:** unchanged. The reload lands the real comment; the
   existing `databaseId === postedCommentId` cleanup drops the placeholder. The
   placeholder bridges the visual gap during the reload round-trip (no flash).
-- **422 window — the asymmetry vs root-comment is real, do not hand-wave it.**
-  The root-comment post originates on the **Overview** tab, where the user is
-  not exercising `/file` or `/viewed`. The single-comment post originates on the
-  **Files/diff** tab, where the user *is* toggling viewed-state
-  (`postFileViewed`, `FilesTab.tsx:204`) and expanding whole files (`/file`).
-  With `Invalidate`, a click in the eviction→reload gap returns 422: `/viewed`
-  silently rolls the checkbox back (`FilesTab.tsx:208`), `/file` shows the
-  whole-file failure banner. This is exactly the asymmetry #353 cited. The
-  refresh-in-place path (Unit 1.2) closes the window; if (b) is taken instead,
-  the window is bounded by the reload round-trip and the client already degrades
-  gracefully, but that must be stated as an accepted cost, not parity.
+- **422 window — accepted, bounded, graceful.** While the snapshot is evicted
+  (from `Invalidate` until the reload GET re-populates it), `/file` (whole-file
+  expand) and `/viewed` (mark-file-viewed) read `TryGetCachedSnapshot == null`
+  and return 422. The client already degrades gracefully: `/viewed` silently
+  rolls the checkbox back (`FilesTab.tsx:208`), `/file` shows the whole-file
+  failure banner — both retryable by clicking again. This is the asymmetry #353
+  cited (root-comment posts on Overview don't exercise these endpoints; inline
+  posts on the diff tab do), so it is a real cost — but a minor one: the window
+  is sub-second, and right after posting the user's focus is on replying to the
+  thread they just created, not toggling viewed-state on other files. Accepted
+  for v1. *Back-pocket mitigation if it ever bites:* defer the two requests
+  on the frontend during the post→reload window (no extra backend fetch); not
+  built now.
 - **Diff content** comes from `/diff` (`useFileDiff`), not the snapshot, so the
   diff pane itself is unaffected by snapshot state either way.
 - **View-state preservation — a HARD requirement (owner constraint).** The
   auto-reload must not change the user's view in any way. This is guaranteed by
-  keep-alive, independent of the backend mechanism: `usePrDetail.reload()` keeps
-  `data` present (no skeleton, #180), so `FilesTab` is **not** unmounted, and
+  keep-alive: `usePrDetail.reload()` keeps `data` present (no skeleton, #180),
+  so `FilesTab` is **not** unmounted, and
   every piece of view state below is local component state / DOM, not derived
   from `prDetail`, so the data swap leaves it untouched:
   - **scroll offset** (`useTabScrollMemory` — only re-fires on tab switch, not a data swap)
