@@ -321,8 +321,10 @@ app.Use(async (ctx, next) =>
             // cold relaunch (no fresh Set-Cookie → stale-cookie 401). Overwrite (assign),
             // not append: OnStarting fires last, so this wins over any Cache-Control a
             // static-file handler set — route-agnostic across MapStaticAssets/MapFallbackToFile.
+            // Indexer (not the typed .CacheControl property) to match the repo's header-write
+            // idiom — cf. SseChannel.cs writing the same "Cache-Control" header this way.
             // Full rationale: docs/specs/2026-06-12-coldstart-stale-cookie-design.md.
-            ctx.Response.Headers.CacheControl = "no-store";
+            ctx.Response.Headers["Cache-Control"] = "no-store";
         }
         return Task.CompletedTask;
     });
