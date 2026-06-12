@@ -210,7 +210,9 @@ test('#302 mutual exclusion — staged draft disables Comment; save label become
 // ---------------------------------------------------------------------------
 // Test 4 — Merged PR: only "Comment" shown, merged sub-label present, no "Add to review"
 // ---------------------------------------------------------------------------
-test('#302 merged PR — only Comment button shown; merged sub-label present', async ({ page }) => {
+test('#302 merged PR — only Comment button shown; merged context on Comment tooltip (#390)', async ({
+  page,
+}) => {
   await setupAndOpenScenarioPr(page);
 
   // Flip to MERGED and force a PrDetailLoader cache miss by advancing the head.
@@ -233,12 +235,16 @@ test('#302 merged PR — only Comment button shown; merged sub-label present', a
   //   - "Add to review" save button must NOT be present (closedBanner = true hides it).
   //   - "Add review comment" label must NOT be present either.
   //   - "Comment" button must be visible (and FUNCTIONAL — types and posts below).
-  //   - The "PR is merged — comments post immediately" sub-note must be visible.
+  //   - #390: the "PR is merged" note is GONE; the merged context is on the Comment
+  //     button's tooltip (title), keeping "Comment" as the accessible name.
   await expect(composerMerged.getByText(/text not saved/i)).toHaveCount(0);
   await expect(composerMerged.getByRole('button', { name: 'Add to review' })).toHaveCount(0);
   await expect(composerMerged.getByRole('button', { name: 'Add review comment' })).toHaveCount(0);
   await expect(composerMerged.getByRole('button', { name: 'Comment', exact: true })).toBeVisible();
-  await expect(composerMerged.getByText(/PR is merged — comments post immediately/i)).toBeVisible();
+  await expect(composerMerged.getByText(/comments post immediately/i)).toHaveCount(0);
+  await expect(
+    composerMerged.getByRole('button', { name: 'Comment', exact: true }),
+  ).toHaveAttribute('title', 'Post directly to this merged PR');
 
   // STRENGTHEN: post-now actually works on a merged PR (#302 core contract).
   // Type a body, click "Comment", assert the comment is posted.
