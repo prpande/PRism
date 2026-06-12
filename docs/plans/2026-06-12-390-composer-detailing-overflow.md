@@ -35,7 +35,7 @@
 ## Task 1: Composer body + frame CSS (textarea owns focus, tight gutter)
 
 **Files:**
-- Modify: `frontend/src/styles/tokens.css:1037-1072`
+- Modify: `frontend/src/styles/tokens.css:1033-1066` (the textarea-well comment block through the `.composer-frame:focus-within` rule — do NOT extend into the `.composer-frame .composer-actions` footer at 1068, that's Task 2)
 
 - [ ] **Step 1: Replace the `.composer-frame .composer-textarea` / focus-within / markdown-preview block.**
 
@@ -178,7 +178,7 @@ git commit -m "feat(composer): textarea owns focus ring; tight gutter; drop fram
 }
 ```
 
-> Note: `.composer-post-now` already has a resting bordered-secondary rule (tokens.css ~970); this only adds the hover. `--t-fast`/`--ease-out` are existing tokens used elsewhere; if absent, use `120ms ease`.
+> Note: `.composer-post-now` already has a resting rule (~970) **and a grey `:hover` rule** (~984, `background: var(--surface-3); border-color: var(--border-strong)`). The new `.composer-frame`-scoped green hover (specificity 0,3,1) intentionally **overrides** that global grey hover (0,2,0) inside the frame. `--t-fast`/`--ease-out` exist (tokens.css ~58–59).
 
 - [ ] **Step 2: Verify the build compiles.**
 
@@ -207,8 +207,14 @@ git commit -m "feat(composer): flat grouped footer, real Preview/Discard buttons
     render(<ComposerActionsBar {...baseProps} closedBanner prState="merged" />);
     expect(screen.queryByRole('button', { name: 'Add to review' })).toBeNull();
     expect(screen.queryByText(/comments post immediately/)).toBeNull();
-    // the immediate-post button keeps the context via its accessible name/title
-    expect(screen.getByRole('button', { name: /Post directly to this merged PR/ })).toBeInTheDocument();
+    // The merged context is preserved as the button's TOOLTIP (title), not its
+    // accessible name: visible text "Comment" outranks `title` in the ARIA
+    // name computation, and keeping "Comment" as the name preserves WCAG 2.5.3
+    // (label-in-name). So assert the title attribute, not the role name.
+    expect(screen.getByRole('button', { name: 'Comment' })).toHaveAttribute(
+      'title',
+      'Post directly to this merged PR',
+    );
   });
 ```
 
@@ -290,7 +296,7 @@ Expected: FAIL — the merged note still renders and the post-now button has no 
   );
 ```
 
-> DOM order is now Preview → AI(null in tests) → badge(span) → spacer(span) → Discard → Save → Comment, so `getAllByRole('button')` still yields `['Preview','Discard','Add to review','Comment']` — the canonical-order test stays green. The `title` becomes the button's accessible name when set, satisfying the new `getByRole(..., {name: /Post directly to this merged PR/})`.
+> DOM order is now Preview → AI(null in tests) → badge(span) → spacer(span) → Discard → Save → Comment, so `getAllByRole('button')` still yields `['Preview','Discard','Add to review','Comment']` — the canonical-order test stays green. The `title` on the post-now button is a **tooltip/description**, not the accessible name (the visible "Comment" text remains the name — preserving WCAG 2.5.3), which is why the test asserts the `title` attribute rather than `getByRole`'s `name`.
 
 - [ ] **Step 4: Run the tests to verify they pass.**
 
@@ -310,18 +316,16 @@ git commit -m "feat(composer): group ComposerActionsBar footer; drop merged note
 
 **Files:**
 - Modify: `frontend/src/components/PrDetail/Composer/PrRootReplyComposer.tsx:211-251`
-- Modify/Create: `frontend/src/components/PrDetail/Composer/PrRootReplyComposer.test.tsx`
+- Modify: `frontend/src/components/PrDetail/Composer/PrRootReplyComposer.badge.test.tsx` (the **existing** test file — there is no `.test.tsx` and no shared render helper; it inlines `render(<PrRootReplyComposer … />)` with `PrRootBodyEditor` + `AiComposerAssistant` mocked. Reuse that exact render pattern.)
 
-- [ ] **Step 1: Write a failing structural test.** Add (or create the file with) a test asserting the footer renders the spacer and the canonical button order:
+- [ ] **Step 1: Write a failing structural test.** Add a test to `PrRootReplyComposer.badge.test.tsx`, copying the existing file's inline render + mocks (do **not** invent a helper). Assert the footer renders the spacer and the canonical button order:
 
 ```tsx
-import { describe, it, expect } from 'vitest';
-import { render, screen, within } from '@testing-library/react';
-// NOTE: PrRootReplyComposer needs its real provider props; if the existing test file
-// already has a render helper, reuse it. Assert against the rendered composer-actions.
-
 it('groups the Overview footer with a spacer in canonical order', () => {
-  renderPrRootReplyComposer(); // existing helper or minimal harness
+  // mirror the existing badge-test render: PrRootBodyEditor + AiComposerAssistant
+  // mocked, props prRef / prState="open" / draftId={null} / onDraftIdChange /
+  // registerOpenComposer / onClose (copy the harness already at the top of this file).
+  render(<PrRootReplyComposer {...replyComposerProps} />);
   const bar = document.querySelector('.composer-actions') as HTMLElement;
   expect(bar.querySelector('.composer-actions-spacer')).not.toBeNull();
   const buttons = within(bar).getAllByRole('button').map((b) => b.textContent);
@@ -329,7 +333,7 @@ it('groups the Overview footer with a spacer in canonical order', () => {
 });
 ```
 
-> If `PrRootReplyComposer` has no existing test harness, write the minimum render wrapper using the same provider mocks the other composer tests use (`useDraftSession`, etc.). Keep the assertion limited to the footer structure.
+> `AiComposerAssistant` is mocked to render null in these tests (AI gate off) and the badge is a `<span>`, so the spacer (a `<span>`) does not appear in `getAllByRole('button')` — the order stays `['Preview','Discard','Post']`.
 
 - [ ] **Step 2: Run it to verify it fails.**
 
@@ -522,19 +526,35 @@ git commit -m "feat(diff): useDiffViewportWidthVar writes diff body width to a C
 }
 ```
 
-- [ ] **Step 2: Write a failing structural test.** In the existing DiffPane test suite (or a focused new test), assert that a rendered comment/composer full-span cell wraps its content in `.diffStickyViewport`. Use the existing DiffPane render harness + a `renderComposerForLine` stub and/or a thread fixture:
+- [ ] **Step 2: Build a `DiffPane` render harness and write the failing test.** **No test currently mounts `<DiffPane>`** (`ExistingCommentWidget.test.tsx` renders the widget directly), so build the harness from scratch in a new `DiffPane.stickyViewport.test.tsx`. Mount `<DiffPane>` with a one-hunk file fixture, one review thread on a right-side line, and a `renderComposerForLine` stub; mock the hooks `DiffPane` pulls (`useAiGate`/AI annotations, `useWholeFileContent`, syntax tokens) — copy the mock set from an existing `FilesTab`/`PrDetail` consumer test (e.g. a `FilesTab` test that already renders the diff). Assert the wrap in **both** modes (unified covers sites 3–4; split covers sites 1–2):
 
 ```tsx
-it('wraps full-span comment/composer cell content in the sticky viewport div', () => {
-  // render DiffPane (unified) with one thread on a line and a composer stub
-  const { container } = renderDiffPaneWithThreadAndComposer(); // existing/extended harness
-  const stickies = container.querySelectorAll('td[colspan] .diffStickyViewport, td[colSpan] .diffStickyViewport');
-  // one for the existing-comment widget, one for the composer slot
-  expect(stickies.length).toBeGreaterThanOrEqual(2);
-});
+function renderDiffPane(diffMode: 'unified' | 'side-by-side') {
+  return render(
+    <DiffPane
+      selectedPath="src/a.ts"
+      file={oneHunkFile}                 // fixture: one hunk, a right-side line N
+      reviewThreads={[threadOnLineN]}    // one thread anchored to line N
+      diffMode={diffMode}
+      lineWrap={false}
+      renderComposerForLine={(_p, _n) => <div data-testid="composer-stub" />}
+      replyContext={replyContextStub}
+      /* …remaining required props with minimal stubs… */
+    />,
+  );
+}
+
+it.each(['unified', 'side-by-side'] as const)(
+  'wraps full-span comment + composer cells in .diffStickyViewport (%s)',
+  (mode) => {
+    const { container } = renderDiffPane(mode);
+    // one wrapper for the ExistingCommentWidget cell + one for the composer cell
+    expect(container.querySelectorAll('.diffStickyViewport').length).toBeGreaterThanOrEqual(2);
+  },
+);
 ```
 
-> Reuse the DiffPane test harness already used for `emitWidgetAndComposerRows`/`ExistingCommentWidget` (see `ExistingCommentWidget.test.tsx` and the DiffPane suite). If the harness only covers split or unified, cover the unified path (Problem 2's target) at minimum.
+> Confirm `DiffPane`'s exact required prop names against the component when wiring the harness. Keep it minimal — its only job is to prove every full-span comment/composer cell is wrapped.
 
 - [ ] **Step 3: Run it to verify it fails.**
 
@@ -543,20 +563,26 @@ Expected: FAIL — no `.diffStickyViewport` wrappers yet.
 
 - [ ] **Step 4: Call the hook and wrap all four cell sites.**
 
-(a) Call the hook near the existing `useLockedPaneScroll` call (~DiffPane.tsx:306), passing the body ref and a dep key covering file/mode/wrap:
+(a) Call the hook near the existing `useLockedPaneScroll` call (~DiffPane.tsx:306), passing the body ref and a dep key that covers file/mode/wrap **and content height** (so it re-measures when a vertical scrollbar appears/disappears and shrinks the visible width — a `ResizeObserver` blind spot):
 
 ```tsx
-useDiffViewportWidthVar(diffBodyRef, [selectedPath, diffMode, lineWrap]);
+useDiffViewportWidthVar(diffBodyRef, [
+  selectedPath,
+  diffMode,
+  lineWrap,
+  wholeFileEnabled,        // whole-file expansion changes content height
+  allLines.length,         // row count changes → scrollbar may appear/disappear
+]);
 ```
-(Import it: `import { useDiffViewportWidthVar } from '../../../../hooks/useDiffViewportWidthVar';`. Use the real names for the selected-path / mode / wrap values in scope — confirm against the component; they drive `isSplit`/`lineWrap` already.)
+(Import it: `import { useDiffViewportWidthVar } from '../../../../hooks/useDiffViewportWidthVar';`. Use the **real** in-scope names — confirm against the component; `selectedPath`/`lineWrap` exist, `diffMode` drives `isSplit`, and the whole-file flag + the rendered-rows array are already computed in `renderDiffRows`. If `allLines` isn't in scope at the call site, use the equivalent row-count/whole-file signal that `useLockedPaneScroll`'s own dep array already keys on, so both observers re-measure together.)
 
-(b) Wrap the content inside each full-span `<td colSpan={colSpan}>` for comments/composers. There are four sites:
-- `emitWidgetAndComposerRows` → the `ExistingCommentWidget` cell;
-- `emitWidgetAndComposerRows` → the composer (`renderComposerForLine`) cell;
-- the unified inline `ExistingCommentWidget` `<tr>` in `DiffLineRow`;
-- the unified `ComposerSlot` cell.
+(b) Wrap the content inside each full-span `<td colSpan={colSpan}>` for comments/composers. There are **four** sites (confirm exact line numbers at implementation — these are from the current file): 
+- `emitWidgetAndComposerRows` → `ExistingCommentWidget` cell (~DiffPane.tsx:484);
+- `emitWidgetAndComposerRows` → composer (`renderComposerForLine`) cell (~:495);
+- unified inline `ExistingCommentWidget` `<tr>` in `DiffLineRow` (~:802);
+- the composer cell rendered by the **`ComposerSlot` component** (a *separate* component, ~:1062–1080, not inline in `DiffLineRow` — easy to miss; its `<td colSpan>{node}</td>` is ~:1077).
 
-For each, change `<td colSpan={colSpan}>{X}</td>` to:
+Do **not** wrap the four `AiHunkAnnotation` colSpan cells (~:416/:435/:522/:540) — they aren't comments/composers. For each of the four comment/composer sites, change `<td colSpan={colSpan}>{X}</td>` to:
 
 ```tsx
 <td colSpan={colSpan}>
