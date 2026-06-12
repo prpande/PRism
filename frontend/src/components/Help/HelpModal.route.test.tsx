@@ -52,7 +52,7 @@ vi.mock('../../hooks/useInbox', () => ({
   useInbox: vi.fn(() => inboxSnapshot),
 }));
 vi.mock('../../hooks/useInboxUpdates', () => ({
-  useInboxUpdates: vi.fn(() => ({ hasUpdate: false, summary: '', dismiss: vi.fn() })),
+  useInboxUpdates: vi.fn(() => ({ announce: '' })),
 }));
 vi.mock('../../hooks/useCapabilities', () => ({
   useCapabilities: vi.fn(() => ({

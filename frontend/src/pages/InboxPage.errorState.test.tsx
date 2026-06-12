@@ -10,7 +10,7 @@ vi.mock('../hooks/useInbox', () => ({
   useInbox: () => ({ data: null, error: new Error('boom'), isLoading: false, reload }),
 }));
 vi.mock('../hooks/useInboxUpdates', () => ({
-  useInboxUpdates: () => ({ hasUpdate: false, summary: '', dismiss: vi.fn() }),
+  useInboxUpdates: () => ({ announce: '' }),
 }));
 vi.mock('../hooks/useAiGate', () => ({
   useAiGate: () => false,

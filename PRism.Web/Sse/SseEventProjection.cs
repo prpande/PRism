@@ -47,6 +47,10 @@ internal static class SseEventProjection
     // could use to deep-link, but the primary consumer only triggers a refetch.
     internal sealed record RootCommentPostedWire(string PrRef, long IssueCommentId);
 
+    // #450 — single-comment-posted: a single inline comment or reply was posted
+    // directly (not via a review). Carries the REST reviewCommentId for frontend de-dup.
+    internal sealed record SingleCommentPostedWire(string PrRef, long ReviewCommentId);
+
     // #392 — draft-submitted: prRef only. The submit already posted every thread/reply + the
     // PR-root comment server-side, so the frontend just needs the signal to reload PR detail —
     // no review/comment id is carried (threat-model minimal-payload posture).
@@ -79,6 +83,9 @@ internal static class SseEventProjection
 
         RootCommentPostedBusEvent e => ("root-comment-posted", new RootCommentPostedWire(
             e.PrRef.ToString(), e.IssueCommentId)),
+
+        SingleCommentPostedBusEvent e => ("single-comment-posted", new SingleCommentPostedWire(
+            e.PrRef.ToString(), e.ReviewCommentId)),
 
         DraftSubmitted e => ("draft-submitted", new DraftSubmittedWire(e.PrRef.ToString())),
 

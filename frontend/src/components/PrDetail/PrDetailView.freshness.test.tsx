@@ -66,6 +66,11 @@ const { reloadSpy, clearUnreadSpy, updatesClearSpy, prDetailResult, updatesResul
   }),
 );
 
+// #450 — hoisted ref capturing the single-comment-posted subscriber's onPosted.
+const { singleCommentOnPosted } = vi.hoisted(() => ({
+  singleCommentOnPosted: { current: null as null | (() => void) },
+}));
+
 vi.mock('../../hooks/usePrDetail', () => ({
   usePrDetail: () => ({
     data: prDetailResult.current.data,
@@ -122,6 +127,13 @@ vi.mock('../../hooks/useStateChangedSubscriber', () => ({
 
 vi.mock('../../hooks/useRootCommentPostedSubscriber', () => ({
   useRootCommentPostedSubscriber: () => {},
+}));
+
+// #450 — capture the single-comment-posted subscriber's onPosted so the test can fire it.
+vi.mock('../../hooks/useSingleCommentPostedSubscriber', () => ({
+  useSingleCommentPostedSubscriber: ({ onPosted }: { onPosted: () => void }) => {
+    singleCommentOnPosted.current = onPosted;
+  },
 }));
 
 vi.mock('../../hooks/useDraftSubmittedSubscriber', () => ({
@@ -241,6 +253,21 @@ describe('PrDetailView — freshness on activation (Task 8)', () => {
     expect(reloadSpy).toHaveBeenCalledTimes(1);
     expect(clearUnreadSpy).toHaveBeenCalledTimes(1);
     expect(clearUnreadSpy).toHaveBeenCalledWith('acme/api/7');
+  });
+
+  // #450 — a single inline comment/reply post emits a 'single-comment-posted' SSE
+  // frame. PrDetailView subscribes (mirroring the root-comment subscriber) and its
+  // onPosted fires usePrDetail.reload so the new thread surfaces with its
+  // ReplyComposer — without a manual reload.
+  test('a single-comment-posted event triggers usePrDetail.reload', () => {
+    prDetailResult.current = { data: PR_DETAIL, isLoading: false, error: null };
+    renderPrDetailView({ active: true });
+    reloadSpy.mockClear();
+
+    expect(singleCommentOnPosted.current).toBeTypeOf('function');
+    singleCommentOnPosted.current!();
+
+    expect(reloadSpy).toHaveBeenCalledTimes(1);
   });
 
   // OQ8 — a backgrounded tab can latch a "PR updated" banner (useActivePrUpdates

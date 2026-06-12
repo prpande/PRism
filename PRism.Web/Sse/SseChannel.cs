@@ -50,6 +50,9 @@ internal sealed class SseChannel : IDisposable
     // clear). Fans out per-PR so every subscriber for the PR reloads PR detail and the just-posted
     // threads + Overview comment surface without a manual reload.
     private readonly IDisposable _busDraftSubmitted;
+    // #450 — single-comment-posted: a single inline comment/reply was posted directly.
+    // Fans out per-PR so every subscriber for the PR reloads and the new thread surfaces.
+    private readonly IDisposable _busSingleCommentPosted;
 
     public SseChannel(
         IReviewEventBus bus,
@@ -74,6 +77,7 @@ internal sealed class SseChannel : IDisposable
         _busSubmitDuplicateMarkerDetected = bus.Subscribe<SubmitDuplicateMarkerDetectedBusEvent>(OnSubmitDuplicateMarkerDetected);
         _busRootCommentPosted = bus.Subscribe<RootCommentPostedBusEvent>(OnRootCommentPosted);
         _busDraftSubmitted = bus.Subscribe<DraftSubmitted>(OnDraftSubmitted);
+        _busSingleCommentPosted = bus.Subscribe<SingleCommentPostedBusEvent>(OnSingleCommentPosted);
         _busIdentityChanged = bus.Subscribe<IdentityChanged>(OnIdentityChanged);
     }
 
@@ -303,6 +307,7 @@ internal sealed class SseChannel : IDisposable
     private void OnSubmitDuplicateMarkerDetected(SubmitDuplicateMarkerDetectedBusEvent evt) => FanoutProjected(evt, evt.PrRef);
     private void OnRootCommentPosted(RootCommentPostedBusEvent evt) => FanoutProjected(evt, evt.PrRef);
     private void OnDraftSubmitted(DraftSubmitted evt) => FanoutProjected(evt, evt.PrRef);
+    private void OnSingleCommentPosted(SingleCommentPostedBusEvent evt) => FanoutProjected(evt, evt.PrRef);
 
     // Per-PR fanout for events that carry a PrReference and use the projection wire shape
     // (prRef as "owner/repo/number" string per spec § 4.5). Mirrors OnActivePrUpdated's
@@ -382,6 +387,7 @@ internal sealed class SseChannel : IDisposable
         _busSubmitDuplicateMarkerDetected.Dispose();
         _busRootCommentPosted.Dispose();
         _busDraftSubmitted.Dispose();
+        _busSingleCommentPosted.Dispose();
         _busIdentityChanged.Dispose();
     }
 

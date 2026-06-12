@@ -54,7 +54,7 @@ vi.mock('../../hooks/useInbox', () => ({
   useInbox: () => inboxSnapshot,
 }));
 vi.mock('../../hooks/useInboxUpdates', () => ({
-  useInboxUpdates: () => ({ hasUpdate: false, summary: '', dismiss: vi.fn() }),
+  useInboxUpdates: () => ({ announce: '' }),
 }));
 
 // SSE provider is a passthrough; no live event channel in the unit test.

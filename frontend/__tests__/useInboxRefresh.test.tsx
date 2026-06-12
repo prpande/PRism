@@ -9,10 +9,9 @@ const refreshMock = vi.mocked(inboxApi.refresh);
 
 function setup() {
   const reload = vi.fn().mockResolvedValue(undefined);
-  const dismiss = vi.fn();
   const onError = vi.fn();
-  const hook = renderHook(() => useInboxRefresh({ reload, dismiss, onError }));
-  return { hook, reload, dismiss, onError };
+  const hook = renderHook(() => useInboxRefresh({ reload, onError }));
+  return { hook, reload, onError };
 }
 
 beforeEach(() => {
@@ -22,9 +21,9 @@ beforeEach(() => {
 afterEach(() => vi.useRealTimers());
 
 describe('useInboxRefresh', () => {
-  it('on success: posts, reloads, dismisses, announces, and shows the confirmation', async () => {
+  it('on success: posts, reloads, announces, and shows the confirmation', async () => {
     refreshMock.mockResolvedValue(undefined);
-    const { hook, reload, dismiss } = setup();
+    const { hook, reload } = setup();
 
     await act(async () => {
       await hook.result.current.refresh();
@@ -32,7 +31,6 @@ describe('useInboxRefresh', () => {
 
     expect(refreshMock).toHaveBeenCalledOnce();
     expect(reload).toHaveBeenCalledOnce();
-    expect(dismiss).toHaveBeenCalledOnce();
     expect(hook.result.current.announce).toBe('Inbox refreshed');
     expect(hook.result.current.justRefreshed).toBe(true);
     expect(hook.result.current.isRefreshing).toBe(false);
