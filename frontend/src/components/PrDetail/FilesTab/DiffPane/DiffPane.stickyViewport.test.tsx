@@ -74,10 +74,11 @@ describe('DiffPane sticky viewport wrap (#390)', () => {
     (mode) => {
       const { container } = renderDiffPane(mode);
       // CSS-module classes are hashed in tests (_diffStickyViewport_xxx); match by substring.
-      // one wrapper for the ExistingCommentWidget cell + one for the composer cell
-      expect(
-        container.querySelectorAll('[class*="diffStickyViewport"]').length,
-      ).toBeGreaterThanOrEqual(2);
+      // Exactly two full-span cells wrap per mode for this fixture (one thread +
+      // one composer on line 5): unified → DiffLineRow widget + ComposerSlot;
+      // split → emitWidgetAndComposerRows widget + composer. (4 sites total across
+      // both modes.) Exact count guards against a site being accidentally unwrapped.
+      expect(container.querySelectorAll('[class*="diffStickyViewport"]').length).toBe(2);
     },
   );
 });
