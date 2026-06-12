@@ -7,6 +7,7 @@ using PRism.AI.Contracts.Observability;
 using PRism.AI.Contracts.Provider;
 using PRism.Core.Contracts;
 using PRism.Core.Events;
+using PRism.Core.PrDetail;
 using PRism.Web.Ai;
 using Xunit;
 
@@ -51,10 +52,14 @@ public sealed class ClaudeCodeSummarizerTests
     private static ClaudeCodeSummarizer Build(ILlmProvider p, ITokenUsageTracker t,
         string diff = "+ added line", string title = "Fix poller", string desc = "Body",
         string baseSha = "base1", string headSha = "abc123", IAiInteractionLog? log = null,
-        IReviewEventBus? bus = null)
+        IReviewEventBus? bus = null, IActivePrCache? activePrCache = null)
         => new(p, t, (_, _) => Task.FromResult((diff, title, desc, baseSha, headSha)),
             NullLogger<ClaudeCodeSummarizer>.Instance, log ?? new FakeAiInteractionLog(),
-            bus ?? new ReviewEventBus());
+            bus ?? new ReviewEventBus(),
+            activePrCache ?? new StubActivePrCache
+            {
+                Snapshot = new ActivePrSnapshot(headSha, null, default, BaseSha: baseSha),
+            });
 
     [Fact]
     public async Task Success_ParsesCategory_RecordsUsage()
@@ -249,5 +254,60 @@ public sealed class ClaudeCodeSummarizerTests
         await summarizer.SummarizeAsync(Pr, CancellationToken.None);
 
         provider.Calls.Should().Be(1, "a quiet hydration event must not drop a just-cached summary");
+    }
+
+    private sealed class StubActivePrCache : IActivePrCache
+    {
+        public ActivePrSnapshot? Snapshot;
+        public bool IsSubscribed(PrReference prRef) => true;
+        public ActivePrSnapshot? GetCurrent(PrReference prRef) => Snapshot;
+        public void Update(PrReference prRef, ActivePrSnapshot snapshot) => Snapshot = snapshot;
+        public void Clear() => Snapshot = null;
+    }
+
+    [Fact]
+    public async Task R7_store_is_skipped_when_active_snapshot_SHAs_no_longer_match()
+    {
+        var provider = new FakeProvider();
+        var cache = new StubActivePrCache
+        {
+            // The PR has already shifted to (b2,h1) by the time the in-flight call goes to store.
+            Snapshot = new ActivePrSnapshot("h1", null, default, BaseSha: "b2"),
+        };
+        using var summarizer = Build(provider, new FakeTracker(), baseSha: "b1", headSha: "h1", activePrCache: cache);
+
+        await summarizer.SummarizeAsync(Pr, CancellationToken.None); // resolves (b1,h1); snapshot says (b2,h1) → skip store
+        await summarizer.SummarizeAsync(Pr, CancellationToken.None); // nothing cached → provider called again
+
+        provider.Calls.Should().Be(2, "a superseded write must not be stored");
+    }
+
+    [Fact]
+    public async Task R7_valid_write_is_stored_even_when_snapshot_matches()
+    {
+        var provider = new FakeProvider();
+        var cache = new StubActivePrCache
+        {
+            Snapshot = new ActivePrSnapshot("h1", null, default, BaseSha: "b1"), // matches the resolved (b1,h1)
+        };
+        using var summarizer = Build(provider, new FakeTracker(), baseSha: "b1", headSha: "h1", activePrCache: cache);
+
+        await summarizer.SummarizeAsync(Pr, CancellationToken.None); // stored
+        await summarizer.SummarizeAsync(Pr, CancellationToken.None); // HIT
+
+        provider.Calls.Should().Be(1, "a valid write whose SHAs are still current must be stored (not dropped)");
+    }
+
+    [Fact]
+    public async Task R7_store_proceeds_when_no_active_snapshot_yet()
+    {
+        var provider = new FakeProvider();
+        var cache = new StubActivePrCache { Snapshot = null }; // first-load window: poller hasn't ticked
+        using var summarizer = Build(provider, new FakeTracker(), baseSha: "b1", headSha: "h1", activePrCache: cache);
+
+        await summarizer.SummarizeAsync(Pr, CancellationToken.None);
+        await summarizer.SummarizeAsync(Pr, CancellationToken.None);
+
+        provider.Calls.Should().Be(1, "no observed shift (null snapshot) → store, preserving initial caching");
     }
 }

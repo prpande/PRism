@@ -103,7 +103,8 @@ internal static class ServiceCollectionExtensions
                 resolve,
                 sp.GetRequiredService<ILogger<ClaudeCodeSummarizer>>(),
                 sp.GetRequiredService<IAiInteractionLog>(),
-                sp.GetRequiredService<IReviewEventBus>());
+                sp.GetRequiredService<IReviewEventBus>(),
+                sp.GetRequiredService<IActivePrCache>());
         });
 
         var realSeams = new Dictionary<Type, object>();   // P1: populated below with the first real impl

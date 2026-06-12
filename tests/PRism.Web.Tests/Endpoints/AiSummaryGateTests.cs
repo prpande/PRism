@@ -70,6 +70,17 @@ public sealed class AiSummaryGateTests
         public void Record(AiInteractionRecord record) { }
     }
 
+    // Permissive IActivePrCache for the stub summarizer: null snapshot → R7 store always proceeds.
+    // Gate tests assert HTTP status, not caching; this avoids a cross-test-project dependency on
+    // ClaudeCodeSummarizerTests.StubActivePrCache.
+    private sealed class NullActivePrCache : IActivePrCache
+    {
+        public bool IsSubscribed(PrReference prRef) => true;
+        public ActivePrSnapshot? GetCurrent(PrReference prRef) => null;
+        public void Update(PrReference prRef, ActivePrSnapshot snapshot) { }
+        public void Clear() { }
+    }
+
     /// <summary>
     /// Per-test harness. Wires a stubbed ClaudeCodeSummarizer (no PrDetailLoader dependency)
     /// and a ConfigurableActivePrCache. Mirrors RootCommentTestContext's pattern so the
@@ -86,12 +97,11 @@ public sealed class AiSummaryGateTests
         public AiSummaryTestContext(ILlmProvider provider, bool subscribeAll)
         {
             var stubSummarizer = new ClaudeCodeSummarizer(
-                provider,
-                new NullTracker(),
+                provider, new NullTracker(),
                 (_, _) => Task.FromResult(("+ added", "Title", "Desc", "base1", "sha1")),
-                NullLogger<ClaudeCodeSummarizer>.Instance,
-                new NullAiInteractionLog(),
-                new PRism.Core.Events.ReviewEventBus()); // fresh bus — see note
+                NullLogger<ClaudeCodeSummarizer>.Instance, new NullAiInteractionLog(),
+                new PRism.Core.Events.ReviewEventBus(), // fresh bus — see note
+                new NullActivePrCache());
 
             _base = new PRismWebApplicationFactory();
             _derived = _base.WithWebHostBuilder(b => b.ConfigureServices(s =>

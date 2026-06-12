@@ -8,6 +8,7 @@ using PRism.AI.Contracts.Seams;
 using PRism.Core.Ai;
 using PRism.Core.Contracts;
 using PRism.Core.Events;
+using PRism.Core.PrDetail;
 
 namespace PRism.Web.Ai;
 
@@ -46,15 +47,18 @@ internal sealed partial class ClaudeCodeSummarizer : IPrSummarizer, IDisposable
     private readonly IAiInteractionLog _interactionLog;
     private readonly ConcurrentDictionary<SummaryCacheKey, PrSummary> _cache = new();
     private readonly IDisposable _busSubscription;
+    private readonly IActivePrCache _activePrCache;
 
     internal ClaudeCodeSummarizer(ILlmProvider provider, ITokenUsageTracker tracker, DiffResolver resolveDiff,
-        ILogger<ClaudeCodeSummarizer> logger, IAiInteractionLog interactionLog, IReviewEventBus bus)
+        ILogger<ClaudeCodeSummarizer> logger, IAiInteractionLog interactionLog, IReviewEventBus bus,
+        IActivePrCache activePrCache)
     {
         _provider = provider;
         _tracker = tracker;
         _resolveDiff = resolveDiff;
         _logger = logger;
         _interactionLog = interactionLog;
+        _activePrCache = activePrCache;
         _busSubscription = bus.Subscribe<ActivePrUpdated>(OnActivePrUpdated);
     }
 
@@ -98,7 +102,13 @@ internal sealed partial class ClaudeCodeSummarizer : IPrSummarizer, IDisposable
 
         var (body, category) = PrCategoryParser.Parse(result.Text);
         var summary = new PrSummary(body, category);
-        _cache[key] = summary; // R7 compare-and-set added in Task 9
+
+        // R7 — store only if the PR's active snapshot still matches the (base, head) this call resolved.
+        // A mid-call head/base shift makes the snapshot differ → skip (the result is for a superseded diff).
+        // A null snapshot (first-load window, before the poller ticks) has no observed shift → store.
+        var current = _activePrCache.GetCurrent(pr);
+        if (current is null || (current.BaseSha == baseSha && current.HeadSha == headSha))
+            _cache[key] = summary;
 
         _interactionLog.Record(new AiInteractionRecord(
             ComponentName, ClaudeProviderId, SummaryModel, pr.PrId, headSha,
