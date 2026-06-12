@@ -25,13 +25,13 @@ source and now pinned by red-on-main tests:
 
 ## Acceptance criteria
 
-- [ ] Red-on-main unit test: a port line split mid-digits across two chunks parses the
+- [x] Red-on-main unit test: a port line split mid-digits across two chunks parses the
       **correct** port (5183, not 51). *(done — `sidecar-lifecycle.unit.test.ts`)*
-- [ ] Named constants for the three magic values (`DEFAULT_*_TIMEOUT_MS`, `KILL_GRACE_MS`,
-      `STDERR_TAIL_BYTES`); the startup-timeout semantics documented (per-phase vs single
-      total — model chosen at the gate, see Finding 2).
-- [ ] Signal-killed child no longer stalls quit (unit-testable with a fake child). *(done)*
-- [ ] `desktop && npm run test:unit` green.
+- [x] Named constants for the three magic values (`DEFAULT_PHASE_TIMEOUT_MS`, `KILL_GRACE_MS`,
+      `STDERR_TAIL_BYTES`); the startup-timeout semantics documented as a **per-phase budget**
+      (model B, chosen at the gate — see Finding 2).
+- [x] Signal-killed child no longer stalls quit (unit-testable with a fake child). *(done)*
+- [x] `desktop && npm run test:unit` green (35/35).
 
 ## Approach
 
