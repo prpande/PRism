@@ -8,16 +8,11 @@
 // Test/FakeReviewService mode so no real PAT is needed.
 
 import { test, expect, type Route } from '@playwright/test';
+import { setupBaseRoutes } from './helpers/base-mocks';
 
 // ---------------------------------------------------------------------------
 // Shared mock fixtures (matches inbox.spec.ts shape)
 // ---------------------------------------------------------------------------
-
-const authedAuthState = {
-  hasToken: true,
-  host: 'https://github.com',
-  hostMismatch: null,
-};
 
 const defaultPreferences = {
   ui: { theme: 'system', accent: 'indigo', aiPreview: false, density: 'comfortable' },
@@ -38,44 +33,14 @@ const defaultPreferences = {
   },
 };
 
-const allOffCapabilities = {
-  ai: {
-    summary: false,
-    fileFocus: false,
-    hunkAnnotations: false,
-    preSubmitValidators: false,
-    composerAssist: false,
-    draftSuggestions: false,
-    draftReconciliation: false,
-    inboxEnrichment: false,
-    inboxRanking: false,
-  },
-};
-
 async function setupBaseMocks(page: import('@playwright/test').Page): Promise<void> {
-  await page.route('**/api/auth/state', (route: Route) =>
-    route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify(authedAuthState),
-    }),
-  );
+  await setupBaseRoutes(page);
   await page.route('**/api/preferences', (route: Route) =>
     route.fulfill({
       status: 200,
       contentType: 'application/json',
       body: JSON.stringify(defaultPreferences),
     }),
-  );
-  await page.route('**/api/capabilities', (route: Route) =>
-    route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify(allOffCapabilities),
-    }),
-  );
-  await page.route('**/api/events', (route: Route) =>
-    route.fulfill({ status: 200, contentType: 'text/event-stream', body: ':heartbeat\n\n' }),
   );
 }
 

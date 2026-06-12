@@ -1,22 +1,13 @@
 import { test, expect, type Route, type Page } from '@playwright/test';
-import {
-  authedAuthState,
-  allOffCapabilities,
-  makeDefaultPreferences,
-} from './fixtures/preferences';
+import { makeDefaultPreferences } from './fixtures/preferences';
+import { setupBaseRoutes } from './helpers/base-mocks';
 
 // B1 visual gate for the #134 Settings redesign. The app gates /settings/* behind
 // auth, so — like the other Settings specs — we mock the auth/preferences/
 // capabilities/events surface via page.route so the modal renders hermetically.
 async function setupMocks(page: Page) {
   const store = makeDefaultPreferences();
-  await page.route('**/api/auth/state', (route: Route) =>
-    route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify(authedAuthState),
-    }),
-  );
+  await setupBaseRoutes(page);
   await page.route('**/api/preferences', async (route: Route) => {
     if (route.request().method() === 'POST') {
       const body = (await route.request().postDataJSON()) as Record<string, unknown>;
@@ -36,22 +27,12 @@ async function setupMocks(page: Page) {
       body: JSON.stringify(store),
     });
   });
-  await page.route('**/api/capabilities', (route: Route) =>
-    route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify(allOffCapabilities),
-    }),
-  );
   await page.route('**/api/submit/in-flight', (route: Route) =>
     route.fulfill({
       status: 200,
       contentType: 'application/json',
       body: JSON.stringify({ inFlight: false, prRef: null }),
     }),
-  );
-  await page.route('**/api/events', (route: Route) =>
-    route.fulfill({ status: 200, contentType: 'text/event-stream', body: ':heartbeat\n\n' }),
   );
 }
 

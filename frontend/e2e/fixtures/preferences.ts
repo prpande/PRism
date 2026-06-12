@@ -1,8 +1,9 @@
-// Shared Playwright fixtures for the density e2e specs (PR9b-density). The
-// authed-auth + all-off-capabilities + default-preferences shapes are
-// identical across density-toggle.spec.ts and density-cross-tab.spec.ts;
-// extracting here means a future field add (e.g. when D87 PR9b-ai-gating
-// ships) is a single-point edit instead of N duplicates.
+// Canonical Playwright fixtures for the mocked-mode e2e specs (originally
+// PR9b-density; #332 promoted this to the single source). The authed-auth +
+// all-off-capabilities + default-preferences shapes back 10+ specs — directly
+// and via helpers/base-mocks.ts (which wires the three constant routes from
+// authedAuthState + allOffCapabilities). Add a wire field HERE once, not in N
+// per-spec copies.
 
 export const authedAuthState = {
   hasToken: true,
