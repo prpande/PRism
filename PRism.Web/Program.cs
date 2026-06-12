@@ -296,10 +296,11 @@ app.UseWhen(
 
 // Stamp the prism-session cookie on every text/html response (the SPA's index.html
 // load path) so the SPA can read it and echo as X-PRism-Session on subsequent
-// fetches. Response.OnStarting fires before the first body byte writes, which
-// works with static-file + minimal-API + fallback-to-file paths alike. Predicate
-// excludes SSE responses (text/event-stream) so EventSource doesn't get the cookie
-// twice — it already arrived with the HTML page.
+// fetches, AND mark that same response Cache-Control: no-store so it is never cached.
+// Response.OnStarting fires before the first body byte writes, which works with
+// static-file + minimal-API + fallback-to-file paths alike. Predicate excludes SSE
+// responses (text/event-stream) so EventSource doesn't get the cookie twice — it
+// already arrived with the HTML page.
 app.Use(async (ctx, next) =>
 {
     ctx.Response.OnStarting(() =>
@@ -314,6 +315,18 @@ app.Use(async (ctx, next) =>
                 Secure = false,
                 Path = "/",
             });
+
+            // #433: a response carrying the per-process security cookie must never be
+            // cached. Without this, Electron's persistent HTTP cache serves a 304 /
+            // from-cache index.html on cold relaunch — which carries no fresh Set-Cookie
+            // — so the SPA presents the previous launch's stale cookie and the new
+            // process 401s. no-store forces a full 200 text/html re-fetch (and cookie
+            // re-stamp) each launch. Bound to the same text/html predicate as the cookie
+            // so the two can't drift, and route-agnostic (applies whether MapStaticAssets
+            // or MapFallbackToFile served index.html). Overwrite (assign), not append:
+            // OnStarting fires last — just before headers flush — so this wins over any
+            // Cache-Control a static-file handler set earlier in the pipeline.
+            ctx.Response.Headers.CacheControl = "no-store";
         }
         return Task.CompletedTask;
     });
