@@ -7,7 +7,6 @@ using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using PRism.Core.Activity;
-using PRism.Web.Middleware;
 using PRism.Web.Tests.TestHelpers;
 using Xunit;
 
@@ -39,20 +38,11 @@ public sealed class ActivityEndpointsTests
         return (inner, outer);
     }
 
-    // Creates an authenticated client against the outer (stub-injected) server, manually
-    // attaching the session token and origin header that PRismWebApplicationFactory.ConfigureClient
-    // normally injects. The outer factory uses the base ConfigureClient (no auto-injection).
-    private static System.Net.Http.HttpClient AuthenticatedClient(WebApplicationFactory<Program> outer)
-    {
-        var client = outer.CreateClient();
-        var token = outer.Services.GetRequiredService<SessionTokenProvider>().Current;
-        client.DefaultRequestHeaders.Add("X-PRism-Session", token);
-        client.DefaultRequestHeaders.Add("Cookie", $"prism-session={token}");
-        var origin = client.BaseAddress?.GetLeftPart(UriPartial.Authority);
-        if (!string.IsNullOrEmpty(origin))
-            client.DefaultRequestHeaders.Add("Origin", origin);
-        return client;
-    }
+    // Authenticated client against the outer (stub-injected) server. The WithWebHostBuilder-derived
+    // factory doesn't inherit PRismWebApplicationFactory.ConfigureClient, so credentials come from
+    // the shared TestClientExtensions seam.
+    private static System.Net.Http.HttpClient AuthenticatedClient(WebApplicationFactory<Program> outer) =>
+        outer.CreateAuthenticatedClient();
 
     private static ActivityResponse OneReviewed() => new(
         [new ActivityItem("alice", null, false, ActivityVerb.Reviewed, "acme/api", 7, "Fix",
