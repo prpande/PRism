@@ -26,8 +26,16 @@
   padding: var(--s-6, 24px);
   box-shadow: var(--shadow-modal, 0 8px 32px rgba(0, 0, 0, 0.2));
 }
-.heading {
+.headerRow {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2, 8px);
   margin: 0 0 var(--s-4, 16px);
+  /* The keyboard glyph inherits the heading colour via currentColor. */
+  color: var(--text-1);
+}
+.heading {
+  margin: 0;
   font-size: var(--text-lg, 17px);
   outline: none;
 }
@@ -55,28 +63,45 @@
   outline: 2px solid var(--accent-ring, var(--accent));
   outline-offset: 2px;
 }
-.group {
-  margin-top: var(--s-4, 16px);
+.table {
+  /* Shrink to content so the columns don't justify edge-to-edge and leave a
+     wide empty gutter on the right of the short Action cells; then centre the
+     tight block for balanced margins. Centring offsets the table from the
+     left-aligned heading, so the heading stands out above it.
+     NOTE: must be `max-content`, not `auto`/`fit-content` — on a <table> element
+     both of those resolve to the full available width (Chromium); only
+     `max-content` shrinks to the intrinsic content width. `max-width: 100%`
+     caps it so a narrow panel wraps cells instead of overflowing. */
+  width: max-content;
+  max-width: 100%;
+  margin: 0 auto;
+  border-collapse: collapse;
+  font-size: var(--text-sm, 13px);
 }
-.group:first-of-type {
-  margin-top: 0;
-}
+/* Column-group header row (one per <tbody>). Styled like the former <h3> group
+   heading; padding-top separates groups since they now share one table. */
 .groupHeading {
-  margin: 0 0 var(--s-2, 8px);
+  text-align: left;
+  font-weight: 600;
   font-size: var(--text-sm, 13px);
   text-transform: uppercase;
   letter-spacing: 0.04em;
   color: var(--text-2);
+  padding: var(--s-4, 16px) 0 var(--s-2, 8px);
 }
-.table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: var(--text-sm, 13px);
+.table tbody:first-of-type .groupHeading {
+  padding-top: 0;
 }
 .table td {
-  padding: var(--s-2, 8px) var(--s-3, 12px) var(--s-2, 8px) 0;
+  /* Wider inter-column gap (right padding) now the columns are content-sized
+     rather than justified across the full width. */
+  padding: var(--s-2, 8px) var(--s-5, 20px) var(--s-2, 8px) 0;
   vertical-align: top;
   border-bottom: 1px solid var(--border-1, var(--border-strong));
+}
+/* No trailing gap after the last (Action) column. */
+.table td.action {
+  padding-right: 0;
 }
 .table tr:last-child td {
   border-bottom: none;
