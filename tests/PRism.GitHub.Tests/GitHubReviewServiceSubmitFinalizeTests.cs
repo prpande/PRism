@@ -12,10 +12,7 @@ public class GitHubReviewServiceSubmitFinalizeTests
     private static PrReference Ref => new("owner", "repo", 42);
 
     private static GitHubReviewService NewService(HttpMessageHandler handler)
-    {
-        var factory = new FakeHttpClientFactory(handler, new Uri("https://api.github.com/"));
-        return new GitHubReviewService(factory, () => Task.FromResult<string?>("ghp_test"), "https://github.com");
-    }
+        => GitHubReviewServiceFactory.Create(handler);
 
     [Theory]
     [InlineData(SubmitEvent.Approve, "APPROVE")]

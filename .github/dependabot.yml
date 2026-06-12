@@ -1,5 +1,10 @@
 version: 2
 updates:
+  # directory: "/" covers BOTH the workflow `uses:` pins under .github/workflows/
+  # AND the SHA pins inside composite actions under .github/actions/ (GitHub's
+  # github-actions ecosystem scans composite actions repo-wide since late 2023).
+  # So the pins in .github/actions/setup-toolchain — consumed by every job — are
+  # Dependabot-maintained without a second entry.
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:

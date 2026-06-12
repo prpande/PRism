@@ -14,6 +14,7 @@ terminal is freed once the build finishes and the window appears.
 scripts\run-desktop.ps1
 scripts\run-desktop.ps1 -SkipBuild   # fast re-launch against the current build
 ```
+
 ```bash
 # macOS
 ./scripts/run-desktop.sh

@@ -24,17 +24,11 @@ jobs:
     # time for the whole job is ~5 minutes.
     timeout-minutes: 30
     steps:
-      # Third-party actions pinned to commit SHAs (security: mutable tags can be
-      # force-pushed; pinned SHAs cannot). Bump via Dependabot (.github/dependabot.yml).
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # actions/checkout v6.0.2
-      - uses: actions/setup-dotnet@c2fa09f4bde5ebb9d1777cf28262a3eb3db3ced7  # actions/setup-dotnet v5.2.0
-        with:
-          dotnet-version: '10.0.x'
-      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e  # actions/setup-node v6.4.0
-        with:
-          node-version: '24'
-          cache: 'npm'
-          cache-dependency-path: 'frontend/package-lock.json'
+      # checkout SHA-pinned (mutable tags can be force-pushed; pinned SHAs cannot;
+      # Dependabot bumps it). The .NET SDK + Node versions/pins live in the
+      # composite setup-toolchain action.
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # actions/checkout v6.0.3
+      - uses: ./.github/actions/setup-toolchain
 
       - name: Frontend install
         working-directory: frontend

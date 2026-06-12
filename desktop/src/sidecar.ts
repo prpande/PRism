@@ -53,7 +53,10 @@ export function planSpawn(opts: SidecarOptions): SpawnPlan {
   const binary = path.resolve(opts.binaryPath);
   return {
     binary,
-    args: ["--no-browser", ...(opts.dataDir ? ["--dataDir", opts.dataDir] : [])],
+    args: [
+      "--no-browser",
+      ...(opts.dataDir ? ["--dataDir", opts.dataDir] : []),
+    ],
     // Anchor the working directory to the binary's OWN directory. ASP.NET derives
     // its ContentRoot from the process cwd, and MapFallbackToFile("index.html")
     // resolves the SPA shell under {ContentRoot}/wwwroot. Electron's launch cwd is
@@ -102,7 +105,9 @@ export async function startSidecar(opts: SidecarOptions): Promise<Sidecar> {
   // bounded tail so the failure surfaces the actual output instead of just a timeout.
   let stderrTail = "";
   child.stderr?.on("data", (chunk: Buffer) => {
-    stderrTail = (stderrTail + chunk.toString("utf8")).slice(-STDERR_TAIL_BYTES);
+    stderrTail = (stderrTail + chunk.toString("utf8")).slice(
+      -STDERR_TAIL_BYTES,
+    );
   });
 
   try {
@@ -136,7 +141,10 @@ export async function startSidecar(opts: SidecarOptions): Promise<Sidecar> {
   }
 }
 
-export function readPortFromStdout(child: ChildProcess, timeoutMs: number): Promise<number> {
+export function readPortFromStdout(
+  child: ChildProcess,
+  timeoutMs: number,
+): Promise<number> {
   return new Promise((resolve, reject) => {
     let buf = "";
     const cleanup = () => {
@@ -165,7 +173,9 @@ export function readPortFromStdout(child: ChildProcess, timeoutMs: number): Prom
     };
     const onExit = (code: number | null) => {
       cleanup();
-      reject(new Error(`Backend exited before reporting a port (code ${code}).`));
+      reject(
+        new Error(`Backend exited before reporting a port (code ${code}).`),
+      );
     };
     // A spawn failure (e.g. ENOENT for a bad binary path) emits 'error', not 'exit'.
     // Without this listener the event is unhandled and crashes the Electron main

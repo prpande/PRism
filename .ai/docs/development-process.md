@@ -39,7 +39,7 @@ The Electron shell wraps those *same* self-contained binaries as a managed sidec
 
 ## Pre-push checklist
 
-Run steps 1–4 locally before every `git push`. They mirror `.github/workflows/ci.yml` so anything CI catches, you catch first. Step 5 (Playwright) is conditional — see comments in [`README.md`](../../README.md) § Pre-push checklist.
+Run steps 1–4 locally before every `git push`. They mirror `.github/workflows/ci.yml` so anything CI catches, you catch first. Step 5 (desktop) is conditional on a `desktop/` change; step 6 (Playwright) is conditional — see comments in [`README.md`](../../README.md) § Pre-push checklist.
 
 ```text
 # 1. Frontend lint (eslint + prettier --check)
@@ -52,10 +52,17 @@ npm run build
 npm test
 
 # 4. Backend build + tests
+#    --settings .runsettings MUST match ci.yml — it excludes Category=Integration
+#    and Canonical=Strict. Omitting it runs the live-GitHub integration project
+#    (needs PRISM_INTEGRATION_PAT) and strict-canonical tests CI deliberately filters.
 cd .. && dotnet build --configuration Release
-dotnet test --no-build --configuration Release
+dotnet test --no-build --configuration Release --settings .runsettings
 
-# 5. Frontend e2e (Playwright) — required when README criteria apply
+# 5. Desktop shell (desktop/) — run when your change touches desktop/. CI runs the
+#    desktop job always-on; locally it's gated to save time (the checklist is serial).
+cd desktop && npm ci && npm run lint && npm run build && npm run test:unit && cd ..
+
+# 6. Frontend e2e (Playwright) — required when README criteria apply
 cd frontend && npx playwright test
 ```
 

@@ -1,5 +1,5 @@
 import { it, expect, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import { PrRootReplyComposer } from './PrRootReplyComposer';
 
 // PrRootBodyEditor's autosave hook hits the network on mount; stub the editor
@@ -50,4 +50,25 @@ it('wraps the composer in the shared composer-frame', () => {
     />,
   );
   expect(container.querySelector('.composer-frame')).not.toBeNull();
+});
+
+it('groups the Overview footer with a spacer in canonical order', () => {
+  const { container } = render(
+    <PrRootReplyComposer
+      prRef={prRef}
+      prState="open"
+      draftId={null}
+      onDraftIdChange={() => {}}
+      registerOpenComposer={() => () => {}}
+      onClose={() => {}}
+    />,
+  );
+  const bar = container.querySelector('.composer-actions') as HTMLElement;
+  expect(bar.querySelector('.composer-actions-spacer')).not.toBeNull();
+  // AiComposerAssistant is mocked to null and the badge/spacer are spans, so the
+  // button sequence in DOM (= visual) order is Preview -> Discard -> Post.
+  const buttons = within(bar)
+    .getAllByRole('button')
+    .map((b) => b.textContent);
+  expect(buttons).toEqual(['Preview', 'Discard', 'Post']);
 });
