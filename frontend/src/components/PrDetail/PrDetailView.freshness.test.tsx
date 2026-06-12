@@ -124,6 +124,10 @@ vi.mock('../../hooks/useRootCommentPostedSubscriber', () => ({
   useRootCommentPostedSubscriber: () => {},
 }));
 
+vi.mock('../../hooks/useDraftSubmittedSubscriber', () => ({
+  useDraftSubmittedSubscriber: () => {},
+}));
+
 vi.mock('../../hooks/useCrossTabPrPresence', () => ({
   useCrossTabPrPresence: () => ({
     readOnly: false,

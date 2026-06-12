@@ -1,6 +1,7 @@
 import type {
   DraftDiscardedEvent,
   DraftSavedEvent,
+  DraftSubmittedEvent,
   InboxUpdatedEvent,
   RootCommentPostedEvent,
   StateChangedEvent,
@@ -22,6 +23,7 @@ export type {
   SubmitOrphanCleanupFailedEvent,
   SubmitDuplicateMarkerDetectedEvent,
   RootCommentPostedEvent,
+  DraftSubmittedEvent,
 };
 
 export type PrUpdatedEvent = {
@@ -51,6 +53,7 @@ export type EventPayloadByType = {
   'submit-duplicate-marker-detected': SubmitDuplicateMarkerDetectedEvent;
   'identity-changed': IdentityChangedEvent;
   'root-comment-posted': RootCommentPostedEvent;
+  'draft-submitted': DraftSubmittedEvent;
 };
 
 // SSE event names the EventSource must register listeners for. EventSource only dispatches
@@ -69,6 +72,7 @@ const EVENT_TYPES = [
   'submit-duplicate-marker-detected',
   'identity-changed',
   'root-comment-posted',
+  'draft-submitted',
 ] as const satisfies readonly (keyof EventPayloadByType)[];
 
 // Cross-provider bridges (spec § 3.2.1 reconnect-replay defense + § 3.1 in-flight
