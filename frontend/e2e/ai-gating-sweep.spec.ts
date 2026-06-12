@@ -16,25 +16,16 @@
 // useAiGate(key) = capabilities[key] && preferences.ui.aiPreview requires.
 
 import { test, expect, type Route } from '@playwright/test';
-import { authedAuthState, makeDefaultPreferences } from './fixtures/preferences';
+import {
+  authedAuthState,
+  allOffCapabilities,
+  makeDefaultPreferences,
+} from './fixtures/preferences';
 
 // ---------------------------------------------------------------------------
-// Fixtures
+// Fixtures — allOffCapabilities is the canonical fixture (#332); allOnCapabilities
+// is local because it is this spec's mirror image with no other consumer.
 // ---------------------------------------------------------------------------
-
-const allOffCapabilities = {
-  ai: {
-    summary: false,
-    fileFocus: false,
-    hunkAnnotations: false,
-    preSubmitValidators: false,
-    composerAssist: false,
-    draftSuggestions: false,
-    draftReconciliation: false,
-    inboxEnrichment: false,
-    inboxRanking: false,
-  },
-};
 
 const allOnCapabilities = {
   ai: {

@@ -1,5 +1,6 @@
 import type { Page, Route } from '@playwright/test';
 import { setupBaseRoutes } from './base-mocks';
+import { makeDefaultPreferences } from '../fixtures/preferences';
 
 // Shared mocks for the mocked-mode Replace-token e2e specs
 // (replace-token-same-login.spec.ts + replace-token-different-login.spec.ts).
@@ -10,24 +11,9 @@ import { setupBaseRoutes } from './base-mocks';
 // The third spec in the family (replace-token-submit-in-flight.spec.ts) uses
 // the REAL backend via /test/submit/hold and doesn't share these mocks.
 
-const defaultPreferences = {
-  ui: { theme: 'system', accent: 'indigo', aiPreview: false, density: 'comfortable' },
-  inbox: {
-    sections: {
-      'review-requested': true,
-      'awaiting-author': true,
-      'authored-by-me': true,
-      mentioned: true,
-      'recently-closed': true,
-    },
-    defaultSort: 'updated',
-  },
-  github: {
-    host: 'https://github.com',
-    configPath: '/Users/x/AppData/Local/PRism/config.json',
-    logsPath: '/Users/x/AppData/Local/PRism/logs',
-  },
-};
+// #332: the preferences body is the canonical fixture (single source of truth);
+// these specs only read it, so a module-level snapshot is fine.
+const defaultPreferences = makeDefaultPreferences();
 
 // Wires up the read-side endpoints the Settings + Setup pages depend on:
 // setupBaseRoutes covers auth/state + capabilities + events; this adds the
