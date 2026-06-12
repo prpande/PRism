@@ -6,7 +6,6 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using PRism.Core.Feedback;
 using PRism.Web.Endpoints;
-using PRism.Web.Middleware;
 using PRism.Web.Tests.TestHelpers;
 using Xunit;
 
@@ -43,17 +42,8 @@ public class FeedbackEndpointTests
         return (f, sub);
     }
 
-    private static HttpClient AuthedClient(WebApplicationFactory<Program> f)
-    {
-        var token = f.Services.GetRequiredService<SessionTokenProvider>().Current;
-        var c = f.CreateClient();
-        c.DefaultRequestHeaders.Add("X-PRism-Session", token);
-        c.DefaultRequestHeaders.Add("Cookie", $"prism-session={token}");
-        var origin = c.BaseAddress?.GetLeftPart(UriPartial.Authority);
-        if (!string.IsNullOrEmpty(origin))
-            c.DefaultRequestHeaders.Add("Origin", origin);
-        return c;
-    }
+    private static HttpClient AuthedClient(WebApplicationFactory<Program> f) =>
+        f.CreateAuthenticatedClient();
 
     private static object ValidBody() =>
         new { category = "Bug", summary = "It broke", details = "Steps", routePattern = "/inbox", platform = "browser" };
