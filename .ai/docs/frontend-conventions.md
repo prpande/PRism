@@ -11,6 +11,21 @@ Production UI lives under `frontend/` (React + Vite + TypeScript). **Visual and 
 
 For route-level or PR-detail structure decisions that conflict with an older plan file, **design handoff wins** on visual/interaction conflicts (see project specs and `CLAUDE.md` / team precedent).
 
+## Test layout
+
+- **Co-locate component tests with their source.** A component's unit test lives next
+  to it as `frontend/src/.../<Component>.test.tsx`, not under `frontend/__tests__/`.
+  This is the convention for **new** component tests; it keeps a component's test next
+  to its source and is the direction the codebase settled on (see #334).
+- **One test location per component.** Do not add a second test file for a component
+  under `frontend/__tests__/` when a co-located one exists (or vice versa) — the
+  dual-location split was consolidated in #334. Subject-specific siblings are fine and
+  encouraged (`<Component>.<subject>.test.tsx`, e.g. `PrRootReplyComposer.badge.test.tsx`),
+  but they live co-located alongside the main file, not in a second directory.
+- `frontend/__tests__/` still holds historical component tests that predate this
+  convention and have no co-located twin; they migrate opportunistically (tracked
+  separately) and are not a license to add new ones there.
+
 ## Component & token gotchas
 
 Non-obvious facts about shared components and the token system, each of which has caused a wrong fix or a wrong review call.
