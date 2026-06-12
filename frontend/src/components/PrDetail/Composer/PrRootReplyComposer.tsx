@@ -209,6 +209,7 @@ export function PrRootReplyComposer({
       )}
 
       <div className="composer-actions">
+        {/* left group */}
         <button
           type="button"
           className="composer-preview-toggle"
@@ -218,6 +219,8 @@ export function PrRootReplyComposer({
           {previewMode ? 'Edit' : 'Preview'}
         </button>
 
+        <AiComposerAssistant />
+
         <span
           className={`composer-badge composer-badge--${badge}`}
           role="status"
@@ -226,8 +229,9 @@ export function PrRootReplyComposer({
           {badgeLabel(badge)}
         </span>
 
-        <AiComposerAssistant />
+        <span className="composer-actions-spacer" aria-hidden="true" />
 
+        {/* right group */}
         <button
           type="button"
           className="composer-discard"

@@ -119,8 +119,13 @@ describe('ReplyComposer — post-now (Task 10)', () => {
     // "Comment" should be present
     expect(screen.getByRole('button', { name: 'Comment' })).toBeInTheDocument();
 
-    // Merged sub-label
-    expect(screen.getByText(/PR is merged — comments post immediately/i)).toBeInTheDocument();
+    // #390 — the merged note is gone; the "posts immediately" context now lives
+    // on the Comment button's tooltip (keeps "Comment" as the accessible name).
+    expect(screen.queryByText(/comments post immediately/i)).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Comment' })).toHaveAttribute(
+      'title',
+      'Post directly to this merged PR',
+    );
   });
 
   // Case 3b: prState='closed' → sub-label reads "PR is closed — comments post immediately"
@@ -133,9 +138,12 @@ describe('ReplyComposer — post-now (Task 10)', () => {
     // "Comment" should be present
     expect(screen.getByRole('button', { name: 'Comment' })).toBeInTheDocument();
 
-    // Closed sub-label (not merged)
-    expect(screen.getByText(/PR is closed — comments post immediately/i)).toBeInTheDocument();
-    expect(screen.queryByText(/PR is merged — comments post immediately/i)).not.toBeInTheDocument();
+    // #390 — closed context on the Comment button's tooltip (not merged).
+    expect(screen.queryByText(/comments post immediately/i)).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Comment' })).toHaveAttribute(
+      'title',
+      'Post directly to this closed PR',
+    );
   });
 
   // Case 4: Click "Comment" on a valid draft → full happy path
