@@ -17,16 +17,18 @@ export function useDiffViewportWidthVar(
     };
     apply();
 
-    // jsdom (test env) has no ResizeObserver — the initial apply() above is all
-    // it gets; only real browsers get live re-measurement + cleanup.
+    // jsdom (test env) has no ResizeObserver — there it only gets the initial
+    // apply(); real browsers re-measure live. One cleanup for both branches so
+    // the property never lingers on unmount (mirrors useLockedPaneScroll).
+    let ro: ResizeObserver | undefined;
     if (typeof ResizeObserver !== 'undefined') {
-      const ro = new ResizeObserver(() => apply());
+      ro = new ResizeObserver(() => apply());
       ro.observe(body);
-      return () => {
-        ro.disconnect();
-        body.style.removeProperty('--diff-viewport-w');
-      };
     }
+    return () => {
+      ro?.disconnect();
+      body.style.removeProperty('--diff-viewport-w');
+    };
     // `deps` lets DiffPane re-measure on file / mode / wrap / content-height
     // change (a vertical scrollbar appearing shrinks clientWidth — a
     // ResizeObserver blind spot).
