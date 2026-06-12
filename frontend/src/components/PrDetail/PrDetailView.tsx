@@ -19,6 +19,7 @@ import { useToast } from '../Toast/useToast';
 import { useDraftSession } from '../../hooks/useDraftSession';
 import { useStateChangedSubscriber } from '../../hooks/useStateChangedSubscriber';
 import { useRootCommentPostedSubscriber } from '../../hooks/useRootCommentPostedSubscriber';
+import { useDraftSubmittedSubscriber } from '../../hooks/useDraftSubmittedSubscriber';
 import { useCrossTabPrPresence } from '../../hooks/useCrossTabPrPresence';
 import { useReconcile } from '../../hooks/useReconcile';
 import type { PrReference } from '../../api/types';
@@ -79,6 +80,18 @@ export function PrDetailView({
   // Task 14: reload PR detail when the root-comment draft is posted so the
   // posted comment appears in the conversation and the local draft clears.
   useRootCommentPostedSubscriber({ prRef, onPosted: reload });
+  // #392: when a review is submitted, reload PR detail (so the just-posted inline
+  // threads + Overview comment surface) AND refetch the draft session (so the
+  // submitted drafts clear from their composers) — without a manual reload. The
+  // `draft-submitted` SSE fires post-clear (PrSubmitEndpoints publishes it after the
+  // pipeline's ClearSubmittedSession), and the loader's matching DraftSubmitted →
+  // Invalidate guarantees this reload re-fetches fresh detail, not the stale snapshot.
+  const handleDraftSubmitted = useCallback(() => {
+    reload();
+    void draftSession.refetch();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- reload (usePrDetail) and draftSession.refetch are stable useCallbacks, not the per-render draftSession object literal (#331)
+  }, [reload, draftSession.refetch]);
+  useDraftSubmittedSubscriber({ prRef, onSubmitted: handleDraftSubmitted });
   const presence = useCrossTabPrPresence(prRef);
 
   // Wraps POST /api/pr/{ref}/reload with the spec's 409-stale-head auto-retry.
