@@ -9,6 +9,8 @@
 # Usage:
 #   ./scripts/run-desktop.sh            # build + launch
 #   ./scripts/run-desktop.sh --skip-build
+#   ./scripts/run-desktop.sh --clean    # wipe local state (data dir + Keychain token), then build + launch
+#   ./scripts/run-desktop.sh --clean --skip-build
 
 # ---- pure helpers (sourceable; no side effects at source time) ----
 
@@ -46,19 +48,36 @@ rid_for_arch() {
   esac
 }
 
-# Pure, position-independent arg parser (testable). Echoes "skip=0"/"skip=1" for the
+# Pure, position-independent arg parser (testable). Echoes "skip=<0|1> clean=<0|1>" for the
 # recognized flag set, or "error:<arg>" for the first unrecognized option — main()
 # turns an "error:" result into a usage error + exit (rather than silently ignoring a
 # typo'd flag and doing a full build anyway).
 resolve_args() {
-  local a skip=0
+  local a skip=0 clean=0
   for a in "$@"; do
     case "$a" in
       --skip-build) skip=1 ;;
+      --clean)      clean=1 ;;
       *) echo "error:$a"; return 0 ;;
     esac
   done
-  echo "skip=$skip"
+  echo "skip=$skip clean=$clean"
+}
+
+# Defense-in-depth guard for --clean's `rm -rf`. The data dir is computed, not user-supplied,
+# but a recursive delete is catastrophic on an empty/relative/too-shallow path. Returns 0
+# (safe) ONLY when $1 is an absolute path whose leaf is 'PRism', is not $HOME, and is at least
+# two segments deep. Bash parallel of run-desktop.ps1:Test-CleanTargetSafe / run.ps1 guard.
+data_dir_cleanable() {
+  local path="${1:-}"
+  [[ -n "$path" ]] || return 1
+  [[ "$path" == /* ]] || return 1                  # must be absolute
+  [[ "$(basename "$path")" == "PRism" ]] || return 1
+  local norm="${path%/}"                           # drop a trailing slash
+  [[ "$norm" != "${HOME%/}" ]] || return 1         # never $HOME itself
+  local rest="${norm#/}"                           # drop leading slash
+  [[ "$rest" == */* ]] || return 1                 # >=2 segments (so '/PRism' is rejected)
+  return 0
 }
 
 main() {
@@ -70,10 +89,16 @@ main() {
   parsed="$(resolve_args "$@")"
   if [[ "$parsed" == error:* ]]; then
     echo "Unknown option: ${parsed#error:}" >&2
-    echo "Usage: run-desktop.sh [--skip-build]" >&2
+    echo "Usage: run-desktop.sh [--skip-build] [--clean]" >&2
     exit 1
   fi
-  local skip_build="${parsed#skip=}"
+  local skip_build=0 clean_state=0 kv
+  for kv in $parsed; do
+    case "$kv" in
+      skip=*)  skip_build="${kv#skip=}" ;;
+      clean=*) clean_state="${kv#clean=}" ;;
+    esac
+  done
 
   local repo_root desktop_dir publish_dir data_dir log pidfile
   repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -84,18 +109,19 @@ main() {
   # so the sidecar always self-resolves its own correct store
   # (DataDirectoryResolver -> Environment.SpecialFolder.LocalApplicationData) regardless
   # of this path — only the log/pidfile location depends on it. The default targets the
-  # XDG data dir (.NET on macOS commonly maps LocalApplicationData to ~/.local/share;
-  # the exact mapping can vary by runtime, so this is a chosen default, not a guaranteed
-  # match — repo docs elsewhere assume ~/Library/Application Support). To pin the store
-  # AND this dir to the same place unambiguously, set PRISM_DATA_DIR (the launch subshell
-  # below inherits it, so main.ts:resolveDataDir() and this path then agree).
-  data_dir="${PRISM_DATA_DIR:-$HOME/.local/share/PRism}"
+  # XDG data dir. The sidecar self-resolves its store via DataDirectoryResolver ->
+  # Environment.SpecialFolder.LocalApplicationData, which .NET maps to
+  # ${XDG_DATA_HOME:-$HOME/.local/share}/PRism on macOS (NOT ~/Library/Application Support;
+  # see TESTING.md). We mirror that exactly so --clean deletes the dir the app actually uses
+  # and the log/pidfile co-locate with the store. PRISM_DATA_DIR overrides both (the launch
+  # subshell below inherits it, so the sidecar and this path agree).
+  data_dir="${PRISM_DATA_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/PRism}"
   log="$data_dir/run-desktop.log"
   pidfile="$data_dir/run-desktop.pid"
-  mkdir -p "$data_dir"
 
-  # --- single-instance short-circuit BEFORE any work (preflight or build), so a
-  #     re-run while the app is up exits fast instead of redoing the preflight/build. ---
+  # --- single-instance short-circuit BEFORE any work (preflight, build, or --clean), so a
+  #     re-run while the app is up exits fast. This must run BEFORE the --clean wipe, which
+  #     would delete the very pidfile we test here. ---
   if [[ -f "$pidfile" ]]; then
     local existing_pid
     existing_pid="$(cat "$pidfile" 2>/dev/null || true)"
@@ -106,10 +132,39 @@ main() {
     # positive is self-recoverable. (A name check is a macOS-tester follow-up; the
     # Windows sibling checks the process name via Get-Process.)
     if [[ -n "$existing_pid" ]] && kill -0 "$existing_pid" 2>/dev/null; then
+      if [[ "$clean_state" -eq 1 ]]; then
+        echo "PRism desktop is running (pid $existing_pid); close the window before a --clean run. Refusing to wipe $data_dir out from under a live app." >&2
+        exit 1
+      fi
       echo "PRism desktop is already running (pid $existing_pid, pidfile $pidfile). Close the window first; a re-run would just refocus it. Nothing rebuilt. If it is NOT running, delete that pidfile and retry." >&2
       exit 0
     fi
   fi
+
+  # --- --clean: wipe local state for a fresh first-run, BEFORE preflight/build. Removes the
+  #     whole data dir (drafts, view state, logs) AND, on macOS, the GitHub token from the
+  #     Keychain. The token lives in the Keychain here (NOT in the data dir), so unlike the
+  #     Windows launcher the dir delete alone would leave you logged in — hence the explicit
+  #     Keychain delete. Item identity is service='PRism', account='github-pat'
+  #     (PRism.Core/Auth/TokenStore.cs: WithMacKeyChain). ---
+  if [[ "$clean_state" -eq 1 ]]; then
+    if ! data_dir_cleanable "$data_dir"; then
+      echo "Refusing --clean: '$data_dir' did not pass the safe-target guard (not an absolute PRism-leaf path, at least two segments deep, outside protected user roots)." >&2
+      exit 1
+    fi
+    if [[ -d "$data_dir" ]]; then
+      echo "Clean: removing local state at $data_dir"
+      rm -rf "$data_dir"
+    else
+      echo "Clean: $data_dir not present - nothing to remove."
+    fi
+    # `security` is macOS-only and returns nonzero when the item is absent (item-not-found);
+    # neither should abort the launch, so swallow with `|| true` (set -e is active here).
+    echo "Clean: removing PRism token from the macOS Keychain (service=PRism, account=github-pat)"
+    security delete-generic-password -s "PRism" -a "github-pat" >/dev/null 2>&1 || true
+  fi
+
+  mkdir -p "$data_dir"
 
   # --- preflight: Node + npm presence, .NET SDK major >= 10 ---
   command -v node   >/dev/null 2>&1 || { node_remediation;   exit 1; }

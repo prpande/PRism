@@ -2,116 +2,100 @@
 
 **A local-first pull-request review tool that runs on your own machine.**
 
-PRism reads your GitHub pull requests, lets you compose an entire review locally — line comments, replies, a verdict, and a summary — and finalizes everything together as a single GitHub *pending review*. Nothing you write is visible to anyone else until you click **Submit**, at which point the whole review lands at once, exactly as if you'd written it on github.com.
+PRism reads your GitHub pull requests and lets you compose an entire review locally — line comments, replies, a verdict, and a summary — then finalizes it as a single GitHub *pending review*. Nothing is visible to anyone until you click **Submit**, at which point the whole review lands at once.
 
-It runs entirely on your computer — there's no PRism server in the middle. The app talks directly to GitHub's API from your machine, and your drafts and view state stay local until you choose to submit a review.
-
-![The PRism inbox — the PRs that involve you, grouped by repository across Review requested, Awaiting author, Authored by me, and CI failing sections](assets/screenshots/inbox.png)
-
-> Screens shown with sample data.
+- **Local-first** — runs entirely on your computer; there's no PRism server. The app talks directly to GitHub's API.
+- **Private until submit** — your drafts and view state stay on your machine until you choose to submit.
+- **Single-user by design** — no server, no team sync, no shared state. A tool for *your* review pass, not a replacement for GitHub as your team's source of truth.
 
 ---
 
 ## Why PRism
 
-You're three files into a careful review when the author force-pushes. On github.com the diff shifts under you, your half-written comments now point at code that moved, and you're context-switching between the **Files** and **Conversation** tabs and the checks panel the whole time. PRism is built around a few deliberate choices that keep a review session calm:
+A careful review falls apart when the author force-pushes mid-pass — the diff shifts, half-written comments point at moved code, and you're juggling tabs. PRism is built to keep a session calm:
 
-- **Compose the whole review, then submit atomically.** Drafts, replies, verdict, and summary stage in a GitHub pending review that's invisible to others. You finalize when *you* decide the review is done — not comment-by-comment.
-- **Banner, not mutation.** When the author pushes a new commit or someone comments, PRism shows a dismissible banner. The diff under your cursor never changes until you choose to reload. You're never reviewing a moving target.
-- **Your text is sacred.** Drafts survive app restarts, PR reloads, and even token swaps. When a new commit moves the line your comment anchored to, PRism re-anchors what it can and clearly flags what it couldn't — it never silently drops what you wrote.
-- **Truthful diffs.** Whitespace shown as-is, nothing filtered or hidden. What you review is what's there.
-
-PRism is single-user and local by design — no server, no team sync, no shared state. It's a tool for *your* review pass, not a replacement for GitHub as your team's source of truth.
+- **Atomic submit** — drafts, replies, verdict, and summary stage in an invisible GitHub pending review; you finalize when *you* decide the review is done, not comment-by-comment.
+- **Banner, not mutation** — a new commit or comment shows a dismissible banner; the diff under your cursor never changes until you choose to reload. You never review a moving target.
+- **Your text is sacred** — drafts survive restarts, PR reloads, and token swaps. When a commit moves an anchored line, PRism re-anchors what it can and clearly flags what it couldn't — it never silently drops what you wrote.
+- **Truthful diffs** — whitespace shown as-is, nothing filtered or hidden.
 
 ---
 
 ## Features
 
-### Inbox
-The landing surface organizes every PR that involves you into sections — **Review requested**, **Awaiting author**, **Authored by me**, **Mentioned**, and **CI failing on my PRs** — grouped by repository. Each row shows the author, age, comment count, and unread badges for new commits and new comments since you last looked. A background poll surfaces changes as a banner you apply on your terms. Paste any PR URL to jump straight to a PR that isn't in your inbox.
+**Inbox** — every PR that involves you, grouped by repository, in sections: **Review requested**, **Awaiting author**, **Authored by me**, **Mentioned**, and **CI failing on my PRs**. Rows show author, age, comment count, and unread badges for new commits and comments. A background poll surfaces changes as a banner you apply on your terms. Paste any PR URL to jump to a PR that isn't in your inbox.
 
-### PR review
-- **File tree** with smart-compacted directory paths, per-file *Viewed* checkboxes, and live per-directory rollups, plus `j`/`k` keyboard navigation.
-- **Diff viewer** with side-by-side and unified modes, syntax highlighting, word-level intra-line highlighting, and on-demand whole-file context expansion.
-- **Iteration tabs** that group the PR's commits into review rounds, so you can focus on *just what changed this round* — or compare any two rounds side by side — instead of re-reading the cumulative diff.
-- **Click-to-comment** drafting anchored to any line, with Markdown live-preview, auto-save on keystroke, and replies to existing threads.
-- **Overview tab** with the PR description, stats, and the PR-level conversation, plus rich Markdown rendering (code blocks, Mermaid diagrams).
+**PR review**
 
-![PR detail — Overview tab with the description, change stats, and the verdict picker in the header](assets/screenshots/pr-overview.png)
+- **File tree** — smart-compacted directory paths, per-file *Viewed* checkboxes, live per-directory rollups, and `j`/`k` navigation.
+- **Diff viewer** — side-by-side and unified modes, syntax highlighting, word-level intra-line highlighting, and on-demand whole-file context expansion.
+- **Iteration tabs** — group the PR's commits into review rounds, so you can focus on just what changed this round, or compare any two rounds side by side.
+- **Click-to-comment** — line-anchored drafting with Markdown live-preview, auto-save on keystroke, and replies to existing threads.
+- **Overview tab** — the PR description, stats, and PR-level conversation, with rich Markdown rendering (code blocks, Mermaid diagrams).
 
-![PR detail — Files tab with the file tree, iteration tabs, and a syntax-highlighted side-by-side diff](assets/screenshots/pr-files.png)
+**Submitting a review** — pick a verdict (**Approve**, **Request changes**, or **Comment**), add an optional summary, and submit. Everything stages as one GitHub pending review and reveals at once. The flow is resumable: a network hiccup won't duplicate the threads or replies in your review.
 
-### Submitting a review
-Pick a verdict — **Approve**, **Request changes**, or **Comment** — add an optional summary, and submit. PRism stages everything as one GitHub pending review and reveals it all at once. The submit flow is resumable: if a network hiccup interrupts it, PRism picks up where it left off without duplicating the threads or replies in your review.
+**Theming and desktop** — light and dark themes. Run PRism as a standalone desktop app with its own window, or as a tab in your default browser — both share the same data folder, so your token and drafts carry across.
 
-### Theming and desktop
-Light and dark themes. Run PRism as a standalone **desktop app** with its own window, or as a tab in your default browser — both share the same data folder, so your token and drafts carry across.
-
-### AI augmentation (in development)
-The architecture is already in place — capability-gated seams throughout the inbox and review surfaces — for Claude-powered review summaries, file-focus hints, and review assistance. These features aren't in the shipping build yet; they're under active development on the project's V2 branch and will arrive in a future release.
+**AI augmentation (in development)** — capability-gated seams for Claude-powered review summaries, file-focus hints, and review assistance are already in place, under active development on the V2 branch for a future release. Not in the shipping build yet.
 
 ---
 
 ## Install and first run
 
-Download the latest build from the [**Releases page**](https://github.com/prpande/PRism/releases). PRism currently ships as a desktop app — a Windows installer or portable executable, and a macOS (Apple Silicon) disk image. (A standalone browser-tab build that opens in your default browser is planned; for now you can run that mode from source — see [Development](#development).)
-
-The current build is an unsigned pre-release. PRism is open source and unsigned because code-signing certificates require a paid developer account — so your OS shows a one-time trust prompt the first time you launch it. This is expected, and the steps below clear it. Download only from the official [Releases page](https://github.com/prpande/PRism/releases) so you know you have the genuine build.
+- Download the latest build from the **[Releases page](https://github.com/prpande/PRism/releases)** — a Windows installer or portable executable, and a macOS (Apple Silicon) `.dmg`.
+- Builds are **unsigned pre-releases** (code-signing requires a paid developer account), so your OS shows a one-time trust prompt on first launch. This is expected and cleared by the steps below — download only from the official Releases page.
+- A standalone browser-tab build is planned; for now you can run that mode from source — see [Development](#development).
 
 ### Windows
 
-Two builds are offered, and both work the same once running — pick whichever fits how you want to install:
-
 - **Installer** (`PRism Setup …exe`) — unpacks once at install time (no admin rights needed), then launches like any installed app.
-- **Portable** (`PRism …exe`) — runs without installing, but re-extracts the full app to your temp folder on **every** launch, so its cold-start is noticeably slower than the installer's, especially the first time on a new machine.
-
-Run the installer, or launch the portable executable. Windows SmartScreen shows **"Windows protected your PC"** because the binary isn't code-signed. Click **More info → Run anyway**. The first launch of an unsigned build can take a while as Windows Defender scans the freshly-extracted files; this is a one-time, OS-level cost. PRism opens to the Setup screen, served on a local port in the `5180–5199` range.
+- **Portable** (`PRism …exe`) — runs without installing, but re-extracts to your temp folder on **every** launch, so cold-start is slower (especially the first time on a new machine).
+- SmartScreen shows **"Windows protected your PC"** — click **More info → Run anyway**. First launch can be slow while Windows Defender scans the extracted files (a one-time cost).
+- PRism opens to the Setup screen, served on a local port in the `5180–5199` range.
 
 ### macOS
 
-Open the downloaded `.dmg` and drag PRism into your Applications folder. On first launch, Gatekeeper blocks it because the app isn't notarized: right-click (or Control-click) PRism in Applications → **Open**, then **Open** again to confirm. On recent macOS versions you may instead need to approve it under **System Settings → Privacy & Security → Open Anyway** — [`TESTING.md`](TESTING.md) has the exact per-version steps. The first time PRism reads your token from the keychain, macOS asks **Allow / Always Allow / Deny** — choose **Always Allow** so it stops prompting on every launch.
+- Open the `.dmg` and drag PRism into Applications.
+- Gatekeeper blocks the unnotarized app: right-click (or Control-click) PRism → **Open**, then **Open** again. On recent macOS you may instead approve it under **System Settings → Privacy & Security → Open Anyway** — [`TESTING.md`](TESTING.md) has the exact per-version steps.
+- On the first keychain read, choose **Always Allow** so macOS stops prompting on every launch.
 
 ### Connect your GitHub account
 
 PRism authenticates with a GitHub Personal Access Token you paste into the Setup screen on first launch.
 
-A **classic PAT** is recommended — it can read GitHub Actions check-runs and commit statuses across all your organizations, which powers the inbox's *CI failing* section:
-
-- Generate one at <https://github.com/settings/tokens/new>
-- Scopes: **`repo`** and **`read:org`**
-
-> **Heads-up on `repo`:** it grants read **and write** access to all repositories you can reach. PRism doesn't push code or change your repositories — but it does post your review (comments and approvals) to GitHub when you submit. The classic-PAT format just has no narrower option; if your organization restricts broadly-scoped tokens, use the fine-grained option below instead, despite its CI blind spot.
-
-A **fine-grained PAT** also works, but it's scoped per-organization and can't read GitHub Actions checks, so the CI section will be blind to Actions-based pipelines. If you choose one, grant **Pull requests: Read and write**, **Contents: Read**, and **Commit statuses: Read**.
-
-> **GitHub Enterprise Server?** Set your GHES host (e.g. `https://github.acmecorp.com`) on the Setup screen before pasting your token.
+- **Classic PAT (recommended)** — reads GitHub Actions check-runs and commit statuses across all your organizations, which powers the inbox's *CI failing* section.
+  - Generate one at <https://github.com/settings/tokens/new>
+  - Scopes: **`repo`** and **`read:org`**
+  - ⚠️ `repo` grants read **and write** to all repositories you can reach. PRism never pushes code, but it does post your review (comments and approvals) on submit. Classic PATs offer no narrower option — if your organization restricts broad tokens, use the fine-grained option below.
+- **Fine-grained PAT** — also works, but it's scoped per-organization and can't read Actions checks, so the CI section goes blind to Actions pipelines. Grant **Pull requests: Read and write**, **Contents: Read**, and **Commit statuses: Read**.
+- **GitHub Enterprise Server?** Set your GHES host (e.g. `https://github.acmecorp.com`) on the Setup screen before pasting your token.
 
 ---
 
 ## Using PRism
 
-- **Find a PR.** Open the app to your inbox, or paste a PR URL into the box at the top to jump directly to one.
-- **Review.** Open a PR, walk the file tree, mark files *Viewed* as you go, and click any line to leave a comment. Use the iteration tabs to focus on a single round of changes.
-- **Submit.** Choose a verdict, write a summary if you like, and click Submit — your whole review posts at once.
-- **Stay current.** When the banner says the PR changed, click Reload to pull in new commits and comments. PRism reconciles your in-progress drafts against the new code and flags any it couldn't confidently re-anchor.
+- **Find a PR** — open the app to your inbox, or paste a PR URL into the box at the top to jump directly to one.
+- **Review** — walk the file tree, mark files *Viewed* as you go, and click any line to leave a comment. Use the iteration tabs to focus on a single round of changes.
+- **Submit** — choose a verdict, write a summary if you like, and click Submit — your whole review posts at once.
+- **Stay current** — when the banner says the PR changed, click Reload. PRism reconciles your in-progress drafts against the new code and flags any it couldn't confidently re-anchor.
 
-### Replacing your token
+**Replacing your token** — Settings → **Replace token** validates a new PAT before swapping it in. If the new token is a different GitHub login, PRism keeps all your draft text, clears the previous account's identifiers, and on your next submit to an affected PR offers to resume or discard any pending review the old account left behind.
 
-The Settings panel has a **Replace token** action. It validates a new PAT before swapping it in. If the new token belongs to a different GitHub login than the old one, PRism keeps all your draft text, clears the identifiers the previous account owned, and — on your next submit to an affected PR — offers to resume or discard any pending review the old account left behind.
+**Where your data lives** — drafts and view state live under your OS application-data folder (shared by the desktop app and browser-tab mode). Your token is kept in an OS-protected store, never in plaintext:
 
-### Where your data lives
-
-PRism stores your drafts and view state under your operating system's application-data folder; the desktop app and browser-tab mode share the same folder. Your GitHub token is kept in an OS-protected token cache, never in plaintext — a DPAPI-encrypted cache file (`PRism.tokens.cache`) in your data folder on Windows, and the system Keychain on macOS (and the libsecret keyring on Linux, if you run from source). See [`TESTING.md`](TESTING.md) for the exact per-platform paths.
+- **Windows** — DPAPI-encrypted `PRism.tokens.cache` in your data folder.
+- **macOS** — the system Keychain.
+- **Linux** (from source) — the libsecret keyring.
+- See [`TESTING.md`](TESTING.md) for the exact per-platform paths.
 
 ---
 
 ## Troubleshooting
 
-**A token expired.** PRism detects the rejection on any GitHub call and sends you to Setup with a banner to paste a fresh token. Your drafts and view state are preserved.
-
-**Some PRs are missing from my inbox.** A fine-grained PAT only reports PRs in the repositories and organizations it's scoped to, so a PR a colleague links you may not appear in search. Paste its URL into the inbox box to open it directly, or switch to a classic PAT for full coverage.
-
-**Recovering a draft.** Identity-change events are recorded in the structured logs under `<dataDir>/logs/`. These logs are scrubbed of your token and login, but review them before sharing anywhere. If you need to preserve specific draft text before a destructive action (Replace token, Discard), copy it out of the composer first.
+- **A token expired** — PRism detects the rejection on any GitHub call and sends you to Setup with a banner to paste a fresh token. Your drafts and view state are preserved.
+- **Some PRs are missing from my inbox** — a fine-grained PAT only reports PRs in the repositories and organizations it's scoped to. Paste the PR's URL to open it directly, or switch to a classic PAT for full coverage.
+- **Recovering a draft** — identity-change events are recorded in the structured logs under `<dataDir>/logs/` (scrubbed of your token and login — still review them before sharing anywhere). Before a destructive action (Replace token, Discard), copy any draft text out of the composer first.
 
 ---
 
@@ -142,4 +126,6 @@ All production code is written test-first. Contributor guidance — the full dev
 
 ## Status
 
-PRism began as a single-user proof of concept and has since shipped a series of unsigned pre-release builds to early testers. The core review experience is feature-complete; AI augmentation is under active development in parallel (on the V2 branch) for a future release. The [Releases page](https://github.com/prpande/PRism/releases) is the source of truth for what's downloadable.
+- Began as a single-user proof of concept; now shipping a series of unsigned pre-release builds to early testers.
+- The core review experience is feature-complete; AI augmentation is under active development in parallel (on the V2 branch) for a future release.
+- The [Releases page](https://github.com/prpande/PRism/releases) is the source of truth for what's downloadable.
