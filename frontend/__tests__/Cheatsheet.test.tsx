@@ -56,6 +56,27 @@ describe('Cheatsheet', () => {
     expect(screen.getByText(/Toggle "Viewed" checkbox/i)).toBeInTheDocument();
   });
 
+  it('lists only implemented shortcuts — real d / preview rows present, phantom n/p/c rows gone (#330)', async () => {
+    const user = userEvent.setup();
+    render(
+      <CheatsheetProvider>
+        <TestApp />
+      </CheatsheetProvider>,
+    );
+    await user.click(screen.getByText('open'));
+
+    // The two shortcuts that DO exist in code (useFilesTabShortcuts 'd',
+    // matchComposerKey Cmd/Ctrl+Shift+P) but were missing from the cheatsheet.
+    expect(screen.getByText(/Toggle Unified \/ Split diff/i)).toBeInTheDocument();
+    expect(screen.getByText(/Toggle Markdown preview/i)).toBeInTheDocument();
+
+    // The Diff group previously advertised n/p/c comment-navigation shortcuts
+    // that have no handler anywhere in the app. They must not reappear.
+    expect(screen.queryByText(/Next comment thread/i)).toBeNull();
+    expect(screen.queryByText(/Previous comment thread/i)).toBeNull();
+    expect(screen.queryByText(/Open comment composer/i)).toBeNull();
+  });
+
   it('focus moves to the dialog heading on open', async () => {
     const user = userEvent.setup();
     render(
