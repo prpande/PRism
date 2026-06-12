@@ -71,7 +71,8 @@ internal sealed partial class ClaudeCodeSummarizer : IPrSummarizer, IDisposable
 
     public Task<PrSummary?> RegenerateAsync(PrReference pr, CancellationToken ct)
     {
-        ArgumentNullException.ThrowIfNull(pr);
+        // EvictForPr is null-safe (no key matches a null PrRef); SummarizeCoreAsync owns the
+        // ArgumentNullException guard, mirroring SummarizeAsync which also forwards unguarded.
         EvictForPr(pr);                       // force a fresh provider call (deliberate re-spend)
         return SummarizeCoreAsync(pr, isRetry: true, ct);
     }
