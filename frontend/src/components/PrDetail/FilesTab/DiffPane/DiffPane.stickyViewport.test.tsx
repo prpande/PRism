@@ -27,7 +27,15 @@ const prRef = { owner: 'acme', repo: 'api', number: 1 };
 const file: FileChange = {
   path: 'src/a.ts',
   status: 'modified',
-  hunks: [{ oldStart: 5, oldLines: 0, newStart: 5, newLines: 1, body: '@@ -5,0 +5,1 @@\n+const x = 1;\n' }],
+  hunks: [
+    {
+      oldStart: 5,
+      oldLines: 0,
+      newStart: 5,
+      newLines: 1,
+      body: '@@ -5,0 +5,1 @@\n+const x = 1;\n',
+    },
+  ],
 };
 
 const threadOnLine5 = {
@@ -36,7 +44,13 @@ const threadOnLine5 = {
   lineNumber: 5,
   isResolved: false,
   comments: [
-    { commentId: 'c1', author: 'amelia.cho', avatarUrl: null, body: 'hi', createdAt: '2026-05-18T00:00:00Z' },
+    {
+      commentId: 'c1',
+      author: 'amelia.cho',
+      avatarUrl: null,
+      body: 'hi',
+      createdAt: '2026-05-18T00:00:00Z',
+    },
   ],
 } as ReviewThreadDto;
 
@@ -61,7 +75,9 @@ describe('DiffPane sticky viewport wrap (#390)', () => {
       const { container } = renderDiffPane(mode);
       // CSS-module classes are hashed in tests (_diffStickyViewport_xxx); match by substring.
       // one wrapper for the ExistingCommentWidget cell + one for the composer cell
-      expect(container.querySelectorAll('[class*="diffStickyViewport"]').length).toBeGreaterThanOrEqual(2);
+      expect(
+        container.querySelectorAll('[class*="diffStickyViewport"]').length,
+      ).toBeGreaterThanOrEqual(2);
     },
   );
 });
