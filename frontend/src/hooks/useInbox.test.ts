@@ -58,15 +58,27 @@ describe('useInbox generation guard (#330)', () => {
   });
 
   it('aborts the 503 retry loop on unmount — no further fetch fires', async () => {
-    get.mockRejectedValueOnce(new ApiError(503)); // first attempt 503 → schedules a retry
-    const { unmount } = renderHook(() => useInbox());
-    await waitFor(() => expect(get).toHaveBeenCalledTimes(1));
+    // Fake timers (not a real sleep): the retry loop is timer-driven, so this stays
+    // deterministic and fast. advanceTimersByTimeAsync advances the fake clock AND
+    // flushes the awaited-promise microtasks between fires.
+    vi.useFakeTimers();
+    try {
+      get.mockRejectedValueOnce(new ApiError(503)); // first attempt 503 → schedules a retry
+      const { unmount } = renderHook(() => useInbox());
+      // Flush the mount load: the delay-0 attempt fires get(), rejects 503, and the
+      // loop parks on the 500ms retry timer.
+      await vi.advanceTimersByTimeAsync(0);
+      expect(get).toHaveBeenCalledTimes(1);
 
-    unmount(); // cleanup bumps the generation → the parked retry is now stale
+      unmount(); // cleanup bumps the generation → the parked retry is now stale
 
-    // Wait past the 500ms first-retry delay; the post-delay isCurrent() check must
-    // short-circuit before a second fetch (the unmount-mid-retry leak the guard closes).
-    await new Promise((r) => setTimeout(r, 600));
-    expect(get).toHaveBeenCalledTimes(1);
+      // Advance past the 500ms first-retry delay; the post-delay isCurrent() check
+      // must short-circuit before a second fetch (the unmount-mid-retry leak the
+      // guard closes).
+      await vi.advanceTimersByTimeAsync(600);
+      expect(get).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
