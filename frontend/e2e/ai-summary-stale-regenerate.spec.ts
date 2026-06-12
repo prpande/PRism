@@ -257,9 +257,8 @@ async function setupMocks(page: import('@playwright/test').Page): Promise<{
   await page.route(`**/api/pr/${OWNER}/${REPO}/${PR_NUMBER}/ai/hunk-annotations`, (route: Route) =>
     route.fulfill({ status: 204 }),
   );
-  await page.route(
-    `**/api/pr/${OWNER}/${REPO}/${PR_NUMBER}/ai/draft-suggestions`,
-    (route: Route) => route.fulfill({ status: 204 }),
+  await page.route(`**/api/pr/${OWNER}/${REPO}/${PR_NUMBER}/ai/draft-suggestions`, (route: Route) =>
+    route.fulfill({ status: 204 }),
   );
 
   // Egress disclosure (pre-consented — alreadyConsented: true so no modal fires).

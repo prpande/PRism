@@ -218,8 +218,22 @@ describe('useActivePrUpdates', () => {
     globalThis.fetch = vi.fn().mockImplementation(() => Promise.resolve(jsonOk())) as typeof fetch;
     const { result } = renderHook(() => useActivePrUpdates(ref), { wrapper });
     await waitFor(() => expect(FakeEventSource.instances).toHaveLength(1));
-    act(() => FakeEventSource.instance.dispatch('pr-updated', { prRef: refStr, headShaChanged: false, baseShaChanged: true, commentCountDelta: 0 }));
-    act(() => FakeEventSource.instance.dispatch('pr-updated', { prRef: refStr, headShaChanged: false, baseShaChanged: false, commentCountDelta: 0 }));
+    act(() =>
+      FakeEventSource.instance.dispatch('pr-updated', {
+        prRef: refStr,
+        headShaChanged: false,
+        baseShaChanged: true,
+        commentCountDelta: 0,
+      }),
+    );
+    act(() =>
+      FakeEventSource.instance.dispatch('pr-updated', {
+        prRef: refStr,
+        headShaChanged: false,
+        baseShaChanged: false,
+        commentCountDelta: 0,
+      }),
+    );
     expect(result.current.baseShaChanged).toBe(true);
   });
 

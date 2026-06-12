@@ -46,7 +46,10 @@ describe('getAiSummaryResult', () => {
 describe('regenerateAiSummary', () => {
   it('POSTs the regenerate route and maps 200 to ok', async () => {
     postMock.mockResolvedValue({ body: 'fresh', category: 'fix' });
-    expect(await regenerateAiSummary(pr)).toEqual({ kind: 'ok', summary: { body: 'fresh', category: 'fix' } });
+    expect(await regenerateAiSummary(pr)).toEqual({
+      kind: 'ok',
+      summary: { body: 'fresh', category: 'fix' },
+    });
     expect(postMock).toHaveBeenCalledWith('/api/pr/o/r/1/ai/summary/regenerate');
   });
 
