@@ -1,10 +1,6 @@
 import { test, expect, type Route } from '@playwright/test';
-import {
-  allOffCapabilities,
-  authedAuthState,
-  makeDefaultPreferences,
-  type DensityPreferences,
-} from './fixtures/preferences';
+import { makeDefaultPreferences, type DensityPreferences } from './fixtures/preferences';
+import { setupBaseRoutes } from './helpers/base-mocks';
 
 // PR9b-density (D97 closure): the density picker in Settings flips the
 // <html data-density="..."> attribute, persists through /api/preferences →
@@ -16,13 +12,7 @@ import {
 async function setupMocks(page: import('@playwright/test').Page, opts?: { postFails?: boolean }) {
   const store: DensityPreferences = makeDefaultPreferences();
 
-  await page.route('**/api/auth/state', (route: Route) =>
-    route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify(authedAuthState),
-    }),
-  );
+  await setupBaseRoutes(page);
 
   await page.route('**/api/preferences', async (route: Route) => {
     if (route.request().method() === 'POST') {
@@ -46,18 +36,6 @@ async function setupMocks(page: import('@playwright/test').Page, opts?: { postFa
       body: JSON.stringify(store),
     });
   });
-
-  await page.route('**/api/capabilities', (route: Route) =>
-    route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify(allOffCapabilities),
-    }),
-  );
-
-  await page.route('**/api/events', (route: Route) =>
-    route.fulfill({ status: 200, contentType: 'text/event-stream', body: ':heartbeat\n\n' }),
-  );
 
   return { store };
 }
