@@ -39,7 +39,7 @@ describe('Cheatsheet', () => {
     expect(screen.getByRole('button', { name: /close cheatsheet/i })).toBeInTheDocument();
   });
 
-  it('shows shortcut tables grouped by section heading', async () => {
+  it('shows shortcuts grouped by section, as column-group headers in one table', async () => {
     const user = userEvent.setup();
     render(
       <CheatsheetProvider>
@@ -48,11 +48,15 @@ describe('Cheatsheet', () => {
     );
     await user.click(screen.getByText('open'));
 
-    expect(screen.getByRole('heading', { name: /global/i, level: 3 })).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: /file tree/i, level: 3 })).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: /diff/i, level: 3 })).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: /composer/i, level: 3 })).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: /submit dialog/i, level: 3 })).toBeInTheDocument();
+    // Groups are <th scope="colgroup"> rows inside a single table (one table so
+    // the columns stay aligned across groups). querying by columnheader role
+    // scopes to header cells, so the /file tree/ group header isn't confused
+    // with the identical "File tree" text in the j/k rows' Context column.
+    expect(screen.getByRole('columnheader', { name: /^global$/i })).toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: /^file tree$/i })).toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: /^diff$/i })).toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: /^composer$/i })).toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: /^submit dialog$/i })).toBeInTheDocument();
     expect(screen.getByText(/Toggle "Viewed" checkbox/i)).toBeInTheDocument();
   });
 
