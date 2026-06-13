@@ -1,4 +1,3 @@
-using System.Net;
 using System.Net.Sockets;
 using PRism.Core.Contracts;
 using PRism.GitHub;

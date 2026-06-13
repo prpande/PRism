@@ -1,6 +1,5 @@
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
-using PRism.Core; // HostUrlResolver
 
 namespace PRism.GitHub;
 
