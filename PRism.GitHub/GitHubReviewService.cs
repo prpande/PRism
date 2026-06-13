@@ -391,9 +391,6 @@ public sealed partial class GitHubReviewService : IPrDiscovery, IPrReader
 
     private sealed record PollPullMeta(string HeadSha, string State, string Mergeability, bool Merged);
 
-    // IReviewSubmitter is an empty seam in PR0a; the seven pending-review pipeline methods
-    // land in PR1 on GitHubReviewService.Submit.cs.
-
     private async Task<PullMeta> FetchPullMetaAsync(PrReference reference, CancellationToken ct)
     {
         var url = $"repos/{reference.Owner}/{reference.Repo}/pulls/{reference.Number}";

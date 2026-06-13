@@ -47,10 +47,10 @@ public static class ServiceCollectionExtensions
         })
         .AddHttpMessageHandler<GitHubAuthHealthHandler>();
 
-        // GitHubReviewService implements three capability interfaces (ADR-S5-1; IReviewAuth was
-        // split out to GitHubAuthValidator in #321 PR1). Register the concrete type once and alias
-        // those three interfaces to that shared singleton so one instance backs discovery, read,
-        // and submit.
+        // GitHubReviewService is the Reader+Discovery pairing (ADR-S5-1; IReviewAuth was split out
+        // to GitHubAuthValidator in #321 PR1, IReviewSubmitter to GitHubReviewSubmitter in #321 PR2).
+        // Register the concrete type once and alias IPrDiscovery + IPrReader to that shared singleton
+        // so one instance backs both discovery and read.
         services.AddSingleton<GitHubReviewService>(sp =>
         {
             var config = sp.GetRequiredService<IConfigStore>();

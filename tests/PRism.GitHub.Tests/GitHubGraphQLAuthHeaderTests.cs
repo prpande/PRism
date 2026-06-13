@@ -49,6 +49,9 @@ public class GitHubGraphQLAuthHeaderTests
             NullLogger.Instance, "query{viewer{login}}", new { }, CancellationToken.None);
 
         await act.Should().ThrowAsync<HttpRequestException>();
-        handler.Last?.Headers.Authorization.Should().BeNull();
+        // The guard throws inside GitHubHttp.ApplyHeaders, before http.SendAsync — so no request
+        // ever reaches the handler. Assert handler.Last is null (no PAT escaped) rather than the
+        // vacuous handler.Last?.…Authorization which short-circuits to satisfied when Last is null.
+        handler.Last.Should().BeNull();
     }
 }
