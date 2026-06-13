@@ -15,6 +15,7 @@
 **Why not TDD-first:** This is a behavior-preserving relocation (bodies byte-identical) + one isolated behavior fix (fold-in 1, which DOES get a test-first treatment). The existing `PRism.GitHub.Tests` suite is the regression net; it must stay green with **only** the mechanical SUT-type swaps the spec enumerates. The one genuinely new behavior — `IsDnsFailure` reading `se.Message` — is the only place a failing-test-first step applies (Task 5).
 
 **Commit boundaries (each leaves a green tree):**
+0. Task 0 → no commit; captures the pre-move submit-body literal (B2 ground truth) from the still-unmodified tree, used by Task 4's assertion.
 1. Task 1 → shared transport + helpers + reader logging convergence.
 2. Tasks 2–4 → submitter split + DI rebind + test migration (the build is red between Task 2 and the end of Task 4; commit once at Task 4's green checkpoint).
 3. Task 5 → fold-in 1 (`IsDnsFailure` + its test) as its **own** commit (separable behavior line for the B2 reviewer).
@@ -46,6 +47,34 @@
 
 ---
 
+## Task 0: Pin the submit request body on the PRE-MOVE tree (B2 ground truth)
+
+**Why first (before any code change):** The strengthened `SubmitPath` body assertion (Task 4) is the **only** guard on the submit GraphQL request *body* — the integration shape-drift suite covers the read side only. If the expected literal were captured by running the *post-move* code, a drift introduced by the transport move would be recorded as "expected" and `Assert.Equal(drifted, drifted)` would pass green — locking in the drift instead of catching it. The working tree is currently at PR1 state (no PR2 code change yet), so capture the ground-truth bytes **now**, from the unmodified transport, and assert against them later.
+
+**Files:** none modified permanently — a throwaway probe + a recorded constant carried into Task 4.
+
+- [ ] **Step 1: Dump the current submit request body**
+
+Temporarily add a body dump to the existing `GraphQlByteIdentityTests.SubmitPath_graphql_request_transport_is_unchanged` (or a scratch copy): make `CapturingHandler.SendAsync` capture `await request.Content!.ReadAsStringAsync(ct)` and the test write it out, e.g. `Console.WriteLine($"BODY={body}"); Console.WriteLine($"CT={request.Content!.Headers.ContentType}");`. Run:
+```
+dotnet test tests/PRism.GitHub.Tests/PRism.GitHub.Tests.csproj --configuration Release --settings .runsettings --filter "FullyQualifiedName~SubmitPath_graphql_request_transport_is_unchanged" --logger "console;verbosity=detailed"
+```
+
+- [ ] **Step 2: Record the canonical literal**
+
+Record the exact emitted body string and content-type verbatim (this is `JsonSerializer.Serialize(new { query = <finalize mutation>, variables = <the finalize variables object> })` over the test's fixed inputs — deterministic). Keep them here for Task 4:
+
+```
+PRE_MOVE_SUBMIT_BODY  = <paste the exact captured string>
+PRE_MOVE_CONTENT_TYPE = application/json; charset=utf-8   # confirm from the CT= line
+```
+
+- [ ] **Step 3: Revert the throwaway probe**
+
+`git checkout -- tests/PRism.GitHub.Tests/GraphQlByteIdentityTests.cs` (or discard the scratch file). Nothing from Task 0 is committed — only the recorded literal carries forward. The real (kept) assertion lands in Task 4 Step 3, asserting the **post-move** output equals `PRE_MOVE_SUBMIT_BODY`. That is a genuine before-vs-after regression check, not a self-derived echo.
+
+---
+
 ## Task 1: Extract shared transport + helpers; converge reader logging
 
 **Why first:** The spec's risk-ordering — move the shared statics (`TryGetPath`/`Truncate`/transport) and re-point the reader **before** moving the submit partials, so a naive file move can't drag a staying member, and the reader stays green at this checkpoint independent of the submitter split.
@@ -73,7 +102,8 @@ namespace PRism.GitHub;
 // the pre-split form (same endpoint resolution, apiVersion:false, StringContent), which is
 // the B2 submit-transport contract pinned by GraphQlByteIdentityTests + the integration
 // shape-drift test.
-internal static class GitHubGraphQL
+// `partial` is required at the class level because of the nested source-gen `partial class Log`.
+internal static partial class GitHubGraphQL
 {
     // Raw GraphQL POST: resolves the host's GraphQL endpoint, sends apiVersion:false,
     // logs transport failures (EventId 5), throws HttpRequestException on non-2xx.
@@ -230,10 +260,9 @@ Record the emitted `EventId(<n>, ...)` for each of the four implicit methods.
         internal static partial void GraphQLReadFailed(ILogger logger, int errorCount, string errorsJson);
 ```
 
-Pin the four previously-implicit methods to the Ids the probe reported (preserve their current operator-facing Ids — do **not** renumber). Add `EventId = <probed>, EventName = "<MethodName>"` to each existing `[LoggerMessage(...)]`. **Branch on the probe result:**
-- If the probe shows four **distinct** Ids → pin each to its own (no operator-visible change).
-- If the probe shows them **indistinguishable** (e.g. all `0`) → assign distinct stable Ids `FanOutDegraded = 6, TimelineCapHit = 7, DiffPagesCapped = 8, PatchParseFailed = 9` (next free block above 5; a strict improvement since no operator could key on indistinguishable events). Record this in the PR change story.
-- If any probed Id equals 4 (would collide with `GraphQLReadFailed`) → that collision exists *today* latently; give the colliding method the next free Id and **flag the one changed event** in the PR change story.
+Pin the four previously-implicit methods explicitly. **Most likely outcome:** the `Microsoft.Extensions.Logging` source generator assigns `EventId = 0` to *every* method that omits one (it does **not** auto-increment), so the probe will show all four as `0` — operator-indistinguishable today. In that case assign distinct stable Ids `FanOutDegraded = 6, TimelineCapHit = 7, DiffPagesCapped = 8, PatchParseFailed = 9` (next free block above 5; a strict improvement, since no operator could have keyed on four identical `0` events) and record the 6–9 assignment in the PR change story (it is the one operator-visible logging change in this PR). The new `GraphQLReadFailed = 4` then sits in the class beside `{6,7,8,9}` — no collision.
+
+**If the probe contradicts that** (the generator on this toolchain emits distinct or non-zero Ids): pin each method to the Id it already emits (preserve operator-facing Ids — do **not** renumber); flag any genuinely-changed Id in the PR change story. The "a probed Id already equals 4" case is a defensive guard only — given omitted ⇒ `0`, it should not fire; if it somehow does, that collision is latent today, so give the colliding method the next free Id and flag it.
 
 Update the call site `s_graphqlReadFailed(_log, …, null)` (in `ThrowIfGraphQLErrorsWithoutData`, `:622`) to `Log.GraphQLReadFailed(_log, errors.GetArrayLength(), errorsJson)` (drop the trailing `null` — `[LoggerMessage]` methods take no `Exception` unless declared). Likewise the transport field's old call site is gone (moved). Confirm `FanOutDegraded`/`TimelineCapHit`/`DiffPagesCapped`/`PatchParseFailed` call sites already use `Log.X(...)` form (they do, e.g. `:714`).
 
@@ -486,7 +515,7 @@ The two query-const facts (`PrDetailGraphQLQuery_is_byte_identical`, `TimelineQu
 For `SubmitPath_graphql_request_transport_is_unchanged` (`:66`):
 - Change `var svc = GitHubReviewServiceFactory.Create(handler);` (`:70`) → `var svc = GitHubReviewServiceFactory.CreateSubmitter(handler);`. The `FinalizePendingReviewAsync` call (`:72`) now resolves on `GitHubReviewSubmitter` — unchanged otherwise.
 - **Keep all five existing assertions** (URI, UserAgent, Accept, no `X-GitHub-Api-Version`, Authorization parameter) — this is the B2 wire-identity guard; do not weaken it.
-- **Add body assertions** (the transport move could drift `StringContent` media type/encoding or payload order, which the header-only assertions don't catch). The `CapturingHandler` captures `request` but not its body; capture the body before responding. Edit `CapturingHandler.SendAsync` to read the content, and assert in the test:
+- **Add body assertions** (the transport move could drift `StringContent` media type/encoding or payload order, which the header-only assertions don't catch). The `CapturingHandler` captures `request` but not its body; **read the body INSIDE the handler, before returning the response** — `GitHubHttp.SendAsync` disposes the request (and its `Content`) when its frame unwinds, so reading `req.Content` after the `await` returns to the test would throw on disposed content. Edit `CapturingHandler.SendAsync` to read the content there, and assert in the test:
 
 ```csharp
     private sealed class CapturingHandler : HttpMessageHandler
@@ -508,16 +537,14 @@ For `SubmitPath_graphql_request_transport_is_unchanged` (`:66`):
 (Note the signature changes to `async Task<...>` + `await`.) Then after the existing header asserts, add:
 ```csharp
         // Body byte-identity: the {query,variables} payload + media type must not drift in the
-        // transport move (the header asserts above don't read req.Content). FinalizePendingReview
-        // serializes submitPullRequestReview(...) with the resolved review id + event.
+        // transport move (the header asserts above don't read req.Content). The expected literal
+        // is the PRE-MOVE ground truth captured in Task 0 (PRE_MOVE_SUBMIT_BODY) — asserting the
+        // post-move output equals it is a genuine before/after regression check.
         Assert.Equal("application/json; charset=utf-8", handler.LastContentType);
-        Assert.NotNull(handler.LastBody);
-        // Pin the exact serialized shape FinalizePendingReviewAsync sends. (Fill in the literal
-        // from the captured value on first green run — see Step 5 note; it is the
-        // JsonSerializer.Serialize(new { query, variables }) output for the finalize mutation.)
+        Assert.Equal(PreMoveSubmitBody, handler.LastBody); // <- Task 0's recorded literal, pasted as a const
 ```
 
-> **Determining the expected body literal:** the exact `{query,variables}` JSON depends on the finalize mutation string + the variables object `FinalizePendingReviewAsync` builds. Rather than hand-transcribe it (error-prone), capture it empirically: on the first run, assert `handler.LastBody` is non-null, log/inspect its value, then pin it as an `Assert.Equal(expected, handler.LastBody)` literal. The point of the pin is that *any future* transport change must not alter these bytes; the literal is whatever the **current** (correct) code emits. This is a characterization assertion, so deriving the literal from current output is correct — not circular — because the byte stream is produced by `JsonSerializer` over the unchanged mutation+variables, which Task 2 did not touch.
+> **The expected literal comes from Task 0, NOT from this code's own output.** Paste Task 0's `PRE_MOVE_SUBMIT_BODY` (captured against the unmodified PR1 transport) as a `private const string PreMoveSubmitBody = "...";` on the test class, and assert the post-move `handler.LastBody` equals it. Do **not** "fill in on first green run" from the post-move output — that would echo whatever the moved code emits and lock in any drift. If the post-move output does not equal the Task 0 literal, the transport drifted: **investigate, do not update the literal.** This is the B2 body contract; the only legitimate way to change `PreMoveSubmitBody` is to re-run Task 0 on `origin/main`.
 
 - [ ] **Step 4: Add the security header-attachment test for `GitHubGraphQL`**
 
@@ -564,8 +591,10 @@ public class GitHubGraphQLAuthHeaderTests
     [Fact]
     public async Task PostAsync_RefusesToken_WhenHostResolvesOffBaseAddress()
     {
-        // BaseAddress is api.github.com, but the GraphQL endpoint resolves from an attacker-
-        // influenced host that does NOT match — the guard must throw rather than leak the PAT.
+        // BaseAddress is api.github.com, but the GraphQL endpoint resolves from a host that does
+        // NOT match it — the backstop against divergence between the two host resolvers
+        // (HostUrlResolver.ApiBase sets BaseAddress; .GraphQlEndpoint sets the request URI, both
+        // from the same operator-configured host). On mismatch the guard must throw, not leak the PAT.
         var handler = new CapturingHandler();
         var http = new FakeHttpClientFactory(handler, new Uri("https://api.github.com/")).CreateClient("github");
 
@@ -578,7 +607,7 @@ public class GitHubGraphQLAuthHeaderTests
 }
 ```
 
-> **Verify before trusting this test:** confirm `HostUrlResolver.GraphQlEndpoint("https://evil.example.com")` yields an absolute URL whose host ≠ `api.github.com` (so `ApplyHeaders` throws). If `FakeHttpClientFactory.CreateClient` always sets `BaseAddress` to the ctor URI regardless of name, this holds. If the resolved endpoint is somehow relative, replace the off-host assertion with a direct `GitHubHttp.SendAsync` off-host case mirroring `GitHubReviewServiceAuthHeaderTests`. Adjust the expected `RequestUri` if `GraphQlEndpoint` for `https://github.com` differs from `https://api.github.com/graphql` — read `HostUrlResolver.GraphQlEndpoint` and pin the actual value.
+> **Verify before trusting this test:** confirm `HostUrlResolver.GraphQlEndpoint("https://evil.example.com")` yields an absolute URL whose host ≠ `api.github.com` (so `ApplyHeaders` throws). If `FakeHttpClientFactory.CreateClient` always sets `BaseAddress` to the ctor URI regardless of name, this holds. If the resolved endpoint is somehow relative, the off-host precedent to mirror is **`GitHubHttpTests.SendAsync_off_host_absolute_url_with_token_throws`** (it exercises the `GitHubHttp.SendAsync` guard directly with an off-host absolute URL) — **not** `GitHubReviewServiceAuthHeaderTests`, which has only bearer-present/null-token cases and no off-host case. Adjust the expected `RequestUri` if `GraphQlEndpoint("https://github.com")` differs from `https://api.github.com/graphql` — read `HostUrlResolver.GraphQlEndpoint` and pin the actual value.
 
 - [ ] **Step 5: Build + full GitHub.Tests green**
 
@@ -586,7 +615,7 @@ public class GitHubGraphQLAuthHeaderTests
 dotnet build tests/PRism.GitHub.Tests/PRism.GitHub.Tests.csproj --configuration Release
 dotnet test tests/PRism.GitHub.Tests/PRism.GitHub.Tests.csproj --no-build --configuration Release --settings .runsettings
 ```
-Expected: all green. If `GraphQlByteIdentityTests.SubmitPath` fails on the new body literal, pin the literal to the captured current output (Step 3 note) and re-run — a *content* mismatch there beyond the expected literal-fill would mean the transport drifted (investigate, do not paper over).
+Expected: all green. If `GraphQlByteIdentityTests.SubmitPath` fails on the body assertion, the post-move output does not equal Task 0's `PRE_MOVE_SUBMIT_BODY` — the transport **drifted**. Investigate and fix the move; do **not** update the literal to match the drifted output.
 
 - [ ] **Step 6: Commit (Tasks 2–4 green checkpoint)**
 
@@ -713,15 +742,22 @@ dotnet test tests/PRism.Web.Tests/PRism.Web.Tests.csproj --no-build --configurat
 ```
 Expected: all green. `PRism.GitHub.Tests.Integration` includes the read-side shape-drift test; `PRism.Web.Tests` exercises the submit/comment endpoints through `IReviewSubmitter` fakes (transparent to the rebind). The `SubmitPath_graphql_request_transport_is_unchanged` byte-identity fact must be green (the B2 contract). (Confirm the exact project paths via `Glob` if any path differs.)
 
+**Gate — confirm the body pin is a real `Assert.Equal`, not a `NotNull`:** open `GraphQlByteIdentityTests.cs` and verify `SubmitPath` asserts `Assert.Equal(PreMoveSubmitBody, handler.LastBody)` against Task 0's recorded literal (plus the `application/json; charset=utf-8` content-type). A surviving `Assert.NotNull(handler.LastBody)` without the `Equal` means the B2 body contract is unpinned — the PR is not ready.
+
 - [ ] **Step 3: AC-verification greps**
 
 ```
 # "one logging style" AC's verifiable form — must be empty:
 Select-String -Path PRism.GitHub/*.cs -Pattern "LoggerMessage\.Define"
-# Security AC — GitHubGraphQL must NOT call http.SendAsync directly (only GitHubHttp.SendAsync):
-Select-String -Path PRism.GitHub/GitHubGraphQL.cs -Pattern "http\.SendAsync"
+# Security AC — two complementary greps (a naive `http\.SendAsync` grep is INERT: Select-String
+# is case-insensitive by default and the literal dot matches the substring inside
+# `GitHubHttp.SendAsync`, so it can neither confirm the guarded call nor isolate a bare bypass):
+#   (a) the guarded call MUST be present (>= 1 match):
+Select-String -Path PRism.GitHub/GitHubGraphQL.cs -Pattern "GitHubHttp\.SendAsync" -CaseSensitive
+#   (b) a BARE raw send (not prefixed by GitHubHttp) MUST be absent (0 matches):
+Select-String -Path PRism.GitHub/GitHubGraphQL.cs -Pattern "(?<!GitHubHttp)\bhttp\.SendAsync" -CaseSensitive
 ```
-Expected: first returns nothing; second returns nothing (only `GitHubHttp.SendAsync` appears).
+Expected: the first (LoggerMessage.Define) returns nothing; grep (a) returns ≥ 1 (the guarded call exists); grep (b) returns nothing (no bare `http.SendAsync`). The `GitHubGraphQLAuthHeaderTests` off-host-throw test (Task 4 Step 4) is the **primary** behavioral backstop — cite it first in the PR Proof; these greps are the secondary static guard.
 
 - [ ] **Step 4: Byte-identity diff review**
 
@@ -740,5 +776,5 @@ Run `/simplify` scoped to this branch's diff vs `origin/main` (it edits the tree
 
 - **Spec coverage:** Split `IReviewSubmitter` (T2), shared transport (T1), shared helpers (T1), logging convergence + EventId pin across 3 touched classes (T1 reader + T2 submitter + T1 graphql), fold-in 1 (T5), `ParseFileChanges` stays (not touched — correct), DI rebind only `IReviewSubmitter` (T3), all 8 test files + `GraphQlByteIdentityTests` split + body strengthen + security test (T4), full verification (T6). ✔ all mapped.
 - **Type/name consistency:** `GitHubGraphQL.PostAsync(http, token, host, log, query, variables, ct)` — same signature used in both thin wrappers (T1 reader, T2 submitter) and the security test (T4). `GitHubHttp.Truncate` (T1) used by `GitHubGraphQL.PostAsync` (T1) + comment partials (T2, via `using static`). `CreateSubmitter` returns `GitHubReviewSubmitter` (T4) — matches the SUT-helper return type swaps. `Log.GraphQL{Read,Submit,Transport}*` method names consistent across call-site updates. ✔
-- **No placeholders:** the only "fill from current output" is the `GraphQlByteIdentityTests` body literal — a characterization pin with an explicit, justified derivation method (T4 Step 3), not a TODO. ✔
+- **No placeholders:** the `GraphQlByteIdentityTests` body literal is captured from the **pre-move** tree (Task 0) and asserted as an `Assert.Equal(PreMoveSubmitBody, …)` in T4 Step 3 — a before/after regression pin, not a self-derived echo and not a TODO. ✔
 - **Byte-identity honesty:** `using static` + thin same-named wrappers keep moved bodies literally byte-identical except the two enumerated logger lines — the T6 Step 4 diff review enforces it. ✔
