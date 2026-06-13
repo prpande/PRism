@@ -35,11 +35,14 @@ export function InboxPage() {
   const initialSort = preferences?.inbox.defaultSort ?? 'updated';
 
   const showCategoryChip = useAiGate('inboxEnrichment');
-  // #283 the activity rail is a fabricated, non-AI mockup — decoupled from the AI-preview
-  // toggle onto a dedicated inbox flag (default false).
+  // The activity rail renders real GitHub activity (#137 wired it to /api/activity:
+  // received_events + notifications + watching). It is decoupled from the AI-preview
+  // toggle onto a dedicated inbox flag, which defaults ON since #439.
   // #300 the rail also requires a wide-enough viewport: below INBOX_RAIL_MIN_WIDTH it is
   // not rendered at all (genuinely hidden, no background fetch), giving the single-column
   // Layout B. One `showRail` drives both the rail render and the cold-load skeleton.
+  // The `?? false` is the pre-preferences-load fallback (not the default): keeping it
+  // false means an opted-out user never sees a rail flash before preferences resolve.
   const wideEnoughForRail = useMediaQuery(`(min-width: ${INBOX_RAIL_MIN_WIDTH}px)`);
   const showRail = (preferences?.inbox.showActivityRail ?? false) && wideEnoughForRail;
   // #331 — memoize so `sections` is referentially stable across renders where the

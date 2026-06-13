@@ -96,8 +96,10 @@ function setHooks(
         },
         sectionOrder:
           opts.sectionOrder ?? 'review-requested,awaiting-author,authored-by-me,mentioned',
-        // #283 the rail reads this dedicated flag, not the AI gate.
-        showActivityRail: opts.showActivityRail ?? false,
+        // #283 the rail reads this dedicated flag, not the AI gate. #439 defaults it ON
+        // to mirror the product default; rail-off tests pass an explicit false, and the
+        // rail only renders with mockViewportWide(true), so the default is inert otherwise.
+        showActivityRail: opts.showActivityRail ?? true,
       },
       github: {
         host: 'https://github.com',
@@ -394,7 +396,9 @@ describe('InboxPage — useAiGate migrations', () => {
           },
           defaultSort: 'updated',
           sectionOrder: 'review-requested,awaiting-author,authored-by-me,mentioned',
-          showActivityRail: false,
+          // #439 mirrors the product default (ON); the rail tests below call
+          // setShowActivityRail() with an explicit value, so this baseline is inert for them.
+          showActivityRail: true,
         },
         github: {
           host: 'https://github.com',

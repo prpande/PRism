@@ -40,8 +40,8 @@ public class PreferencesEndpointsTests
         sections.GetProperty("awaiting-author").GetBoolean().Should().BeTrue();
         sections.GetProperty("authored-by-me").GetBoolean().Should().BeTrue();
         sections.GetProperty("mentioned").GetBoolean().Should().BeTrue();
-        // #283 the activity rail is decoupled from AI onto this dedicated flag, default OFF.
-        body.GetProperty("inbox").GetProperty("showActivityRail").GetBoolean().Should().BeFalse();
+        // #439 the activity rail defaults ON (decoupled from AI onto this dedicated flag since #283).
+        body.GetProperty("inbox").GetProperty("showActivityRail").GetBoolean().Should().BeTrue();
 
         var github = body.GetProperty("github");
         github.GetProperty("host").GetString().Should().Be("https://github.com");
@@ -176,19 +176,21 @@ public class PreferencesEndpointsTests
             .Should().Be("mentioned,authored-by-me,review-requested,awaiting-author");
     }
 
-    // #283: inbox.showActivityRail surfaces in GET (default false) and round-trips through POST.
+    // #439: inbox.showActivityRail surfaces in GET (now default true) and round-trips through
+    // POST. Posting `false` (the meaningful direction now that the default is on) exercises a
+    // real write+read; a POST `true` would be a no-op against the default and prove nothing.
     [Fact]
-    public async Task GET_inbox_showActivityRail_defaults_false_and_POST_round_trips()
+    public async Task GET_inbox_showActivityRail_defaults_true_and_POST_false_round_trips()
     {
         using var factory = new PRismWebApplicationFactory();
         var client = factory.CreateClient();
         var origin = client.BaseAddress!.GetLeftPart(UriPartial.Authority);
 
         var initial = await client.GetFromJsonAsync<JsonElement>(new Uri("/api/preferences", UriKind.Relative));
-        initial.GetProperty("inbox").GetProperty("showActivityRail").GetBoolean().Should().BeFalse();
+        initial.GetProperty("inbox").GetProperty("showActivityRail").GetBoolean().Should().BeTrue();
 
         using var content = new StringContent(
-            """{ "inbox.showActivityRail": true }""",
+            """{ "inbox.showActivityRail": false }""",
             System.Text.Encoding.UTF8,
             "application/json");
         using var req = new HttpRequestMessage(HttpMethod.Post, new Uri("/api/preferences", UriKind.Relative))
@@ -199,10 +201,10 @@ public class PreferencesEndpointsTests
         var post = await client.SendAsync(req);
         post.StatusCode.Should().Be(HttpStatusCode.OK);
         var postBody = await post.Content.ReadFromJsonAsync<JsonElement>();
-        postBody.GetProperty("inbox").GetProperty("showActivityRail").GetBoolean().Should().BeTrue();
+        postBody.GetProperty("inbox").GetProperty("showActivityRail").GetBoolean().Should().BeFalse();
 
         var after = await client.GetFromJsonAsync<JsonElement>(new Uri("/api/preferences", UriKind.Relative));
-        after.GetProperty("inbox").GetProperty("showActivityRail").GetBoolean().Should().BeTrue();
+        after.GetProperty("inbox").GetProperty("showActivityRail").GetBoolean().Should().BeFalse();
     }
 
     // #219: inbox.groupByRepo surfaces in GET (default true) and round-trips through POST.

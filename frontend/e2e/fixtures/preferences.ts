@@ -47,7 +47,12 @@ export function makeDefaultPreferences() {
       // #275: the real GET /api/preferences always emits sectionOrder; keep the
       // shared mock in contract with it (canonical order = no reorder applied).
       sectionOrder: 'review-requested,awaiting-author,authored-by-me,mentioned',
-      // #283: real GET always emits showActivityRail; default false (rail hidden).
+      // #283: real GET always emits showActivityRail. The PRODUCT default is now ON
+      // (#439), but this shared mock deliberately pins it OFF so the rail doesn't appear
+      // in mock-mode specs that aren't testing it (e.g. ai-gating-sweep asserts it stays
+      // hidden under AI-on to prove the decouple). The rail-on appearance is covered by
+      // the dedicated `inbox-activity-rail` parity baseline; specs that exercise the rail
+      // set the flag explicitly.
       showActivityRail: false,
       // #219: real GET always emits groupByRepo; default true (Inbox grouped by repo).
       groupByRepo: true,

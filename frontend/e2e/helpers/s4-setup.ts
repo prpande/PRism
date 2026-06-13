@@ -39,6 +39,11 @@ export async function resetBackendState(request: APIRequestContext): Promise<voi
   // two separate requests — a combined body 400s and resets neither. Best-effort:
   // a non-200 (e.g., config already default) is acceptable and silently ignored
   // rather than failing the beforeEach — the test will fail for its own reason.
+  // showActivityRail: the product default flipped ON in #439, but parity/layout specs
+  // pin it OFF here so the (deterministic, FakeActivityProvider-backed) rail doesn't
+  // appear in baselines that aren't testing it — the same hygiene applied to aiPreview /
+  // contentScale above. The rail's own visual baseline (`inbox-activity-rail`) re-enables
+  // it explicitly per-test.
   for (const patch of [
     { aiPreview: false },
     { contentScale: 'm' },

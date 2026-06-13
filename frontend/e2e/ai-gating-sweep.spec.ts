@@ -415,9 +415,10 @@ test('ai-gating-sweep: off → on → off shows/hides AI surfaces', async ({ pag
   await expect(page.getByText('Worth a comment here?')).toBeVisible();
 
   // (e) Inbox activity rail is DECOUPLED from AI (#283): it is gated on
-  // inbox.showActivityRail (default false), NOT on the AI-preview toggle. So even with
-  // AI preview fully on here, the fabricated rail must stay hidden. (Its own
-  // flag-driven visibility is covered in inbox.spec.ts.)
+  // inbox.showActivityRail, NOT on the AI-preview toggle. The product default is ON (#439),
+  // but this mock-mode spec's makeDefaultPreferences pins the flag OFF, so even with AI
+  // preview fully on here the rail must stay hidden — proving it rides the inbox flag, not
+  // AI. (Its own flag-driven visibility is covered in inbox.spec.ts.)
   await page.goto('/');
   await expect(page.getByText('Refactor Calc utilities')).toBeVisible({ timeout: 15_000 });
   await expect(page.getByRole('complementary', { name: /activity/i })).not.toBeAttached();
