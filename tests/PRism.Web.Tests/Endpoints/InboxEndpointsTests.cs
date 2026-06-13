@@ -35,10 +35,10 @@ public class InboxEndpointsTests
             "foo/bar",
             DateTimeOffset.UtcNow,
             DateTimeOffset.UtcNow,
-            1, 0, 10, 5,
-            "abc123",
-            CiStatus.None,
-            null, null);
+            CommitCount: 1, ChangedFiles: 0, CommentCount: 0, Additions: 10, Deletions: 5,
+            HeadSha: "abc123",
+            Ci: CiStatus.None,
+            LastViewedHeadSha: null, LastSeenCommentId: null);
 
     [Fact]
     public async Task Get_inbox_cold_start_kicks_refresh_only_once_for_concurrent_requests()
@@ -263,7 +263,7 @@ public class InboxEndpointsTests
         var staleItem = new PrInboxItem(
             reference, "Calc", "author", "acme/api",
             DateTimeOffset.UtcNow, DateTimeOffset.UtcNow,
-            1, 0, 1, 0, "HEAD", CiStatus.None,
+            1, 0, 0, 1, 0, "HEAD", CiStatus.None,
             LastViewedHeadSha: "STALE", LastSeenCommentId: 11);
         var fakeOrch = new FakeInboxRefreshOrchestrator
         {

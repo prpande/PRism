@@ -14,7 +14,7 @@ public sealed class GitHubPrEnricherCloseStateTests
 {
     private static RawPrInboxItem Raw(int n) => new(
         new PrReference("acme", "api", n), "t", "a", "acme/api",
-        DateTimeOffset.UtcNow, DateTimeOffset.UtcNow, 0, 0, 0, "sha", 1);
+        DateTimeOffset.UtcNow, DateTimeOffset.UtcNow, 0, 0, 0, "sha", 1, 0);
 
     private static HttpResponseMessage Ok(string body) =>
         new(HttpStatusCode.OK) { Content = new StringContent(body, Encoding.UTF8, "application/json") };

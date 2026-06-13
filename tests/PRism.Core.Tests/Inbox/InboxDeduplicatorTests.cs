@@ -13,7 +13,7 @@ public sealed class InboxDeduplicatorTests
             new PrReference(parts[0], parts[1], n),
             $"PR #{n}", "author", repo,
             DateTimeOffset.UtcNow, DateTimeOffset.UtcNow,
-            1, 0, 0, 0, $"sha{n}", CiStatus.None, null, null);
+            1, 0, 0, 0, 0, $"sha{n}", CiStatus.None, null, null);
     }
 
     private readonly IInboxDeduplicator _sut = new InboxDeduplicator();
@@ -55,7 +55,7 @@ public sealed class InboxDeduplicatorTests
         // that still carries a ci-failing key (version-skewed client) must NOT cause
         // authored-by-me to be demoted — there is no such pair anymore.
         var pr = new PrInboxItem(new PrReference("acme", "api", 1), "t", "a", "acme/api",
-            DateTimeOffset.UtcNow, DateTimeOffset.UtcNow, 1, 0, 0, 0, "sha", CiStatus.Failing, null, null);
+            DateTimeOffset.UtcNow, DateTimeOffset.UtcNow, 1, 0, 0, 0, 0, "sha", CiStatus.Failing, null, null);
         var sections = new Dictionary<string, IReadOnlyList<PrInboxItem>>
         {
             ["authored-by-me"] = new[] { pr },
