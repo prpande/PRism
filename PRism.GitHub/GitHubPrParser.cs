@@ -5,11 +5,9 @@ using PRism.Core.Iterations;
 namespace PRism.GitHub;
 
 // Pure JSON→DTO parsers for the GraphQL `pullRequest` payload, relocated verbatim from
-// GitHubReviewService.cs (#321 PR1, epic #317). No behavioral change — bodies are unchanged.
-// `internal` (test-visible via the csproj InternalsVisibleTo), not `public`: the parse shapes
-// are an implementation detail of the GitHub adapter. The read path on GitHubReviewService
-// (GetPrDetailAsync / GetTimelineAsync) calls these across the class boundary, which is why
-// each is `internal static` rather than `private`.
+// GitHubReviewService (#321 PR1). `internal static` (not `private`) because the read path on
+// GitHubReviewService calls these across the class boundary; `internal` is test-visible via the
+// csproj InternalsVisibleTo.
 internal static class GitHubPrParser
 {
     internal static List<ClusteringCommit> ParseTimelineCommits(JsonElement pull)
