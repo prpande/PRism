@@ -43,6 +43,7 @@ public class AiFileFocusEndpointTests
         var first = body.GetProperty("entries")[0];
         first.GetProperty("path").GetString().Should().NotBeNullOrWhiteSpace();
         first.GetProperty("level").GetString().Should().BeOneOf("high", "medium", "low");
+        first.GetProperty("rationale").GetString().Should().NotBeNullOrWhiteSpace();
         body.GetProperty("fallback").GetBoolean().Should().BeFalse();
     }
 
