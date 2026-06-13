@@ -550,7 +550,7 @@ public sealed partial class GitHubReviewService : IPrDiscovery, IPrReader
     // the source generator already assigned to them (probed from the generated source):
     // pinning to current freezes those operator-facing Ids against a future method rename
     // (a rename would otherwise silently change the generated hash). GraphQLReadFailed keeps
-    // EventId 4 (was the s_graphqlReadFailed LoggerMessage.Define field, converted in PR2).
+    // EventId 4 (was the s_graphqlReadFailed manual logger field, converted to source-gen in PR2).
     // None of the five collide; the source generator enforces per-class EventId uniqueness.
     private static partial class Log
     {
