@@ -386,7 +386,13 @@ describe('InboxPage — useAiGate migrations', () => {
     });
     vi.mocked(usePreferences).mockReturnValue({
       preferences: {
-        ui: { theme: 'system', accent: 'indigo', aiMode: 'off', density: 'comfortable', contentScale: 'm' },
+        ui: {
+          theme: 'system',
+          accent: 'indigo',
+          aiMode: 'off',
+          density: 'comfortable',
+          contentScale: 'm',
+        },
         inbox: {
           sections: {
             'review-requested': true,
@@ -417,7 +423,13 @@ describe('InboxPage — useAiGate migrations', () => {
   function setShowActivityRail(showActivityRail: boolean) {
     vi.mocked(usePreferences).mockReturnValue({
       preferences: {
-        ui: { theme: 'system', accent: 'indigo', aiMode: 'off', density: 'comfortable', contentScale: 'm' },
+        ui: {
+          theme: 'system',
+          accent: 'indigo',
+          aiMode: 'off',
+          density: 'comfortable',
+          contentScale: 'm',
+        },
         inbox: {
           sections: {
             'review-requested': true,
