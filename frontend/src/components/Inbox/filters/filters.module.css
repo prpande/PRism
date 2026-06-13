@@ -245,54 +245,6 @@
   background: var(--accent-soft);
 }
 
-/* Sort control (#300) — styled to the .trigger family. The native <select> is kept
-   (full keyboard + AT semantics); a leading "sorted" glyph and a custom caret are
-   absolute-overlaid (pointer-events:none) so they never intercept the select's clicks,
-   mirroring the .search input pattern. */
-.sort {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  white-space: nowrap;
-}
-
-.sortGlyph {
-  position: absolute;
-  left: var(--s-2);
-  display: inline-flex;
-  color: var(--text-3);
-  pointer-events: none;
-}
-
-.sortCaret {
-  position: absolute;
-  right: var(--s-2);
-  display: inline-flex;
-  color: var(--text-3);
-  pointer-events: none;
-}
-
-.sortSelect {
-  appearance: none;
-  -webkit-appearance: none;
-  height: 28px;
-  /* clear the 13px glyph (left) and 11px caret (right) */
-  padding: 0 calc(var(--s-2) + 16px) 0 calc(var(--s-2) + 18px);
-  font-size: var(--text-sm);
-  color: var(--text-1);
-  background: var(--surface-inset);
-  border: 1px solid var(--border-2);
-  border-radius: var(--radius-2);
-  cursor: pointer;
-}
-
-/* Single focus ring: border swap on the select (matches .searchInput:focus);
-   outline:none suppresses the UA ring some engines leave under appearance:none. */
-.sortSelect:focus-visible {
-  border-color: var(--accent);
-  outline: none;
-}
-
 /* #311 — keep Sort + Refresh together as ONE flex item so they wrap as a unit
    when .barRow wraps at narrow container widths (flex-wrap wraps items, not
    loose sibling groups). */

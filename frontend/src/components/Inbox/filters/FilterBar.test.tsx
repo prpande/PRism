@@ -1,5 +1,6 @@
 import { it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { FilterBar } from './FilterBar';
 import { OpenTabsProvider } from '../../../contexts/OpenTabsContext';
@@ -72,4 +73,25 @@ it('sort control is an accessible combobox named "Sort" with no visible "Sort:" 
   // #300 — the visible "Sort:" label is dropped; the select keeps an accessible name.
   expect(screen.getByRole('combobox', { name: /^sort$/i })).toBeInTheDocument();
   expect(screen.queryByText('Sort:')).not.toBeInTheDocument();
+});
+
+it('selecting a sort option updates the control via the themed Select', async () => {
+  render(
+    <MemoryRouter>
+      <OpenTabsProvider>
+        <FilterBar
+          sections={secs}
+          initialSort="updated"
+          ciProbeComplete
+          onState={onState}
+          refresh={vi.fn()}
+          isRefreshing={false}
+          justRefreshed={false}
+        />
+      </OpenTabsProvider>
+    </MemoryRouter>,
+  );
+  await userEvent.click(screen.getByRole('combobox', { name: /^sort$/i }));
+  await userEvent.click(screen.getByRole('option', { name: 'Most comments' }));
+  expect(screen.getByRole('combobox', { name: /^sort$/i })).toHaveTextContent('Most comments');
 });
