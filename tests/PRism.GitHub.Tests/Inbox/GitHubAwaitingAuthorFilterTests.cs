@@ -30,7 +30,7 @@ public sealed class GitHubAwaitingAuthorFilterTests
             new PrReference(parts[0], parts[1], n),
             $"PR #{n}", "author", repo,
             DateTimeOffset.UtcNow, DateTimeOffset.UtcNow,
-            0, 0, 0, headSha, 1);
+            0, 0, 0, headSha, 1, 0);
     }
 
     private static string ReviewsResponse(

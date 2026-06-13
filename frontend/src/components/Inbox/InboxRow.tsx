@@ -82,9 +82,11 @@ export function InboxRow({
   // CI_GLYPH_LABEL so the suffix and the <title> tooltip never drift.
   const ciSuffix = !isDone && pr.ci !== 'none' ? ` · ${CI_GLYPH_LABEL[pr.ci]}` : '';
 
+  const commitLabel = `${pr.commitCount} ${pr.commitCount === 1 ? 'commit' : 'commits'}`;
+
   const ariaLabel = isDone
     ? `${pr.title} · ${pr.repo} · ${doneState}`
-    : `${pr.title} · ${pr.repo} · open · iteration ${pr.iterationNumber}${
+    : `${pr.title} · ${pr.repo} · open · ${commitLabel}${
         hasUnseenActivity ? ' · unread' : ''
       }${ciSuffix}`;
 
@@ -145,7 +147,7 @@ export function InboxRow({
               <span className={styles.authorName}>{pr.author}</span>
             </span>
             <span className={styles.dotsep}>·</span>
-            <span className={styles.mono}>iter {pr.iterationNumber}</span>
+            <span className={styles.mono}>{commitLabel}</span>
             <span className={styles.dotsep}>·</span>
             <span>{formatAge(pr.updatedAt)}</span>
           </span>
@@ -192,6 +194,24 @@ export function InboxRow({
                   <path d="M1.75 1h12.5c.966 0 1.75.784 1.75 1.75v9.5A1.75 1.75 0 0 1 14.25 13H8.061l-2.574 2.573A1.458 1.458 0 0 1 3 14.543V13H1.75A1.75 1.75 0 0 1 0 11.25v-9.5C0 1.784.784 1 1.75 1ZM1.5 2.75v8.5a.25.25 0 0 0 .25.25h2a.75.75 0 0 1 .75.75v2.19l2.72-2.72a.749.749 0 0 1 .53-.22h6.5a.25.25 0 0 0 .25-.25v-8.5a.25.25 0 0 0-.25-.25H1.75a.25.25 0 0 0-.25.25Z" />
                 </svg>
                 {pr.commentCount}
+              </span>
+            )}
+          </span>
+          <span className={styles.filesSlot}>
+            {pr.changedFiles > 0 && (
+              <span className={styles.files}>
+                <svg
+                  className={styles.fileIcon}
+                  viewBox="0 0 16 16"
+                  width="12"
+                  height="12"
+                  fill="currentColor"
+                  aria-hidden="true"
+                >
+                  {/* Octicon file-16 */}
+                  <path d="M2 1.75C2 .784 2.784 0 3.75 0h6.586c.464 0 .909.184 1.237.513l2.914 2.914c.329.328.513.773.513 1.237v9.586A1.75 1.75 0 0 1 13.25 16h-9.5A1.75 1.75 0 0 1 2 14.25Zm1.75-.25a.25.25 0 0 0-.25.25v12.5c0 .138.112.25.25.25h9.5a.25.25 0 0 0 .25-.25V6h-2.75A1.75 1.75 0 0 1 9 4.25V1.5Zm6.75.062V4.25c0 .138.112.25.25.25h2.688l-.011-.013-2.914-2.914-.013-.011Z" />
+                </svg>
+                {pr.changedFiles}
               </span>
             )}
           </span>

@@ -2,7 +2,7 @@
 .row {
   display: grid;
   grid-template-columns: 16px minmax(0, 1fr) var(--inbox-tail-w);
-  --inbox-tail-w: 224px; /* metrics only: 64 diff + 72 counts + 52 comments + 2×12 gaps = 212, +12 slack; tuned in B1 */
+  --inbox-tail-w: 288px; /* metrics only: 64 diff + 72 counts + 52 comments + 52 files + 3×12 gaps = 276, +12 slack; tuned in B1 */
   gap: var(--s-3);
   width: 100%;
   padding: var(--s-3) var(--s-4);
@@ -257,7 +257,7 @@
   color: var(--danger-fg);
 }
 
-.comments {
+.metricPill {
   display: inline-flex;
   align-items: center;
   gap: 3px;
@@ -267,18 +267,43 @@
   color: var(--text-3);
 }
 
-/* Accent-tinted comment glyph (not an emoji) so the count reads as comments
+/* Accent-tinted glyph so the count reads as a metric (not plain text)
    while staying inside the theme's colour scheme. */
-.commentIcon {
+.metricPillIcon {
   flex: none;
   color: var(--accent);
 }
 
-/* Keep the comment-pill readable as a raised chip on a hovered row. Per-theme token:
+/* Keep metric-pills readable as raised chips on a hovered row. Per-theme token:
    surface-3 in light, but a distinct value in dark where --row-hover sits next to
    surface-3 (#347). */
-.row:hover .comments {
+.row:hover .metricPill {
   background: var(--row-hover-pill);
+}
+
+.comments {
+  composes: metricPill;
+}
+
+.commentIcon {
+  composes: metricPillIcon;
+}
+
+/* 52px fits a 3-digit file count without the pill bleeding into the adjacent gap;
+   right-pinned so the glyph+count right edge aligns across rows regardless of digit count. */
+.filesSlot {
+  flex: none;
+  width: 52px;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.files {
+  composes: metricPill;
+}
+
+.fileIcon {
+  composes: metricPillIcon;
 }
 
 /* Indent grouped rows via left padding, not the accordion body, so the tail's
@@ -296,9 +321,9 @@
    the breakpoint (tail width changes), by design. Thresholds tuned in B1. */
 @container inbox-sections (max-width: 560px) {
   /* Override --inbox-tail-w declared on .row itself; the grid template re-resolves.
-     72 counts + 52 comments + 12 gap = 136, +8 slack (diff bar is hidden below). */
+     72 counts + 52 comments + 52 files + 2×12 gaps = 200, +8 slack (diff bar is hidden below). */
   .row {
-    --inbox-tail-w: 144px;
+    --inbox-tail-w: 208px;
   }
   /* Drop the diff bar AND the AI category chip together: at this width the chip
      would otherwise clamp to a cryptic ~1-char stub rather than read as a label.

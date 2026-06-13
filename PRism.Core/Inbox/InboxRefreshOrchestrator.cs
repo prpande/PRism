@@ -294,12 +294,24 @@ public sealed partial class InboxRefreshOrchestrator : IInboxRefreshOrchestrator
         var ci = ciByRef.TryGetValue(r.Reference, out var c) ? c : CiStatus.None;
         var (lastViewedHeadSha, lastSeenCommentId) = InboxViewedState.Project(r.Reference, state);
         return new PrInboxItem(
-            r.Reference, r.Title, r.Author, r.Repo,
-            r.UpdatedAt, r.PushedAt,
-            r.IterationNumberApprox, r.CommentCount,
-            r.Additions, r.Deletions, r.HeadSha, ci,
-            lastViewedHeadSha, lastSeenCommentId,
-            r.MergedAt, r.ClosedAt, r.AvatarUrl);
+            Reference: r.Reference,
+            Title: r.Title,
+            Author: r.Author,
+            Repo: r.Repo,
+            UpdatedAt: r.UpdatedAt,
+            PushedAt: r.PushedAt,
+            CommitCount: r.CommitCount,
+            ChangedFiles: r.ChangedFiles,
+            CommentCount: r.CommentCount,
+            Additions: r.Additions,
+            Deletions: r.Deletions,
+            HeadSha: r.HeadSha,
+            Ci: ci,
+            LastViewedHeadSha: lastViewedHeadSha,
+            LastSeenCommentId: lastSeenCommentId,
+            MergedAt: r.MergedAt,
+            ClosedAt: r.ClosedAt,
+            AvatarUrl: r.AvatarUrl);
     }
 
     // NewOrUpdatedPrCount is named for the common case (added or updated PRs) but its

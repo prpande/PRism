@@ -23,11 +23,11 @@ public sealed class InboxRefreshOrchestratorTests
 
     private static RawPrInboxItem RawPr(int n, string headSha = "sha", string owner = "acme", string repo = "api")
         => new(Ref(n, owner, repo), $"PR #{n}", "author", $"{owner}/{repo}",
-            DateTimeOffset.UtcNow, DateTimeOffset.UtcNow, 0, 0, 0, headSha, 1);
+            DateTimeOffset.UtcNow, DateTimeOffset.UtcNow, 0, 0, 0, headSha, 1, 0);
 
     private static RawPrInboxItem RawClosed(int n, DateTimeOffset? merged, DateTimeOffset? closed, string headSha = "")
         => new(Ref(n), $"PR #{n}", "author", "acme/api",
-            DateTimeOffset.UtcNow, DateTimeOffset.UtcNow, 0, 0, 0, headSha, 1,
+            DateTimeOffset.UtcNow, DateTimeOffset.UtcNow, 0, 0, 0, headSha, 1, 0,
             MergedAt: merged, ClosedAt: closed);
 
     private static RawPrInboxItem RawClosedRepo(int n, string repo, DateTimeOffset closed)
@@ -39,7 +39,7 @@ public sealed class InboxRefreshOrchestratorTests
         // matches its name and doesn't conflate merged vs closed. The recency
         // sort uses MergedAt ?? ClosedAt ?? UpdatedAt, so ClosedAt drives order.
         return new(Ref(n, owner, name), $"PR #{n}", "author", repo,
-            DateTimeOffset.UtcNow, DateTimeOffset.UtcNow, 0, 0, 0, "", 1,
+            DateTimeOffset.UtcNow, DateTimeOffset.UtcNow, 0, 0, 0, "", 1, 0,
             MergedAt: null, ClosedAt: closed);
     }
 

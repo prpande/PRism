@@ -13,7 +13,8 @@ const PR: PrInboxItem = {
   repo: 'acme/api',
   updatedAt: new Date().toISOString(),
   pushedAt: new Date().toISOString(),
-  iterationNumber: 2,
+  commitCount: 2,
+  changedFiles: 3,
   commentCount: 3,
   additions: 50,
   deletions: 10,
@@ -361,5 +362,26 @@ describe('InboxRow unread bar, New-badge removal, and age', () => {
     expect(screen.queryByText('New')).not.toBeInTheDocument();
     // ...and the unread bar is suppressed too (done rows never flag).
     expect(screen.getByRole('button')).toHaveAttribute('data-unread', 'false');
+  });
+});
+
+describe('InboxRow changed-files slot', () => {
+  it('renders changed-files count in the tail metrics', () => {
+    const { container } = renderInboxRow({ ...PR, changedFiles: 5 });
+    const filesSlot = container.querySelector('[class*="filesSlot"]');
+    expect(filesSlot).not.toBeNull();
+    expect(filesSlot!.textContent).toContain('5');
+    // count is rendered next to an aria-hidden SVG glyph
+    expect(filesSlot!.querySelector('svg')).not.toBeNull();
+  });
+
+  it('does not render files count when changedFiles is 0', () => {
+    const { container } = renderInboxRow({ ...PR, changedFiles: 0 });
+    const filesSlot = container.querySelector('[class*="filesSlot"]');
+    expect(filesSlot).not.toBeNull();
+    expect(filesSlot!.querySelector('[class*="files"]')).toBeNull();
+    expect(filesSlot!.textContent).toBe('');
+    // queryByText with exact match: the standalone "0" file count must not appear
+    expect(screen.queryByText('0')).toBeNull();
   });
 });

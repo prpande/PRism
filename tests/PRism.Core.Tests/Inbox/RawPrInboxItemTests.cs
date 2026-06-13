@@ -11,7 +11,7 @@ public sealed class RawPrInboxItemTests
     {
         var raw = new RawPrInboxItem(
             new PrReference("acme", "api", 1), "t", "a", "acme/api",
-            DateTimeOffset.UtcNow, DateTimeOffset.UtcNow, 0, 0, 0, "sha", 1);
+            DateTimeOffset.UtcNow, DateTimeOffset.UtcNow, 0, 0, 0, "sha", 1, 0);
 
         raw.MergedAt.Should().BeNull();
         raw.ClosedAt.Should().BeNull();
@@ -23,7 +23,7 @@ public sealed class RawPrInboxItemTests
         var merged = DateTimeOffset.UtcNow;
         var raw = new RawPrInboxItem(
             new PrReference("acme", "api", 1), "t", "a", "acme/api",
-            DateTimeOffset.UtcNow, DateTimeOffset.UtcNow, 0, 0, 0, "sha", 1)
+            DateTimeOffset.UtcNow, DateTimeOffset.UtcNow, 0, 0, 0, "sha", 1, 0)
             with { MergedAt = merged, ClosedAt = merged };
 
         raw.MergedAt.Should().Be(merged);

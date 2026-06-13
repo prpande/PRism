@@ -111,7 +111,8 @@ export interface PrInboxItem {
   repo: string;
   updatedAt: string;
   pushedAt: string;
-  iterationNumber: number;
+  commitCount: number;
+  changedFiles: number;
   commentCount: number;
   additions: number;
   deletions: number;

@@ -28,7 +28,7 @@ public class InboxViewedStateTests
         string? lastViewedHeadSha = null, long? lastSeenCommentId = null) =>
         new(reference, "T", "a", "acme/api",
             System.DateTimeOffset.UtcNow, System.DateTimeOffset.UtcNow,
-            1, 0, 1, 0, headSha, CiStatus.None, lastViewedHeadSha, lastSeenCommentId);
+            1, 0, 0, 1, 0, headSha, CiStatus.None, lastViewedHeadSha, lastSeenCommentId);
 
     [Fact]
     public void Project_returns_most_recent_tab_stamp_head_by_stamped_at()

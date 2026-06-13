@@ -143,7 +143,8 @@ public sealed partial class GitHubSectionQueryRunner : ISectionQueryRunner
                     comments,
                     0, 0, // additions/deletions not in Search API; refined in fan-out
                     "",   // head_sha not in Search API; refined in fan-out
-                    1,    // iteration approx
+                    1,    // commit count approx
+                    0,    // changed_files not in Search API; refined in fan-out
                     AvatarUrl: avatarUrl));
             }
             catch (Exception ex) when (InboxJsonGuard.IsMalformedItem(ex))
