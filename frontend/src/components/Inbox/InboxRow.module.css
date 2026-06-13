@@ -257,7 +257,7 @@
   color: var(--danger-fg);
 }
 
-.comments {
+.metricPill {
   display: inline-flex;
   align-items: center;
   gap: 3px;
@@ -267,18 +267,26 @@
   color: var(--text-3);
 }
 
-/* Accent-tinted comment glyph (not an emoji) so the count reads as comments
+/* Accent-tinted glyph so the count reads as a metric (not plain text)
    while staying inside the theme's colour scheme. */
-.commentIcon {
+.metricPillIcon {
   flex: none;
   color: var(--accent);
 }
 
-/* Keep the comment-pill readable as a raised chip on a hovered row. Per-theme token:
+/* Keep metric-pills readable as raised chips on a hovered row. Per-theme token:
    surface-3 in light, but a distinct value in dark where --row-hover sits next to
    surface-3 (#347). */
-.row:hover .comments {
+.row:hover .metricPill {
   background: var(--row-hover-pill);
+}
+
+.comments {
+  composes: metricPill;
+}
+
+.commentIcon {
+  composes: metricPillIcon;
 }
 
 /* 52px fits a 3-digit file count without the pill bleeding into the adjacent gap;
@@ -291,25 +299,11 @@
 }
 
 .files {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  padding: 2px 6px;
-  border-radius: var(--radius-2);
-  font-size: var(--text-xs);
-  color: var(--text-3);
+  composes: metricPill;
 }
 
-/* Accent-tinted file glyph so the count reads as a file count
-   while staying inside the theme's colour scheme. */
 .fileIcon {
-  flex: none;
-  color: var(--accent);
-}
-
-/* Keep the files-pill readable as a raised chip on a hovered row. */
-.row:hover .files {
-  background: var(--row-hover-pill);
+  composes: metricPillIcon;
 }
 
 /* Indent grouped rows via left padding, not the accordion body, so the tail's

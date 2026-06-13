@@ -82,9 +82,11 @@ export function InboxRow({
   // CI_GLYPH_LABEL so the suffix and the <title> tooltip never drift.
   const ciSuffix = !isDone && pr.ci !== 'none' ? ` · ${CI_GLYPH_LABEL[pr.ci]}` : '';
 
+  const commitLabel = `${pr.commitCount} ${pr.commitCount === 1 ? 'commit' : 'commits'}`;
+
   const ariaLabel = isDone
     ? `${pr.title} · ${pr.repo} · ${doneState}`
-    : `${pr.title} · ${pr.repo} · open · ${pr.commitCount} commit${pr.commitCount === 1 ? '' : 's'}${
+    : `${pr.title} · ${pr.repo} · open · ${commitLabel}${
         hasUnseenActivity ? ' · unread' : ''
       }${ciSuffix}`;
 
@@ -145,9 +147,7 @@ export function InboxRow({
               <span className={styles.authorName}>{pr.author}</span>
             </span>
             <span className={styles.dotsep}>·</span>
-            <span className={styles.mono}>
-              {pr.commitCount} {pr.commitCount === 1 ? 'commit' : 'commits'}
-            </span>
+            <span className={styles.mono}>{commitLabel}</span>
             <span className={styles.dotsep}>·</span>
             <span>{formatAge(pr.updatedAt)}</span>
           </span>
