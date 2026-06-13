@@ -145,7 +145,9 @@ export function InboxRow({
               <span className={styles.authorName}>{pr.author}</span>
             </span>
             <span className={styles.dotsep}>·</span>
-            <span className={styles.mono}>{pr.commitCount} {pr.commitCount === 1 ? 'commit' : 'commits'}</span>
+            <span className={styles.mono}>
+              {pr.commitCount} {pr.commitCount === 1 ? 'commit' : 'commits'}
+            </span>
             <span className={styles.dotsep}>·</span>
             <span>{formatAge(pr.updatedAt)}</span>
           </span>
