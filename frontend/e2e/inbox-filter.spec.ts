@@ -308,7 +308,7 @@ for (const theme of ['light', 'dark'] as const) {
       //   #43 "Wire pending checks" — older (06-02), diff 490
       // 'updated' DESC ranks #42 first; 'Diff size' DESC ranks #43 first — a
       // genuine swap, which is what proves the sort actually reorders.
-      const sortSelect = page.getByRole('combobox');
+      const sortTrigger = page.getByRole('combobox', { name: 'Sort' });
 
       // DOM order of the two review-requested titles (top-to-bottom).
       const order = async () => {
@@ -325,11 +325,13 @@ for (const theme of ['light', 'dark'] as const) {
       expect(await order()).toEqual(['refactor', 'pending']);
 
       // 'Diff size' DESC: the larger #43 now leads — the rows swapped.
-      await sortSelect.selectOption('diff');
+      await sortTrigger.click();
+      await page.getByRole('option', { name: 'Largest diff' }).click();
       await expect.poll(order).toEqual(['pending', 'refactor']);
 
       // Back to 'updated': #42 leads again.
-      await sortSelect.selectOption('updated');
+      await sortTrigger.click();
+      await page.getByRole('option', { name: 'Recently updated' }).click();
       await expect.poll(order).toEqual(['refactor', 'pending']);
     });
 
