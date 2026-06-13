@@ -5,6 +5,8 @@ using Microsoft.Extensions.Logging.Abstractions;
 using PRism.Core;
 using PRism.Core.Contracts;
 using PRism.Core.Iterations;
+using static PRism.GitHub.GitHubGraphQL; // TryGetPath (#321 PR2 shared static)
+using static PRism.GitHub.GitHubHttp;    // Truncate (#321 PR2 shared static)
 
 namespace PRism.GitHub;
 
@@ -540,64 +542,46 @@ public sealed partial class GitHubReviewService : IPrDiscovery, IPrReader, IRevi
     // concern (rate-limit defense), not a clustering coefficient. Spec § 6.4.
     private const int InterBatchPaceMs = 100;
 
+    // #321 PR2 — explicit EventIds pinned on every method in this Log class so it is
+    // collision-deterministic. The four cap-hit methods carry the exact name-hash EventIds
+    // the source generator already assigned to them (probed from the generated source):
+    // pinning to current freezes those operator-facing Ids against a future method rename
+    // (a rename would otherwise silently change the generated hash). GraphQLReadFailed keeps
+    // EventId 4 (was the s_graphqlReadFailed LoggerMessage.Define field, converted in PR2).
+    // None of the five collide; the source generator enforces per-class EventId uniqueness.
     private static partial class Log
     {
-        [LoggerMessage(Level = LogLevel.Warning, Message = "Per-commit fan-out hit a 4xx response on PR {Owner}/{Repo}#{Number}; remaining commits will be skipped (session degraded). ChangedFiles will be null for those commits and FileJaccardMultiplier returns neutral (1.0).")]
+        [LoggerMessage(Level = LogLevel.Warning, EventId = 1044022636, EventName = "FanOutDegraded", Message = "Per-commit fan-out hit a 4xx response on PR {Owner}/{Repo}#{Number}; remaining commits will be skipped (session degraded). ChangedFiles will be null for those commits and FileJaccardMultiplier returns neutral (1.0).")]
         internal static partial void FanOutDegraded(ILogger logger, string owner, string repo, int number);
 
-        [LoggerMessage(Level = LogLevel.Warning, Message = "Timeline page cap reached on PR {Owner}/{Repo}#{Number}; some history was not loaded. Frontend renders the explicit cap-hit banner.")]
+        [LoggerMessage(Level = LogLevel.Warning, EventId = 1939989743, EventName = "TimelineCapHit", Message = "Timeline page cap reached on PR {Owner}/{Repo}#{Number}; some history was not loaded. Frontend renders the explicit cap-hit banner.")]
         internal static partial void TimelineCapHit(ILogger logger, string owner, string repo, int number);
 
-        [LoggerMessage(Level = LogLevel.Warning, Message = "Diff pagination hit the 30-page cap on PR {Owner}/{Repo}#{Number}; truncated diff will surface to the user via DiffDto.Truncated.")]
+        [LoggerMessage(Level = LogLevel.Warning, EventId = 1196818731, EventName = "DiffPagesCapped", Message = "Diff pagination hit the 30-page cap on PR {Owner}/{Repo}#{Number}; truncated diff will surface to the user via DiffDto.Truncated.")]
         internal static partial void DiffPagesCapped(ILogger logger, string owner, string repo, int number);
 
-        [LoggerMessage(Level = LogLevel.Warning, Message = "PatchParser threw on file {Path}; surfacing empty hunks for that file (Files tab will show the \"Empty file\" placeholder). Per-file fault isolation kept the rest of the response intact. Inspect the patch shape if seen repeatedly.")]
+        [LoggerMessage(Level = LogLevel.Warning, EventId = 590488725, EventName = "PatchParseFailed", Message = "PatchParser threw on file {Path}; surfacing empty hunks for that file (Files tab will show the \"Empty file\" placeholder). Per-file fault isolation kept the rest of the response intact. Inspect the patch shape if seen repeatedly.")]
         internal static partial void PatchParseFailed(ILogger logger, string path, Exception ex);
+
+        // s_graphqlReadFailed → GraphQLReadFailed. Logged at Warning (not Error) because the
+        // read-side queries can legitimately run against repos the user no longer has access
+        // to or PRs that have been deleted — those produce errors-without-data legitimately
+        // and the UI surfaces an empty state. EventId 4 preserved (operators grep on it).
+        [LoggerMessage(Level = LogLevel.Warning, EventId = 4, EventName = "GraphQLReadFailed",
+            Message = "Read-side GraphQL call returned {ErrorCount} error(s) with no usable data. Raw errors: {ErrorsJson}")]
+        internal static partial void GraphQLReadFailed(ILogger logger, int errorCount, string errorsJson);
     }
 
+    // Thin per-class transport wrapper: reads the token, builds the named "github" client,
+    // delegates the raw POST to the shared GitHubGraphQL.PostAsync (#321 PR2). Keeping this
+    // wrapper named PostGraphQLAsync(query, variables, ct) leaves the read-path call sites
+    // (GetPrDetailAsync / GetTimelineAsync) byte-identical.
     private async Task<string> PostGraphQLAsync(string query, object variables, CancellationToken ct)
     {
         var token = await _readToken().ConfigureAwait(false);
-        var payload = JsonSerializer.Serialize(new { query, variables });
         using var http = _httpFactory.CreateClient("github");
-        // Absolute URL to defeat the named client's BaseAddress = `<host>/api/v3/`. GHES's
-        // GraphQL endpoint is `<host>/api/graphql` (no /v3); resolving against BaseAddress
-        // would 404 on every GraphQL call against GHES.
-        var endpoint = HostUrlResolver.GraphQlEndpoint(_host);
-        // apiVersion:false — the REST version header is meaningless to the GraphQL endpoint;
-        // suppressing it keeps this request byte-identical to its pre-#320 form. The submit
-        // pipeline rides this method (PostSubmitGraphQLAsync wraps it), so byte-identity here
-        // preserves the B2 submit transport.
-        using var content = new StringContent(payload, System.Text.Encoding.UTF8, "application/json");
-        using var resp = await GitHubHttp.SendAsync(
-            http, HttpMethod.Post, endpoint.ToString(), token, ct,
-            content: content, apiVersion: false).ConfigureAwait(false);
-        if (!resp.IsSuccessStatusCode)
-        {
-            // GitHub's error body carries the actionable reason ({"message":"Bad credentials",…}
-            // for 401, abuse/rate-limit details for 403, etc.); read it (best-effort) so the
-            // exception message and the transport-failure log include it.
-            string body = await GitHubHttp.ReadErrorBodyBestEffortAsync(resp, ct).ConfigureAwait(false);
-            s_graphqlTransportFailed(_log, (int)resp.StatusCode, resp.ReasonPhrase ?? "", Truncate(body, 1024), null);
-            throw new HttpRequestException(
-                $"GitHub GraphQL HTTP {(int)resp.StatusCode} {resp.ReasonPhrase}: {Truncate(body, 512)}",
-                inner: null,
-                statusCode: resp.StatusCode);
-        }
-        return await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+        return await GitHubGraphQL.PostAsync(http, token, _host, _log, query, variables, ct).ConfigureAwait(false);
     }
-
-    private static string Truncate(string s, int max)
-        => string.IsNullOrEmpty(s) ? string.Empty : (s.Length <= max ? s : string.Concat(s.AsSpan(0, max), "…"));
-
-    // Transport-level failures are logged at Warning because rate-limits and auth
-    // expiry are recoverable conditions — distinct from execution errors (Warning
-    // for read, Error for submit). Body is truncated in the log to 1024 chars so a
-    // pathological 5xx body doesn't bloat the log file; the response code +
-    // first 512 chars in the exception's Message are what callers surface.
-    private static readonly Action<ILogger, int, string, string, Exception?> s_graphqlTransportFailed =
-        LoggerMessage.Define<int, string, string>(LogLevel.Warning, new EventId(5, "GraphQLTransportFailed"),
-            "GraphQL HTTP request failed: {StatusCode} {ReasonPhrase}. Body: {Body}");
 
     // GraphQL is "200 with errors" rather than HTTP-error-coded; the `errors` array
     // carries execution failures. Throw only when errors are present AND there is no
@@ -619,37 +603,10 @@ public sealed partial class GitHubReviewService : IPrDiscovery, IPrReader, IRevi
         if (hasUsableData) return;
 
         var errorsJson = errors.GetRawText();
-        s_graphqlReadFailed(_log, errors.GetArrayLength(), errorsJson, null);
+        Log.GraphQLReadFailed(_log, errors.GetArrayLength(), errorsJson);
         throw new GitHubGraphQLException(
             GitHubGraphQLException.FormatErrorsMessage(errorsJson) + " (no data)",
             errorsJson);
-    }
-
-    // Logged at Warning (not Error) because the read-side queries can legitimately
-    // run against repos the user no longer has access to or PRs that have been
-    // deleted — those produce errors-without-data legitimately and the UI surfaces
-    // an empty state. The structured log lets an operator distinguish "real GitHub
-    // failure" from "expected absence" without crawling stack traces.
-    private static readonly Action<ILogger, int, string, Exception?> s_graphqlReadFailed =
-        LoggerMessage.Define<int, string>(LogLevel.Warning, new EventId(4, "GraphQLReadFailed"),
-            "Read-side GraphQL call returned {ErrorCount} error(s) with no usable data. Raw errors: {ErrorsJson}");
-
-    // Walks a chain of property names defensively. Returns false on any missing key,
-    // any non-object intermediate, or short-circuits at the first JSON null.
-    private static bool TryGetPath(JsonElement root, out JsonElement leaf, params string[] path)
-    {
-        var current = root;
-        foreach (var key in path)
-        {
-            if (current.ValueKind != JsonValueKind.Object || !current.TryGetProperty(key, out var next))
-            {
-                leaf = default;
-                return false;
-            }
-            current = next;
-        }
-        leaf = current;
-        return true;
     }
 
     // The three GraphQL connections inside `pullRequest` that the spec § 6.1 cap-hit
