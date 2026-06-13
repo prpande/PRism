@@ -775,34 +775,11 @@ git commit -m "test(#349): lock Select contracts + dev labeling guard"
 **Files:**
 - Modify: `frontend/src/components/Inbox/filters/FilterBar.tsx:88-124`
 - Modify: `frontend/src/components/Inbox/filters/filters.module.css`
-- Test: `frontend/src/components/Inbox/filters/FilterBar.test.tsx` (locate the sort test; if no dedicated test exists, the InboxPage-level tests exercise it)
+- Test: `frontend/src/components/Inbox/filters/FilterBar.test.tsx` (co-located). The existing suite only asserts the sort control is an accessible combobox — it does **not** drive a selection — so migration keeps it green; we add a selection test.
 
-- [ ] **Step 1: Update the FilterBar test for the new combobox role**
+> **Migration task (not red-first TDD).** This swaps an already-tested control for the new one. The existing combobox-presence assertion (`getByRole('combobox', { name: /^sort$/i })`) stays green because the `Select` trigger is also `role="combobox"`. We migrate, confirm the suite stays green, then add a selection test that exercises the new open→click interaction.
 
-Find the existing sort assertion. Native `<select aria-label="Sort">` exposes `role="combobox"` already, so a `getByRole('combobox', { name: 'Sort' })` query still resolves. The behavior change: selecting is now two interactions (open, then click option) instead of `selectOptions`. Replace any `userEvent.selectOptions(sortSelect, 'diff')` with:
-
-```tsx
-await userEvent.click(screen.getByRole('combobox', { name: 'Sort' }));
-await userEvent.click(screen.getByRole('option', { name: 'Largest diff' }));
-```
-
-If `FilterBar.test.tsx` has no sort-specific test, add one:
-
-```tsx
-it('changes sort via the themed Select', async () => {
-  // ...render FilterBar with its required props (mirror existing tests in this file)...
-  await userEvent.click(screen.getByRole('combobox', { name: 'Sort' }));
-  await userEvent.click(screen.getByRole('option', { name: 'Most comments' }));
-  // assert the onState/result reflects the 'comments' sort per this file's existing pattern
-});
-```
-
-- [ ] **Step 2: Run, verify failure**
-
-Run: `npm test -- src/components/Inbox/filters/FilterBar.test.tsx`
-Expected: FAIL — `getByRole('option', ...)` finds nothing (native `<option>`s are not in the a11y tree until the native popup opens; with the native `<select>` still in place, the two-click interaction does not surface listbox options).
-
-- [ ] **Step 3: Replace the native sort `<select>` with `Select`**
+- [ ] **Step 1: Replace the native sort `<select>` with `Select`**
 
 In `FilterBar.tsx`, add the import:
 
@@ -814,7 +791,6 @@ Replace the entire `<span className={styles.sort}>...</span>` block (the leading
 
 ```tsx
           <Select
-            className={styles.sort}
             aria-label="Sort"
             value={f.sort}
             onChange={(v) => f.setSort(v)}
@@ -827,16 +803,37 @@ Replace the entire `<span className={styles.sort}>...</span>` block (the leading
           />
 ```
 
-`f.setSort` already accepts a `SortKey`; the `as SortKey` cast from the old `e.target.value` handler is no longer needed because `Select`'s `onChange` is typed `(value: SortKey) => void` via inference from `value={f.sort}`.
+`f.setSort` already accepts a `SortKey`; the old `as SortKey` cast from the `e.target.value` handler is gone because `Select`'s `onChange` is typed `(value: SortKey) => void` via inference from `value={f.sort}`. The `.sort` wrapper class is dropped — `Select`'s own root (`position: relative; inline-flex`) replaces the wrapper that positioned the old absolute glyph/caret.
 
-- [ ] **Step 4: Remove the now-dead CSS rules**
+- [ ] **Step 2: Remove the now-dead CSS rules**
 
-In `filters.module.css`, delete the `.sort` block's now-unused inner pieces and the dead rules. Keep `.sort` only if it still carries useful layout (inline-flex/gap); since `Select` now owns the control, simplify `.sort` to a thin layout wrapper or remove it and drop the `className={styles.sort}` prop. Delete `.sortGlyph`, `.sortCaret`, `.sortSelect`, and `.sortSelect:focus-visible`. Verify no other file references them:
+In `filters.module.css`, delete `.sort`, `.sortGlyph`, `.sortCaret`, `.sortSelect`, and `.sortSelect:focus-visible`. Verify nothing else references them:
 
-Run: `git grep -nE "sortGlyph|sortCaret|sortSelect" frontend/src`
+Run: `git grep -nE "styles\.sort\b|sortGlyph|sortCaret|sortSelect" frontend/src`
 Expected: no matches after the edit.
 
-- [ ] **Step 5: Run the relevant suites, verify pass**
+- [ ] **Step 3: Run the existing FilterBar test, verify it stays green**
+
+Run: `npm test -- src/components/Inbox/filters/FilterBar.test.tsx`
+Expected: PASS — the `combobox` named "Sort" assertion holds against the new trigger.
+
+- [ ] **Step 4: Add a selection behavior test**
+
+Append to `FilterBar.test.tsx` a test that drives the new open→click interaction (mirror the render setup of the existing `it('sort control is an accessible combobox...')` test for required props):
+
+```tsx
+it('selecting a sort option updates the control via the themed Select', async () => {
+  // ...render FilterBar with the same props the sibling test uses...
+  await userEvent.click(screen.getByRole('combobox', { name: /^sort$/i }));
+  await userEvent.click(screen.getByRole('option', { name: 'Most comments' }));
+  // The trigger reflects the committed selection (Select renders the selected label).
+  expect(screen.getByRole('combobox', { name: /^sort$/i })).toHaveTextContent('Most comments');
+});
+```
+
+Ensure `import userEvent from '@testing-library/user-event';` is present at the top of `FilterBar.test.tsx` (add it if the file previously asserted only with `screen.getByRole`).
+
+- [ ] **Step 5: Run the inbox suite, verify pass**
 
 Run: `npm test -- src/components/Inbox`
 Expected: PASS.
@@ -856,22 +853,9 @@ git commit -m "feat(#349): migrate inbox sort to themed Select"
 - Modify: `frontend/src/components/Settings/panes/InboxPane.tsx:161-177`
 - Test: `frontend/src/components/Settings/panes/InboxPane.test.tsx`
 
-- [ ] **Step 1: Update the InboxPane test**
+The existing test changes the sort via `fireEvent.change(screen.getByLabelText('Default sort'), { target: { value: 'pushed' } })`. `fireEvent.change` is a no-op on the new `Select` (a `<button>`, not a form control), so that test genuinely breaks on migration — we migrate first, watch it fail, then rewrite the interaction.
 
-Find the default-sort assertion (likely `userEvent.selectOptions(...)` against `getByLabelText('Default sort')`). The label association is preserved via `id="inbox-default-sort"`, so `getByRole('combobox', { name: 'Default sort' })` resolves. Replace the selection interaction:
-
-```tsx
-await userEvent.click(screen.getByRole('combobox', { name: 'Default sort' }));
-await userEvent.click(screen.getByRole('option', { name: 'Largest diff' }));
-// assert set('inbox.defaultSort', 'diff') was called, per this file's existing mock pattern
-```
-
-- [ ] **Step 2: Run, verify failure**
-
-Run: `npm test -- src/components/Settings/panes/InboxPane.test.tsx`
-Expected: FAIL — listbox options not present while the native `<select>` is still in place.
-
-- [ ] **Step 3: Replace the native `<select>` with `Select`**
+- [ ] **Step 1: Replace the native `<select>` with `Select`**
 
 In `InboxPane.tsx`, add the import:
 
@@ -892,6 +876,29 @@ Replace the `<select id="inbox-default-sort" ...>...</select>` block with:
 
 The external `<label htmlFor="inbox-default-sort">Default sort</label>` row stays unchanged and provides the accessible name.
 
+- [ ] **Step 2: Run the existing test, verify the change-test fails**
+
+Run: `npm test -- src/components/Settings/panes/InboxPane.test.tsx`
+Expected: FAIL — the default-sort test calls `fireEvent.change` on the trigger button, which does not fire `onChange`, so `set('inbox.defaultSort', 'pushed')` is never called.
+
+- [ ] **Step 3: Rewrite the failing interaction to open→click**
+
+In `InboxPane.test.tsx`, replace the `fireEvent.change` interaction. The accessible name is preserved via `id="inbox-default-sort"` + the external label, so query by combobox role. Replace:
+
+```tsx
+const select = screen.getByLabelText('Default sort');
+fireEvent.change(select, { target: { value: 'pushed' } });
+```
+
+with:
+
+```tsx
+await userEvent.click(screen.getByRole('combobox', { name: 'Default sort' }));
+await userEvent.click(screen.getByRole('option', { name: 'Recently pushed' }));
+```
+
+Make the enclosing `it(...)` callback `async`, ensure `import userEvent from '@testing-library/user-event';` is present, and keep the existing assertion that `set` was called with `('inbox.defaultSort', 'pushed')`.
+
 - [ ] **Step 4: Run, verify pass**
 
 Run: `npm test -- src/components/Settings/panes/InboxPane.test.tsx`
@@ -911,31 +918,16 @@ git commit -m "feat(#349): migrate Settings default-sort to themed Select"
 **Files:**
 - Modify: `frontend/src/components/PrDetail/FilesTab/ComparePicker.tsx`
 - Modify: `frontend/src/components/PrDetail/FilesTab/ComparePicker.module.css`
-- Test: `frontend/src/components/PrDetail/FilesTab/ComparePicker.test.tsx`
+- Test: `frontend/__tests__/ComparePicker.test.tsx` — **note the location**: this test lives in the central `frontend/__tests__/` directory, NOT co-located beside the component.
 
-- [ ] **Step 1: Update the ComparePicker test**
+The existing test drives the selects with `fireEvent.change(screen.getByLabelText(/from/i), { target: { value: '2' } })` and asserts disabled options via `fromSelect.querySelectorAll('option')` + `.disabled`. Both break against the new `Select`: `fireEvent.change` is a no-op on a `<button>`, and there are no native `<option>` elements to query. We migrate first, watch it fail, then rewrite the interactions. ComparePicker is unmounted in the live app, so this is unit-test coverage only — there is no visual/live gate for it.
 
-Replace any `userEvent.selectOptions` interactions targeting the From/To selects with the open-then-click pattern, keyed on the `aria-label`s `From iteration` / `To iteration`:
+- [ ] **Step 1: Replace both native `<select>`s with `Select` and adapt the handlers**
 
-```tsx
-await userEvent.click(screen.getByRole('combobox', { name: 'From iteration' }));
-await userEvent.click(screen.getByRole('option', { name: 'Iter 2' }));
-// assert onCompare reflects the from/to swap logic per the existing test's expectations
-```
-
-Keep any assertions about disabled options — they now assert `aria-disabled="true"` on the `role="option"` (or that the option is not selectable), instead of a disabled native `<option>`.
-
-- [ ] **Step 2: Run, verify failure**
-
-Run: `npm test -- src/components/PrDetail/FilesTab/ComparePicker.test.tsx`
-Expected: FAIL — listbox options not present while native `<select>`s remain.
-
-- [ ] **Step 3: Replace both native `<select>`s with `Select` and adapt the handlers**
-
-In `ComparePicker.tsx`, add the import:
+In `ComparePicker.tsx`, add the import (controls live at `src/components/controls`; from `src/components/PrDetail/FilesTab/` that is two levels up):
 
 ```tsx
-import { Select } from '../../../controls/Select';
+import { Select } from '../../controls/Select';
 ```
 
 Change the two change handlers to take a numeric value directly (the `Select` `onChange` gives `value: number`, not an event):
@@ -990,6 +982,48 @@ Replace the second `<select aria-label="To iteration" ...>...</select>` with:
         />
 ```
 
+- [ ] **Step 2: Run the existing test, verify it fails**
+
+Run: `npm test -- __tests__/ComparePicker.test.tsx`
+Expected: FAIL — `fireEvent.change` on the new trigger button does not fire `onChange` (so `onCompare` is never called), and the disabled-option assertion's `querySelectorAll('option')` returns an empty list (no native `<option>`s exist).
+
+- [ ] **Step 3: Rewrite the test interactions**
+
+In `frontend/__tests__/ComparePicker.test.tsx`:
+
+Replace each change interaction, e.g.:
+
+```tsx
+fireEvent.change(screen.getByLabelText(/from/i), { target: { value: '2' } });
+```
+
+with the open→click pattern:
+
+```tsx
+await userEvent.click(screen.getByRole('combobox', { name: /from/i }));
+await userEvent.click(screen.getByRole('option', { name: 'Iter 2' }));
+```
+
+Replace the disabled-option assertion that reads native options:
+
+```tsx
+const fromSelect = screen.getByLabelText(/from/i) as HTMLSelectElement;
+const options = fromSelect.querySelectorAll('option');
+// ...expects a specific option.disabled === true
+```
+
+with an `aria-disabled` assertion on the listbox option:
+
+```tsx
+await userEvent.click(screen.getByRole('combobox', { name: /from/i }));
+expect(screen.getByRole('option', { name: /snapshot lost/i })).toHaveAttribute(
+  'aria-disabled',
+  'true',
+);
+```
+
+Make the affected `it(...)` callbacks `async`, add `import userEvent from '@testing-library/user-event';` if absent, and keep the existing `onCompare` swap-logic assertions (the handlers are preserved, so their expected from/to outputs are unchanged).
+
 - [ ] **Step 4: Remove the dead CSS rule**
 
 In `ComparePicker.module.css`, delete the `.comparePickerSelect` rule (and any `:focus`/`appearance` variants). Verify:
@@ -999,13 +1033,13 @@ Expected: no matches.
 
 - [ ] **Step 5: Run, verify pass**
 
-Run: `npm test -- src/components/PrDetail/FilesTab/ComparePicker.test.tsx`
+Run: `npm test -- __tests__/ComparePicker.test.tsx`
 Expected: PASS.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add frontend/src/components/PrDetail/FilesTab/ComparePicker.tsx frontend/src/components/PrDetail/FilesTab/ComparePicker.module.css frontend/src/components/PrDetail/FilesTab/ComparePicker.test.tsx
+git add frontend/src/components/PrDetail/FilesTab/ComparePicker.tsx frontend/src/components/PrDetail/FilesTab/ComparePicker.module.css frontend/__tests__/ComparePicker.test.tsx
 git commit -m "feat(#349): migrate ComparePicker to themed Select (unit-tested only)"
 ```
 
@@ -1066,4 +1100,6 @@ git commit -m "test(#349): update e2e selectors for themed Select"
 
 **Placeholder scan:** none — every code step shows the actual code/command.
 
-**Type consistency:** `SelectOption<T>`/`SelectProps<T>` defined in Task 1 are referenced consistently; helpers `firstEnabled`/`lastEnabled`/`nextEnabled`/`matchTypeahead` introduced before use (Tasks 2–3); `commit`/`close(refocus)`/`openList` signatures stable across tasks; migrations map `{ key, label }` → `{ value, label }` consistently and ComparePicker handlers are re-typed to `(value: number)`.
+**Type consistency:** `SelectOption<T>`/`SelectProps<T>` defined in Task 1 are referenced consistently; `firstEnabled` is introduced in Task 1, then `lastEnabled`/`nextEnabled` in Task 2 and `matchTypeahead` in Task 3 — each before use; `commit`/`close(refocus)`/`openList` signatures stable across tasks; migrations map `{ key, label }` → `{ value, label }` consistently and ComparePicker handlers are re-typed to `(value: number)`.
+
+**Post-review correction (round 1 ce-doc-review on the plan):** Tasks 5–7 were reframed from red-first TDD to migrate-first (these swap already-tested controls). Fixed: ComparePicker test path is `frontend/__tests__/ComparePicker.test.tsx` (central dir, not co-located); ComparePicker import depth is `../../controls/Select` (not `../../../`); the real test interactions are `fireEvent.change`/`querySelectorAll('option')` (not `selectOptions`), addressed per site; FilterBar's existing test stays green (combobox-presence only).
