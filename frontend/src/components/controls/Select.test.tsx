@@ -61,6 +61,17 @@ describe('Select — core', () => {
     expect(trigger).toHaveAttribute('aria-expanded', 'true');
     expect(trigger).toHaveAttribute('aria-controls', screen.getByRole('listbox').id);
   });
+
+  it('sets aria-activedescendant on the focused trigger (not the listbox)', async () => {
+    render(<Select aria-label="Sort" options={OPTS} value="pushed" onChange={() => {}} />);
+    const trigger = screen.getByRole('combobox', { name: 'Sort' });
+    trigger.focus();
+    await userEvent.keyboard('{ArrowDown}'); // open, active = selected ('pushed')
+    const activeOpt = screen.getByRole('option', { name: 'Recently pushed' });
+    expect(trigger).toHaveAttribute('aria-activedescendant', activeOpt.id);
+    // The attribute belongs on the focused element, never on the unfocused listbox.
+    expect(screen.getByRole('listbox')).not.toHaveAttribute('aria-activedescendant');
+  });
 });
 
 describe('Select — keyboard', () => {
@@ -168,6 +179,24 @@ describe('Select — contracts', () => {
   it('disables the trigger when options is empty', () => {
     render(<Select aria-label="Sort" options={[]} value={'x' as string} onChange={() => {}} />);
     expect(screen.getByRole('combobox', { name: 'Sort' })).toBeDisabled();
+  });
+
+  it('disables the trigger when every option is disabled (nothing selectable)', async () => {
+    render(
+      <Select
+        aria-label="Sort"
+        options={[
+          { value: 'a', label: 'A', disabled: true },
+          { value: 'b', label: 'B', disabled: true },
+        ]}
+        value="a"
+        onChange={() => {}}
+      />,
+    );
+    const trigger = screen.getByRole('combobox', { name: 'Sort' });
+    expect(trigger).toBeDisabled();
+    await userEvent.click(trigger);
+    expect(screen.queryByRole('listbox')).toBeNull();
   });
 
   it('a single-option list opens normally', async () => {

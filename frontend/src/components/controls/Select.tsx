@@ -50,14 +50,20 @@ export function Select<T extends string | number>({
   const instanceId = useId();
   const listboxId = `${instanceId}-listbox`;
 
-  // Empty options intentionally renders the trigger disabled/inert — a consumer passing an empty list gets a non-interactive control by design.
-  const isDisabled = disabled || options.length === 0;
+  // Empty OR all-disabled options render the trigger disabled/inert — a consumer
+  // with nothing selectable gets a non-interactive control by design (avoids an
+  // "open but unresponsive" list where Enter/Space silently no-op).
+  const isDisabled = disabled || options.length === 0 || options.every((o) => o.disabled);
 
-  if (import.meta.env.DEV && !id && !ariaLabel) {
-    console.warn(
-      'Select: provide either `id` (with a <label htmlFor>) or `aria-label` for an accessible name.',
-    );
-  }
+  // Dev-only authoring guard, in an effect so it fires when the labeling props
+  // change — not on every re-render (e.g. each keystroke) or StrictMode double-invoke.
+  useEffect(() => {
+    if (import.meta.env.DEV && !id && !ariaLabel) {
+      console.warn(
+        'Select: provide either `id` (with a <label htmlFor>) or `aria-label` for an accessible name.',
+      );
+    }
+  }, [id, ariaLabel]);
 
   const selectedIndex = options.findIndex((o) => o.value === value);
   const selectedLabel = selectedIndex >= 0 ? options[selectedIndex].label : '';
@@ -142,6 +148,9 @@ export function Select<T extends string | number>({
     }
   };
 
+  // Clear any pending type-ahead buffer-reset timer on unmount.
+  useEffect(() => () => window.clearTimeout(typeahead.current.timer), []);
+
   // Outside-click dismiss (net-new vs CommitMultiSelectPicker).
   useEffect(() => {
     if (!open) return;
@@ -168,6 +177,10 @@ export function Select<T extends string | number>({
         aria-haspopup="listbox"
         aria-expanded={open}
         aria-controls={open ? listboxId : undefined}
+        // aria-activedescendant lives on the focused element (this trigger keeps
+        // DOM focus; the listbox is never focused) so AT announces the active
+        // option during keyboard nav. WAI-ARIA combobox pattern.
+        aria-activedescendant={activeId}
         aria-label={ariaLabel}
         disabled={isDisabled}
         className={styles.trigger}
@@ -184,13 +197,7 @@ export function Select<T extends string | number>({
       </button>
 
       {open && (
-        <div
-          id={listboxId}
-          role="listbox"
-          aria-activedescendant={activeId}
-          tabIndex={-1}
-          className={styles.listbox}
-        >
+        <div id={listboxId} role="listbox" tabIndex={-1} className={styles.listbox}>
           {options.map((o, i) => (
             <div
               key={String(o.value)}
