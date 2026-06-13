@@ -7,6 +7,7 @@ import {
   orderedWorkSectionIds,
   type WorkSectionId,
 } from '../../Inbox/sectionOrder';
+import { Select } from '../../controls/Select';
 import { Switch } from '../../controls/Switch';
 import pane from './Pane.module.css';
 
@@ -163,17 +164,12 @@ export function InboxPane() {
           Default sort
         </label>
         <div className={pane.spring} />
-        <select
+        <Select
           id="inbox-default-sort"
           value={defaultSort}
-          onChange={(e) => set('inbox.defaultSort', e.target.value).catch(() => {})}
-        >
-          {SORT_OPTIONS.map((o) => (
-            <option key={o.key} value={o.key}>
-              {o.label}
-            </option>
-          ))}
-        </select>
+          onChange={(v) => set('inbox.defaultSort', v).catch(() => {})}
+          options={SORT_OPTIONS.map((o) => ({ value: o.key, label: o.label }))}
+        />
       </div>
 
       <div className={pane.row}>

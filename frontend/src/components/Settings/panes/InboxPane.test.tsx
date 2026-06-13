@@ -1,4 +1,4 @@
-import { render, screen, waitFor, fireEvent } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { SortKey } from '../../../api/types';
@@ -83,10 +83,10 @@ describe('InboxPane', () => {
     expect(screen.getByText('Needs re-review')).toBeInTheDocument();
   });
 
-  it('renders a default-sort select and persists a change', () => {
+  it('renders a default-sort select and persists a change', async () => {
     renderInboxPane({ defaultSort: 'updated' });
-    const select = screen.getByLabelText('Default sort');
-    fireEvent.change(select, { target: { value: 'pushed' } });
+    await userEvent.click(screen.getByRole('combobox', { name: 'Default sort' }));
+    await userEvent.click(screen.getByRole('option', { name: 'Recently pushed' }));
     expect(set).toHaveBeenCalledWith('inbox.defaultSort', 'pushed');
   });
 
