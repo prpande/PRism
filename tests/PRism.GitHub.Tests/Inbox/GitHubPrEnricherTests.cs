@@ -20,7 +20,7 @@ public sealed class GitHubPrEnricherTests
             new PrReference(parts[0], parts[1], n),
             $"PR #{n}", "author", repo,
             ts, ts,
-            0, 0, 0, "", 1);
+            0, 0, 0, "", 1, 0);
     }
 
     private const string PullsResponse = """
@@ -32,6 +32,7 @@ public sealed class GitHubPrEnricherTests
           "additions": 5,
           "deletions": 2,
           "commits": 3,
+          "changed_files": 7,
           "updated_at": "2026-05-06T10:00:00Z"
         }
         """;
@@ -57,6 +58,7 @@ public sealed class GitHubPrEnricherTests
         item.Additions.Should().Be(5);
         item.Deletions.Should().Be(2);
         item.CommitCount.Should().Be(3);
+        item.ChangedFiles.Should().Be(7);
         item.PushedAt.Should().Be(DateTimeOffset.Parse("2026-05-06T09:50:00Z", CultureInfo.InvariantCulture));
     }
 
@@ -246,7 +248,7 @@ public sealed class GitHubPrEnricherTests
             new PrReference("acme", "api", 1),
             "PR #1", "author", "acme/api",
             DateTimeOffset.UtcNow, DateTimeOffset.UtcNow,
-            0, 0, 0, "", 1,
+            0, 0, 0, "", 1, 0,
             AvatarUrl: "https://avatars.githubusercontent.com/u/1?v=4");
 
         var result = await sut.EnrichAsync([raw], default);

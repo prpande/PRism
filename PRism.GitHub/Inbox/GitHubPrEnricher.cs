@@ -66,6 +66,7 @@ public sealed class GitHubPrEnricher : IPrEnricher
             var additions = doc.RootElement.TryGetProperty("additions", out var a) ? a.GetInt32() : 0;
             var deletions = doc.RootElement.TryGetProperty("deletions", out var d) ? d.GetInt32() : 0;
             var commits = doc.RootElement.TryGetProperty("commits", out var c) ? c.GetInt32() : 1;
+            var changedFiles = doc.RootElement.TryGetProperty("changed_files", out var cf) ? cf.GetInt32() : 0;
             // pulls/{n} response does NOT have pushed_at at root. The closest field is
             // head.repo.pushed_at (the head branch's repo last-push timestamp). If that is
             // also missing (very rare; only on closed PRs whose head ref was deleted),
@@ -94,7 +95,7 @@ public sealed class GitHubPrEnricher : IPrEnricher
             return raw with
             {
                 HeadSha = head, Additions = additions, Deletions = deletions,
-                CommitCount = commits, PushedAt = pushedAt,
+                CommitCount = commits, ChangedFiles = changedFiles, PushedAt = pushedAt,
                 MergedAt = mergedAt, ClosedAt = closedAt,
             };
         }

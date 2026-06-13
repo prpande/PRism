@@ -14,6 +14,7 @@ const examplePr: PrInboxItem = {
   updatedAt: new Date().toISOString(),
   pushedAt: new Date().toISOString(),
   commitCount: 1,
+  changedFiles: 0,
   commentCount: 0,
   additions: 5,
   deletions: 2,

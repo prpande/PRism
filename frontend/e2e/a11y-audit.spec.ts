@@ -60,6 +60,7 @@ const sampleInbox = {
           updatedAt: FIXED_TS,
           pushedAt: FIXED_TS,
           commitCount: 1,
+          changedFiles: 0,
           commentCount: 3,
           additions: 25,
           deletions: 4,

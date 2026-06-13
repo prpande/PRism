@@ -11,6 +11,7 @@ function pr(owner: string, repo: string, number: number): PrInboxItem {
     updatedAt: '2026-05-01T00:00:00Z',
     pushedAt: '2026-05-01T00:00:00Z',
     commitCount: 1,
+    changedFiles: 0,
     commentCount: 0,
     additions: 0,
     deletions: 0,

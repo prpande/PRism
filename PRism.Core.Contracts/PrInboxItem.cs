@@ -14,6 +14,7 @@ public sealed record PrInboxItem(
     DateTimeOffset UpdatedAt,
     DateTimeOffset PushedAt,
     int CommitCount,
+    int ChangedFiles,
     int CommentCount,
     int Additions,
     int Deletions,

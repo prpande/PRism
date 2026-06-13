@@ -76,7 +76,7 @@ public class NoopSeamTests
             new PrInboxItem(
                 Ref, "Title", "author", "acme/api",
                 DateTimeOffset.UtcNow, DateTimeOffset.UtcNow,
-                1, 0, 0, 0, "abc", CiStatus.None, null, null),
+                1, 0, 0, 0, 0, "abc", CiStatus.None, null, null),
         };
         var result = await s.EnrichAsync(input, CancellationToken.None);
         result.Should().BeEmpty();

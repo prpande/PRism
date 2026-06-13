@@ -16,6 +16,7 @@ const item = (repo: string, author: string, n: number, commentCount = 0): PrInbo
   updatedAt: `2026-06-0${n}T00:00:00Z`,
   pushedAt: '2026-06-01T00:00:00Z',
   commitCount: 1,
+  changedFiles: 0,
   commentCount,
   additions: 0,
   deletions: 0,

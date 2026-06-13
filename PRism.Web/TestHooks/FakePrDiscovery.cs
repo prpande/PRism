@@ -30,6 +30,7 @@ internal sealed class FakePrDiscovery : IPrDiscovery
                 UpdatedAt: _store.Now,
                 PushedAt: _store.Now,
                 CommitCount: _store.Iterations.Count,
+                ChangedFiles: 0,
                 CommentCount: 0,
                 Additions: 8,
                 Deletions: 0,

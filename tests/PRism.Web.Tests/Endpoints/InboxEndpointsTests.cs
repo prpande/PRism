@@ -35,7 +35,7 @@ public class InboxEndpointsTests
             "foo/bar",
             DateTimeOffset.UtcNow,
             DateTimeOffset.UtcNow,
-            1, 0, 10, 5,
+            1, 0, 0, 10, 5,
             "abc123",
             CiStatus.None,
             null, null);
@@ -263,7 +263,7 @@ public class InboxEndpointsTests
         var staleItem = new PrInboxItem(
             reference, "Calc", "author", "acme/api",
             DateTimeOffset.UtcNow, DateTimeOffset.UtcNow,
-            1, 0, 1, 0, "HEAD", CiStatus.None,
+            1, 0, 0, 1, 0, "HEAD", CiStatus.None,
             LastViewedHeadSha: "STALE", LastSeenCommentId: 11);
         var fakeOrch = new FakeInboxRefreshOrchestrator
         {

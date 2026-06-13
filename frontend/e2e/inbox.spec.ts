@@ -20,6 +20,7 @@ const sampleInbox = {
           updatedAt: new Date().toISOString(),
           pushedAt: new Date().toISOString(),
           commitCount: 3,
+          changedFiles: 0,
           commentCount: 7,
           additions: 50,
           deletions: 10,

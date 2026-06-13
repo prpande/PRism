@@ -42,6 +42,7 @@ function pr(opts: {
     updatedAt: opts.updatedAt ?? '2026-06-01T00:00:00Z',
     pushedAt: opts.updatedAt ?? '2026-06-01T00:00:00Z',
     commitCount: 1,
+    changedFiles: 0,
     commentCount: opts.commentCount ?? 0,
     additions: opts.additions ?? 10,
     deletions: opts.deletions ?? 1,

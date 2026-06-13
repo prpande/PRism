@@ -112,6 +112,7 @@ export interface PrInboxItem {
   updatedAt: string;
   pushedAt: string;
   commitCount: number;
+  changedFiles: number;
   commentCount: number;
   additions: number;
   deletions: number;

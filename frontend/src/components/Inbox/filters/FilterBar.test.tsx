@@ -15,6 +15,7 @@ const item = (ci: PrInboxItem['ci'], n: number): PrInboxItem => ({
   updatedAt: '2026-06-01T00:00:00Z',
   pushedAt: '2026-06-01T00:00:00Z',
   commitCount: 1,
+  changedFiles: 0,
   commentCount: 0,
   additions: 0,
   deletions: 0,

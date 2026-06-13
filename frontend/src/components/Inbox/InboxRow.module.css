@@ -2,7 +2,7 @@
 .row {
   display: grid;
   grid-template-columns: 16px minmax(0, 1fr) var(--inbox-tail-w);
-  --inbox-tail-w: 224px; /* metrics only: 64 diff + 72 counts + 52 comments + 2×12 gaps = 212, +12 slack; tuned in B1 */
+  --inbox-tail-w: 288px; /* metrics only: 64 diff + 72 counts + 52 comments + 52 files + 3×12 gaps = 276, +12 slack; tuned in B1 */
   gap: var(--s-3);
   width: 100%;
   padding: var(--s-3) var(--s-4);
@@ -281,6 +281,37 @@
   background: var(--row-hover-pill);
 }
 
+/* 52px fits a 3-digit file count without the pill bleeding into the adjacent gap;
+   right-pinned so the glyph+count right edge aligns across rows regardless of digit count. */
+.filesSlot {
+  flex: none;
+  width: 52px;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.files {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 6px;
+  border-radius: var(--radius-2);
+  font-size: var(--text-xs);
+  color: var(--text-3);
+}
+
+/* Accent-tinted file glyph so the count reads as a file count
+   while staying inside the theme's colour scheme. */
+.fileIcon {
+  flex: none;
+  color: var(--accent);
+}
+
+/* Keep the files-pill readable as a raised chip on a hovered row. */
+.row:hover .files {
+  background: var(--row-hover-pill);
+}
+
 /* Indent grouped rows via left padding, not the accordion body, so the tail's
    right edge stays flush with flat rows and the metrics align across flat +
    grouped rows (border-box keeps width:100% honest). */
@@ -296,9 +327,9 @@
    the breakpoint (tail width changes), by design. Thresholds tuned in B1. */
 @container inbox-sections (max-width: 560px) {
   /* Override --inbox-tail-w declared on .row itself; the grid template re-resolves.
-     72 counts + 52 comments + 12 gap = 136, +8 slack (diff bar is hidden below). */
+     72 counts + 52 comments + 52 files + 2×12 gaps = 200, +8 slack (diff bar is hidden below). */
   .row {
-    --inbox-tail-w: 144px;
+    --inbox-tail-w: 208px;
   }
   /* Drop the diff bar AND the AI category chip together: at this width the chip
      would otherwise clamp to a cryptic ~1-char stub rather than read as a label.
