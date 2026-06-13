@@ -23,8 +23,8 @@ namespace PRism.Web.Tests.Endpoints;
 
 // Spec § 3.2 + § 5.4. The /ai/file-focus endpoint mirrors /ai/summary's
 // seam-resolve-and-map pattern: Noop seam → empty list → 204; Placeholder
-// seam → canned data → 200. No per-endpoint IsSubscribed check — D111
-// defers that to the real-AI seam-swap moment.
+// seam → canned data → 200. An IsSubscribed gate (D111) fires before
+// RankAsync in every mode; Task 5 added it and the tests below verify it.
 public class AiFileFocusEndpointTests
 {
     [Fact]
