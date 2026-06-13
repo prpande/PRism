@@ -156,7 +156,9 @@ describe('Select — type-ahead', () => {
 
 describe('Select — contracts', () => {
   it('renders a disabled trigger when `disabled` is set; cannot open', async () => {
-    render(<Select aria-label="Sort" options={OPTS} value="updated" onChange={() => {}} disabled />);
+    render(
+      <Select aria-label="Sort" options={OPTS} value="updated" onChange={() => {}} disabled />,
+    );
     const trigger = screen.getByRole('combobox', { name: 'Sort' });
     expect(trigger).toBeDisabled();
     await userEvent.click(trigger);
@@ -170,7 +172,12 @@ describe('Select — contracts', () => {
 
   it('a single-option list opens normally', async () => {
     render(
-      <Select aria-label="Sort" options={[{ value: 'updated', label: 'Recently updated' }]} value="updated" onChange={() => {}} />,
+      <Select
+        aria-label="Sort"
+        options={[{ value: 'updated', label: 'Recently updated' }]}
+        value="updated"
+        onChange={() => {}}
+      />,
     );
     await userEvent.click(screen.getByRole('combobox'));
     expect(screen.getAllByRole('option')).toHaveLength(1);

@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  type KeyboardEvent,
+  type ReactNode,
+} from 'react';
 import styles from './Select.module.css';
 
 export interface SelectOption<T extends string | number> {
@@ -147,7 +155,11 @@ export function Select<T extends string | number>({
   const activeId = open && activeIndex >= 0 ? `${instanceId}-opt-${activeIndex}` : undefined;
 
   return (
-    <div ref={rootRef} className={`${styles.root}${className ? ` ${className}` : ''}`} onKeyDown={onKeyDown}>
+    <div
+      ref={rootRef}
+      className={`${styles.root}${className ? ` ${className}` : ''}`}
+      onKeyDown={onKeyDown}
+    >
       <button
         ref={triggerRef}
         type="button"

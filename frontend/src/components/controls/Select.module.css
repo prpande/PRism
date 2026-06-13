@@ -3,7 +3,7 @@
   display: inline-flex;
 }
 
-/* ===== Trigger (closed control) — mirrors filters .sortSelect tokens ===== */
+/* ===== Trigger (closed control) — themed with the app's surface/border tokens ===== */
 .trigger {
   appearance: none;
   display: inline-flex;

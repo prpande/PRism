@@ -93,7 +93,13 @@ export function FilterBar({
             onChange={f.setSort}
             options={SORT_OPTIONS.map((s) => ({ value: s.key, label: s.label }))}
             leadingIcon={
-              <svg viewBox="0 0 16 16" width="13" height="13" fill="currentColor" aria-hidden="true">
+              <svg
+                viewBox="0 0 16 16"
+                width="13"
+                height="13"
+                fill="currentColor"
+                aria-hidden="true"
+              >
                 <path d="M0 4.25c0-.414.336-.75.75-.75h11.5a.75.75 0 0 1 0 1.5H.75A.75.75 0 0 1 0 4.25Zm2 4a.75.75 0 0 1 .75-.75h7.5a.75.75 0 0 1 0 1.5h-7.5A.75.75 0 0 1 2 8.25Zm2 4a.75.75 0 0 1 .75-.75h3.5a.75.75 0 0 1 0 1.5h-3.5a.75.75 0 0 1-.75-.75Z" />
               </svg>
             }
