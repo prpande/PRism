@@ -254,7 +254,26 @@ export type FocusLevel = 'high' | 'medium' | 'low';
 export interface FileFocus {
   path: string;
   level: FocusLevel;
+  rationale: string;
 }
+
+// Response envelope from GET …/ai/file-focus. `fallback` is the response-level all-medium signal.
+export interface FileFocusResult {
+  entries: FileFocus[];
+  fallback: boolean;
+}
+
+// Discriminated UI status the shared fetch exposes (spec §8). `not-subscribed` is derived FE-side
+// (the fetch is gated on subscription) and is Live-only; `loading` is in-flight; the rest map from
+// the HTTP result.
+export type FileFocusStatus =
+  | 'loading'
+  | 'ok'
+  | 'empty'
+  | 'no-changes'
+  | 'not-subscribed'
+  | 'error'
+  | 'fallback';
 
 // AnnotationTone carries 3 backend values (PRism.AI.Contracts/Dtos/
 // HunkAnnotation.cs:5-10: Calm, HeadsUp, Concern). Today's placeholder

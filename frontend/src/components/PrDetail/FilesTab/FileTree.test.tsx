@@ -426,7 +426,7 @@ describe('FileTree — AI focus dot (D32a)', () => {
   });
 
   it('renders the high dot for level high', () => {
-    const entries: FileFocus[] = [{ path: 'src/Calc.cs', level: 'high' }];
+    const entries: FileFocus[] = [{ path: 'src/Calc.cs', level: 'high', rationale: 'core logic' }];
     const { container } = render(
       <FileTree
         files={files}
@@ -444,7 +444,7 @@ describe('FileTree — AI focus dot (D32a)', () => {
   });
 
   it('renders the medium dot for level medium', () => {
-    const entries: FileFocus[] = [{ path: 'src/Calc.cs', level: 'medium' }];
+    const entries: FileFocus[] = [{ path: 'src/Calc.cs', level: 'medium', rationale: 'tests' }];
     const { container } = render(
       <FileTree
         files={files}
@@ -462,7 +462,7 @@ describe('FileTree — AI focus dot (D32a)', () => {
   });
 
   it('does NOT render a dot for level low (handoff has no .ai-focus-low)', () => {
-    const entries: FileFocus[] = [{ path: 'src/Calc.cs', level: 'low' }];
+    const entries: FileFocus[] = [{ path: 'src/Calc.cs', level: 'low', rationale: 'formatting' }];
     const { container } = render(
       <FileTree
         files={files}

@@ -20,8 +20,8 @@ describe('useAiFileFocus', () => {
 
   it('fetches and returns FileFocus[] when enabled', async () => {
     vi.mocked(aiFileFocus.getAiFileFocus).mockResolvedValue([
-      { path: 'src/Calc.cs', level: 'high' },
-      { path: 'src/Calc.Tests.cs', level: 'medium' },
+      { path: 'src/Calc.cs', level: 'high', rationale: 'core logic' },
+      { path: 'src/Calc.Tests.cs', level: 'medium', rationale: 'tests' },
     ]);
 
     const { result } = renderHook(() => useAiFileFocus(PR_REF, true));
@@ -59,7 +59,7 @@ describe('useAiFileFocus', () => {
 
     const { result, unmount } = renderHook(() => useAiFileFocus(PR_REF, true));
     unmount();
-    resolve([{ path: 'src/Calc.cs', level: 'high' }]);
+    resolve([{ path: 'src/Calc.cs', level: 'high', rationale: 'core logic' }]);
     // No React warning about setState on unmounted component
     expect(result.current).toBe(null);
   });
