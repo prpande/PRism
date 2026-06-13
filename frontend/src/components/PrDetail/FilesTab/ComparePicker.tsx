@@ -42,7 +42,7 @@ export function ComparePicker({ iterations, fromIter, toIter, onCompare }: Compa
 
   return (
     <div className={`compare-picker ${styles.comparePicker}`} data-testid="compare-picker">
-      <label className={`compare-picker-label ${styles.comparePickerLabel}`}>
+      <div className={`compare-picker-label ${styles.comparePickerLabel}`}>
         <span className={`compare-picker-label-text ${styles.comparePickerLabelText}`}>
           Compare
         </span>
@@ -52,20 +52,20 @@ export function ComparePicker({ iterations, fromIter, toIter, onCompare }: Compa
           onChange={handleFromChange}
           options={iterOptions}
         />
-      </label>
+      </div>
 
       <span className={`compare-picker-arrow ${styles.comparePickerArrow}`} aria-hidden="true">
         ⇄
       </span>
 
-      <label className={`compare-picker-label ${styles.comparePickerLabel}`}>
+      <div className={`compare-picker-label ${styles.comparePickerLabel}`}>
         <Select
           aria-label="To iteration"
           value={effectiveTo}
           onChange={handleToChange}
           options={iterOptions}
         />
-      </label>
+      </div>
 
       {isSameIter && (
         <span className={`compare-picker-empty muted ${styles.comparePickerEmpty}`} role="status">
