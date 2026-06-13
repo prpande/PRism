@@ -16,7 +16,8 @@ describe('useFileFocusResult', () => {
   });
 
   it('disabled → not-subscribed-equivalent off (no fetch)', () => {
-    renderHook(() => useFileFocusResult(PR, false, true));
+    const { result } = renderHook(() => useFileFocusResult(PR, false, true));
+    expect(result.current.status).toBe('no-changes');
     expect(api.getAiFileFocusResult).not.toHaveBeenCalled();
   });
 

@@ -37,23 +37,27 @@ export function useFileFocusResult(
     }
     let cancelled = false;
     setState({ status: 'loading', entries: [] });
-    getAiFileFocusResult(prRef).then((outcome) => {
-      if (cancelled) return;
-      if (outcome.kind === 'no-content') {
-        setState({ status: 'no-changes', entries: [] });
-      } else if (outcome.kind === 'error') {
-        setState({ status: 'error', entries: [] });
-      } else {
-        const { entries, fallback } = outcome.result;
-        // fallback checked BEFORE entries — a fallback is never rendered as rows (spec §8).
-        if (fallback) {
-          setState({ status: 'fallback', entries });
+    getAiFileFocusResult(prRef)
+      .then((outcome) => {
+        if (cancelled) return;
+        if (outcome.kind === 'no-content') {
+          setState({ status: 'no-changes', entries: [] });
+        } else if (outcome.kind === 'error') {
+          setState({ status: 'error', entries: [] });
         } else {
-          const hasSignal = entries.some((e) => e.level === 'high' || e.level === 'medium');
-          setState({ status: hasSignal ? 'ok' : 'empty', entries });
+          const { entries, fallback } = outcome.result;
+          // fallback checked BEFORE entries — a fallback is never rendered as rows (spec §8).
+          if (fallback) {
+            setState({ status: 'fallback', entries });
+          } else {
+            const hasSignal = entries.some((e) => e.level === 'high' || e.level === 'medium');
+            setState({ status: hasSignal ? 'ok' : 'empty', entries });
+          }
         }
-      }
-    });
+      })
+      .catch(() => {
+        if (!cancelled) setState({ status: 'error', entries: [] });
+      });
     return () => {
       cancelled = true;
     };
