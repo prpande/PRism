@@ -76,9 +76,11 @@ Done rows already omit the iteration/commit from their aria-label — no change 
 
 ### Tests updated (commit 1)
 
+- `PRism.Web/TestHooks/FakeSectionQueryRunner.cs:44` — named arg `IterationNumberApprox: _store.Iterations.Count` → `CommitCount: _store.Iterations.Count`
+- `PRism.Web/TestHooks/FakePrDiscovery.cs:32` — named arg `IterationNumber: _store.Iterations.Count` → `CommitCount: _store.Iterations.Count`
 - `tests/PRism.GitHub.Tests/Inbox/GitHubPrEnricherTests.cs:59` — `IterationNumberApprox.Should().Be(3)` → `CommitCount.Should().Be(3)`
 - `tests/PRism.Core.Tests/Inbox/InboxRefreshOrchestratorTests.cs:26,30` — `RawPr`/`RawClosed` helpers: positional `1` for the old `IterationNumberApprox` slot becomes `CommitCount: 1` (or stays positional if order is preserved)
-- All frontend fixture files that set `iterationNumber: 1` → `commitCount: 1` (approximately 7 files under `frontend/src/components/Inbox/`)
+- All frontend fixture files that set `iterationNumber: 1` → `commitCount: 1`: approximately 13 files, including `InboxRow.test.tsx`, `InboxSection.test.tsx`, `InboxSection.grouping.test.tsx`, `RepoGroupAccordion.test.tsx`, `groupByRepo.test.ts`, `useInboxFilters.test.ts`, `applyInboxFilters.test.ts`, `FilterBar.test.tsx`, `InboxPage.test.tsx`, and e2e specs `inbox.spec.ts`, `inbox-filter.spec.ts`, `a11y-audit.spec.ts`, `ai-gating-sweep.spec.ts`
 
 ---
 
@@ -90,9 +92,25 @@ Done rows already omit the iteration/commit from their aria-label — no change 
 |------|--------|
 | `PRism.GitHub/Inbox/GitHubPrEnricher.cs` (~line 68) | Add `var changedFiles = doc.RootElement.TryGetProperty("changed_files", out var cf) ? cf.GetInt32() : 0;` alongside `commits`/`additions`/`deletions` |
 | `PRism.GitHub/Inbox/GitHubPrEnricher.cs` (~line 97) | Include `ChangedFiles = changedFiles` in the `raw with { … }` expression |
-| `PRism.Core/Inbox/RawPrInboxItem.cs` | Add `int ChangedFiles` (positional, after `CommitCount`; default `0` not needed — record positional args are required) |
-| `PRism.Core.Contracts/PrInboxItem.cs` | Add `int ChangedFiles` (positional, after `CommitCount`) |
-| `PRism.Core/Inbox/InboxRefreshOrchestrator.cs:299` | Pass `r.ChangedFiles` in `new PrInboxItem(…)` |
+| `PRism.Core/Inbox/RawPrInboxItem.cs` | Add `int ChangedFiles` (required positional, after `CommitCount`, before `MergedAt?`) |
+| `PRism.Core.Contracts/PrInboxItem.cs` | Add `int ChangedFiles` (required positional, after `CommitCount`, before `CommentCount`) |
+| `PRism.Core/Inbox/InboxRefreshOrchestrator.cs:299` | Pass `r.ChangedFiles` in `new PrInboxItem(…)` — use **named args** here and for all subsequent fields to prevent silent int-binding if parameter order ever shifts again |
+
+**IMPORTANT — positional call site blast radius.** Adding `int ChangedFiles` as a required positional parameter in `PrInboxItem` inserts a new `int` at position 8 (after `CommitCount`, before `CommentCount`). Any call site that constructs `PrInboxItem` with positional integer args from position 8 onward will silently bind wrong field values (no compile error — all `int`s). Before inserting the parameter, convert all such call sites to **named args**. Known affected sites:
+
+- `tests/PRism.Web.Tests/Endpoints/InboxEndpointsTests.cs:263–267` — mixed positional; `1, 0, 1, 0` maps to wrong fields after insertion
+- `tests/PRism.Core.Tests/Inbox/InboxDeduplicatorTests.cs:12–16, 57–58` — fully positional
+- `tests/PRism.Core.Tests/Ai/NoopSeamTests.cs:76–79` — fully positional
+
+Similarly for `RawPrInboxItem` — `ChangedFiles` lands at position 12 (after `CommitCount`, before `MergedAt?`). All positional call sites that supply ≥ 11 required args need `ChangedFiles: 0` added. Known affected sites (in addition to orchestrator test helpers already noted):
+
+- `PRism.GitHub/Inbox/GitHubSectionQueryRunner.cs:139–147` — positional construction; will not compile without `ChangedFiles`
+- `tests/PRism.GitHub.Tests/Inbox/GitHubPrEnricherTests.cs:19–23` — positional 11-arg; multiple test methods
+- `tests/PRism.GitHub.Tests/Inbox/GitHubCiFailingDetectorTests.cs:18–23` — positional
+- `tests/PRism.GitHub.Tests/Inbox/GitHubAwaitingAuthorFilterTests.cs:29–33` — positional
+- `tests/PRism.Core.Tests/Inbox/RawPrInboxItemTests.cs:12–14, 24–27` — positional
+
+The recommended approach: **grep for `new RawPrInboxItem(` and `new PrInboxItem(`** as the first implementation step to enumerate all call sites, then convert positional int-heavy constructors to named args before adding the new field.
 
 ### Frontend
 
@@ -125,7 +143,11 @@ Hidden when `changedFiles === 0` — graceful degradation for any PR where the f
 comes back absent or zero (the enricher defaults to `0` on missing property).
 
 `InboxRow.module.css` — add `.filesSlot` and `.files` styles mirroring `.commentSlot`
-and `.comments` (same flex/gap/color treatment).
+and `.comments` (same flex/gap/color treatment). Also update `--inbox-tail-w` in the
+`.row` block to account for the new slot: the metrics cluster is a fixed-width column
+(`var(--inbox-tail-w)`) whose current comment in the CSS documents the slot widths and
+running total. Adding a 52px files slot + 12px gap (+64px) requires widening
+`--inbox-tail-w` by the same amount; otherwise the new slot overflows or is clipped.
 
 ### Tests updated (commit 2)
 
