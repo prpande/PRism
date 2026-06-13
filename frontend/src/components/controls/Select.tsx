@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import styles from './Select.module.css';
 
 export interface SelectOption<T extends string | number> {
@@ -54,12 +54,16 @@ export function Select<T extends string | number>({
     if (refocus) setTimeout(() => triggerRef.current?.focus(), 0);
   }, []);
 
-  const openList = useCallback(() => {
-    if (isDisabled) return;
-    const enabledSelected = selectedIndex >= 0 && !options[selectedIndex].disabled;
-    setActiveIndex(enabledSelected ? selectedIndex : firstEnabled(options));
-    setOpen(true);
-  }, [isDisabled, options, selectedIndex]);
+  const openList = useCallback(
+    (delta = 0) => {
+      if (isDisabled) return;
+      const enabledSelected = selectedIndex >= 0 && !options[selectedIndex].disabled;
+      const base = enabledSelected ? selectedIndex : firstEnabled(options);
+      setActiveIndex(delta !== 0 ? nextEnabled(options, base, delta) : base);
+      setOpen(true);
+    },
+    [isDisabled, options, selectedIndex],
+  );
 
   const commit = useCallback(
     (index: number) => {
@@ -71,6 +75,50 @@ export function Select<T extends string | number>({
     },
     [options, value, onChange, close],
   );
+
+  const onKeyDown = (e: KeyboardEvent) => {
+    if (isDisabled) return;
+    if (!open) {
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp' || e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        openList(e.key === 'ArrowDown' ? 1 : e.key === 'ArrowUp' ? -1 : 0);
+      }
+      return;
+    }
+    switch (e.key) {
+      case 'ArrowDown':
+        e.preventDefault();
+        setActiveIndex((cur) => nextEnabled(options, cur, 1));
+        break;
+      case 'ArrowUp':
+        e.preventDefault();
+        setActiveIndex((cur) => nextEnabled(options, cur, -1));
+        break;
+      case 'Home':
+        e.preventDefault();
+        setActiveIndex(firstEnabled(options));
+        break;
+      case 'End':
+        e.preventDefault();
+        setActiveIndex(lastEnabled(options));
+        break;
+      case 'Enter':
+      case ' ':
+        e.preventDefault();
+        commit(activeIndex);
+        break;
+      case 'Escape':
+        e.preventDefault();
+        e.stopPropagation();
+        close(true);
+        break;
+      case 'Tab':
+        // Close, but let focus move on naturally — no preventDefault, no refocus,
+        // so a keyboard user can Tab past an open Select in the Settings form.
+        close(false);
+        break;
+    }
+  };
 
   // Outside-click dismiss (net-new vs CommitMultiSelectPicker).
   useEffect(() => {
@@ -85,7 +133,7 @@ export function Select<T extends string | number>({
   const activeId = open && activeIndex >= 0 ? `${instanceId}-opt-${activeIndex}` : undefined;
 
   return (
-    <div ref={rootRef} className={`${styles.root}${className ? ` ${className}` : ''}`}>
+    <div ref={rootRef} className={`${styles.root}${className ? ` ${className}` : ''}`} onKeyDown={onKeyDown}>
       <button
         ref={triggerRef}
         type="button"
@@ -126,7 +174,7 @@ export function Select<T extends string | number>({
               aria-disabled={o.disabled || undefined}
               className={[
                 styles.option,
-                i === activeIndex ? styles.optionActive : '',
+                i === activeIndex || i === selectedIndex ? styles.optionActive : '',
                 o.disabled ? styles.optionDisabled : '',
               ]
                 .filter(Boolean)
@@ -150,4 +198,25 @@ export function Select<T extends string | number>({
 
 function firstEnabled<T extends string | number>(options: SelectOption<T>[]): number {
   return options.findIndex((o) => !o.disabled);
+}
+
+function lastEnabled<T extends string | number>(options: SelectOption<T>[]): number {
+  for (let i = options.length - 1; i >= 0; i--) if (!options[i].disabled) return i;
+  return -1;
+}
+
+// Move `delta` from `current`, skipping disabled options. Clamp at the first/last
+// enabled option — do NOT wrap (spec: stop at boundary).
+function nextEnabled<T extends string | number>(
+  options: SelectOption<T>[],
+  current: number,
+  delta: number,
+): number {
+  let i = current;
+  for (;;) {
+    const candidate = i + delta;
+    if (candidate < 0 || candidate >= options.length) return i; // boundary: stay
+    i = candidate;
+    if (!options[i].disabled) return i;
+  }
 }

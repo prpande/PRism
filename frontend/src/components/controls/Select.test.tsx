@@ -62,3 +62,57 @@ describe('Select — core', () => {
     expect(trigger).toHaveAttribute('aria-controls', screen.getByRole('listbox').id);
   });
 });
+
+describe('Select — keyboard', () => {
+  const DIS = [
+    { value: 1, label: 'Iter 1' },
+    { value: 2, label: 'Iter 2 (snapshot lost)', disabled: true },
+    { value: 3, label: 'Iter 3' },
+  ];
+
+  it('opens on ArrowDown with the selected option active', async () => {
+    render(<Select aria-label="Sort" options={OPTS} value="pushed" onChange={() => {}} />);
+    const trigger = screen.getByRole('combobox', { name: 'Sort' });
+    trigger.focus();
+    await userEvent.keyboard('{ArrowDown}');
+    expect(screen.getByRole('listbox')).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'Recently pushed' })).toHaveClass(/optionActive/);
+  });
+
+  it('Arrow keys skip disabled options and stop at the boundary (no wrap)', async () => {
+    render(<Select aria-label="Iter" options={DIS} value={1} onChange={() => {}} />);
+    screen.getByRole('combobox').focus();
+    await userEvent.keyboard('{ArrowDown}'); // 1 -> skip disabled 2 -> 3
+    expect(screen.getByRole('option', { name: 'Iter 3' })).toHaveClass(/optionActive/);
+    await userEvent.keyboard('{ArrowDown}'); // at last enabled -> stays
+    expect(screen.getByRole('option', { name: 'Iter 3' })).toHaveClass(/optionActive/);
+  });
+
+  it('Enter selects the active option and closes', async () => {
+    const onChange = vi.fn();
+    render(<Select aria-label="Sort" options={OPTS} value="updated" onChange={onChange} />);
+    screen.getByRole('combobox').focus();
+    await userEvent.keyboard('{ArrowDown}{Enter}'); // updated -> pushed
+    expect(onChange).toHaveBeenCalledWith('pushed');
+    expect(screen.queryByRole('listbox')).toBeNull();
+  });
+
+  it('Escape closes without changing value', async () => {
+    const onChange = vi.fn();
+    render(<Select aria-label="Sort" options={OPTS} value="updated" onChange={onChange} />);
+    screen.getByRole('combobox').focus();
+    await userEvent.keyboard('{ArrowDown}{Escape}');
+    expect(screen.queryByRole('listbox')).toBeNull();
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it('Home/End jump to first/last enabled', async () => {
+    render(<Select aria-label="Iter" options={DIS} value={3} onChange={() => {}} />);
+    screen.getByRole('combobox').focus();
+    await userEvent.keyboard('{ArrowDown}'); // open
+    await userEvent.keyboard('{Home}');
+    expect(screen.getByRole('option', { name: 'Iter 1' })).toHaveClass(/optionActive/);
+    await userEvent.keyboard('{End}');
+    expect(screen.getByRole('option', { name: 'Iter 3' })).toHaveClass(/optionActive/);
+  });
+});
