@@ -36,10 +36,10 @@ internal static class AiEndpoints
                    IAiSeamSelector ai, CancellationToken ct) =>
             {
                 var ranker = ai.Resolve<IFileFocusRanker>();
-                var entries = await ranker
+                var result = await ranker
                     .RankAsync(new PrReference(owner, repo, number), ct)
                     .ConfigureAwait(false);
-                return entries.Count == 0 ? Results.NoContent() : Results.Ok(entries);
+                return result.Entries.Count == 0 ? Results.NoContent() : Results.Ok(result);
             });
 
         // PR9b-ai-gating § 3.2. The seam interface takes (prRef, filePath, hunkIndex)

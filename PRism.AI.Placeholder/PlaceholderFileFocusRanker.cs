@@ -6,6 +6,6 @@ namespace PRism.AI.Placeholder;
 
 public sealed class PlaceholderFileFocusRanker : IFileFocusRanker
 {
-    public Task<IReadOnlyList<FileFocus>> RankAsync(PrReference pr, CancellationToken ct)
-        => Task.FromResult(PlaceholderData.FileFocus);
+    public Task<FileFocusResult> RankAsync(PrReference pr, CancellationToken ct)
+        => Task.FromResult(new FileFocusResult(PlaceholderData.FileFocus, Fallback: false));
 }

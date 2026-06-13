@@ -25,7 +25,8 @@ public class PlaceholderSeamTests
     {
         IFileFocusRanker s = new PlaceholderFileFocusRanker();
         var result = await s.RankAsync(Ref, CancellationToken.None);
-        result.Should().NotBeEmpty();
+        result.Entries.Should().NotBeEmpty();
+        result.Fallback.Should().BeFalse();
     }
 
     [Fact]

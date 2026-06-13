@@ -39,10 +39,11 @@ public class AiFileFocusEndpointTests
 
         resp.StatusCode.Should().Be(HttpStatusCode.OK);
         var body = await resp.Content.ReadFromJsonAsync<JsonElement>();
-        body.GetArrayLength().Should().BeGreaterThan(0);
-        var first = body[0];
+        body.GetProperty("entries").GetArrayLength().Should().BeGreaterThan(0);
+        var first = body.GetProperty("entries")[0];
         first.GetProperty("path").GetString().Should().NotBeNullOrWhiteSpace();
         first.GetProperty("level").GetString().Should().BeOneOf("high", "medium", "low");
+        body.GetProperty("fallback").GetBoolean().Should().BeFalse();
     }
 
     [Fact]
