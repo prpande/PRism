@@ -101,8 +101,9 @@ projects (InternalsVisibleTo). Callers resolve `IReviewAuth`, never the concrete
 
 ### `GitHubReviewService` after PR1
 
-Drops to ~760 lines (≈180 auth + ≈250 parsers removed), implementing `IPrDiscovery, IPrReader,
-IReviewSubmitter` (no longer `IReviewAuth`). Retains: the read path + fetch helpers + per-commit
+The main `GitHubReviewService.cs` partial drops from **1,172** lines to ~760 (≈180 auth + ≈250 parsers
+removed; the ~1,835 figure in *Problem* is the four-partial total, not this one file). After PR1 it
+implements `IPrDiscovery, IPrReader, IReviewSubmitter` (no longer `IReviewAuth`). Retains: the read path + fetch helpers + per-commit
 fan-out, `TryParsePrUrl`, the legacy throw-stubs, the transport wrappers `SendGitHubAsync` /
 `PostGraphQLAsync`, `TryGetPath`, `ThrowIfGraphQLErrorsWithoutData`, the cap-hit trio
 (`HasAnyNextPage` / `ConnectionHasNext` / `PagedConnections`), `Truncate`, the `Log` source-generated
@@ -157,14 +158,23 @@ All relocations are mechanical; no assertion or scenario changes.
 |-----------|--------|
 | `ParseReviewThreadsDatabaseIdTests.cs:16` | `GitHubReviewService.ParseReviewThreads` → `GitHubPrParser.ParseReviewThreads` |
 | `GitHubReviewService_ValidateCredentialsAsyncTests.cs` | `BuildSut` constructs `new GitHubAuthValidator(...)` instead of `new GitHubReviewService(...)`. This file already calls the **3-arg** form (the logger ctor param is optional and omitted), so the *only* edit is the constructed type — there is no logger arg to remove. |
-| `GitHubReviewServiceValidateSkipTests.cs` | Same type swap in its `Build` helper. The `skipCredentialHealth` → `SkipHealthKey` propagation lives **inside** `ValidateCredentialsAsync`, which moves to `GitHubAuthValidator` verbatim, and the `GitHubAuthHealthHandler` latch is wired on the named `github` client via `IHttpClientFactory` (not the SUT) — so the latch test exercises the same pipeline. Check whether this file actually passes a logger arg before removing one. |
+| `GitHubReviewServiceValidateSkipTests.cs` | Type swap in its `Build` helper to `new GitHubAuthValidator(factory, () => Task.FromResult<string?>(token), "github.com")` — and **drop the trailing `null` logger arg** the current call passes (`GitHubReviewService`'s ctor has an optional `ILogger`; `GitHubAuthValidator`'s 3-arg ctor does not, so leaving the `null` is a compile error). The `skipCredentialHealth` → `SkipHealthKey` propagation lives **inside** `ValidateCredentialsAsync`, which moves to `GitHubAuthValidator` verbatim, and the `GitHubAuthHealthHandler` latch is wired on the named `github` client via `IHttpClientFactory` (not the SUT) — so the latch test exercises the same pipeline. |
 | `PRism.GitHub.Tests.Integration/PatScopeContractTests.cs` | **No change.** It resolves `IReviewAuth` from `LiveGitHubFixture`'s DI container (not a direct `new`), so the `IReviewAuth` → `GitHubAuthValidator` rebind takes effect transparently. `LiveGitHubFixture.cs` likewise needs no edit (it already resolves the interface). |
-| `ServiceRegistrationTests.cs` (**new fact**) | Add `Assert.IsType<GitHubAuthValidator>(sp.GetRequiredService<IReviewAuth>())` (or at minimum assert it resolves without throwing). The `IReviewAuth` DI lambda is the one non-mechanical change in PR1; nothing else covers that the rebind resolves its `IConfigStore` / `ITokenStore` / `IHttpClientFactory` dependencies. |
 
-Optional hygiene (decided: **do it**, not deferred): rename the two auth unit files to
-`GitHubAuthValidator*Tests.cs` so the test name tracks the type under test (keep the `[Fact]` bodies
-and update the class/namespace name to match). Cheap, improves locality, and the rename lands in this
-PR — not a follow-up.
+**The `IReviewAuth` DI rebind is intentionally not unit-tested.** `ServiceRegistrationTests` only
+covers *dependency-free* registrations (`IGitHubCredentialHealth`, `IClock`) — it builds a provider
+from `AddPrismGitHub()` alone, which registers neither `IConfigStore` nor `ITokenStore` (one fact even
+comments "no `ITokenStore` stub needed"). The new `IReviewAuth` lambda resolves both of those
+composition-root deps eagerly, so a `GetRequiredService<IReviewAuth>()` fact would throw
+`InvalidOperationException` unless we stub `IConfigStore` + `ITokenStore` — which would break the file's
+deliberate dependency-free pattern and is not "mechanical." The rebind's correctness is instead
+guaranteed by the compiler (the lambda must compile against `GitHubAuthValidator`'s ctor) and exercised
+end-to-end by the live integration auth tests (`PatScopeContractTests` via `LiveGitHubFixture`). This
+mirrors how the *existing* `GitHubReviewService` registration — which also resolves `IConfigStore` /
+`ITokenStore` — is likewise not unit-covered here.
+
+The two auth unit-test files keep their current names (no rename) — PR1 is a mechanical relocation, and
+a class/namespace rename is discretionary churn that inflates the diff without a correctness need.
 
 Tests that exercise parsers/auth *indirectly* through public methods (`GitHubReviewServicePrDetailTests`,
 `GitHubReviewServiceTimelineTests`, `GitHubReviewServiceAuthHeaderTests`, the byte-identity tests) are
