@@ -188,7 +188,6 @@ vi.mock('../../hooks/useUnionDiff', () => ({
 vi.mock('../../hooks/useAiSummary', () => ({
   useAiSummary: () => ({ summary: null, loading: false, error: false }),
 }));
-vi.mock('../../hooks/useAiFileFocus', () => ({ useAiFileFocus: () => null }));
 vi.mock('../../hooks/useAiDraftSuggestions', () => ({ useAiDraftSuggestions: () => null }));
 vi.mock('../../hooks/useFilesTabShortcuts', () => ({ useFilesTabShortcuts: () => {} }));
 vi.mock('../../hooks/useFirstActivePrPollComplete', () => ({
