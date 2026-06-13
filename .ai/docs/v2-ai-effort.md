@@ -41,7 +41,7 @@ provider behind a tri-state gate — one seam (one class + a prompt + tests) at 
 
 | Source | Role |
 |---|---|
-| `docs/backlog/` (00-methodology, 01-P0, 02-P1, 03-P2, 05-P4) | **Source of truth** — detailed decomposition. On any conflict, this wins. |
+| `docs/backlog/` — `00-priority-methodology.md`, `01-P0-foundations.md`, `02-P1-core-ai.md`, `03-P2-extended-ai.md`, `05-P4-polish.md` (no `04-P3`) | **Source of truth** — detailed decomposition. On any conflict, this wins. |
 | GitHub **epic #423** ("[AI] v2 augmentation roadmap", label `roadmap`) | **Live readiness map** — dependency-ordered "what's next", ✅/🟢/⛔ per item. Open it to answer "what do I pick up." |
 | **20 root issues** #403–#422 (`ai:foundation`/`ai:core`/`ai:extended`) + milestone "v2 — AI" | Coarse tracking issues; picking one up triggers a brainstorm → refined child issues. |
 | `docs/specs/2026-06-12-ai-roadmap-issue-tracking-design.md` | How the epic/roots/labels/milestone map to the backlog + maintenance rules. |
@@ -70,9 +70,10 @@ epic. P0-1b streaming + P0-4 clone + P0-7 MCP are the chat (P2-2) prerequisites.
   credential `/login` wrote — PRism manages **no** AI credentials. Therefore: **never pass `--bare`**
   (skips OAuth); **scrub `ANTHROPIC_API_KEY`/`ANTHROPIC_AUTH_TOKEN`** from the child env; the
   **sidecar must run as the logged-in user** (a service identity won't see the credential).
-- **June 15 2026 metering:** subscription `claude -p` draws from a separate, per-user, non-pooled
-  **Agent SDK credit** PRism can't read or set. → **caching + lazy-load are budget management** for a
-  wallet we can't see. Treat post-June-15 as the baseline.
+- **Agent SDK credit metering (effective 2026-06-15):** on subscription plans, `claude -p` draws
+  from a separate, per-user, non-pooled **Agent SDK credit** PRism can't read or set; when exhausted,
+  calls stop until refresh unless paid usage credits are enabled. → **caching + lazy-load are budget
+  management** for a wallet we can't see. This is the standing design baseline.
 - **Don't rely on `--resume`** for cross-feature context forwarding (restoring full context after a
   clean end is undocumented; resumed turns re-send the whole transcript). Use prompt caching on a
   stable diff prefix instead.
