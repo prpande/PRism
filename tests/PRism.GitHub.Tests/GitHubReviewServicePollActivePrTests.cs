@@ -130,4 +130,22 @@ public class GitHubReviewServicePollActivePrTests
         snap.CommentCount.Should().Be(1);
         snap.ReviewCount.Should().Be(0);
     }
+
+    [Fact]
+    public async Task PollActivePrAsync_parses_base_sha_from_pulls_payload()
+    {
+        // base.sha rides the same pulls/{n} REST response the poll already fetches — no extra request.
+        var sut = NewService(new PollHandler
+        {
+            PullBody = """
+                { "head": { "sha": "headsha1" }, "base": { "sha": "basesha1" },
+                  "state": "open", "mergeable_state": "clean" }
+                """
+        });
+
+        var snap = await sut.PollActivePrAsync(new PrReference("o", "r", 1), CancellationToken.None);
+
+        snap.HeadSha.Should().Be("headsha1");
+        snap.BaseSha.Should().Be("basesha1");
+    }
 }

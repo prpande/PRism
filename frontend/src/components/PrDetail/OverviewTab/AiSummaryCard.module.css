@@ -42,7 +42,6 @@
   font-size: var(--text-sm);
 }
 
-/* Dormant: not yet rendered by production JSX. See D17 in deferrals. */
 .aiSummaryHead {
   display: flex;
   align-items: center;

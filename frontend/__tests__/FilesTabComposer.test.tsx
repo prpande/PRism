@@ -178,6 +178,7 @@ function Wrapper({ prDetail }: { prDetail: PrDetailDto }) {
         draftSession,
         readOnly: false,
         subscribed: false,
+        baseShaChanged: false,
         onSelectSubTab: () => {},
       }}
     >

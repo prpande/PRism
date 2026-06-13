@@ -60,7 +60,7 @@ public class ActivePrCacheTests
             new FakeHostEnvironment("Production"));
 
         registry.Add("sub1", Pr);
-        review.SetSnapshot(Pr, new ActivePrPollSnapshot("h-fresh", "MERGEABLE", "OPEN", 0, 0));
+        review.SetSnapshot(Pr, new ActivePrPollSnapshot("h-fresh", "base1", "MERGEABLE", "OPEN", 0, 0));
 
         await poller.TickAsync(T0, default);
 

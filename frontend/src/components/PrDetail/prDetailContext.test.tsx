@@ -19,6 +19,7 @@ test('provides prRef + session to children', () => {
     draftSession: {} as PrDetailContextValue['draftSession'],
     readOnly: false,
     subscribed: false,
+    baseShaChanged: false,
     onSelectSubTab: vi.fn(),
   } satisfies PrDetailContextValue;
   render(

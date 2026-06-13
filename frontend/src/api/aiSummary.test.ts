@@ -1,15 +1,16 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { getAiSummaryResult } from './aiSummary';
+import { getAiSummaryResult, regenerateAiSummary } from './aiSummary';
 import { ApiError } from './client';
 import type { PrSummary } from './types';
 
-const { getMock } = vi.hoisted(() => ({
+const { getMock, postMock } = vi.hoisted(() => ({
   getMock: vi.fn<(path: string) => Promise<PrSummary | undefined>>(),
+  postMock: vi.fn<(path: string) => Promise<PrSummary | undefined>>(),
 }));
 
 vi.mock('./client', async (orig) => {
   const actual = await orig<typeof import('./client')>();
-  return { ...actual, apiClient: { get: getMock } };
+  return { ...actual, apiClient: { get: getMock, post: postMock } };
 });
 
 const pr = { owner: 'o', repo: 'r', number: 1 };
@@ -39,5 +40,26 @@ describe('getAiSummaryResult', () => {
   it('maps network error to error', async () => {
     getMock.mockRejectedValue(new Error('network'));
     expect(await getAiSummaryResult(pr)).toEqual({ kind: 'error' });
+  });
+});
+
+describe('regenerateAiSummary', () => {
+  it('POSTs the regenerate route and maps 200 to ok', async () => {
+    postMock.mockResolvedValue({ body: 'fresh', category: 'fix' });
+    expect(await regenerateAiSummary(pr)).toEqual({
+      kind: 'ok',
+      summary: { body: 'fresh', category: 'fix' },
+    });
+    expect(postMock).toHaveBeenCalledWith('/api/pr/o/r/1/ai/summary/regenerate');
+  });
+
+  it('maps 204 (undefined) to absent', async () => {
+    postMock.mockResolvedValue(undefined);
+    expect(await regenerateAiSummary(pr)).toEqual({ kind: 'absent' });
+  });
+
+  it('maps 503 to error', async () => {
+    postMock.mockRejectedValue(new ApiError(503, null, null));
+    expect(await regenerateAiSummary(pr)).toEqual({ kind: 'error' });
   });
 });

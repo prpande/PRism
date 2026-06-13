@@ -2,19 +2,9 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using FluentAssertions;
-using Microsoft.AspNetCore.Mvc.Testing;
-using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.DependencyInjection.Extensions;
-using Microsoft.Extensions.Logging.Abstractions;
 using PRism.AI.ClaudeCode;
-using PRism.AI.Contracts.Observability;
 using PRism.AI.Contracts.Provider;
 using PRism.Core.Ai;
-using PRism.Core.Config;
-using PRism.Core.Contracts;
-using PRism.Core.PrDetail;
-using PRism.Web.Ai;
-using PRism.Web.Middleware;
 using PRism.Web.Tests.TestHelpers;
 using Xunit;
 
@@ -54,81 +44,6 @@ public sealed class AiSummaryGateTests
         {
             Calls++;
             throw new LlmProviderException("provider unavailable", "", 1);
-        }
-    }
-
-    // No-op ITokenUsageTracker (non-fatal, spec §9).
-    private sealed class NullTracker : ITokenUsageTracker
-    {
-        public Task RecordAsync(TokenUsageRecord record, CancellationToken ct) => Task.CompletedTask;
-    }
-
-    // No-op AI audit sink — these gate tests assert HTTP status mapping, not audit logging.
-    private sealed class NullAiInteractionLog : IAiInteractionLog
-    {
-        public void Record(AiInteractionRecord record) { }
-    }
-
-    /// <summary>
-    /// Per-test harness. Wires a stubbed ClaudeCodeSummarizer (no PrDetailLoader dependency)
-    /// and a ConfigurableActivePrCache. Mirrors RootCommentTestContext's pattern so the
-    /// session token is properly injected into the HTTP client.
-    /// </summary>
-    private sealed class AiSummaryTestContext : IDisposable
-    {
-        private readonly PRismWebApplicationFactory _base;
-        private readonly WebApplicationFactory<Program> _derived;
-
-        public AiModeState ModeState => _derived.Services.GetRequiredService<AiModeState>();
-        public AiConsentState ConsentState => _derived.Services.GetRequiredService<AiConsentState>();
-
-        public AiSummaryTestContext(ILlmProvider provider, bool subscribeAll)
-        {
-            var stubSummarizer = new ClaudeCodeSummarizer(
-                provider,
-                new NullTracker(),
-                (_, _) => Task.FromResult(("+ added", "Title", "Desc", "sha1")),
-                NullLogger<ClaudeCodeSummarizer>.Instance,
-                new NullAiInteractionLog());
-
-            _base = new PRismWebApplicationFactory();
-            _derived = _base.WithWebHostBuilder(b => b.ConfigureServices(s =>
-            {
-                // Replace ClaudeCodeSummarizer with a stub that avoids PrDetailLoader.
-                // The IAiSeamSelector factory calls sp.GetRequiredService<ClaudeCodeSummarizer>()
-                // to populate realSeams — replacing it here causes the stub to light up as the
-                // Live seam without needing a real PR diff load path.
-                s.RemoveAll<ClaudeCodeSummarizer>();
-                s.AddSingleton(stubSummarizer);
-
-                // Replace IActivePrCache so the D111 gate behaves per-case.
-                s.RemoveAll<IActivePrCache>();
-                s.AddSingleton<IActivePrCache>(new ConfigurableActivePrCache(subscribeAll));
-            }));
-            // Force DI container build so services are available before tests access them.
-            _ = _derived.Services;
-        }
-
-        public HttpClient CreateClient()
-        {
-            // Mirror PRismWebApplicationFactory.ConfigureClient: inject session token + origin.
-            var token = _derived.Services.GetRequiredService<SessionTokenProvider>().Current;
-            var c = _derived.CreateClient();
-            c.DefaultRequestHeaders.Add("X-PRism-Session", token);
-            c.DefaultRequestHeaders.Add("Cookie", $"prism-session={token}");
-            var origin = c.BaseAddress?.GetLeftPart(UriPartial.Authority);
-            if (!string.IsNullOrEmpty(origin)) c.DefaultRequestHeaders.Add("Origin", origin);
-            return c;
-        }
-
-        public void SeedConsent()
-            => ConsentState.Set(new AiConsentConfig(
-                AiProviderIds.Claude, AiDisclosure.CurrentVersion, DateTimeOffset.UtcNow));
-
-        public void Dispose()
-        {
-            _derived.Dispose();
-            _base.Dispose();
         }
     }
 

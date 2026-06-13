@@ -7,6 +7,8 @@ using PRism.AI.Contracts.Provider;
 using PRism.AI.Contracts.Seams;
 using PRism.Core.Ai;
 using PRism.Core.Contracts;
+using PRism.Core.Events;
+using PRism.Core.PrDetail;
 
 namespace PRism.Web.Ai;
 
@@ -16,16 +18,24 @@ namespace PRism.Web.Ai;
 /// endpoint) and are NOT cached, so reopening the PR re-invokes. Token-tracker failures are logged
 /// and non-fatal (spec §9): a failed usage write must not deny the user a valid summary that was
 /// already computed and egressed.</summary>
-internal sealed partial class ClaudeCodeSummarizer : IPrSummarizer
+internal sealed partial class ClaudeCodeSummarizer : IPrSummarizer, IDisposable
 {
-    /// <summary>Diff source: (prRef, ct) → (diff, title, description, headSha). Production wiring closes
-    /// over PrDetailLoader; tests inject a stub.</summary>
-    internal delegate Task<(string diff, string title, string description, string headSha)> DiffResolver(
+    /// <summary>Diff source: (prRef, ct) → (diff, title, description, baseSha, headSha). Production wiring
+    /// closes over PrDetailLoader; tests inject a stub.</summary>
+    internal delegate Task<(string diff, string title, string description, string baseSha, string headSha)> DiffResolver(
         PrReference pr, CancellationToken ct);
+
+    /// <summary>Structured cache key. Avoids the ambiguous-delimiter risk of appending a second '#'
+    /// to PrId (already "owner/repo#number"). Mirrors PrDetailLoader.DiffMemoKey.</summary>
+    internal readonly record struct SummaryCacheKey(PrReference PrRef, string BaseSha, string HeadSha);
 
     internal const string ClaudeProviderId = AiProviderIds.Claude;
     internal const string SummaryModel = "claude-sonnet-4-6"; // KTD-2 — tunable
     private const string ComponentName = "summary"; // AI-audit component tag (matches the FE feature key)
+
+    // EGRESS ALLOWLIST (spec §11 / P1a §5 change-control): the ONLY PR-derived fields sent to the
+    // provider. Adding a field here widens what leaves the device and MUST bump DisclosureVersion.
+    internal static readonly IReadOnlyList<string> PromptFieldAllowlist = new[] { "diff", "title", "description" };
 
     private const string SystemPromptV1 =
         "You summarize a GitHub pull request for a reviewer. Output, in order:\n" +
@@ -39,23 +49,39 @@ internal sealed partial class ClaudeCodeSummarizer : IPrSummarizer
     private readonly DiffResolver _resolveDiff;
     private readonly ILogger<ClaudeCodeSummarizer> _logger;
     private readonly IAiInteractionLog _interactionLog;
-    private readonly ConcurrentDictionary<string, PrSummary> _cache = new();
+    private readonly ConcurrentDictionary<SummaryCacheKey, PrSummary> _cache = new();
+    private readonly IDisposable _busSubscription;
+    private readonly IActivePrCache _activePrCache;
 
     internal ClaudeCodeSummarizer(ILlmProvider provider, ITokenUsageTracker tracker, DiffResolver resolveDiff,
-        ILogger<ClaudeCodeSummarizer> logger, IAiInteractionLog interactionLog)
+        ILogger<ClaudeCodeSummarizer> logger, IAiInteractionLog interactionLog, IReviewEventBus bus,
+        IActivePrCache activePrCache)
     {
         _provider = provider;
         _tracker = tracker;
         _resolveDiff = resolveDiff;
         _logger = logger;
         _interactionLog = interactionLog;
+        _activePrCache = activePrCache;
+        _busSubscription = bus.Subscribe<ActivePrUpdated>(OnActivePrUpdated);
     }
 
-    public async Task<PrSummary?> SummarizeAsync(PrReference pr, CancellationToken ct)
+    public Task<PrSummary?> SummarizeAsync(PrReference pr, CancellationToken ct)
+        => SummarizeCoreAsync(pr, isRetry: false, ct);
+
+    public Task<PrSummary?> RegenerateAsync(PrReference pr, CancellationToken ct)
+    {
+        // EvictForPr is null-safe (no key matches a null PrRef); SummarizeCoreAsync owns the
+        // ArgumentNullException guard, mirroring SummarizeAsync which also forwards unguarded.
+        EvictForPr(pr);                       // force a fresh provider call (deliberate re-spend)
+        return SummarizeCoreAsync(pr, isRetry: true, ct);
+    }
+
+    private async Task<PrSummary?> SummarizeCoreAsync(PrReference pr, bool isRetry, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(pr);
-        var (diff, title, description, headSha) = await _resolveDiff(pr, ct).ConfigureAwait(false);
-        var key = $"{pr.PrId}#{headSha}"; // "owner/repo#number#headSha" — PrId is "owner/repo#number"; headSha appended as a per-commit suffix
+        var (diff, title, description, baseSha, headSha) = await _resolveDiff(pr, ct).ConfigureAwait(false);
+        var key = new SummaryCacheKey(pr, baseSha, headSha);
         if (_cache.TryGetValue(key, out var cached))
         {
             _interactionLog.Record(new AiInteractionRecord(
@@ -91,7 +117,13 @@ internal sealed partial class ClaudeCodeSummarizer : IPrSummarizer
 
         var (body, category) = PrCategoryParser.Parse(result.Text);
         var summary = new PrSummary(body, category);
-        _cache[key] = summary; // cache the successful result first — tracking is best-effort (spec §9)
+
+        // R7 — store only if the PR's active snapshot still matches the (base, head) this call resolved.
+        // A mid-call head/base shift makes the snapshot differ → skip (the result is for a superseded diff).
+        // A null snapshot (first-load window, before the poller ticks) has no observed shift → store.
+        var current = _activePrCache.GetCurrent(pr);
+        if (current is null || (current.BaseSha == baseSha && current.HeadSha == headSha))
+            _cache[key] = summary;
 
         _interactionLog.Record(new AiInteractionRecord(
             ComponentName, ClaudeProviderId, SummaryModel, pr.PrId, headSha,
@@ -108,7 +140,7 @@ internal sealed partial class ClaudeCodeSummarizer : IPrSummarizer
                 Feature: "pr-summary", ProviderId: ClaudeProviderId,
                 InputTokens: result.InputTokens, OutputTokens: result.OutputTokens,
                 CacheReadInputTokens: result.CacheReadInputTokens,
-                EstimatedCostUsd: result.EstimatedCostUsd, IsRetry: false), ct).ConfigureAwait(false);
+                EstimatedCostUsd: result.EstimatedCostUsd, IsRetry: isRetry), ct).ConfigureAwait(false);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -120,6 +152,25 @@ internal sealed partial class ClaudeCodeSummarizer : IPrSummarizer
 
         return summary;
     }
+
+    // Invalidation, not mutable-state-in-key (roadmap §6). A base OR head move makes the cached
+    // (prRef, baseSha, headSha) entries describe a superseded diff; drop the PR's entries wholesale.
+    // The quiet first-poll event (neither flag) must NOT evict — mirrors PrDetailLoader.OnActivePrUpdated.
+    // Synchronous bus: this runs on the publisher's thread and does in-memory dict removal only — cheap.
+    private void OnActivePrUpdated(ActivePrUpdated e)
+    {
+        if (e.HeadShaChanged || e.BaseShaChanged)
+            EvictForPr(e.PrRef);
+    }
+
+    private void EvictForPr(PrReference prRef)
+    {
+        foreach (var key in _cache.Keys)
+            if (key.PrRef == prRef)
+                _cache.TryRemove(key, out _);
+    }
+
+    public void Dispose() => _busSubscription.Dispose();
 
     private static long ElapsedMs(long startTimestamp) =>
         (long)Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds;

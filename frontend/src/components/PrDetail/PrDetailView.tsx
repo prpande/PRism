@@ -274,9 +274,18 @@ export function PrDetailView({
       draftSession,
       readOnly: presence.readOnly,
       subscribed: updates.subscribed,
+      baseShaChanged: updates.baseShaChanged,
       onSelectSubTab: selectSubTab,
     }),
-    [prRef, data, draftSession, presence.readOnly, updates.subscribed, selectSubTab],
+    [
+      prRef,
+      data,
+      draftSession,
+      presence.readOnly,
+      updates.subscribed,
+      updates.baseShaChanged,
+      selectSubTab,
+    ],
   );
 
   return (

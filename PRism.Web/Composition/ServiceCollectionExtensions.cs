@@ -11,6 +11,7 @@ using PRism.AI.Contracts.Seams;
 using PRism.AI.Placeholder;
 using PRism.Core.Ai;
 using PRism.Core.Contracts;
+using PRism.Core.Events;
 using PRism.Core.Json;
 using PRism.Core.PrDetail;
 using PRism.Web.Ai;
@@ -94,14 +95,16 @@ internal static class ServiceCollectionExtensions
                 var headSha = snapshot.Detail.Pr.HeadSha;
                 var diffDto = await loader.GetOrFetchDiffAsync(pr, new DiffRangeRequest(baseSha, headSha), ct).ConfigureAwait(false);
                 var diffText = PrDiffText.Render(diffDto);
-                return (diffText, snapshot.Detail.Pr.Title, snapshot.Detail.Pr.Body, headSha);
+                return (diffText, snapshot.Detail.Pr.Title, snapshot.Detail.Pr.Body, baseSha, headSha);
             };
             return new ClaudeCodeSummarizer(
                 sp.GetRequiredService<ILlmProvider>(),
                 sp.GetRequiredService<ITokenUsageTracker>(),
                 resolve,
                 sp.GetRequiredService<ILogger<ClaudeCodeSummarizer>>(),
-                sp.GetRequiredService<IAiInteractionLog>());
+                sp.GetRequiredService<IAiInteractionLog>(),
+                sp.GetRequiredService<IReviewEventBus>(),
+                sp.GetRequiredService<IActivePrCache>());
         });
 
         var realSeams = new Dictionary<Type, object>();   // P1: populated below with the first real impl

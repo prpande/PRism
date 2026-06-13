@@ -6,6 +6,8 @@ using Microsoft.Extensions.Logging.Abstractions;
 using PRism.AI.Contracts.Observability;
 using PRism.AI.Contracts.Provider;
 using PRism.Core.Contracts;
+using PRism.Core.Events;
+using PRism.Core.PrDetail;
 using PRism.Web.Ai;
 using Xunit;
 
@@ -45,13 +47,19 @@ public sealed class ClaudeCodeSummarizerTests
 
     private static readonly PrReference Pr = new("o", "r", 1);
 
-    // Test seam: the summarizer takes a Func that yields (diff, title, description, headSha) so the
+    // Test seam: the summarizer takes a Func that yields (diff, title, description, baseSha, headSha) so the
     // test bypasses PrDetailLoader. Production wiring closes over PrDetailLoader (Task 9).
     private static ClaudeCodeSummarizer Build(ILlmProvider p, ITokenUsageTracker t,
-        string diff = "+ added line", string title = "Fix poller", string desc = "Body", string headSha = "abc123",
-        IAiInteractionLog? log = null)
-        => new(p, t, (_, _) => Task.FromResult((diff, title, desc, headSha)),
-            NullLogger<ClaudeCodeSummarizer>.Instance, log ?? new FakeAiInteractionLog());
+        string diff = "+ added line", string title = "Fix poller", string desc = "Body",
+        string baseSha = "base1", string headSha = "abc123", IAiInteractionLog? log = null,
+        IReviewEventBus? bus = null, IActivePrCache? activePrCache = null)
+        => new(p, t, (_, _) => Task.FromResult((diff, title, desc, baseSha, headSha)),
+            NullLogger<ClaudeCodeSummarizer>.Instance, log ?? new FakeAiInteractionLog(),
+            bus ?? new ReviewEventBus(),
+            activePrCache ?? new StubActivePrCache
+            {
+                Snapshot = new ActivePrSnapshot(headSha, null, default, BaseSha: baseSha),
+            });
 
     [Fact]
     public async Task Success_ParsesCategory_RecordsUsage()
@@ -173,5 +181,162 @@ public sealed class ClaudeCodeSummarizerTests
         var summary2 = await s.SummarizeAsync(Pr, CancellationToken.None);
         summary2!.Body.Should().Be("Summary body.");
         p.Calls.Should().Be(1, "summary was cached despite tracker failure — second call is a cache hit");
+    }
+
+    [Fact]
+    public async Task Same_head_different_base_is_a_MISS_on_one_instance_and_calls_provider_twice()
+    {
+        var provider = new FakeProvider();
+        // ONE summarizer, ONE cache. The resolver returns the SAME head but a DIFFERENT base on the
+        // second call, so the only thing that can force a MISS is baseSha being part of SummaryCacheKey.
+        // (A two-instance variant would pass even if the key IGNORED base — each instance has its own
+        // cache, so it proves nothing about key discrimination. This is the real R2 invariant.)
+        var bases = new Queue<string>(new[] { "b1", "b2" });
+        using var summarizer = new ClaudeCodeSummarizer(
+            provider, new FakeTracker(),
+            (_, _) => Task.FromResult(("+ added line", "Fix poller", "Body", bases.Dequeue(), "h1")),
+            NullLogger<ClaudeCodeSummarizer>.Instance, new FakeAiInteractionLog(),
+            new ReviewEventBus(), new StubActivePrCache()); // null snapshot → R7 store proceeds both times
+
+        await summarizer.SummarizeAsync(Pr, CancellationToken.None); // (Pr,b1,h1) MISS → provider call 1
+        await summarizer.SummarizeAsync(Pr, CancellationToken.None); // (Pr,b2,h1) MISS → provider call 2
+
+        provider.Calls.Should().Be(2,
+            "same head + different base is a different SummaryCacheKey → MISS on the same cache");
+    }
+
+    [Fact]
+    public async Task Same_base_and_head_is_a_HIT_and_calls_provider_once()
+    {
+        var provider = new FakeProvider();
+        var tracker = new FakeTracker();
+        var summarizer = Build(provider, tracker, baseSha: "b1", headSha: "h1");
+
+        await summarizer.SummarizeAsync(Pr, CancellationToken.None);
+        await summarizer.SummarizeAsync(Pr, CancellationToken.None);
+
+        provider.Calls.Should().Be(1, "identical (base, head) is a cache HIT");
+    }
+
+    [Fact]
+    public async Task Evicts_cached_summary_on_BaseShaChanged_then_recomputes()
+    {
+        var provider = new FakeProvider();
+        var bus = new ReviewEventBus();
+        using var summarizer = Build(provider, new FakeTracker(), baseSha: "b1", headSha: "h1", bus: bus);
+
+        await summarizer.SummarizeAsync(Pr, CancellationToken.None); // provider call 1, cached under (Pr,b1,h1)
+        bus.Publish(new ActivePrUpdated(Pr, HeadShaChanged: false, CommentCountChanged: false,
+            NewHeadSha: null, CommentCountDelta: 0, BaseShaChanged: true, NewBaseSha: "b2"));
+        await summarizer.SummarizeAsync(Pr, CancellationToken.None); // entry evicted → provider call 2
+
+        provider.Calls.Should().Be(2, "BaseShaChanged evicts the PR's summary entries");
+    }
+
+    [Fact]
+    public async Task Evicts_cached_summary_on_HeadShaChanged()
+    {
+        var provider = new FakeProvider();
+        var bus = new ReviewEventBus();
+        using var summarizer = Build(provider, new FakeTracker(), bus: bus);
+
+        await summarizer.SummarizeAsync(Pr, CancellationToken.None);
+        bus.Publish(new ActivePrUpdated(Pr, HeadShaChanged: true, CommentCountChanged: false,
+            NewHeadSha: "h2", CommentCountDelta: 0));
+        await summarizer.SummarizeAsync(Pr, CancellationToken.None);
+
+        provider.Calls.Should().Be(2, "HeadShaChanged evicts the PR's summary entries");
+    }
+
+    [Fact]
+    public async Task Quiet_first_poll_event_does_not_evict()
+    {
+        var provider = new FakeProvider();
+        var bus = new ReviewEventBus();
+        using var summarizer = Build(provider, new FakeTracker(), bus: bus);
+
+        await summarizer.SummarizeAsync(Pr, CancellationToken.None);
+        bus.Publish(new ActivePrUpdated(Pr, HeadShaChanged: false, CommentCountChanged: false,
+            NewHeadSha: null, CommentCountDelta: 0)); // hydration: neither flag set
+        await summarizer.SummarizeAsync(Pr, CancellationToken.None);
+
+        provider.Calls.Should().Be(1, "a quiet hydration event must not drop a just-cached summary");
+    }
+
+    private sealed class StubActivePrCache : IActivePrCache
+    {
+        public ActivePrSnapshot? Snapshot;
+        public bool IsSubscribed(PrReference prRef) => true;
+        public ActivePrSnapshot? GetCurrent(PrReference prRef) => Snapshot;
+        public void Update(PrReference prRef, ActivePrSnapshot snapshot) => Snapshot = snapshot;
+        public void Clear() => Snapshot = null;
+    }
+
+    // --- Egress allowlist trip-wire (spec §11 / Task 11) ---
+
+    [Fact]
+    public void Prompt_field_allowlist_is_exactly_diff_title_description()
+    {
+        ClaudeCodeSummarizer.PromptFieldAllowlist.Should().BeEquivalentTo(new[] { "diff", "title", "description" },
+            "widening egress requires a visible constant edit + a DisclosureVersion bump (spec §11)");
+    }
+
+    [Fact]
+    public async Task Provider_prompt_contains_only_allowlisted_fields_and_never_baseSha()
+    {
+        var provider = new FakeProvider();
+        using var summarizer = Build(provider, new FakeTracker(), diff: "DIFFTOKEN", title: "TITLETOKEN",
+            desc: "DESCTOKEN", baseSha: "BASESHATOKEN", headSha: "h1");
+
+        await summarizer.SummarizeAsync(Pr, CancellationToken.None);
+
+        provider.Last!.UserContent.Should().Contain("DIFFTOKEN").And.Contain("TITLETOKEN").And.Contain("DESCTOKEN");
+        provider.Last!.UserContent.Should().NotContain("BASESHATOKEN", "baseSha is a cache key, never provider input");
+    }
+
+    [Fact]
+    public async Task R7_store_is_skipped_when_active_snapshot_SHAs_no_longer_match()
+    {
+        var provider = new FakeProvider();
+        var cache = new StubActivePrCache
+        {
+            // The PR has already shifted to (b2,h1) by the time the in-flight call goes to store.
+            Snapshot = new ActivePrSnapshot("h1", null, default, BaseSha: "b2"),
+        };
+        using var summarizer = Build(provider, new FakeTracker(), baseSha: "b1", headSha: "h1", activePrCache: cache);
+
+        await summarizer.SummarizeAsync(Pr, CancellationToken.None); // resolves (b1,h1); snapshot says (b2,h1) → skip store
+        await summarizer.SummarizeAsync(Pr, CancellationToken.None); // nothing cached → provider called again
+
+        provider.Calls.Should().Be(2, "a superseded write must not be stored");
+    }
+
+    [Fact]
+    public async Task R7_valid_write_is_stored_even_when_snapshot_matches()
+    {
+        var provider = new FakeProvider();
+        var cache = new StubActivePrCache
+        {
+            Snapshot = new ActivePrSnapshot("h1", null, default, BaseSha: "b1"), // matches the resolved (b1,h1)
+        };
+        using var summarizer = Build(provider, new FakeTracker(), baseSha: "b1", headSha: "h1", activePrCache: cache);
+
+        await summarizer.SummarizeAsync(Pr, CancellationToken.None); // stored
+        await summarizer.SummarizeAsync(Pr, CancellationToken.None); // HIT
+
+        provider.Calls.Should().Be(1, "a valid write whose SHAs are still current must be stored (not dropped)");
+    }
+
+    [Fact]
+    public async Task R7_store_proceeds_when_no_active_snapshot_yet()
+    {
+        var provider = new FakeProvider();
+        var cache = new StubActivePrCache { Snapshot = null }; // first-load window: poller hasn't ticked
+        using var summarizer = Build(provider, new FakeTracker(), baseSha: "b1", headSha: "h1", activePrCache: cache);
+
+        await summarizer.SummarizeAsync(Pr, CancellationToken.None);
+        await summarizer.SummarizeAsync(Pr, CancellationToken.None);
+
+        provider.Calls.Should().Be(1, "no observed shift (null snapshot) → store, preserving initial caching");
     }
 }
