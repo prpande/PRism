@@ -19,7 +19,7 @@ const sampleInbox = {
           repo: 'acme/api',
           updatedAt: new Date().toISOString(),
           pushedAt: new Date().toISOString(),
-          iterationNumber: 3,
+          commitCount: 3,
           commentCount: 7,
           additions: 50,
           deletions: 10,

@@ -150,7 +150,7 @@ const sampleInbox = {
           repo: `${OWNER}/${REPO}`,
           updatedAt: new Date().toISOString(),
           pushedAt: new Date().toISOString(),
-          iterationNumber: 1,
+          commitCount: 1,
           commentCount: 0,
           additions: 1,
           deletions: 1,

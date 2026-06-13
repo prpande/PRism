@@ -29,7 +29,7 @@ internal sealed class FakePrDiscovery : IPrDiscovery
                 Repo: "acme/api",
                 UpdatedAt: _store.Now,
                 PushedAt: _store.Now,
-                IterationNumber: _store.Iterations.Count,
+                CommitCount: _store.Iterations.Count,
                 CommentCount: 0,
                 Additions: 8,
                 Deletions: 0,

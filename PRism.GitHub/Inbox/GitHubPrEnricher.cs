@@ -94,7 +94,7 @@ public sealed class GitHubPrEnricher : IPrEnricher
             return raw with
             {
                 HeadSha = head, Additions = additions, Deletions = deletions,
-                IterationNumberApprox = commits, PushedAt = pushedAt,
+                CommitCount = commits, PushedAt = pushedAt,
                 MergedAt = mergedAt, ClosedAt = closedAt,
             };
         }

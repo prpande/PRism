@@ -13,7 +13,7 @@ const PR: PrInboxItem = {
   repo: 'acme/api',
   updatedAt: new Date().toISOString(),
   pushedAt: new Date().toISOString(),
-  iterationNumber: 2,
+  commitCount: 2,
   commentCount: 3,
   additions: 50,
   deletions: 10,

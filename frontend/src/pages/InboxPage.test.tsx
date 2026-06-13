@@ -131,7 +131,7 @@ const sampleData: InboxResponse = {
           repo: 'acme/api',
           updatedAt: new Date().toISOString(),
           pushedAt: new Date().toISOString(),
-          iterationNumber: 1,
+          commitCount: 1,
           commentCount: 0,
           additions: 5,
           deletions: 2,

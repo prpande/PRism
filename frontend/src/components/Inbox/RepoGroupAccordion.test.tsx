@@ -14,7 +14,7 @@ function pr(n: number): PrInboxItem {
     repo: 'acme/api',
     updatedAt: '2026-05-01T00:00:00Z',
     pushedAt: '2026-05-01T00:00:00Z',
-    iterationNumber: 1,
+    commitCount: 1,
     commentCount: 0,
     additions: 0,
     deletions: 0,

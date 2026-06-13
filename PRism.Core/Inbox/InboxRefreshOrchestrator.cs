@@ -296,7 +296,7 @@ public sealed partial class InboxRefreshOrchestrator : IInboxRefreshOrchestrator
         return new PrInboxItem(
             r.Reference, r.Title, r.Author, r.Repo,
             r.UpdatedAt, r.PushedAt,
-            r.IterationNumberApprox, r.CommentCount,
+            r.CommitCount, r.CommentCount,
             r.Additions, r.Deletions, r.HeadSha, ci,
             lastViewedHeadSha, lastSeenCommentId,
             r.MergedAt, r.ClosedAt, r.AvatarUrl);

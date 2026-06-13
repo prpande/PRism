@@ -19,7 +19,7 @@ public sealed record RawPrInboxItem(
     int Additions,
     int Deletions,
     string HeadSha,
-    int IterationNumberApprox,
+    int CommitCount,
     DateTimeOffset? MergedAt = null,
     DateTimeOffset? ClosedAt = null,
     string? AvatarUrl = null);

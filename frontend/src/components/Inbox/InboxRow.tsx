@@ -84,7 +84,7 @@ export function InboxRow({
 
   const ariaLabel = isDone
     ? `${pr.title} · ${pr.repo} · ${doneState}`
-    : `${pr.title} · ${pr.repo} · open · iteration ${pr.iterationNumber}${
+    : `${pr.title} · ${pr.repo} · open · ${pr.commitCount} commit${pr.commitCount === 1 ? '' : 's'}${
         hasUnseenActivity ? ' · unread' : ''
       }${ciSuffix}`;
 
@@ -145,7 +145,7 @@ export function InboxRow({
               <span className={styles.authorName}>{pr.author}</span>
             </span>
             <span className={styles.dotsep}>·</span>
-            <span className={styles.mono}>iter {pr.iterationNumber}</span>
+            <span className={styles.mono}>{pr.commitCount} {pr.commitCount === 1 ? 'commit' : 'commits'}</span>
             <span className={styles.dotsep}>·</span>
             <span>{formatAge(pr.updatedAt)}</span>
           </span>

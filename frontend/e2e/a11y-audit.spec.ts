@@ -59,7 +59,7 @@ const sampleInbox = {
           repo: 'octocat/Hello-World',
           updatedAt: FIXED_TS,
           pushedAt: FIXED_TS,
-          iterationNumber: 1,
+          commitCount: 1,
           commentCount: 3,
           additions: 25,
           deletions: 4,

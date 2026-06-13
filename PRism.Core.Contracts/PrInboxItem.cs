@@ -13,7 +13,7 @@ public sealed record PrInboxItem(
     string Repo,
     DateTimeOffset UpdatedAt,
     DateTimeOffset PushedAt,
-    int IterationNumber,
+    int CommitCount,
     int CommentCount,
     int Additions,
     int Deletions,
