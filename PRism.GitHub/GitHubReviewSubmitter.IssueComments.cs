@@ -3,6 +3,7 @@ using System.Text.Json;
 using PRism.Core;
 using PRism.Core.Contracts;
 using PRism.Core.Submit;
+using static PRism.GitHub.GitHubHttp;    // Truncate (#321 PR2 shared static)
 
 namespace PRism.GitHub;
 
@@ -19,7 +20,7 @@ namespace PRism.GitHub;
 // Non-2xx: throws HttpRequestException with the StatusCode populated (matches PostGraphQLAsync's
 // pattern of reading the response body first so the message is actionable). Task 10 maps specific
 // codes (403, 404, 422…) to typed error results.
-public sealed partial class GitHubReviewService
+internal sealed partial class GitHubReviewSubmitter
 {
     public async Task<CreatedIssueCommentResult> CreateIssueCommentAsync(
         PrReference reference,

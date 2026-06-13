@@ -12,8 +12,8 @@ public sealed class GitHubReviewServiceReviewCommentsContractTests
 {
     private static PrReference Ref => new("owner", "repo", 42);
 
-    private static GitHubReviewService NewService(HttpMessageHandler handler)
-        => GitHubReviewServiceFactory.Create(handler);
+    private static GitHubReviewSubmitter NewService(HttpMessageHandler handler)
+        => GitHubReviewServiceFactory.CreateSubmitter(handler);
 
     private static ReviewCommentRequest SampleReq =>
         new(CommitOid: "deadbeef", FilePath: "src/Foo.cs", LineNumber: 42, Side: "RIGHT",

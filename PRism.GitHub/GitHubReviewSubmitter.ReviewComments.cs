@@ -3,12 +3,14 @@ using System.Text.Json;
 using PRism.Core;
 using PRism.Core.Contracts;
 using PRism.Core.Submit;
+using static PRism.GitHub.GitHubGraphQL; // TryGetPath (#321 PR2 shared static)
+using static PRism.GitHub.GitHubHttp;    // Truncate (#321 PR2 shared static)
 
 namespace PRism.GitHub;
 
 // #302 — single-comment write path. Inline = REST POST /pulls/{n}/comments (mirrors IssueComments.cs).
 // Reply = GraphQL addPullRequestReviewThreadReply with NO pullRequestReviewId (posts immediately).
-public sealed partial class GitHubReviewService
+internal sealed partial class GitHubReviewSubmitter
 {
     public async Task<CreatedReviewCommentResult> CreateReviewCommentAsync(
         PrReference reference, ReviewCommentRequest request, CancellationToken ct)

@@ -2,6 +2,7 @@ using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using PRism.Core.Contracts;
 using PRism.Core.Submit;
+using static PRism.GitHub.GitHubGraphQL; // TryGetPath (#321 PR2 shared static)
 
 namespace PRism.GitHub;
 
@@ -10,12 +11,12 @@ namespace PRism.GitHub;
 //  - docs/specs/2026-05-11-s5-submit-pipeline-design.md § 4 (contract) + § 5.2 (the pipeline steps these feed)
 //  - docs/spec/00-verification-notes.md § C6 (addPullRequestReviewThread param shape — verified), § C7 (marker durability — verified), § C9 (empty-pipeline finalize — verified)
 //
-// Transport reuses the adapter's existing GraphQL plumbing (PostGraphQLAsync + the named "github"
-// HttpClient + HostUrlResolver.GraphQlEndpoint). Submit calls are mutations, so they cannot partially
-// succeed: PostSubmitGraphQLAsync throws GitHubGraphQLException on ANY non-empty `errors` array —
-// stricter than the read-side ThrowIfGraphQLErrorsWithoutData, which tolerates errors-alongside-data
-// for the multi-field fetch queries where partial data is legitimately useful.
-public sealed partial class GitHubReviewService
+// Transport reuses the shared GraphQL plumbing (GitHubGraphQL.PostAsync via the thin
+// PostGraphQLAsync wrapper + the named "github" HttpClient). Submit calls are mutations, so they
+// cannot partially succeed: PostSubmitGraphQLAsync throws GitHubGraphQLException on ANY non-empty
+// `errors` array — stricter than the read-side ThrowIfGraphQLErrorsWithoutData, which tolerates
+// errors-alongside-data for the multi-field fetch queries where partial data is legitimately useful.
+internal sealed partial class GitHubReviewSubmitter
 {
     public async Task<BeginPendingReviewResult> BeginPendingReviewAsync(
         PrReference reference,
@@ -485,7 +486,7 @@ public sealed partial class GitHubReviewService
             // only renders the first. The user-facing toast surfaces the
             // formatted Message (now actually useful); operators grepping
             // logs get the raw payload.
-            s_graphqlSubmitFailed(_log, errors.GetArrayLength(), errorsJson, null);
+            Log.GraphQLSubmitFailed(_log, errors.GetArrayLength(), errorsJson);
             throw new GitHubGraphQLException(
                 GitHubGraphQLException.FormatErrorsMessage(errorsJson),
                 errorsJson);
@@ -493,23 +494,10 @@ public sealed partial class GitHubReviewService
 
         if (!root.TryGetProperty("data", out var data) || data.ValueKind != JsonValueKind.Object)
         {
-            s_graphqlSubmitNoData(_log, null);
+            Log.GraphQLSubmitNoData(_log);
             throw new GitHubGraphQLException("GitHub GraphQL response carried no usable data object.");
         }
 
         return data.Clone();
     }
-
-    // Logged at Error because submit-pipeline GraphQL failures always abort the
-    // pipeline — there's no "partial data" path here (queries that tolerate
-    // errors-alongside-data go through ThrowIfGraphQLErrorsWithoutData, not
-    // this method). The full errors JSON is included as a parameter so the
-    // operator sees every error, not just the first one rendered in the toast.
-    private static readonly Action<ILogger, int, string, Exception?> s_graphqlSubmitFailed =
-        LoggerMessage.Define<int, string>(LogLevel.Error, new EventId(2, "GraphQLSubmitFailed"),
-            "Submit-pipeline GraphQL call returned {ErrorCount} error(s). Raw errors: {ErrorsJson}");
-
-    private static readonly Action<ILogger, Exception?> s_graphqlSubmitNoData =
-        LoggerMessage.Define(LogLevel.Error, new EventId(3, "GraphQLSubmitNoData"),
-            "Submit-pipeline GraphQL call succeeded with no errors but no `data` object — server contract violation.");
 }
