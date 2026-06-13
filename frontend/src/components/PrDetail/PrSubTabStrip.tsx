@@ -9,6 +9,11 @@ interface PrSubTabStripProps {
   // High+Medium count; undefined while loading/error/zero/Preview → no badge.
   hotspotsCount?: number;
   draftsCount?: number;
+  // Spec §8 — the Hotspots tab is rendered ONLY when the fileFocus capability is
+  // on (Preview or Live). When AI is Off it is removed from the DOM entirely (not
+  // display:none / aria-hidden), so the tablist carries no inert tab. Defaults to
+  // false: a consumer that doesn't thread capability state never shows the tab.
+  showHotspots?: boolean;
 }
 
 export function PrSubTabStrip({
@@ -17,6 +22,7 @@ export function PrSubTabStrip({
   fileCount,
   hotspotsCount,
   draftsCount,
+  showHotspots = false,
 }: PrSubTabStripProps) {
   return (
     <div role="tablist" className={styles.prTabs}>
@@ -33,21 +39,23 @@ export function PrSubTabStrip({
         onSelect={onTabChange}
         count={fileCount}
       />
-      <Tab
-        id="hotspots"
-        label="Hotspots"
-        active={activeTab === 'hotspots'}
-        onSelect={onTabChange}
-        count={hotspotsCount}
-        // Spec § 6.1 — the hotspots badge announces "N files need attention"
-        // rather than the generic "N items". Built at the call site (single
-        // consumer) so the generic Tab keeps its default wording.
-        srCountSuffix={
-          hotspotsCount
-            ? `, ${hotspotsCount} ${hotspotsCount === 1 ? 'file needs' : 'files need'} attention`
-            : undefined
-        }
-      />
+      {showHotspots && (
+        <Tab
+          id="hotspots"
+          label="Hotspots"
+          active={activeTab === 'hotspots'}
+          onSelect={onTabChange}
+          count={hotspotsCount}
+          // Spec § 6.1 — the hotspots badge announces "N files need attention"
+          // rather than the generic "N items". Built at the call site (single
+          // consumer) so the generic Tab keeps its default wording.
+          srCountSuffix={
+            hotspotsCount
+              ? `, ${hotspotsCount} ${hotspotsCount === 1 ? 'file needs' : 'files need'} attention`
+              : undefined
+          }
+        />
+      )}
       <Tab
         id="drafts"
         label="Drafts"

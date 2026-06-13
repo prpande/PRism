@@ -206,6 +206,19 @@ export function PrDetailView({
     setSubTab(tab);
   }, []);
 
+  // Spec §8 — the Hotspots tab exists only when the fileFocus capability is on
+  // (Preview or Live). `fileFocusEnabled` derives from async-loaded
+  // capabilities, so it starts false (null caps → off) and flips true once they
+  // resolve — the tab and its content appear reactively at that point.
+  //
+  // Deep-link-while-off edge: a `/pr/.../hotspots` URL seeds subTab='hotspots'
+  // (and a user can turn AI off while parked on the tab). Coerce 'hotspots' →
+  // 'overview' whenever the capability is off, so the strip's active-tab and the
+  // hidden-gating below agree — no blank screen, no misleading "No file changes"
+  // Hotspots state. `effectiveSubTab` is what the UI renders; the underlying
+  // `subTab` state is left untouched, so the live tab is restored once caps load.
+  const effectiveSubTab: PrTabId = subTab === 'hotspots' && !fileFocusEnabled ? 'overview' : subTab;
+
   // Deep-link navigation intent (spec §8). HotspotsTab calls requestFileView(path):
   // switch to Files and stash the path; FilesTab consumes pendingFilePath (resets
   // the diff range, selects the file, focuses + announces), then clears it. Focus
@@ -382,8 +395,9 @@ export function PrDetailView({
         }
         mergeability={data?.pr.mergeability}
         ciSummary={data?.pr.ciSummary}
-        activeTab={subTab}
+        activeTab={effectiveSubTab}
         onTabChange={selectSubTab}
+        showHotspots={fileFocusEnabled}
         draftsCount={draftsCount}
         hotspotsCount={
           // Only a real (Live) ranking with signal gets a numeric badge. Preview
@@ -485,23 +499,32 @@ export function PrDetailView({
         // not in the DOM at all until first selected. Gated on `ctxValue` (non-null
         // iff `data` is) so the provider value is typed non-null without an assertion.
         <PrDetailContextProvider value={ctxValue}>
-          {visited.current.has('overview') && (
-            <div data-subtab="overview" hidden={subTab !== 'overview'}>
+          {/* effectiveSubTab is what drives visibility (spec §8): when the
+              fileFocus capability is off it coerces 'hotspots'→'overview', so a
+              /hotspots deep-link landed while AI is off falls back to Overview.
+              The `|| effectiveSubTab === 'overview'` term mounts Overview as the
+              safe fallback even when it was never visited (the deep-link case
+              seeds `visited` with only 'hotspots'), avoiding a blank screen. */}
+          {(visited.current.has('overview') || effectiveSubTab === 'overview') && (
+            <div data-subtab="overview" hidden={effectiveSubTab !== 'overview'}>
               <OverviewTab />
             </div>
           )}
           {visited.current.has('files') && (
-            <div data-subtab="files" hidden={subTab !== 'files'}>
+            <div data-subtab="files" hidden={effectiveSubTab !== 'files'}>
               <FilesTab />
             </div>
           )}
-          {visited.current.has('hotspots') && (
-            <div data-subtab="hotspots" hidden={subTab !== 'hotspots'}>
+          {/* Content gated on the capability too (not just the tab strip): when
+              AI is off no HotspotsTab mounts, so its misleading "No file changes"
+              state can never surface from a coerced/deep-linked subTab. */}
+          {fileFocusEnabled && visited.current.has('hotspots') && (
+            <div data-subtab="hotspots" hidden={effectiveSubTab !== 'hotspots'}>
               <HotspotsTab />
             </div>
           )}
           {visited.current.has('drafts') && (
-            <div data-subtab="drafts" hidden={subTab !== 'drafts'}>
+            <div data-subtab="drafts" hidden={effectiveSubTab !== 'drafts'}>
               <DraftsTabRoute />
             </div>
           )}
