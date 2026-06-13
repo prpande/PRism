@@ -18,7 +18,7 @@ vi.mock('../hooks/usePreferences', () => ({
   usePreferences: vi.fn(),
 }));
 vi.mock('../hooks/useAiGate', () => ({
-  useAiGate: () => false,
+  useAiGate: vi.fn(),
   useIsSampleMode: () => false,
 }));
 
