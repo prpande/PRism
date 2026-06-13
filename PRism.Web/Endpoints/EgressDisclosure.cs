@@ -3,7 +3,7 @@ using PRism.Core.Ai;
 namespace PRism.Web.Endpoints;
 
 /// <summary>Egress-disclosure content owned by the disclosure endpoint (spec §5) — NOT added to the
-/// provider descriptor. Truthful to exactly what ClaudeCodeSummarizer sends.</summary>
+/// provider descriptor. Truthful to exactly what ClaudeCodeSummarizer and ClaudeCodeFileFocusRanker send.</summary>
 internal static class EgressDisclosure
 {
     public const string CurrentVersion = AiDisclosure.CurrentVersion;
