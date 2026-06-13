@@ -11,8 +11,8 @@ public class GitHubReviewServiceSubmitFinalizeTests
 {
     private static PrReference Ref => new("owner", "repo", 42);
 
-    private static GitHubReviewService NewService(HttpMessageHandler handler)
-        => GitHubReviewServiceFactory.Create(handler);
+    private static GitHubReviewSubmitter NewService(HttpMessageHandler handler)
+        => GitHubReviewServiceFactory.CreateSubmitter(handler);
 
     [Theory]
     [InlineData(SubmitEvent.Approve, "APPROVE")]

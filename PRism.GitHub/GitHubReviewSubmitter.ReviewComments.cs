@@ -10,7 +10,7 @@ namespace PRism.GitHub;
 
 // #302 — single-comment write path. Inline = REST POST /pulls/{n}/comments (mirrors IssueComments.cs).
 // Reply = GraphQL addPullRequestReviewThreadReply with NO pullRequestReviewId (posts immediately).
-public sealed partial class GitHubReviewService
+internal sealed partial class GitHubReviewSubmitter
 {
     public async Task<CreatedReviewCommentResult> CreateReviewCommentAsync(
         PrReference reference, ReviewCommentRequest request, CancellationToken ct)

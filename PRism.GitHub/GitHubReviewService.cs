@@ -10,7 +10,10 @@ using static PRism.GitHub.GitHubHttp;    // Truncate (#321 PR2 shared static)
 
 namespace PRism.GitHub;
 
-public sealed partial class GitHubReviewService : IPrDiscovery, IPrReader, IReviewSubmitter
+// #321 PR2 — IReviewSubmitter was split out to GitHubReviewSubmitter (ADR-S5-1); this class is
+// the documented Reader+Discovery capability pairing (IReviewAuth was split to GitHubAuthValidator
+// in PR1). The submit partials (.Submit/.ReviewComments/.IssueComments) now live on the submitter.
+public sealed partial class GitHubReviewService : IPrDiscovery, IPrReader
 {
     // Single source of truth for the PR-detail GraphQL query shape. Lifted out of
     // GetPrDetailAsync so the integration test 7g (Frozen_pr_graphql_shape_unchanged) can
