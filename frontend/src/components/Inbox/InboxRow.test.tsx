@@ -378,12 +378,9 @@ describe('InboxRow changed-files slot', () => {
   it('does not render files count when changedFiles is 0', () => {
     const { container } = renderInboxRow({ ...PR, changedFiles: 0 });
     const filesSlot = container.querySelector('[class*="filesSlot"]');
-    // slot element may be present but the inner count span must not render
-    if (filesSlot) {
-      expect(filesSlot.querySelector('[class*="files"]')).toBeNull();
-      // the filesSlot itself should have no text content when count is 0
-      expect(filesSlot.textContent).toBe('');
-    }
+    expect(filesSlot).not.toBeNull();
+    expect(filesSlot!.querySelector('[class*="files"]')).toBeNull();
+    expect(filesSlot!.textContent).toBe('');
     // queryByText with exact match: the standalone "0" file count must not appear
     expect(screen.queryByText('0')).toBeNull();
   });
