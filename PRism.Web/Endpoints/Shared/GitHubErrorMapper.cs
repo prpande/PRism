@@ -14,8 +14,6 @@ internal static class GitHubErrorMapper
                 ("github-unauthorized", "GitHub authentication failed. Reconnect your account."),
             HttpStatusCode.UnprocessableEntity =>
                 ("github-validation-error", "GitHub rejected the request as invalid."),
-            HttpStatusCode.NotFound =>
-                ("github-not-found", "The resource was not found on GitHub."),
             _ => ("github-network-error", "Couldn't reach GitHub. Try again."),
         };
         return new SubmitErrorDto(code, message);

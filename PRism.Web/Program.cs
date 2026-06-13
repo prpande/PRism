@@ -290,8 +290,7 @@ app.UseWhen(
             || value.EndsWith("/submit/foreign-pending-review/discard", StringComparison.Ordinal)
             || value.EndsWith("/drafts/discard-all", StringComparison.Ordinal)
             || value.EndsWith("/submit/discard", StringComparison.Ordinal)
-            || value.EndsWith("/root-comment/post", StringComparison.Ordinal)
-            || value.EndsWith("/comment/post", StringComparison.Ordinal);
+            || value.EndsWith("/root-comment/post", StringComparison.Ordinal);
     },
     branch => branch.Use(async (ctx, next) =>
     {

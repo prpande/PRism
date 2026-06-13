@@ -117,17 +117,10 @@ jobs:
   # ---------------------------------------------------------------------------
   e2e:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
     container:
       image: mcr.microsoft.com/playwright:v1.59.1-noble
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # actions/checkout v6.0.3
-        with:
-          # Check out the PR head branch directly so `git push` in the
-          # baseline-commit step can push back to the PR branch without
-          # re-merging with the base (merge commits are read-only refs).
-          ref: ${{ github.head_ref || github.ref }}
 
       - uses: ./.github/actions/setup-toolchain
 
@@ -153,33 +146,6 @@ jobs:
             exit 1
           fi
 
-      # Refresh the screenshot baselines in the CI environment BEFORE running the
-      # full suite. This is the canonical Linux rendering environment (the Docker
-      # image), so baselines generated here are the source of truth. On PRs from
-      # the same repo, any changes are committed back to the branch with [skip ci]
-      # to prevent a loop. The full run that follows then compares against the
-      # freshly generated baselines and passes.
-      - name: Refresh screenshot baselines
-        working-directory: frontend
-        run: npx playwright test e2e/settings-modal-visual.spec.ts --update-snapshots --reporter=line
-        env:
-          CI: 'true'
-        timeout-minutes: 10
-
-      - name: Commit updated baselines if changed
-        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
-        shell: bash
-        run: |
-          git add frontend/e2e/__screenshots__/linux/ 2>/dev/null || true
-          if git diff --cached --quiet; then
-            echo "Baselines unchanged — nothing to commit"
-          else
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git commit -m "chore(e2e): update screenshot baselines [skip ci]"
-            git push origin HEAD:${{ github.head_ref }}
-          fi
-
       # No continue-on-error: a genuine e2e failure now turns the job RED. The
       # D104 tablist a11y violation is allowlisted inside a11y-audit.spec.ts (#174).
       - name: Playwright tests
@@ -189,8 +155,11 @@ jobs:
           CI: 'true'
         timeout-minutes: 30
 
-      # Always upload. Test-results contain the actual/diff images from failures,
-      # useful for diagnosing screenshot or non-screenshot failures.
+      # Always upload. On the FIRST Linux run the pixel-parity specs have no
+      # linux/ baseline yet, so Playwright WRITES them under
+      # e2e/__screenshots__/linux/ and fails those tests — download this artifact
+      # once to commit the linux baselines (the win32 ones were for the old,
+      # broken windows path and don't match a Linux runner).
       - name: Upload e2e artifacts
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # actions/upload-artifact v7.0.1
