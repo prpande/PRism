@@ -50,29 +50,34 @@ Pure, side-effect-free JSON→DTO parsers relocated verbatim from `GitHubReviewS
 
 | Member | Current accessibility | New accessibility | Note |
 |--------|----------------------|-------------------|------|
-| `ParsePr` | `private static` | `internal static` | exercised via `GetPrDetailAsync` today; promoting to `internal` keeps the move mechanical and lets a future direct test reach it |
-| `ParseRootComments` | `private static` | `internal static` | |
-| `ParseReviewThreads` | `internal static` | `internal static` | called directly by `ParseReviewThreadsDatabaseIdTests` |
-| `ParseTimelineCommits` | `private static` | `internal static` | |
-| `ParseForcePushes` | `private static` | `internal static` | |
-| `ParseReviewEvents` | `private static` | `internal static` | |
-| `ParseAuthorComments` | `private static` | `internal static` | |
+| `ParsePr` | `private static` | `internal static` | called cross-class by `GetPrDetailAsync` after the move |
+| `ParseRootComments` | `private static` | `internal static` | called cross-class by `GetPrDetailAsync` |
+| `ParseReviewThreads` | `internal static` | `internal static` | already `internal`; called directly by `ParseReviewThreadsDatabaseIdTests` |
+| `ParseTimelineCommits` | `private static` | `internal static` | called cross-class by `GetTimelineAsync` |
+| `ParseForcePushes` | `private static` | `internal static` | called cross-class by `GetTimelineAsync` |
+| `ParseReviewEvents` | `private static` | `internal static` | called cross-class by `GetTimelineAsync` |
+| `ParseAuthorComments` | `private static` | `internal static` | called cross-class by `GetTimelineAsync` |
 | `ReadActor` | `private static` | `private static` | helper used only inside the parser class |
 | `IsTypeName` | `private static` | `private static` | helper used only inside the parser class |
-| `HasAnyNextPage` | `private static` | `internal static` | cap-hit helper called by `GetPrDetailAsync` |
-| `ConnectionHasNext` | `private static` | `private static` | helper of `HasAnyNextPage` |
-| `PagedConnections` | `private static readonly string[]` | `private static readonly` | data of `HasAnyNextPage` |
 
-Accessibility note: members the read path still calls cross-class (`ParsePr`, `ParseRootComments`,
-`HasAnyNextPage`, the timeline parsers) become `internal static`; members used only within
-`GitHubPrParser` (`ReadActor`, `IsTypeName`, `ConnectionHasNext`, `PagedConnections`) stay `private`.
-No member becomes `public`. `InternalsVisibleTo` for the test projects is already declared at the
+Accessibility note: the `private static` → `internal static` promotions above are **mandatory, not
+discretionary** — after the move the read path on `GitHubReviewService` (`GetPrDetailAsync`,
+`GetTimelineAsync`) calls these parsers across the class boundary, so they must be at least `internal`
+for the code to compile. Direct-test reachability is a secondary benefit, not the reason — do **not**
+"tighten" any of them back to `private` to reduce surface; that breaks the build. `ParseReviewThreads`
+is already `internal`. Helpers used only within `GitHubPrParser` (`ReadActor`, `IsTypeName`) stay
+`private`. No member becomes `public`. `InternalsVisibleTo` for both test projects is declared at the
 csproj level, so `internal` carries to the existing tests with no new attribute.
 
-**Stays on `GitHubReviewService`:** `TryGetPath` and `ThrowIfGraphQLErrorsWithoutData`. `TryGetPath`
-is used by both the read path *and* `Submit.cs` — moving it would edit the B2 file. `ThrowIfGraphQLErrorsWithoutData`
-is instance (logs via `s_graphqlReadFailed`) and read-specific; it stays with the reader and its
-logging convergence is deferred to PR2 with the rest.
+**Stays on `GitHubReviewService` (private):** `TryGetPath`, `ThrowIfGraphQLErrorsWithoutData`, and the
+cap-hit trio `HasAnyNextPage` / `ConnectionHasNext` / `PagedConnections`. `TryGetPath` is used by both
+the read path *and* `Submit.cs` — moving it would edit the B2 file. `ThrowIfGraphQLErrorsWithoutData`
+is instance (logs via `s_graphqlReadFailed`) and read-specific; its logging convergence is deferred to
+PR2. The cap-hit trio is **not** a DTO mapper — it is a read-path completeness sentinel whose only
+caller (`GetPrDetailAsync`, `GitHubReviewService.cs:304`) stays on this class; keeping it `private`
+here avoids an unnecessary `internal` promotion + cross-class call and keeps `GitHubPrParser` a single
+altitude (pure JSON→DTO mapping). `Truncate` and the `s_graphql*` logger fields also stay — see the
+extraction note in *Risks*.
 
 ### New file: `PRism.GitHub/GitHubAuthValidator.cs` — `internal sealed class GitHubAuthValidator : IReviewAuth`
 
@@ -96,15 +101,22 @@ projects (InternalsVisibleTo). Callers resolve `IReviewAuth`, never the concrete
 
 ### `GitHubReviewService` after PR1
 
-Drops to ~760 lines, implementing `IPrDiscovery, IPrReader, IReviewSubmitter` (no longer `IReviewAuth`).
-Retains: the read path + fetch helpers + per-commit fan-out, `TryParsePrUrl`, the legacy throw-stubs,
-the transport wrappers `SendGitHubAsync` / `PostGraphQLAsync`, `TryGetPath`,
-`ThrowIfGraphQLErrorsWithoutData`, the `Log` source-generated class, the manual logger fields, the
-query consts (`PrDetailGraphQLQuery` / `TimelineQuery`), and `Submit.cs` **byte-identical**.
+Drops to ~760 lines (≈180 auth + ≈250 parsers removed), implementing `IPrDiscovery, IPrReader,
+IReviewSubmitter` (no longer `IReviewAuth`). Retains: the read path + fetch helpers + per-commit
+fan-out, `TryParsePrUrl`, the legacy throw-stubs, the transport wrappers `SendGitHubAsync` /
+`PostGraphQLAsync`, `TryGetPath`, `ThrowIfGraphQLErrorsWithoutData`, the cap-hit trio
+(`HasAnyNextPage` / `ConnectionHasNext` / `PagedConnections`), `Truncate`, the `Log` source-generated
+class, the manual logger fields, the query consts (`PrDetailGraphQLQuery` / `TimelineQuery`), and
+`Submit.cs` **byte-identical**.
+
+The other two partials — `GitHubReviewService.ReviewComments.cs` and `.IssueComments.cs` — are
+**untouched**: they reference only members that stay (`SendGitHubAsync`, `Truncate`, `TryGetPath`,
+`PostSubmitGraphQLAsync`), no moved parser or auth member.
 
 The read path's call sites change only by qualification: `ParsePr(...)` → `GitHubPrParser.ParsePr(...)`,
 `ParseReviewThreads(...)` → `GitHubPrParser.ParseReviewThreads(...)`, etc. (in `GetPrDetailAsync`,
-`GetTimelineAsync`).
+`GetTimelineAsync`). `HasAnyNextPage(pull)` at `GitHubReviewService.cs:304` is unchanged (it stays
+local).
 
 ### DI: `ServiceCollectionExtensions.AddPrismGitHub`
 
@@ -125,6 +137,11 @@ services.AddSingleton<IReviewAuth>(sp =>
 });
 ```
 
+The eager `config.Current.Github.Host` string capture intentionally mirrors the existing
+`GitHubReviewService` registration (`ServiceCollectionExtensions.cs:60`) — same behavior, not a
+regression. (A live host change without restart is a pre-existing property of *both* registrations;
+switching both to `Func<string>` is out of scope for this refactor.)
+
 `IPrDiscovery` / `IPrReader` / `IReviewSubmitter` keep resolving the shared `GitHubReviewService`
 singleton (registered exactly as today). The XML-doc summary on `AddPrismGitHub` is updated to note
 `IReviewAuth` is now backed by `GitHubAuthValidator`, not the shared instance. No other consumer of
@@ -139,13 +156,15 @@ All relocations are mechanical; no assertion or scenario changes.
 | Test file | Change |
 |-----------|--------|
 | `ParseReviewThreadsDatabaseIdTests.cs:16` | `GitHubReviewService.ParseReviewThreads` → `GitHubPrParser.ParseReviewThreads` |
-| `GitHubReviewService_ValidateCredentialsAsyncTests.cs` | `BuildSut` constructs `new GitHubAuthValidator(...)` instead of `new GitHubReviewService(...)`; drop the now-unused logger arg |
-| `GitHubReviewServiceValidateSkipTests.cs` | same SUT-construction swap |
-| `PRism.GitHub.Tests.Integration/PatScopeContractTests.cs` | same SUT-construction swap (auth) |
+| `GitHubReviewService_ValidateCredentialsAsyncTests.cs` | `BuildSut` constructs `new GitHubAuthValidator(...)` instead of `new GitHubReviewService(...)`. This file already calls the **3-arg** form (the logger ctor param is optional and omitted), so the *only* edit is the constructed type — there is no logger arg to remove. |
+| `GitHubReviewServiceValidateSkipTests.cs` | Same type swap in its `Build` helper. The `skipCredentialHealth` → `SkipHealthKey` propagation lives **inside** `ValidateCredentialsAsync`, which moves to `GitHubAuthValidator` verbatim, and the `GitHubAuthHealthHandler` latch is wired on the named `github` client via `IHttpClientFactory` (not the SUT) — so the latch test exercises the same pipeline. Check whether this file actually passes a logger arg before removing one. |
+| `PRism.GitHub.Tests.Integration/PatScopeContractTests.cs` | **No change.** It resolves `IReviewAuth` from `LiveGitHubFixture`'s DI container (not a direct `new`), so the `IReviewAuth` → `GitHubAuthValidator` rebind takes effect transparently. `LiveGitHubFixture.cs` likewise needs no edit (it already resolves the interface). |
+| `ServiceRegistrationTests.cs` (**new fact**) | Add `Assert.IsType<GitHubAuthValidator>(sp.GetRequiredService<IReviewAuth>())` (or at minimum assert it resolves without throwing). The `IReviewAuth` DI lambda is the one non-mechanical change in PR1; nothing else covers that the rebind resolves its `IConfigStore` / `ITokenStore` / `IHttpClientFactory` dependencies. |
 
-Optional hygiene (not required to close, but cheap and improves locality): rename the two auth unit
-files to `GitHubAuthValidator*Tests.cs` so the test name tracks the type under test. Decided during
-planning; default is to rename for clarity since the type moved.
+Optional hygiene (decided: **do it**, not deferred): rename the two auth unit files to
+`GitHubAuthValidator*Tests.cs` so the test name tracks the type under test (keep the `[Fact]` bodies
+and update the class/namespace name to match). Cheap, improves locality, and the rename lands in this
+PR — not a follow-up.
 
 Tests that exercise parsers/auth *indirectly* through public methods (`GitHubReviewServicePrDetailTests`,
 `GitHubReviewServiceTimelineTests`, `GitHubReviewServiceAuthHeaderTests`, the byte-identity tests) are
@@ -171,10 +190,17 @@ From issue #321:
 
 ## Risks & non-goals
 
-- **Risk: a parser body changes during the move.** Mitigation: relocate by cut-paste, no edits to
-  method bodies; the existing indirect tests (`PrDetailTests`, `TimelineTests`) and the direct
+- **Risk: a parser body changes during the move.** Mitigation: relocate by **member identity**, no
+  edits to method bodies; the existing indirect tests (`PrDetailTests`, `TimelineTests`) and the direct
   `ParseReviewThreadsDatabaseIdTests` pin behavior. Verify the full `PRism.GitHub.Tests` +
   `.Integration` suites stay green with zero assertion edits.
+- **Risk: a naive line-range cut drags a staying member out (or strands a parser helper).** The parser
+  members are **non-contiguous** in the source — interleaved with members that must STAY:
+  `Truncate` (`:768`), `s_graphqlTransportFailed` (`:776`), `s_graphqlReadFailed` (`:910`), and
+  `TryGetPath` (`:916`) all sit between `ParseTimelineCommits` (`:780`) and `HasAnyNextPage` (`:1071`).
+  Mitigation: extract method-by-method by identity, never by line range; a range cut would either pull
+  `Truncate`/`TryGetPath` into `GitHubPrParser` (breaking `Submit.cs`, which calls both) or leave a
+  parser helper behind.
 - **Risk: auth ctor drops a dependency the path needs.** Mitigation: the auth path provably uses only
   `(httpFactory, readToken, host)` — no `_log`, no shared fields; the auth tests already construct the
   service with these and call `ValidateCredentialsAsync`.
