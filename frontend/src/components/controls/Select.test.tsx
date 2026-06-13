@@ -82,7 +82,9 @@ describe('Select — keyboard', () => {
   it('Arrow keys skip disabled options and stop at the boundary (no wrap)', async () => {
     render(<Select aria-label="Iter" options={DIS} value={1} onChange={() => {}} />);
     screen.getByRole('combobox').focus();
-    await userEvent.keyboard('{ArrowDown}'); // 1 -> skip disabled 2 -> 3
+    await userEvent.keyboard('{ArrowDown}'); // open at selected (Iter 1)
+    expect(screen.getByRole('option', { name: 'Iter 1' })).toHaveClass(/optionActive/);
+    await userEvent.keyboard('{ArrowDown}'); // Iter 1 -> skip disabled Iter 2 -> Iter 3
     expect(screen.getByRole('option', { name: 'Iter 3' })).toHaveClass(/optionActive/);
     await userEvent.keyboard('{ArrowDown}'); // at last enabled -> stays
     expect(screen.getByRole('option', { name: 'Iter 3' })).toHaveClass(/optionActive/);
@@ -92,7 +94,9 @@ describe('Select — keyboard', () => {
     const onChange = vi.fn();
     render(<Select aria-label="Sort" options={OPTS} value="updated" onChange={onChange} />);
     screen.getByRole('combobox').focus();
-    await userEvent.keyboard('{ArrowDown}{Enter}'); // updated -> pushed
+    await userEvent.keyboard('{ArrowDown}'); // open at selected (Recently updated)
+    await userEvent.keyboard('{ArrowDown}'); // move to Recently pushed
+    await userEvent.keyboard('{Enter}');
     expect(onChange).toHaveBeenCalledWith('pushed');
     expect(screen.queryByRole('listbox')).toBeNull();
   });

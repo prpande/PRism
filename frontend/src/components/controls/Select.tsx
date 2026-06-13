@@ -54,16 +54,12 @@ export function Select<T extends string | number>({
     if (refocus) setTimeout(() => triggerRef.current?.focus(), 0);
   }, []);
 
-  const openList = useCallback(
-    (delta = 0) => {
-      if (isDisabled) return;
-      const enabledSelected = selectedIndex >= 0 && !options[selectedIndex].disabled;
-      const base = enabledSelected ? selectedIndex : firstEnabled(options);
-      setActiveIndex(delta !== 0 ? nextEnabled(options, base, delta) : base);
-      setOpen(true);
-    },
-    [isDisabled, options, selectedIndex],
-  );
+  const openList = useCallback(() => {
+    if (isDisabled) return;
+    const enabledSelected = selectedIndex >= 0 && !options[selectedIndex].disabled;
+    setActiveIndex(enabledSelected ? selectedIndex : firstEnabled(options));
+    setOpen(true);
+  }, [isDisabled, options, selectedIndex]);
 
   const commit = useCallback(
     (index: number) => {
@@ -81,7 +77,7 @@ export function Select<T extends string | number>({
     if (!open) {
       if (e.key === 'ArrowDown' || e.key === 'ArrowUp' || e.key === 'Enter' || e.key === ' ') {
         e.preventDefault();
-        openList(e.key === 'ArrowDown' ? 1 : e.key === 'ArrowUp' ? -1 : 0);
+        openList();
       }
       return;
     }
@@ -174,7 +170,7 @@ export function Select<T extends string | number>({
               aria-disabled={o.disabled || undefined}
               className={[
                 styles.option,
-                i === activeIndex || i === selectedIndex ? styles.optionActive : '',
+                i === activeIndex ? styles.optionActive : '',
                 o.disabled ? styles.optionDisabled : '',
               ]
                 .filter(Boolean)
