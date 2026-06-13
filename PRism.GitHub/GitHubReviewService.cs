@@ -6,7 +6,6 @@ using PRism.Core;
 using PRism.Core.Contracts;
 using PRism.Core.Iterations;
 using static PRism.GitHub.GitHubGraphQL; // TryGetPath (#321 PR2 shared static)
-using static PRism.GitHub.GitHubHttp;    // Truncate (#321 PR2 shared static)
 
 namespace PRism.GitHub;
 
