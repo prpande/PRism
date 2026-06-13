@@ -6,6 +6,11 @@ using Xunit;
 
 namespace PRism.Core.Tests.Hosting;
 
+// Moq is retained here deliberately (#334): IProcessRunner is the OS process-spawn
+// boundary (BrowserLauncher shells out to ShellExecute / `open` / `xdg-open` to launch
+// the system browser), and these tests assert the exact ProcessStart shape via argument
+// matching. The house rule permits mocking external boundaries — unlike the internal
+// store/orchestrator seams that were migrated off Moq onto in-project fakes.
 public class BrowserLauncherTests
 {
     [Fact]

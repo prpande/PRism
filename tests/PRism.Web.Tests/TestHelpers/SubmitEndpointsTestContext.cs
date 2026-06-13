@@ -9,7 +9,6 @@ using PRism.Core;
 using PRism.Core.Events;
 using PRism.Core.PrDetail;
 using PRism.Core.State;
-using PRism.Web.Middleware;
 
 namespace PRism.Web.Tests.TestHelpers;
 
@@ -58,18 +57,8 @@ internal sealed class SubmitEndpointsTestContext : IDisposable
     // exercise the tab-id-missing path pass `tabId: null` (NOT `""`) to suppress the header
     // entirely — empty-string was tried first but DefaultRequestHeaders.Add behavior on empty
     // values is brittle across HttpClient versions; an explicit null is cleaner.
-    public HttpClient CreateClient(string? tabId = "tab-test")
-    {
-        var token = _derived.Services.GetRequiredService<SessionTokenProvider>().Current;
-        var c = _derived.CreateClient();
-        c.DefaultRequestHeaders.Add("X-PRism-Session", token);
-        c.DefaultRequestHeaders.Add("Cookie", $"prism-session={token}");
-        var origin = c.BaseAddress?.GetLeftPart(UriPartial.Authority);
-        if (!string.IsNullOrEmpty(origin)) c.DefaultRequestHeaders.Add("Origin", origin);
-        if (!string.IsNullOrEmpty(tabId))
-            c.DefaultRequestHeaders.Add("X-PRism-Tab-Id", tabId);
-        return c;
-    }
+    public HttpClient CreateClient(string? tabId = "tab-test") =>
+        _derived.CreateAuthenticatedClient(tabId);
 
     public async Task SeedSessionAsync(string owner, string repo, int number, ReviewSessionState session)
     {

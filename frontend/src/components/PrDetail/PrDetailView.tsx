@@ -19,6 +19,8 @@ import { useToast } from '../Toast/useToast';
 import { useDraftSession } from '../../hooks/useDraftSession';
 import { useStateChangedSubscriber } from '../../hooks/useStateChangedSubscriber';
 import { useRootCommentPostedSubscriber } from '../../hooks/useRootCommentPostedSubscriber';
+import { useSingleCommentPostedSubscriber } from '../../hooks/useSingleCommentPostedSubscriber';
+import { useDraftSubmittedSubscriber } from '../../hooks/useDraftSubmittedSubscriber';
 import { useCrossTabPrPresence } from '../../hooks/useCrossTabPrPresence';
 import { useReconcile } from '../../hooks/useReconcile';
 import type { PrReference } from '../../api/types';
@@ -79,6 +81,23 @@ export function PrDetailView({
   // Task 14: reload PR detail when the root-comment draft is posted so the
   // posted comment appears in the conversation and the local draft clears.
   useRootCommentPostedSubscriber({ prRef, onPosted: reload });
+  // #450: when a single inline comment/reply is posted, reload PR detail so the new thread
+  // surfaces with its ReplyComposer — without a manual reload. Mirrors the root-comment
+  // subscriber above; the loader's matching SingleCommentPostedBusEvent → Invalidate guarantees
+  // the reload re-fetches fresh detail, not the stale head-SHA-keyed snapshot.
+  useSingleCommentPostedSubscriber({ prRef, onPosted: reload });
+  // #392: when a review is submitted, reload PR detail (so the just-posted inline
+  // threads + Overview comment surface) AND refetch the draft session (so the
+  // submitted drafts clear from their composers) — without a manual reload. The
+  // `draft-submitted` SSE fires post-clear (PrSubmitEndpoints publishes it after the
+  // pipeline's ClearSubmittedSession), and the loader's matching DraftSubmitted →
+  // Invalidate guarantees this reload re-fetches fresh detail, not the stale snapshot.
+  const handleDraftSubmitted = useCallback(() => {
+    reload();
+    void draftSession.refetch();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- reload (usePrDetail) and draftSession.refetch are stable useCallbacks, not the per-render draftSession object literal (#331)
+  }, [reload, draftSession.refetch]);
+  useDraftSubmittedSubscriber({ prRef, onSubmitted: handleDraftSubmitted });
   const presence = useCrossTabPrPresence(prRef);
 
   // Wraps POST /api/pr/{ref}/reload with the spec's 409-stale-head auto-retry.
@@ -288,6 +307,13 @@ export function PrDetailView({
     ],
   );
 
+  // Stable identity for PrHeader's onSessionRefetch — an inline arrow would hand
+  // PrHeader a fresh function each render, churning its effect/memo dep hygiene.
+  const handleSessionRefetch = useCallback(() => {
+    void draftSession.refetch();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- depends on the stable draftSession.refetch useCallback, not the per-render draftSession object literal (#331)
+  }, [draftSession.refetch]);
+
   return (
     <div className={pageClassName} data-prref={refKey} hidden={!active}>
       {/* Per-tab loading bar pinned to THIS tab's content boundary (not a global
@@ -328,7 +354,7 @@ export function PrDetailView({
         readOnly={presence.readOnly}
         registerOpenComposer={draftSession.registerOpenComposer}
         getPrRootHolder={draftSession.getPrRootHolder}
-        onSessionRefetch={() => void draftSession.refetch()}
+        onSessionRefetch={handleSessionRefetch}
         onRefresh={prRefresh.refresh}
         isRefreshing={prRefresh.isRefreshing}
         justRefreshed={prRefresh.justRefreshed}
@@ -405,10 +431,11 @@ export function PrDetailView({
           covers the background-reload case visually.) */}
       {!data && isLoading ? (
         <PrDetailSkeleton />
-      ) : data ? (
+      ) : ctxValue ? (
         // Direct keep-alive sub-tab rendering. Each visited sub-tab stays
         // mounted; `hidden` hides the inactive ones. Unvisited sub-tabs are
-        // not in the DOM at all until first selected.
+        // not in the DOM at all until first selected. Gated on `ctxValue` (non-null
+        // iff `data` is) so the provider value is typed non-null without an assertion.
         <PrDetailContextProvider value={ctxValue}>
           {visited.current.has('overview') && (
             <div data-subtab="overview" hidden={subTab !== 'overview'}>

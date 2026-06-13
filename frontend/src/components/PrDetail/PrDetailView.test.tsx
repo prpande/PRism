@@ -9,8 +9,9 @@ import {
 } from '../../contexts/OpenTabsContext';
 import { AskAiDrawerProvider } from '../../contexts/AskAiDrawerContext';
 import { ToastProvider } from '../Toast/useToast';
-import type { PrDetailDto, PrReference } from '../../api/types';
+import type { PrReference } from '../../api/types';
 import { prRefKey } from '../../api/types';
+import { makePrDetailDto, makePr } from '../../../__tests__/helpers/prDetail';
 import type { PrTabId } from './PrSubTabStrip';
 import { PrDetailView } from './PrDetailView';
 import * as prDetailApi from '../../api/prDetail';
@@ -28,33 +29,14 @@ const { reloadMock } = vi.hoisted(() => ({ reloadMock: vi.fn() }));
 // component state, independent of any network result).
 // ---------------------------------------------------------------------------
 
-const PR_DETAIL: PrDetailDto = {
-  pr: {
+const PR_DETAIL = makePrDetailDto({
+  pr: makePr({
     reference: { owner: 'acme', repo: 'api', number: 7 },
     title: 'Keep-alive title',
-    body: 'A realistic body.',
     author: 'alice',
     avatarUrl: 'https://avatars.githubusercontent.com/u/1?v=4',
-    state: 'open',
-    headSha: 'abc123',
-    baseSha: 'def456',
-    headBranch: 'feat',
-    baseBranch: 'main',
-    mergeability: 'mergeable',
-    ciSummary: '',
-    isMerged: false,
-    isClosed: false,
-    openedAt: new Date('2026-01-01T00:00:00Z').toISOString(),
-    mergedAt: null,
-    closedAt: null,
-  },
-  clusteringQuality: 'ok',
-  iterations: [],
-  commits: [],
-  rootComments: [],
-  reviewComments: [],
-  timelineCapHit: false,
-};
+  }),
+});
 
 vi.mock('../../hooks/usePrDetail', () => ({
   usePrDetail: () => ({
@@ -96,6 +78,10 @@ vi.mock('../../hooks/useStateChangedSubscriber', () => ({
 
 vi.mock('../../hooks/useRootCommentPostedSubscriber', () => ({
   useRootCommentPostedSubscriber: () => {},
+}));
+
+vi.mock('../../hooks/useDraftSubmittedSubscriber', () => ({
+  useDraftSubmittedSubscriber: () => {},
 }));
 
 vi.mock('../../hooks/useCrossTabPrPresence', () => ({

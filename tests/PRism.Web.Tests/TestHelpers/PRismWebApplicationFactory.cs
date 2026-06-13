@@ -13,7 +13,7 @@ namespace PRism.Web.Tests.TestHelpers;
 
 public sealed class PRismWebApplicationFactory : WebApplicationFactory<Program>
 {
-    public string DataDir { get; } = Path.Combine(Path.GetTempPath(), $"PRism-test-{Guid.NewGuid():N}");
+    public string DataDir { get; } = TempDataDir.NewPath("PRism-test");
     public Func<Task<AuthValidationResult>>? ValidateOverride { get; set; }
     public FakeInboxRefreshOrchestrator? FakeOrchestrator { get; set; }
 
@@ -68,7 +68,7 @@ public sealed class PRismWebApplicationFactory : WebApplicationFactory<Program>
             }
             else if (ValidateOverride is not null)
             {
-                ReplaceSingleton<IReviewAuth>(services, new StubReviewService(ValidateOverride));
+                ReplaceSingleton<IReviewAuth>(services, new StubReviewAuth(ValidateOverride));
             }
 
             // Replace IInboxRefreshOrchestrator with a fake when FakeOrchestrator is set.
@@ -113,12 +113,7 @@ public sealed class PRismWebApplicationFactory : WebApplicationFactory<Program>
     {
         ArgumentNullException.ThrowIfNull(client);
         base.ConfigureClient(client);
-        var token = SessionToken;
-        client.DefaultRequestHeaders.Add("X-PRism-Session", token);
-        client.DefaultRequestHeaders.Add("Cookie", $"prism-session={token}");
-        var sameOrigin = client.BaseAddress?.GetLeftPart(UriPartial.Authority);
-        if (!string.IsNullOrEmpty(sameOrigin))
-            client.DefaultRequestHeaders.Add("Origin", sameOrigin);
+        client.AddPrismSessionHeaders(SessionToken);
     }
 
     // For tests that need to exercise the 401 path (no token / wrong token). Uses

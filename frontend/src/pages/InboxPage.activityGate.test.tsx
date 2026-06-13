@@ -20,7 +20,7 @@ vi.mock('../hooks/useInbox', () => ({
   }),
 }));
 vi.mock('../hooks/useInboxUpdates', () => ({
-  useInboxUpdates: () => ({ hasUpdate: false, summary: '', dismiss: vi.fn() }),
+  useInboxUpdates: () => ({ announce: '' }),
 }));
 vi.mock('../hooks/useInboxRefresh', () => ({
   useInboxRefresh: () => ({

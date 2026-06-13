@@ -159,7 +159,12 @@ describe('ReplyComposer — closed PR (#302 updated)', () => {
       />,
     );
     expect(screen.queryByText(/text not saved/i)).not.toBeInTheDocument();
-    // The "comments post immediately" note is shown instead.
-    expect(screen.getByText(/comments post immediately/i)).toBeInTheDocument();
+    // #390 — the inline merged/closed note is gone; the "posts immediately"
+    // context now lives on the Comment button's tooltip.
+    expect(screen.queryByText(/comments post immediately/i)).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Comment' })).toHaveAttribute(
+      'title',
+      'Post directly to this merged PR',
+    );
   });
 });

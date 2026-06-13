@@ -43,8 +43,8 @@ internal static class PrDraftsDiscardAllEndpoint
     {
         var prRef = new PrReference(owner, repo, number);
         var sessionKey = prRef.ToString();
-        if (!activePrCache.IsSubscribed(prRef))
-            return Results.Json(new SubmitErrorDto("unauthorized", "Subscribe to this PR before discarding."), statusCode: StatusCodes.Status401Unauthorized);
+        if (RequireSubscribed.Check(activePrCache, prRef, "Subscribe to this PR before discarding.") is { } notSubscribed)
+            return notSubscribed;
 
         string? pendingToDelete = null;
         await stateStore.UpdateAsync(state =>
@@ -60,8 +60,7 @@ internal static class PrDraftsDiscardAllEndpoint
                 PendingReviewId = null,
                 PendingReviewCommitOid = null,
             };
-            var sessions = new Dictionary<string, ReviewSessionState>(state.Reviews.Sessions) { [sessionKey] = cleared };
-            return state.WithDefaultReviews(state.Reviews with { Sessions = sessions });
+            return state.WithSession(sessionKey, cleared);
         }, ct).ConfigureAwait(false);
 
         bus.Publish(new StateChanged(prRef, DiscardedFields, SourceTabId: null));

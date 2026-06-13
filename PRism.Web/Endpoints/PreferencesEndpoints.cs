@@ -16,9 +16,12 @@ internal static class PreferencesEndpoints
 
         app.MapPost("/api/preferences", async (HttpContext ctx, IConfigStore config, LogsPathInfo logsPath, AiModeState aiState) =>
         {
-            using var doc = await JsonDocument.ParseAsync(ctx.Request.Body, cancellationToken: ctx.RequestAborted).ConfigureAwait(false);
-            if (doc.RootElement.ValueKind != JsonValueKind.Object)
+            var read = await HttpJson.TryReadJsonObjectAsync(ctx, ctx.RequestAborted).ConfigureAwait(false);
+            if (read.Error == JsonReadError.InvalidJson)
+                return Results.BadRequest(new PreferencesError(Error: "invalid-json"));
+            if (read.Error == JsonReadError.NotObject)
                 return Results.BadRequest(new PreferencesError(Error: "body must be a JSON object"));
+            using var doc = read.Document!;
 
             var props = doc.RootElement.EnumerateObject().ToArray();
             if (props.Length != 1)

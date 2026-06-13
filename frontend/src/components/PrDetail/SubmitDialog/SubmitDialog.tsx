@@ -124,8 +124,11 @@ export function SubmitDialog(props: Props) {
 
   const [verdict, setVerdict] = useState<DraftVerdict | null>(session.draftVerdict);
   const [editing, setEditing] = useState(false);
-  // Controlled draftId for the editor (null→uuid on first autosave-create).
-  const [, setBodyDraftId] = useState<string | null>(prRootDraft?.id ?? null);
+  // The editor reports its draft id (null→uuid on first autosave-create) via
+  // onDraftIdChange, but the dialog keys the editor on `prRootDraft?.id ?? 'new'`
+  // from the session and never reads the reported id — so a stable no-op avoids a
+  // wasted re-render per autosave-create. (#330)
+  const handleDraftIdChange = useCallback(() => {}, []);
   // Live body surfaced from the editor — drives the submit-disabled override
   // while editing (replicates the old inline-summary override).
   const [editingBody, setEditingBody] = useState<string>(prRootDraft?.bodyMarkdown ?? '');
@@ -233,13 +236,11 @@ export function SubmitDialog(props: Props) {
 
   // The foreign-pending-review prompt is its own modal (spec § 11), not an
   // in-dialog banner — render it instead of the submit dialog shell.
-  if (kind === 'foreign-pending-review-prompt') {
+  if (submitState.kind === 'foreign-pending-review-prompt') {
     return (
       <ForeignPendingReviewModal
         open
-        snapshot={
-          (submitState as Extract<SubmitState, { kind: 'foreign-pending-review-prompt' }>).snapshot
-        }
+        snapshot={submitState.snapshot}
         onResume={onResumeForeignPendingReview}
         onDiscard={onDiscardForeignPendingReview}
         onCancel={onClose}
@@ -309,13 +310,17 @@ export function SubmitDialog(props: Props) {
   const confirmReason = submitDisabledReason(effectiveSession, headShaDrift, validatorResults);
   const confirmDisabled = confirmReason !== null;
 
-  const title = success
-    ? 'Review submitted.'
-    : failed
-      ? `Submit failed at ${(submitState as Extract<SubmitState, { kind: 'failed' }>).failedStep}.`
-      : inFlight
-        ? 'Submitting your review…'
-        : 'Submit review';
+  // Branch on submitState.kind directly (not the copied `success`/`failed`/`inFlight`
+  // locals) so TS narrows the discriminated union and `submitState.failedStep` needs
+  // no `as Extract<...>` cast. (#330)
+  const title =
+    submitState.kind === 'success'
+      ? 'Review submitted.'
+      : submitState.kind === 'failed'
+        ? `Submit failed at ${submitState.failedStep}.`
+        : submitState.kind === 'in-flight'
+          ? 'Submitting your review…'
+          : 'Submit review';
 
   const prUrl = htmlUrl;
 
@@ -424,7 +429,7 @@ export function SubmitDialog(props: Props) {
                   prRef={reference}
                   prState={prState}
                   draftId={prRootDraft?.id ?? null}
-                  onDraftIdChange={setBodyDraftId}
+                  onDraftIdChange={handleDraftIdChange}
                   registerOpenComposer={registerOpenComposer}
                   ownerKey="submit-dialog"
                   initialBody={prRootDraft?.bodyMarkdown ?? ''}

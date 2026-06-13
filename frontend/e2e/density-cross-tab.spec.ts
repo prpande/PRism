@@ -1,10 +1,6 @@
 import { test, expect, type BrowserContext, type Page, type Route } from '@playwright/test';
-import {
-  allOffCapabilities,
-  authedAuthState,
-  makeDefaultPreferences,
-  type DensityPreferences,
-} from './fixtures/preferences';
+import { makeDefaultPreferences, type DensityPreferences } from './fixtures/preferences';
+import { setupBaseRoutes } from './helpers/base-mocks';
 
 // PR9b-density cross-tab: toggling density in tab A propagates to tab B via the
 // existing window-focus refetch contract in usePreferences (S6 PR1). Tab B's
@@ -19,13 +15,7 @@ import {
 async function setupContextMocks(context: BrowserContext) {
   const store: DensityPreferences = makeDefaultPreferences();
 
-  await context.route('**/api/auth/state', (route: Route) =>
-    route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify(authedAuthState),
-    }),
-  );
+  await setupBaseRoutes(context);
 
   await context.route('**/api/preferences', async (route: Route) => {
     if (route.request().method() === 'POST') {
@@ -42,18 +32,6 @@ async function setupContextMocks(context: BrowserContext) {
       body: JSON.stringify(store),
     });
   });
-
-  await context.route('**/api/capabilities', (route: Route) =>
-    route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify(allOffCapabilities),
-    }),
-  );
-
-  await context.route('**/api/events', (route: Route) =>
-    route.fulfill({ status: 200, contentType: 'text/event-stream', body: ':heartbeat\n\n' }),
-  );
 }
 
 test.use({ viewport: { width: 1280, height: 800 } });

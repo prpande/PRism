@@ -9,10 +9,7 @@ namespace PRism.GitHub.Tests;
 public class GitHubReviewServiceDiffTests
 {
     private static GitHubReviewService NewService(PaginatedFakeHandler handler)
-    {
-        var factory = new FakeHttpClientFactory(handler, new Uri("https://api.github.com/"));
-        return new GitHubReviewService(factory, () => Task.FromResult<string?>("ghp_test"), "https://github.com");
-    }
+        => GitHubReviewServiceFactory.Create(handler);
 
     private static string FilePage(int n, int startIndex = 0) =>
         "[" + string.Join(",", Enumerable.Range(startIndex, n).Select(i =>

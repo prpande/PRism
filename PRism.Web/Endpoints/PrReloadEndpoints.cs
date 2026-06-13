@@ -1,5 +1,4 @@
 using System.Collections.Concurrent;
-using System.Text.RegularExpressions;
 using PRism.Core;
 using PRism.Core.Contracts;
 using PRism.Core.Events;
@@ -12,9 +11,6 @@ namespace PRism.Web.Endpoints;
 
 internal static class PrReloadEndpoints
 {
-    private static readonly Regex Sha40 = new("^[0-9a-f]{40}$", RegexOptions.Compiled);
-    private static readonly Regex Sha64 = new("^[0-9a-f]{64}$", RegexOptions.Compiled);
-
     private static readonly IReadOnlyList<string> ReloadFieldsTouched =
         new[] { "draft-comments", "draft-replies", "draft-verdict-status" };
 
@@ -60,7 +56,7 @@ internal static class PrReloadEndpoints
 
         var prRef = new PrReference(owner, repo, number);
         var refKey = prRef.ToString();
-        var sourceTabId = httpContext.Request.Headers["X-PRism-Tab-Id"].FirstOrDefault();
+        var sourceTabId = httpContext.Request.Headers[TabStamps.TabIdHeader].FirstOrDefault();
 
         // Tab id validation (spec § 3) — reload is a write site and must reject missing /
         // out-of-allowlist tab ids before any state mutation. Distinct /reload/tab-id-missing
@@ -76,7 +72,7 @@ internal static class PrReloadEndpoints
         // ArgumentNullException → 500 instead of returning 400.
         if (string.IsNullOrEmpty(request.HeadSha))
             return Results.BadRequest(new { error = "head-sha-missing" });
-        if (!Sha40.IsMatch(request.HeadSha) && !Sha64.IsMatch(request.HeadSha))
+        if (!SharedRegexes.Sha40().IsMatch(request.HeadSha) && !SharedRegexes.Sha64().IsMatch(request.HeadSha))
             return Results.UnprocessableEntity(new { error = "sha-format-invalid" });
 
         var sem = PerPrSemaphores.GetOrAdd(refKey, _ => new SemaphoreSlim(1, 1));
@@ -164,15 +160,10 @@ internal static class PrReloadEndpoints
                     : current.DraftVerdictStatus;
 
                 // Per-tab stamp write — sourceTabId was validated against TabIdAllowlistRegex
-                // at the top of PostReload, so it's safe to use as a state-store key. N=8 cap
-                // mirrors the mark-viewed write site (spec § 5.2): eviction by oldest stamp.
-                var tabStamps = current.TabStamps.ToDictionary(kv => kv.Key, kv => kv.Value);
-                tabStamps[sourceTabId] = new TabStamp(request.HeadSha, DateTime.UtcNow);
-                if (tabStamps.Count > 8)
-                {
-                    var oldest = tabStamps.MinBy(kv => kv.Value.StampedAtUtc).Key;
-                    tabStamps.Remove(oldest);
-                }
+                // at the top of PostReload, so it's safe to use as a state-store key. The
+                // TabStamps.MaxTabStamps cap mirrors the mark-viewed write site (spec § 5.2):
+                // eviction by oldest stamp.
+                var tabStamps = TabStamps.Write(current.TabStamps, sourceTabId, request.HeadSha, DateTime.UtcNow);
                 var updated = current with
                 {
                     DraftComments = updatedDrafts,
@@ -181,12 +172,7 @@ internal static class PrReloadEndpoints
                     TabStamps = tabStamps
                 };
                 updatedSession = updated;
-
-                var sessions = new Dictionary<string, ReviewSessionState>(state.Reviews.Sessions)
-                {
-                    [refKey] = updated
-                };
-                return state.WithDefaultReviews(state.Reviews with { Sessions = sessions });
+                return state.WithSession(refKey, updated);
             }, ct).ConfigureAwait(false);
 
             if (currentHeadShaForRetry is not null)

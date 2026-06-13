@@ -294,7 +294,7 @@ app.UseWhen(
     },
     branch => branch.Use(async (ctx, next) =>
     {
-        const long Cap = 16 * 1024;
+        const long Cap = EndpointExtensions.MutatingBodyCapBytes;
         var feat = ctx.Features.Get<Microsoft.AspNetCore.Http.Features.IHttpMaxRequestBodySizeFeature>();
         if (feat is not null && !feat.IsReadOnly) feat.MaxRequestBodySize = Cap;
         if (ctx.Request.ContentLength is { } cl && cl > Cap)
@@ -307,10 +307,11 @@ app.UseWhen(
 
 // Stamp the prism-session cookie on every text/html response (the SPA's index.html
 // load path) so the SPA can read it and echo as X-PRism-Session on subsequent
-// fetches. Response.OnStarting fires before the first body byte writes, which
-// works with static-file + minimal-API + fallback-to-file paths alike. Predicate
-// excludes SSE responses (text/event-stream) so EventSource doesn't get the cookie
-// twice — it already arrived with the HTML page.
+// fetches, AND mark that same response Cache-Control: no-store so it is never cached.
+// Response.OnStarting fires before the first body byte writes, which works with
+// static-file + minimal-API + fallback-to-file paths alike. Predicate excludes SSE
+// responses (text/event-stream) so EventSource doesn't get the cookie twice — it
+// already arrived with the HTML page.
 app.Use(async (ctx, next) =>
 {
     ctx.Response.OnStarting(() =>
@@ -325,6 +326,16 @@ app.Use(async (ctx, next) =>
                 Secure = false,
                 Path = "/",
             });
+
+            // #433: a response carrying the per-process security cookie must never be
+            // cached, or Electron's persistent HTTP cache serves a stale index.html on
+            // cold relaunch (no fresh Set-Cookie → stale-cookie 401). Overwrite (assign),
+            // not append: OnStarting fires last, so this wins over any Cache-Control a
+            // static-file handler set — route-agnostic across MapStaticAssets/MapFallbackToFile.
+            // Indexer (not the typed .CacheControl property) to match the repo's header-write
+            // idiom — cf. SseChannel.cs writing the same "Cache-Control" header this way.
+            // Full rationale: docs/specs/2026-06-12-coldstart-stale-cookie-design.md.
+            ctx.Response.Headers["Cache-Control"] = "no-store";
         }
         return Task.CompletedTask;
     });

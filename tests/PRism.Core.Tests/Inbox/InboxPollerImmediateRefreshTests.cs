@@ -1,9 +1,10 @@
 using System.Diagnostics;
 using FluentAssertions;
 using Microsoft.Extensions.Logging.Abstractions;
-using Moq;
 using PRism.Core.Config;
 using PRism.Core.Inbox;
+using PRism.Core.Tests.PrDetail;
+using PRism.Core.Tests.TestHelpers;
 using Xunit;
 
 namespace PRism.Core.Tests.Inbox;
@@ -17,31 +18,28 @@ public sealed class InboxPollerImmediateRefreshTests
     public async Task RequestImmediateRefresh_Signals_NextRefresh_Within500ms()
     {
         // 60s cadence — without the signal, the second RefreshAsync wouldn't fire until ~60s.
-        var orchestrator = new Mock<IInboxRefreshOrchestrator>();
+        var orchestrator = new FakeInboxRefreshOrchestrator();
         var firstTick = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var secondTick = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var tickCount = 0;
-        orchestrator
-            .Setup(o => o.RefreshAsync(It.IsAny<CancellationToken>()))
-            .Returns(() =>
-            {
-                var n = Interlocked.Increment(ref tickCount);
-                if (n == 1) firstTick.TrySetResult();
-                else if (n == 2) secondTick.TrySetResult();
-                return Task.CompletedTask;
-            });
-
-        var config = new Mock<IConfigStore>();
-        config.Setup(c => c.Current).Returns(AppConfig.Default with
+        orchestrator.RefreshOverride = _ =>
         {
-            Polling = new PollingConfig(30, 60),  // 60s inbox cadence
-        });
+            var n = Interlocked.Increment(ref tickCount);
+            if (n == 1) firstTick.TrySetResult();
+            else if (n == 2) secondTick.TrySetResult();
+            return Task.CompletedTask;
+        };
+
+        var config = new FakeConfigStore
+        {
+            Current = AppConfig.Default with { Polling = new PollingConfig(30, 60) }, // 60s inbox cadence
+        };
 
         var subs = new InboxSubscriberCount();
         using var poller = new InboxPoller(
-            orchestrator.Object,
+            orchestrator,
             subs,
-            config.Object,
+            config,
             NullLogger<InboxPoller>.Instance);
 
         using var stopCts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
@@ -76,14 +74,13 @@ public sealed class InboxPollerImmediateRefreshTests
         // Capacity-1 semaphore coalesces; SemaphoreFullException must be swallowed
         // so callers (the endpoint) don't crash when the previous signal hasn't been
         // consumed yet.
-        var orchestrator = new Mock<IInboxRefreshOrchestrator>();
-        var config = new Mock<IConfigStore>();
-        config.Setup(c => c.Current).Returns(AppConfig.Default);
+        var orchestrator = new FakeInboxRefreshOrchestrator();
+        var config = new FakeConfigStore();
 
         using var poller = new InboxPoller(
-            orchestrator.Object,
+            orchestrator,
             new InboxSubscriberCount(),
-            config.Object,
+            config,
             NullLogger<InboxPoller>.Instance);
 
         var act = () =>

@@ -8,8 +8,6 @@ const CONFIRM_MS = 3_000; // ≥ MIN_INTERVAL_MS so the lockout window is never 
 interface Options {
   /** Re-fetch the inbox after the backend pull settles. */
   reload: () => Promise<void>;
-  /** Clear any pending "N new updates" banner — a manual pull moots it. */
-  dismiss: () => void;
   /** Surface a soft, dismissible error (the page keeps its current view). */
   onError: (message: string) => void;
 }
@@ -21,7 +19,7 @@ export interface InboxRefreshState {
   refresh: () => Promise<void>;
 }
 
-export function useInboxRefresh({ reload, dismiss, onError }: Options): InboxRefreshState {
+export function useInboxRefresh({ reload, onError }: Options): InboxRefreshState {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [justRefreshed, setJustRefreshed] = useState(false);
   const [announce, setAnnounce] = useState('');
@@ -50,7 +48,6 @@ export function useInboxRefresh({ reload, dismiss, onError }: Options): InboxRef
     try {
       await inboxApi.refresh(controller.signal);
       await reload();
-      dismiss();
       lastSuccessAt.current = Date.now(); // stamp ONLY on success
       setAnnounce('Inbox refreshed');
       setJustRefreshed(true);
@@ -65,7 +62,7 @@ export function useInboxRefresh({ reload, dismiss, onError }: Options): InboxRef
       inFlight.current = false;
       setIsRefreshing(false);
     }
-  }, [reload, dismiss, onError]);
+  }, [reload, onError]);
 
   return { isRefreshing, justRefreshed, announce, refresh };
 }

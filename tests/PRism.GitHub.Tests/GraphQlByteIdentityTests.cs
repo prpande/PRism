@@ -67,8 +67,7 @@ public class GraphQlByteIdentityTests
     {
         var handler = new CapturingHandler(
             """{"data":{"submitPullRequestReview":{"pullRequestReview":{"id":"PRR_done","state":"APPROVED"}}}}""");
-        var factory = new FakeHttpClientFactory(handler, new Uri("https://api.github.com/"));
-        var svc = new GitHubReviewService(factory, () => Task.FromResult<string?>("ghp_test"), "https://github.com");
+        var svc = GitHubReviewServiceFactory.Create(handler);
 
         await svc.FinalizePendingReviewAsync(new PrReference("owner", "repo", 42), "PRR_x", SubmitEvent.Comment, CancellationToken.None);
 

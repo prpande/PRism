@@ -51,6 +51,27 @@ const NEW_HEAD = 'a'.repeat(40);
 const CALC_WITH_HALF =
   'namespace Acme;\npublic static class Calc {\n  public static int Add(int a, int b) => a + b;\n  public static int Half(int a) => a / 2;\n}\n';
 
+// #450 Task 13 — a deliberately TALL src/Calc.cs so the rendered diff overflows
+// [data-app-scroll] and is genuinely scrollable. FakePrReader.GetDiffAsync emits a
+// single all-`+` hunk from this content (one diff row per line), so ~150 lines
+// guarantees the scroll container has non-zero scrollHeight beyond its client
+// height in a 1920×1080 viewport. Line 3 is still the `Add` body, matching the
+// existing "add comment on line 3" affordance the post-now path uses.
+const SCROLL_HEAD = 'b'.repeat(40);
+const CALC_TALL = (() => {
+  const lines = [
+    'namespace Acme;',
+    'public static class Calc {',
+    '  public static int Add(int a, int b) => a + b;',
+  ];
+  // Pad with many distinct method lines so the diff overflows the viewport.
+  for (let i = 0; i < 150; i += 1) {
+    lines.push(`  public static int M${i}(int a, int b) => a + b + ${i};`);
+  }
+  lines.push('}');
+  return lines.join('\n') + '\n';
+})();
+
 test.beforeEach(async () => {
   const ctx = await request.newContext();
   await resetBackendState(ctx);
@@ -135,6 +156,89 @@ test('#302 inline post-now — Comment button posts immediately, no pending revi
 });
 
 // ---------------------------------------------------------------------------
+// Test 1b — #450: posting an inline comment preserves diff scroll across the
+// auto-reload (the single-comment-posted SSE → usePrDetail.reload()).
+// ---------------------------------------------------------------------------
+// Feasible-today slice of #450. The full "reply-able without reload" e2e stays
+// deferred to #453 (see the test.fixme below) because FakePrReader returns no
+// ReviewThreadDto, so a posted comment never round-trips back into PR detail.
+// What the fake DOES support — and what this asserts — is that the optimistic
+// inline card survives the auto-reload and the diff scroll offset is NOT yanked
+// back to the top when the single-comment-posted reload re-renders the diff.
+test('#450 inline post-now preserves diff scroll across the auto-reload', async ({ page }) => {
+  await setupAndOpenScenarioPr(page);
+
+  // Make the diff TALL so [data-app-scroll] genuinely overflows and scrolls.
+  // FakePrReader serves the diff from the (path, headSha) file content, so we
+  // advance the head to a large Calc.cs before opening the Files tab.
+  await advanceHead(page.request, SCROLL_HEAD, [{ path: 'src/Calc.cs', content: CALC_TALL }]);
+
+  await page.goto('/pr/acme/api/123/files');
+  await page.getByRole('treeitem', { name: /Calc\.cs/i }).click();
+
+  // The diff body is the internal vertical scroller (.diff-pane-body →
+  // overflow:auto in DiffPane.module.css). In browser mode the diff scrolls
+  // INTERNALLY here, not in the outer [data-app-scroll] (which only scrolls when
+  // the header stack overflows). Its native scrollTop must survive the
+  // single-comment-posted reload (DiffPane is not remounted on a data refetch) —
+  // that is the #450 "no viewport yank" contract.
+  const scroller = page.locator('.diff-pane-body');
+  await expect(scroller).toBeVisible();
+
+  // Wait for the diff to render enough rows to overflow, then scroll down.
+  // Use an exact name — the tall diff has lines 3, 30, 31, … which a loose
+  // regex would all match (strict-mode violation).
+  const addBtn = page.getByRole('button', { name: 'Add comment on line 3', exact: true });
+  await expect(addBtn).toBeVisible({ timeout: 15_000 });
+
+  // Scroll to a non-zero offset. Assert the container is actually scrollable
+  // (scrollHeight > clientHeight) before relying on the preservation check —
+  // otherwise scrollTop would clamp to 0 and the assertion would be vacuous.
+  const scrollBefore = await scroller.evaluate((el) => {
+    el.scrollTop = 600;
+    return { top: el.scrollTop, overflow: el.scrollHeight - el.clientHeight };
+  });
+  expect(
+    scrollBefore.overflow,
+    'diff must overflow [data-app-scroll] for a meaningful scroll-preservation assertion',
+  ).toBeGreaterThan(0);
+  expect(scrollBefore.top, 'scrollTop must be non-zero before posting').toBeGreaterThan(0);
+
+  // Open the inline composer on line 3 (the affordance may have scrolled out of
+  // view; clicking re-scrolls minimally — capture scrollTop again right before
+  // the post so the comparison reflects the at-post offset, not the pre-click one).
+  await addBtn.click();
+  const composer = page.getByTestId('inline-comment-composer');
+  await expect(composer).toBeVisible();
+
+  const body = 'Scroll-preservation inline comment (#450).';
+  await composer.getByRole('textbox', { name: /comment body/i }).fill(body);
+
+  const atPostScrollTop = await scroller.evaluate((el) => el.scrollTop);
+
+  // Post-now: click "Comment" and wait for the 200. The success fires a
+  // single-comment-posted SSE → usePrDetail.reload() (the auto-reload under test).
+  const postPromise = page.waitForResponse(
+    (r) =>
+      r.url().includes('/api/pr/acme/api/123/comment/post') &&
+      r.request().method() === 'POST' &&
+      r.status() === 200,
+    { timeout: 15_000 },
+  );
+  await composer.getByRole('button', { name: 'Comment', exact: true }).click();
+  await postPromise;
+
+  // The optimistic inline placeholder renders immediately and survives the
+  // single-comment-posted reload (it de-dups only against a real comment with a
+  // matching databaseId — and FakePrReader never returns one, so it persists).
+  await expect(page.getByTestId('inline-comment-card-optimistic')).toBeVisible({ timeout: 10_000 });
+
+  // Scroll offset is preserved across the auto-reload — no viewport yank to top.
+  const scrollAfter = await scroller.evaluate((el) => el.scrollTop);
+  expect(Math.abs(scrollAfter - atPostScrollTop)).toBeLessThanOrEqual(2);
+});
+
+// ---------------------------------------------------------------------------
 // Test 2 — Reply post-now
 // ---------------------------------------------------------------------------
 // FIXME: This test requires a /test/seed-review-thread endpoint that seeds a
@@ -210,7 +314,9 @@ test('#302 mutual exclusion — staged draft disables Comment; save label become
 // ---------------------------------------------------------------------------
 // Test 4 — Merged PR: only "Comment" shown, merged sub-label present, no "Add to review"
 // ---------------------------------------------------------------------------
-test('#302 merged PR — only Comment button shown; merged sub-label present', async ({ page }) => {
+test('#302 merged PR — only Comment button shown; merged context on Comment tooltip (#390)', async ({
+  page,
+}) => {
   await setupAndOpenScenarioPr(page);
 
   // Flip to MERGED and force a PrDetailLoader cache miss by advancing the head.
@@ -233,12 +339,16 @@ test('#302 merged PR — only Comment button shown; merged sub-label present', a
   //   - "Add to review" save button must NOT be present (closedBanner = true hides it).
   //   - "Add review comment" label must NOT be present either.
   //   - "Comment" button must be visible (and FUNCTIONAL — types and posts below).
-  //   - The "PR is merged — comments post immediately" sub-note must be visible.
+  //   - #390: the "PR is merged" note is GONE; the merged context is on the Comment
+  //     button's tooltip (title), keeping "Comment" as the accessible name.
   await expect(composerMerged.getByText(/text not saved/i)).toHaveCount(0);
   await expect(composerMerged.getByRole('button', { name: 'Add to review' })).toHaveCount(0);
   await expect(composerMerged.getByRole('button', { name: 'Add review comment' })).toHaveCount(0);
   await expect(composerMerged.getByRole('button', { name: 'Comment', exact: true })).toBeVisible();
-  await expect(composerMerged.getByText(/PR is merged — comments post immediately/i)).toBeVisible();
+  await expect(composerMerged.getByText(/comments post immediately/i)).toHaveCount(0);
+  await expect(
+    composerMerged.getByRole('button', { name: 'Comment', exact: true }),
+  ).toHaveAttribute('title', 'Post directly to this merged PR');
 
   // STRENGTHEN: post-now actually works on a merged PR (#302 core contract).
   // Type a body, click "Comment", assert the comment is posted.

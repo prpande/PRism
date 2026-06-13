@@ -71,11 +71,13 @@ describe('usePreferences', () => {
     expect(result.current.preferences!.github.logsPath).toContain('logs');
   });
 
-  it('rolls back ONLY the failing key when two rapid POSTs interleave and the second fails', async () => {
-    // Regression: pre-fix, set() captured the whole `prior` snapshot at call
-    // time. Two near-simultaneous toggles both snapshot the same baseline P0;
-    // if A succeeds and B fails, B's rollback to P0 silently undoes A. Fix is
-    // key-scoped writeKey() patched against current state via functional set.
+  it('leaves an earlier successful write intact when a later POST fails (apply-on-success)', async () => {
+    // Apply-on-success (#330): set() writes local state ONLY after its POST
+    // resolves, so a failed write never touches local state — there is nothing to
+    // roll back and, crucially, an earlier successful write can't be clobbered.
+    // (Pre-fix a dead rollback path claimed to guard this; option (b) removed it as
+    // the apply-on-success contract makes the clobber structurally impossible.) The
+    // end-state assertions below hold either way; this guards the surviving property.
     showMock.mockReset();
     const { result } = renderHook(() => usePreferences());
     await waitFor(() => expect(result.current.preferences).not.toBeNull());
@@ -118,10 +120,10 @@ describe('usePreferences', () => {
     expect(result.current.preferences!.inbox.sections['review-requested']).toBe(false);
   });
 
-  it('rolls back preferences and surfaces an error toast when POST /api/preferences rejects', async () => {
-    // Server starts as the default (theme=system); flipping the POST to 500
-    // should restore that state and fire one error toast — never a half-applied
-    // preference. Closes spec § 2.6 "rollback on 4xx/5xx/network failure".
+  it('leaves preferences unchanged and surfaces an error toast when POST /api/preferences rejects', async () => {
+    // Apply-on-success (#330): a failed POST leaves local state exactly as it was
+    // (never a half-applied preference) and fires one error toast — no rollback to
+    // perform, since set() never applied the value optimistically.
     showMock.mockReset();
     const { result } = renderHook(() => usePreferences());
     await waitFor(() => expect(result.current.preferences).not.toBeNull());

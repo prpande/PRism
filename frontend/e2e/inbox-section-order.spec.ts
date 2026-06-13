@@ -1,9 +1,6 @@
 import { test, expect, type Route } from '@playwright/test';
-import {
-  allOffCapabilities,
-  authedAuthState,
-  makeDefaultPreferences,
-} from './fixtures/preferences';
+import { makeDefaultPreferences } from './fixtures/preferences';
+import { setupBaseRoutes } from './helpers/base-mocks';
 
 // #275 — section reorder persists end-to-end: Settings → POST /api/preferences
 // → inbox render honours the saved order across a reload. Pattern matches
@@ -61,13 +58,7 @@ const sampleInbox = {
 async function setupMocks(page: import('@playwright/test').Page) {
   const store: Preferences = makePrefsWithOrder();
 
-  await page.route('**/api/auth/state', (route: Route) =>
-    route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify(authedAuthState),
-    }),
-  );
+  await setupBaseRoutes(page);
 
   await page.route('**/api/preferences', async (route: Route) => {
     if (route.request().method() === 'POST') {
@@ -84,18 +75,6 @@ async function setupMocks(page: import('@playwright/test').Page) {
       body: JSON.stringify(store),
     });
   });
-
-  await page.route('**/api/capabilities', (route: Route) =>
-    route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify(allOffCapabilities),
-    }),
-  );
-
-  await page.route('**/api/events', (route: Route) =>
-    route.fulfill({ status: 200, contentType: 'text/event-stream', body: ':heartbeat\n\n' }),
-  );
 
   await page.route('**/api/inbox', (route: Route) =>
     route.fulfill({

@@ -69,4 +69,57 @@ public class AppStateWithDefaultHelpersTests
         state.AiState.Should().BeSameAs(state.Accounts[AccountKeys.Default].AiState);
         state.LastConfiguredGithubHost.Should().Be(state.Accounts[AccountKeys.Default].LastConfiguredGithubHost);
     }
+
+    [Fact]
+    public void WithSession_upserts_a_session_without_mutating_the_original()
+    {
+        var state = AppState.Default;
+        var session = new ReviewSessionState(
+            TabStamps: new Dictionary<string, TabStamp>(),
+            LastSeenCommentId: null,
+            PendingReviewId: null,
+            PendingReviewCommitOid: null,
+            ViewedFiles: new Dictionary<string, string>(),
+            DraftComments: System.Array.Empty<DraftComment>(),
+            DraftReplies: System.Array.Empty<DraftReply>(),
+            DraftVerdict: null,
+            DraftVerdictStatus: DraftVerdictStatus.Draft);
+
+        var updated = state.WithSession("o/r/1", session);
+
+        updated.Reviews.Sessions.Should().ContainKey("o/r/1");
+        updated.Reviews.Sessions["o/r/1"].Should().BeSameAs(session);
+        state.Reviews.Sessions.Should().NotContainKey("o/r/1"); // original unchanged (immutability)
+    }
+
+    [Fact]
+    public void WithSession_overwrites_an_existing_key_and_preserves_siblings()
+    {
+        var first = new ReviewSessionState(
+            TabStamps: new Dictionary<string, TabStamp>(),
+            LastSeenCommentId: null,
+            PendingReviewId: null,
+            PendingReviewCommitOid: null,
+            ViewedFiles: new Dictionary<string, string>(),
+            DraftComments: System.Array.Empty<DraftComment>(),
+            DraftReplies: System.Array.Empty<DraftReply>(),
+            DraftVerdict: null,
+            DraftVerdictStatus: DraftVerdictStatus.Draft);
+        var second = new ReviewSessionState(
+            TabStamps: new Dictionary<string, TabStamp>(),
+            LastSeenCommentId: null,
+            PendingReviewId: null,
+            PendingReviewCommitOid: null,
+            ViewedFiles: new Dictionary<string, string>(),
+            DraftComments: System.Array.Empty<DraftComment>(),
+            DraftReplies: System.Array.Empty<DraftReply>(),
+            DraftVerdict: null,
+            DraftVerdictStatus: DraftVerdictStatus.Draft);
+        var state = AppState.Default.WithSession("o/r/1", first).WithSession("o/r/2", first);
+
+        var updated = state.WithSession("o/r/1", second);
+
+        updated.Reviews.Sessions["o/r/1"].Should().BeSameAs(second);
+        updated.Reviews.Sessions["o/r/2"].Should().BeSameAs(first); // sibling preserved
+    }
 }

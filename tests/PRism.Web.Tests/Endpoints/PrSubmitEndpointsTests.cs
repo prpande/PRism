@@ -279,14 +279,14 @@ public class PrSubmitEndpointsTests
     }
 
     [Fact]
-    public async Task PostSubmit_no_session_returns_400_no_session()
+    public async Task PostSubmit_no_session_returns_404_no_session()
     {
         using var ctx = SubmitEndpointsTestContext.Create();
         using var client = ctx.CreateClient();
 
         var resp = await client.PostAsJsonAsync("/api/pr/o/r/6/submit", new { verdict = "comment" });
 
-        resp.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        resp.StatusCode.Should().Be(HttpStatusCode.NotFound);
         (await resp.Content.ReadFromJsonAsync<JsonElement>(CamelCase)).GetProperty("code").GetString().Should().Be("no-session");
     }
 
@@ -458,7 +458,7 @@ public class PrSubmitEndpointsTests
     // ----------------------------------------- POST /submit/foreign-pending-review/discard
 
     [Fact]
-    public async Task PostDiscard_TOCTOU_pass_deletes_pending_review_and_clears_session_returns_200()
+    public async Task PostDiscard_TOCTOU_pass_deletes_pending_review_and_clears_session_returns_204()
     {
         using var ctx = SubmitEndpointsTestContext.Create();
         ctx.Submitter.OwnPendingReview = Snapshot("PRR_x");
@@ -467,7 +467,7 @@ public class PrSubmitEndpointsTests
 
         var resp = await client.PostAsJsonAsync("/api/pr/o/r/1/submit/foreign-pending-review/discard", new { pullRequestReviewId = "PRR_x" });
 
-        resp.StatusCode.Should().Be(HttpStatusCode.OK);
+        resp.StatusCode.Should().Be(HttpStatusCode.NoContent);
         ctx.Submitter.DeletedPendingReviews.Should().Contain("PRR_x");
         var session = await ctx.LoadSessionAsync("o", "r", 1);
         session!.PendingReviewId.Should().BeNull();

@@ -33,16 +33,13 @@ export const SHORTCUTS: ReadonlyArray<ShortcutGroup> = [
   },
   {
     group: 'Diff',
-    rows: [
-      { keys: 'n', context: 'Diff', action: 'Next comment thread' },
-      { keys: 'p', context: 'Diff', action: 'Previous comment thread' },
-      { keys: 'c', context: 'Diff (line focused)', action: 'Open comment composer' },
-    ],
+    rows: [{ keys: 'd', context: 'Files tab', action: 'Toggle Unified / Split diff' }],
   },
   {
     group: 'Composer',
     rows: [
       { keys: 'Cmd/Ctrl + Enter', context: 'Composer', action: 'Save draft' },
+      { keys: 'Cmd/Ctrl + Shift + P', context: 'Composer', action: 'Toggle Markdown preview' },
       { keys: 'Esc', context: 'Composer (non-empty)', action: 'Cancel (with discard confirm)' },
     ],
   },

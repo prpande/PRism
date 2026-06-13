@@ -1,4 +1,6 @@
 import { test, expect, type Route } from '@playwright/test';
+import { setupBaseRoutes } from './helpers/base-mocks';
+import { allOffCapabilities, makeDefaultPreferences } from './fixtures/preferences';
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -34,111 +36,33 @@ const sampleInbox = {
   tokenScopeFooterEnabled: true,
 };
 
-const authedAuthState = {
-  hasToken: true,
-  host: 'https://github.com',
-  hostMismatch: null,
-};
-
-// S6 PR1: GET /api/preferences widened from flat { theme, accent, aiPreview } to
-// nested { ui, inbox, github } (spec § 2.4). Playwright frontend consumers
-// (HeaderControls, InboxPage, …) now read preferences.ui.theme etc., so the
-// Playwright fixture must mirror the new shape or the React tree crashes when
-// HeaderControls.applyToDocument(undefined, undefined) → ACCENT_HUES[undefined].h
-// throws. Caught by Playwright on PR #69 (4 inbox tests failed at "Refactor auth
-// flow" never rendering).
-const defaultPreferences = {
-  // aiMode 'off' for these mock-driven tests; contentScale + sectionOrder are always
-  // present on the real GET /api/preferences wire, so keep the fixture in contract.
-  ui: {
-    theme: 'system',
-    accent: 'indigo',
-    aiMode: 'off' as const,
-    density: 'comfortable',
-    contentScale: 'm',
-  },
-  inbox: {
-    sections: {
-      'review-requested': true,
-      'awaiting-author': true,
-      'authored-by-me': true,
-      mentioned: true,
-      'recently-closed': true,
-    },
-    defaultSort: 'updated',
-    sectionOrder: 'review-requested,awaiting-author,authored-by-me,mentioned',
-    showActivityRail: false, // #283 rail decoupled from AI, default off
-  },
-  github: {
-    host: 'https://github.com',
-    configPath: '/fake/config.json',
-    logsPath: '/fake/logs',
-  },
-};
-
-const allOffCapabilities = {
-  ai: {
-    summary: false,
-    fileFocus: false,
-    hunkAnnotations: false,
-    preSubmitValidators: false,
-    composerAssist: false,
-    draftSuggestions: false,
-    draftReconciliation: false,
-    inboxEnrichment: false,
-    inboxRanking: false,
-  },
-};
+// The canonical mocked-mode preferences shape (#332). It mirrors the real
+// nested GET /api/preferences wire (ui / inbox / github) so the React tree
+// hydrates — a flat-shaped fixture crashes HeaderControls.applyToDocument
+// (ACCENT_HUES[undefined].h throws; caught by Playwright on PR #69). The
+// activity-rail test below spreads this base and overrides ui.aiPreview /
+// inbox.showActivityRail.
+const defaultPreferences = makeDefaultPreferences();
 
 // ---------------------------------------------------------------------------
 // Shared mock wiring
 // ---------------------------------------------------------------------------
 
 /**
- * Registers route mocks common to most tests:
- *   /api/auth/state  — authenticated with github.com
- *   /api/preferences — GET returns defaultPreferences (or override); POST echoes back
- *   /api/capabilities — returns allOffCapabilities (or override)
- *   /api/events      — empty SSE heartbeat (keeps the connection-open semantics happy)
- *
- * Tests that need custom preferences/capabilities behaviour should either pass
- * overrides via `opts` or register their own route handlers before calling goto.
- * Playwright matches routes in reverse registration order, so a handler registered
- * after setupBaseMocks will shadow the one registered here for the same pattern.
+ * Wires the three constant read-side routes (auth/state, capabilities, events)
+ * via setupBaseRoutes, then the `/api/preferences` snapshot. Tests that need
+ * custom preferences register their own `/api/preferences` handler AFTER this
+ * call — Playwright matches routes in reverse registration order, so the later
+ * handler shadows this one.
  */
-async function setupBaseMocks(
-  page: import('@playwright/test').Page,
-  opts: {
-    preferences?: typeof defaultPreferences;
-    capabilities?: typeof allOffCapabilities;
-  } = {},
-) {
-  await page.route('**/api/auth/state', (route: Route) =>
+async function setupBaseMocks(page: import('@playwright/test').Page) {
+  await setupBaseRoutes(page);
+  await page.route('**/api/preferences', (route: Route) =>
     route.fulfill({
       status: 200,
       contentType: 'application/json',
-      body: JSON.stringify(authedAuthState),
+      body: JSON.stringify(defaultPreferences),
     }),
-  );
-  await page.route('**/api/preferences', (route: Route) => {
-    // POST: the client sends a partial patch; echo back the resolved preferences.
-    // GET: return current preferences snapshot.
-    return route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify(opts.preferences ?? defaultPreferences),
-    });
-  });
-  await page.route('**/api/capabilities', (route: Route) =>
-    route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify(opts.capabilities ?? allOffCapabilities),
-    }),
-  );
-  await page.route('**/api/events', (route: Route) =>
-    // Empty SSE stream — keeps the connection-open semantics happy without injecting events.
-    route.fulfill({ status: 200, contentType: 'text/event-stream', body: ':heartbeat\n\n' }),
   );
 }
 
@@ -289,13 +213,10 @@ test('activity rail is gated by inbox.showActivityRail, independent of AI previe
   // is deliberately no Settings UI for it).
   let showActivityRail = false;
 
-  await page.route('**/api/auth/state', (route: Route) =>
-    route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify(authedAuthState),
-    }),
-  );
+  // setupBaseRoutes wires auth/state + events (constant) + an all-off
+  // capabilities; this test overrides preferences and capabilities below
+  // (registered after, so LIFO route matching makes the overrides win).
+  await setupBaseRoutes(page);
   await page.route('**/api/preferences', async (route: Route) => {
     await route.fulfill({
       status: 200,
@@ -318,9 +239,6 @@ test('activity rail is gated by inbox.showActivityRail, independent of AI previe
         ai: { ...allOffCapabilities.ai, inboxRanking: true, inboxEnrichment: true },
       }),
     }),
-  );
-  await page.route('**/api/events', (route: Route) =>
-    route.fulfill({ status: 200, contentType: 'text/event-stream', body: ':heartbeat\n\n' }),
   );
   await page.route('**/api/inbox', (route: Route) =>
     route.fulfill({
@@ -387,10 +305,10 @@ test('manual Refresh button drives the loading bar and re-enables', async ({ pag
 
 // ---------------------------------------------------------------------------
 
-test.skip('SSE banner appears on inbox-updated event', () => {
-  // Deferred: Playwright's route mocking does not naturally support streaming
-  // SSE responses. Driving an event mid-test would require a fake EventSource
-  // injected via page.addInitScript before the SPA mounts. Out of scope for
-  // S2 E2E; covered by the Vitest tests in useInboxUpdates.test.tsx and the
-  // backend EventsEndpointsTests integration tests.
-});
+// NOTE: "SSE banner appears on inbox-updated event" is intentionally NOT an E2E
+// test. Playwright's route mocking does not naturally support streaming SSE
+// responses, and driving an event mid-test would require a fake EventSource
+// injected via page.addInitScript before the SPA mounts. That behavior is covered
+// by the Vitest tests in useInboxUpdates.test.tsx and the backend
+// EventsEndpointsTests integration tests, so no permanently-skipped placeholder is
+// kept here (#334).

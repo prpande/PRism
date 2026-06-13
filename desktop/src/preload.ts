@@ -30,11 +30,13 @@ contextBridge.exposeInMainWorld("prism", {
     minimize: () => ipcRenderer.send("window:minimize"),
     toggleMaximize: () => ipcRenderer.send("window:toggle-maximize"),
     close: () => ipcRenderer.send("window:close"),
-    isMaximized: (): Promise<boolean> => ipcRenderer.invoke("window:is-maximized"),
+    isMaximized: (): Promise<boolean> =>
+      ipcRenderer.invoke("window:is-maximized"),
     onMaximizedChange: (cb: (maximized: boolean) => void): (() => void) => {
       const listener = (_e: unknown, maximized: boolean) => cb(maximized);
       ipcRenderer.on("window:maximized-changed", listener);
-      return () => ipcRenderer.removeListener("window:maximized-changed", listener);
+      return () =>
+        ipcRenderer.removeListener("window:maximized-changed", listener);
     },
   },
 });

@@ -127,7 +127,7 @@ internal static partial class PrDetailEndpoints
                 // toast for the wire-up regression case without conflating it with PR-detail
                 // staleness. Allowlist is the same [a-zA-Z0-9_-]{1,64} regex used everywhere a
                 // tab id reaches the server (spec § 3).
-                var tabId = httpContext.Request.Headers["X-PRism-Tab-Id"].FirstOrDefault();
+                var tabId = httpContext.Request.Headers[TabStamps.TabIdHeader].FirstOrDefault();
                 if (string.IsNullOrEmpty(tabId) || !TabIdAllowlistRegex().IsMatch(tabId))
                     return Results.Problem(type: "/viewed/tab-id-missing", statusCode: 422);
 
@@ -145,16 +145,11 @@ internal static partial class PrDetailEndpoints
                     {
                         var session = state.Reviews.Sessions.GetValueOrDefault(key) ?? PrDraftEndpoints.NewEmptySession();
 
-                        // Write the caller's tab stamp; cap at N=8 entries by evicting the
-                        // oldest StampedAtUtc. The cap protects against state.json bloat if a
-                        // misbehaving extension or test fixture keeps minting fresh tab ids.
-                        var tabStamps = session.TabStamps.ToDictionary(kv => kv.Key, kv => kv.Value);
-                        tabStamps[tabId] = new TabStamp(body.HeadSha, DateTime.UtcNow);
-                        if (tabStamps.Count > 8)
-                        {
-                            var oldest = tabStamps.MinBy(kv => kv.Value.StampedAtUtc).Key;
-                            tabStamps.Remove(oldest);
-                        }
+                        // Write the caller's tab stamp; TabStamps.Write caps at
+                        // TabStamps.MaxTabStamps entries by evicting the oldest StampedAtUtc. The
+                        // cap protects against state.json bloat if a misbehaving extension or test
+                        // fixture keeps minting fresh tab ids.
+                        var tabStamps = TabStamps.Write(session.TabStamps, tabId, body.HeadSha, DateTime.UtcNow);
 
                         // Session-flat LastSeenCommentId is the inbox unread-badge anchor;
                         // monotone guard prevents a stale per-tab value from rewinding the
@@ -182,7 +177,7 @@ internal static partial class PrDetailEndpoints
                 }
 
                 return Results.NoContent();
-            }).WithMetadata(new RequestSizeLimitAttribute(16384));   // P2.3 — 16 KiB cap
+            }).WithMetadata(new RequestSizeLimitAttribute(EndpointExtensions.MutatingBodyCapBytes));   // P2.3 — 16 KiB cap
 
         app.MapPost("/api/pr/{owner}/{repo}/{number:int}/files/viewed",
             async (string owner, string repo, int number,
@@ -248,20 +243,14 @@ internal static partial class PrDetailEndpoints
                 }
 
                 return capExceeded ?? Results.NoContent();
-            }).WithMetadata(new RequestSizeLimitAttribute(16384));
+            }).WithMetadata(new RequestSizeLimitAttribute(EndpointExtensions.MutatingBodyCapBytes));
 
         return app;
     }
 
     private static bool IsValidGitOid(string s) =>
         // SHA-1 (40 hex) or SHA-256 (64 hex). Anything else → 422 /sha/invalid.
-        GitOid40Regex().IsMatch(s) || GitOid64Regex().IsMatch(s);
-
-    [GeneratedRegex("^[0-9a-fA-F]{40}$")]
-    private static partial Regex GitOid40Regex();
-
-    [GeneratedRegex("^[0-9a-fA-F]{64}$")]
-    private static partial Regex GitOid64Regex();
+        SharedRegexes.Sha40().IsMatch(s) || SharedRegexes.Sha64().IsMatch(s);
 
     // Spec § 3 — X-PRism-Tab-Id allowlist. 1-64 chars from [a-zA-Z0-9_-]. Anything else is
     // rejected with /viewed/tab-id-missing 422 by mark-viewed (Task 4), reload (Task 5),
