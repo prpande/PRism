@@ -99,6 +99,7 @@ interface PrHeaderProps {
   activeTab: PrTabId;
   onTabChange: (tab: PrTabId) => void;
   fileCount?: number;
+  hotspotsCount?: number;
   draftsCount?: number;
   // S5 — the draft session drives the verdict picker + Submit button + the
   // in-flight-submit recovery badge. Null while the PR detail is loading.
@@ -150,6 +151,7 @@ export function PrHeader({
   activeTab,
   onTabChange,
   fileCount,
+  hotspotsCount,
   draftsCount,
   session = null,
   headShaDrift = false,
@@ -519,6 +521,7 @@ export function PrHeader({
           activeTab={activeTab}
           onTabChange={onTabChange}
           fileCount={fileCount}
+          hotspotsCount={hotspotsCount}
           draftsCount={draftsCount}
         />
         {/* No collapse toggle during cold load — keep buttons out of the loading

@@ -299,8 +299,9 @@ describe('parsePrRoute', () => {
     });
   });
 
-  test('extracts files/drafts sub-tab segments and clamps unknown ones to overview', () => {
+  test('extracts files/hotspots/drafts sub-tab segments and clamps unknown ones to overview', () => {
     expect(parsePrRoute('/pr/acme/api/7/files')?.subTab).toBe('files');
+    expect(parsePrRoute('/pr/acme/api/7/hotspots')?.subTab).toBe('hotspots');
     expect(parsePrRoute('/pr/acme/api/7/drafts')?.subTab).toBe('drafts');
     expect(parsePrRoute('/pr/acme/api/7/garbage')?.subTab).toBe('overview');
   });

@@ -198,6 +198,10 @@ function Wrapper({ prDetail }: { prDetail: PrDetailDto }) {
         subscribed: false,
         baseShaChanged: false,
         onSelectSubTab: () => {},
+        fileFocus: { status: 'no-changes', entries: [], retry: () => {} },
+        pendingFilePath: null,
+        requestFileView: () => {},
+        clearPendingFilePath: () => {},
       }}
     >
       <Outlet />

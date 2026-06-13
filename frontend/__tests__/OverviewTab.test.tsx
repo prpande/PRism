@@ -173,7 +173,7 @@ function mockFetch(opts: MockOptions = {}) {
 function providerValue(
   prDetail: PrDetailDto,
   draftSession: UseDraftSessionResult,
-  onSelectSubTab: (tab: 'overview' | 'files' | 'drafts') => void,
+  onSelectSubTab: PrDetailContextValue['onSelectSubTab'],
   subscribed = true,
 ): PrDetailContextValue {
   return {
@@ -184,6 +184,10 @@ function providerValue(
     subscribed,
     baseShaChanged: false,
     onSelectSubTab,
+    fileFocus: { status: 'no-changes', entries: [], retry: vi.fn() },
+    pendingFilePath: null,
+    requestFileView: vi.fn(),
+    clearPendingFilePath: vi.fn(),
   };
 }
 

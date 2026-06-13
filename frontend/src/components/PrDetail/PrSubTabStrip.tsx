@@ -1,11 +1,13 @@
 import styles from './PrSubTabStrip.module.css';
 
-export type PrTabId = 'overview' | 'files' | 'drafts';
+export type PrTabId = 'overview' | 'files' | 'hotspots' | 'drafts';
 
 interface PrSubTabStripProps {
   activeTab: PrTabId;
   onTabChange: (tab: PrTabId) => void;
   fileCount?: number;
+  // High+Medium count; undefined while loading/error/zero/Preview → no badge.
+  hotspotsCount?: number;
   draftsCount?: number;
 }
 
@@ -13,6 +15,7 @@ export function PrSubTabStrip({
   activeTab,
   onTabChange,
   fileCount,
+  hotspotsCount,
   draftsCount,
 }: PrSubTabStripProps) {
   return (
@@ -29,6 +32,21 @@ export function PrSubTabStrip({
         active={activeTab === 'files'}
         onSelect={onTabChange}
         count={fileCount}
+      />
+      <Tab
+        id="hotspots"
+        label="Hotspots"
+        active={activeTab === 'hotspots'}
+        onSelect={onTabChange}
+        count={hotspotsCount}
+        // Spec § 6.1 — the hotspots badge announces "N files need attention"
+        // rather than the generic "N items". Built at the call site (single
+        // consumer) so the generic Tab keeps its default wording.
+        srCountSuffix={
+          hotspotsCount
+            ? `, ${hotspotsCount} ${hotspotsCount === 1 ? 'file needs' : 'files need'} attention`
+            : undefined
+        }
       />
       <Tab
         id="drafts"
@@ -48,9 +66,13 @@ interface TabProps {
   onSelect: (tab: PrTabId) => void;
   disabled?: boolean;
   count?: number;
+  // When provided, replaces the default ", N items" sr-only companion (the
+  // visible numeric badge is unchanged). Single consumer = Hotspots; not worth
+  // a function-valued prop on the generic Tab.
+  srCountSuffix?: string;
 }
 
-function Tab({ id, label, active, onSelect, disabled, count }: TabProps) {
+function Tab({ id, label, active, onSelect, disabled, count, srCountSuffix }: TabProps) {
   // D11/D103 — the handoff (design/handoff/pr-detail.jsx:124 + :134) applies
   // `.pr-tab-count-warn` drafts-only, never on files. The base `.pr-tab-count`
   // class is shared. Conditional-render of the span (count > 0) already covers
@@ -82,8 +104,11 @@ function Tab({ id, label, active, onSelect, disabled, count }: TabProps) {
             {count}
           </span>
           {/* SR companion so the tab announces "Files, 3 items" rather than
-              "Files 3". Spec § 6.1 Pass 2 ("badge labels in words"). */}
-          <span className="sr-only">{`, ${count} ${count === 1 ? 'item' : 'items'}`}</span>
+              "Files 3". Spec § 6.1 Pass 2 ("badge labels in words"). The
+              Hotspots tab overrides the wording via srCountSuffix. */}
+          <span className="sr-only">
+            {srCountSuffix ?? `, ${count} ${count === 1 ? 'item' : 'items'}`}
+          </span>
         </>
       )}
     </button>

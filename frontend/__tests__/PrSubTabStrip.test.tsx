@@ -5,11 +5,43 @@ import { PrSubTabStrip } from '../src/components/PrDetail/PrSubTabStrip';
 import styles from '../src/components/PrDetail/PrSubTabStrip.module.css';
 
 describe('PrSubTabStrip', () => {
-  it('renders three tabs: Overview, Files, Drafts', () => {
+  it('renders four tabs: Overview, Files, Hotspots, Drafts', () => {
     render(<PrSubTabStrip activeTab="overview" onTabChange={vi.fn()} />);
     expect(screen.getByRole('tab', { name: /overview/i })).toBeInTheDocument();
     expect(screen.getByRole('tab', { name: /files/i })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: /hotspots/i })).toBeInTheDocument();
     expect(screen.getByRole('tab', { name: /drafts/i })).toBeInTheDocument();
+  });
+
+  it('marks the Hotspots tab active with aria-selected when it is the active tab', () => {
+    render(<PrSubTabStrip activeTab="hotspots" onTabChange={vi.fn()} />);
+    expect(screen.getByRole('tab', { name: /hotspots/i })).toHaveAttribute('aria-selected', 'true');
+  });
+
+  it('clicking Hotspots calls onTabChange("hotspots")', async () => {
+    const onTabChange = vi.fn();
+    render(<PrSubTabStrip activeTab="overview" onTabChange={onTabChange} />);
+    await userEvent.click(screen.getByRole('tab', { name: /hotspots/i }));
+    expect(onTabChange).toHaveBeenCalledWith('hotspots');
+  });
+
+  it('renders the hotspots count and announces "N files need attention" when > 0', () => {
+    render(<PrSubTabStrip activeTab="overview" onTabChange={vi.fn()} hotspotsCount={3} />);
+    const hotspots = screen.getByRole('tab', { name: /hotspots/i });
+    expect(hotspots.querySelector('[data-testid="pr-tab-count"]')?.textContent).toBe('3');
+    expect(hotspots.textContent).toMatch(/3 files need attention/i);
+  });
+
+  it('uses singular "file needs attention" when hotspotsCount is 1', () => {
+    render(<PrSubTabStrip activeTab="overview" onTabChange={vi.fn()} hotspotsCount={1} />);
+    const hotspots = screen.getByRole('tab', { name: /hotspots/i });
+    expect(hotspots.textContent).toMatch(/1 file needs attention/i);
+  });
+
+  it('does NOT render a count next to Hotspots when hotspotsCount is undefined', () => {
+    render(<PrSubTabStrip activeTab="overview" onTabChange={vi.fn()} />);
+    const hotspots = screen.getByRole('tab', { name: /hotspots/i });
+    expect(hotspots.querySelector('[data-testid="pr-tab-count"]')).toBeNull();
   });
 
   it('renders tablist as a group', () => {

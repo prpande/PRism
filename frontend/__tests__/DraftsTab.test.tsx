@@ -78,9 +78,7 @@ interface RenderOptions {
 // FILES/OVERVIEW remain harmless (no longer navigated to) and the MemoryRouter
 // stays because nested DraftsTab children (composers/modals) may use router
 // hooks.
-function makeValue(
-  onSelectSubTab: (tab: 'overview' | 'files' | 'drafts') => void,
-): PrDetailContextValue {
+function makeValue(onSelectSubTab: PrDetailContextValue['onSelectSubTab']): PrDetailContextValue {
   return {
     prRef: ref,
     prDetail: {} as PrDetailContextValue['prDetail'],
@@ -89,6 +87,10 @@ function makeValue(
     subscribed: false,
     baseShaChanged: false,
     onSelectSubTab,
+    fileFocus: { status: 'no-changes', entries: [], retry: vi.fn() },
+    pendingFilePath: null,
+    requestFileView: vi.fn(),
+    clearPendingFilePath: vi.fn(),
   };
 }
 

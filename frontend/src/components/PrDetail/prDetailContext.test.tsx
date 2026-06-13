@@ -21,6 +21,10 @@ test('provides prRef + session to children', () => {
     subscribed: false,
     baseShaChanged: false,
     onSelectSubTab: vi.fn(),
+    fileFocus: { status: 'no-changes', entries: [], retry: vi.fn() },
+    pendingFilePath: null,
+    requestFileView: vi.fn(),
+    clearPendingFilePath: vi.fn(),
   } satisfies PrDetailContextValue;
   render(
     <PrDetailContextProvider value={value}>

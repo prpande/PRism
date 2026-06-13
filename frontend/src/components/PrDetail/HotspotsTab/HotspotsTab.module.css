@@ -1,0 +1,96 @@
+.hotspots {
+  padding: var(--s-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-4);
+}
+.group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+}
+.groupHeading {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--text-2);
+  margin: 0;
+}
+.rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1);
+}
+.row {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  width: 100%;
+  text-align: left;
+  background: var(--surface-2);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-2);
+  padding: var(--s-2) var(--s-3);
+  cursor: pointer;
+}
+.row:hover {
+  background: var(--surface-3);
+}
+.row:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.rowPath {
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  color: var(--text-1);
+}
+.rowRationale {
+  font-size: var(--text-xs);
+  color: var(--text-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+.message,
+.messagePositive,
+.messageError {
+  padding: var(--s-4);
+  font-size: var(--text-sm);
+  color: var(--text-2);
+}
+.messagePositive {
+  color: var(--success-fg);
+}
+.messageError {
+  color: var(--danger-fg);
+}
+.retryButton {
+  margin-left: var(--s-2);
+  background: none;
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-2);
+  padding: 2px var(--s-2);
+  font-size: var(--text-xs);
+  color: var(--text-1);
+  cursor: pointer;
+}
+.retryButton:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.skeletonRow {
+  height: 44px;
+  border-radius: var(--radius-2);
+  background: var(--surface-2);
+  animation: pulse 1.2s ease-in-out infinite;
+}
+@keyframes pulse {
+  50% {
+    opacity: 0.5;
+  }
+}

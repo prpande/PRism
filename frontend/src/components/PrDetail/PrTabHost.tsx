@@ -27,7 +27,14 @@ export function parsePrRoute(
   const valid = /^\d+$/.test(seg3) && Number(seg3) > 0;
   const number = Number(seg3);
   const seg = m[4];
-  const subTab: PrTabId = seg === 'files' ? 'files' : seg === 'drafts' ? 'drafts' : 'overview';
+  const subTab: PrTabId =
+    seg === 'files'
+      ? 'files'
+      : seg === 'hotspots'
+        ? 'hotspots'
+        : seg === 'drafts'
+          ? 'drafts'
+          : 'overview';
   return { ref: { owner: m[1], repo: m[2], number }, valid, subTab };
 }
 

@@ -9,6 +9,7 @@ import { CrossTabPresenceBanner } from './CrossTabPresenceBanner';
 import { UnresolvedPanel } from './Reconciliation/UnresolvedPanel';
 import { OverviewTab } from './OverviewTab/OverviewTab';
 import { FilesTab } from './FilesTab/FilesTab';
+import { HotspotsTab } from './HotspotsTab/HotspotsTab';
 import { DraftsTabRoute } from './DraftsTab/DraftsTabRoute';
 import { PrDetailSkeleton } from './PrDetailSkeleton';
 import type { PrTabId } from './PrSubTabStrip';
@@ -17,6 +18,9 @@ import { useActivePrUpdates } from '../../hooks/useActivePrUpdates';
 import { usePrDetailRefresh } from '../../hooks/usePrDetailRefresh';
 import { useToast } from '../Toast/useToast';
 import { useDraftSession } from '../../hooks/useDraftSession';
+import { useCapabilities } from '../../hooks/useCapabilities';
+import { usePreferences } from '../../hooks/usePreferences';
+import { useFileFocusResult } from '../../hooks/useFileFocusResult';
 import { useStateChangedSubscriber } from '../../hooks/useStateChangedSubscriber';
 import { useRootCommentPostedSubscriber } from '../../hooks/useRootCommentPostedSubscriber';
 import { useSingleCommentPostedSubscriber } from '../../hooks/useSingleCommentPostedSubscriber';
@@ -60,6 +64,19 @@ export function PrDetailView({
 
   const { data, isLoading, error, reload } = usePrDetail(prRef);
   const updates = useActivePrUpdates(prRef);
+
+  // The SINGLE shared file-focus fetch (spec §8): owned here, consumed by both
+  // the Files-tree dots and the HotspotsTab via prDetailContext — no duplicate
+  // GET. Enabled when the fileFocus capability is on (Preview OR Live); the Live
+  // fetch is additionally gated on `subscribed` (D111 204 race).
+  const { capabilities } = useCapabilities();
+  const { preferences } = usePreferences();
+  // Preview and Live both set capabilities.fileFocus=true, so the capability flag
+  // can't tell them apart — read the mode to gate the numeric badge (Preview's
+  // placeholder data must not surface a count).
+  const isLive = preferences?.ui?.aiMode === 'live';
+  const fileFocusEnabled = capabilities?.fileFocus ?? false;
+  const fileFocus = useFileFocusResult(prRef, fileFocusEnabled, updates.subscribed);
 
   // #344 — proactive manual Refresh. Force-re-reads the PR from GitHub (bypasses
   // the head-SHA-keyed snapshot cache), then fires usePrDetail.reload() to re-GET
@@ -189,6 +206,21 @@ export function PrDetailView({
     setSubTab(tab);
   }, []);
 
+  // Deep-link navigation intent (spec §8). HotspotsTab calls requestFileView(path):
+  // switch to Files and stash the path; FilesTab consumes pendingFilePath (resets
+  // the diff range, selects the file, focuses + announces), then clears it. Focus
+  // moves ONCE — when FilesTab applies the path — not on the tab switch here, to
+  // avoid a double screen-reader announcement (tab button, then diff region).
+  const [pendingFilePath, setPendingFilePath] = useState<string | null>(null);
+  const requestFileView = useCallback(
+    (path: string) => {
+      selectSubTab('files');
+      setPendingFilePath(path);
+    },
+    [selectSubTab],
+  );
+  const clearPendingFilePath = useCallback(() => setPendingFilePath(null), []);
+
   // Ordering dependency: the marker effect must precede useTabScrollMemory so
   // [data-app-scroll] is a scroll container before scrollTop is restored (in
   // browser mode it's only scrollable when data-files-active is set; writing
@@ -295,6 +327,10 @@ export function PrDetailView({
       subscribed: updates.subscribed,
       baseShaChanged: updates.baseShaChanged,
       onSelectSubTab: selectSubTab,
+      fileFocus,
+      pendingFilePath,
+      requestFileView,
+      clearPendingFilePath,
     }),
     [
       prRef,
@@ -304,6 +340,10 @@ export function PrDetailView({
       updates.subscribed,
       updates.baseShaChanged,
       selectSubTab,
+      fileFocus,
+      pendingFilePath,
+      requestFileView,
+      clearPendingFilePath,
     ],
   );
 
@@ -345,6 +385,14 @@ export function PrDetailView({
         activeTab={subTab}
         onTabChange={selectSubTab}
         draftsCount={draftsCount}
+        hotspotsCount={
+          // Only a real (Live) ranking with signal gets a numeric badge. Preview
+          // (placeholder data) + loading/empty/error/fallback/no-changes/
+          // not-subscribed all suppress the count.
+          isLive && fileFocus.status === 'ok'
+            ? fileFocus.entries.filter((e) => e.level === 'high' || e.level === 'medium').length
+            : undefined
+        }
         session={draftSession.session}
         headShaDrift={updates.headShaChanged}
         currentHeadSha={data?.pr.headSha}
@@ -445,6 +493,11 @@ export function PrDetailView({
           {visited.current.has('files') && (
             <div data-subtab="files" hidden={subTab !== 'files'}>
               <FilesTab />
+            </div>
+          )}
+          {visited.current.has('hotspots') && (
+            <div data-subtab="hotspots" hidden={subTab !== 'hotspots'}>
+              <HotspotsTab />
             </div>
           )}
           {visited.current.has('drafts') && (
