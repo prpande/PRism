@@ -44,6 +44,13 @@ export function Select<T extends string | number>({
 
   // Empty options intentionally renders the trigger disabled/inert — a consumer passing an empty list gets a non-interactive control by design.
   const isDisabled = disabled || options.length === 0;
+
+  if (import.meta.env.DEV && !id && !ariaLabel) {
+    console.warn(
+      'Select: provide either `id` (with a <label htmlFor>) or `aria-label` for an accessible name.',
+    );
+  }
+
   const selectedIndex = options.findIndex((o) => o.value === value);
   const selectedLabel = selectedIndex >= 0 ? options[selectedIndex].label : '';
 

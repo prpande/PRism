@@ -153,3 +153,42 @@ describe('Select — type-ahead', () => {
     expect(screen.getByRole('option', { name: 'Recently updated' })).toHaveClass(/optionActive/);
   });
 });
+
+describe('Select — contracts', () => {
+  it('renders a disabled trigger when `disabled` is set; cannot open', async () => {
+    render(<Select aria-label="Sort" options={OPTS} value="updated" onChange={() => {}} disabled />);
+    const trigger = screen.getByRole('combobox', { name: 'Sort' });
+    expect(trigger).toBeDisabled();
+    await userEvent.click(trigger);
+    expect(screen.queryByRole('listbox')).toBeNull();
+  });
+
+  it('disables the trigger when options is empty', () => {
+    render(<Select aria-label="Sort" options={[]} value={'x' as string} onChange={() => {}} />);
+    expect(screen.getByRole('combobox', { name: 'Sort' })).toBeDisabled();
+  });
+
+  it('a single-option list opens normally', async () => {
+    render(
+      <Select aria-label="Sort" options={[{ value: 'updated', label: 'Recently updated' }]} value="updated" onChange={() => {}} />,
+    );
+    await userEvent.click(screen.getByRole('combobox'));
+    expect(screen.getAllByRole('option')).toHaveLength(1);
+  });
+
+  it('re-selecting the current value closes the list but does not fire onChange', async () => {
+    const onChange = vi.fn();
+    render(<Select aria-label="Sort" options={OPTS} value="updated" onChange={onChange} />);
+    await userEvent.click(screen.getByRole('combobox'));
+    await userEvent.click(screen.getByRole('option', { name: 'Recently updated' }));
+    expect(onChange).not.toHaveBeenCalled();
+    expect(screen.queryByRole('listbox')).toBeNull();
+  });
+
+  it('warns in dev when neither id nor aria-label is provided', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    render(<Select options={OPTS} value="updated" onChange={() => {}} />);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('Select'));
+    warn.mockRestore();
+  });
+});
