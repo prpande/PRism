@@ -86,6 +86,8 @@ function makeValue(
     prDetail: {} as PrDetailContextValue['prDetail'],
     draftSession: {} as PrDetailContextValue['draftSession'],
     readOnly: false,
+    subscribed: true,
+    baseShaChanged: false,
     onSelectSubTab,
   };
 }

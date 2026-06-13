@@ -111,7 +111,6 @@ export function writeKey(
   };
 }
 
-
 export interface PreferencesContextValue {
   preferences: PreferencesResponse | null;
   error: Error | null;

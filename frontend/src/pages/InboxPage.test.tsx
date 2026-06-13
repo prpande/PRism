@@ -85,7 +85,9 @@ function setHooks(
       ui: {
         theme: 'system',
         accent: 'indigo',
-        aiPreview: opts.aiPreview ?? false,
+        aiMode: 'off',
+        density: 'comfortable',
+        contentScale: 'm',
       },
       inbox: {
         sections: {
@@ -95,10 +97,11 @@ function setHooks(
           mentioned: true,
           'recently-closed': true,
         },
+        defaultSort: 'updated',
         sectionOrder:
           opts.sectionOrder ?? 'review-requested,awaiting-author,authored-by-me,mentioned',
-        // #283 the rail reads this dedicated flag, not the AI gate.
         showActivityRail: opts.showActivityRail ?? false,
+        groupByRepo: true,
       },
       github: {
         host: 'https://github.com',
@@ -383,7 +386,7 @@ describe('InboxPage — useAiGate migrations', () => {
     });
     vi.mocked(usePreferences).mockReturnValue({
       preferences: {
-        ui: { theme: 'system', accent: 'indigo', aiPreview: false, density: 'comfortable' },
+        ui: { theme: 'system', accent: 'indigo', aiMode: 'off', density: 'comfortable', contentScale: 'm' },
         inbox: {
           sections: {
             'review-requested': true,
@@ -395,6 +398,7 @@ describe('InboxPage — useAiGate migrations', () => {
           defaultSort: 'updated',
           sectionOrder: 'review-requested,awaiting-author,authored-by-me,mentioned',
           showActivityRail: false,
+          groupByRepo: true,
         },
         github: {
           host: 'https://github.com',
@@ -413,7 +417,7 @@ describe('InboxPage — useAiGate migrations', () => {
   function setShowActivityRail(showActivityRail: boolean) {
     vi.mocked(usePreferences).mockReturnValue({
       preferences: {
-        ui: { theme: 'system', accent: 'indigo', aiPreview: false, density: 'comfortable' },
+        ui: { theme: 'system', accent: 'indigo', aiMode: 'off', density: 'comfortable', contentScale: 'm' },
         inbox: {
           sections: {
             'review-requested': true,
@@ -425,6 +429,7 @@ describe('InboxPage — useAiGate migrations', () => {
           defaultSort: 'updated',
           sectionOrder: 'review-requested,awaiting-author,authored-by-me,mentioned',
           showActivityRail,
+          groupByRepo: true,
         },
         github: {
           host: 'https://github.com',

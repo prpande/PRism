@@ -68,9 +68,7 @@ function setHooks(
     reload: vi.fn().mockResolvedValue(undefined),
   });
   vi.mocked(useInboxUpdates).mockReturnValue({
-    hasUpdate: opts.hasUpdate ?? false,
-    summary: opts.hasUpdate ? '3 new updates' : '',
-    dismiss: vi.fn(),
+    announce: '',
   });
   // InboxPage now uses useAiGate for both gates.
   // useCapabilities / usePreferences are no longer called directly by InboxPage
@@ -347,9 +345,7 @@ describe('InboxPage — useAiGate migrations', () => {
       reload: vi.fn().mockResolvedValue(undefined),
     });
     vi.mocked(useInboxUpdates).mockReturnValue({
-      hasUpdate: false,
-      summary: '',
-      dismiss: vi.fn(),
+      announce: '',
     });
     // These mocks are only needed if InboxPage still calls them directly.
     // After migration they become no-ops, but the vi.mock() hoisting keeps them registered.
