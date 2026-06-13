@@ -38,6 +38,7 @@ export function Select<T extends string | number>({
   const [activeIndex, setActiveIndex] = useState(-1);
   const rootRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
+  const typeahead = useRef({ buffer: '', timer: 0 });
   const instanceId = useId();
   const listboxId = `${instanceId}-listbox`;
 
@@ -113,6 +114,16 @@ export function Select<T extends string | number>({
         // so a keyboard user can Tab past an open Select in the Settings form.
         close(false);
         break;
+      default:
+        if (e.key.length === 1 && !e.metaKey && !e.ctrlKey && !e.altKey) {
+          e.preventDefault();
+          const ta = typeahead.current;
+          window.clearTimeout(ta.timer);
+          ta.timer = window.setTimeout(() => (ta.buffer = ''), 500);
+          ta.buffer += e.key.toLowerCase();
+          const match = matchTypeahead(options, ta.buffer, activeIndex);
+          if (match >= 0) setActiveIndex(match);
+        }
     }
   };
 
@@ -215,4 +226,26 @@ function nextEnabled<T extends string | number>(
     i = candidate;
     if (!options[i].disabled) return i;
   }
+}
+
+// Type-ahead match. Single-repeated-character buffer (e.g. "a", "aa") cycles
+// among enabled options whose label starts with that character, advancing past
+// `activeIndex`; any other buffer jumps to the first enabled prefix match.
+// Returns -1 when nothing matches (caller keeps the current active option).
+function matchTypeahead<T extends string | number>(
+  options: SelectOption<T>[],
+  buffer: string,
+  activeIndex: number,
+): number {
+  const enabled = options
+    .map((o, i) => ({ label: o.label.toLowerCase(), i, disabled: o.disabled }))
+    .filter((x) => !x.disabled);
+  const allSame = [...buffer].every((c) => c === buffer[0]);
+  if (allSame) {
+    const matches = enabled.filter((x) => x.label.startsWith(buffer[0]));
+    if (matches.length === 0) return -1;
+    return (matches.find((m) => m.i > activeIndex) ?? matches[0]).i;
+  }
+  const match = enabled.find((x) => x.label.startsWith(buffer));
+  return match ? match.i : -1;
 }

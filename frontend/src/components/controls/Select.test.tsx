@@ -120,3 +120,36 @@ describe('Select — keyboard', () => {
     expect(screen.getByRole('option', { name: 'Iter 3' })).toHaveClass(/optionActive/);
   });
 });
+
+describe('Select — type-ahead', () => {
+  it('jumps to the first option matching the accumulated prefix (case-insensitive)', async () => {
+    render(<Select aria-label="Sort" options={OPTS} value="updated" onChange={() => {}} />);
+    screen.getByRole('combobox').focus();
+    await userEvent.keyboard('{ArrowDown}'); // open
+    await userEvent.keyboard('la'); // "Largest diff"
+    expect(screen.getByRole('option', { name: 'Largest diff' })).toHaveClass(/optionActive/);
+  });
+
+  it('cycles among matches when the same character repeats', async () => {
+    const opts = [
+      { value: 'a', label: 'Apple' },
+      { value: 'b', label: 'Apricot' },
+      { value: 'c', label: 'Cherry' },
+    ];
+    render(<Select aria-label="Fruit" options={opts} value="a" onChange={() => {}} />);
+    screen.getByRole('combobox').focus();
+    await userEvent.keyboard('{ArrowDown}'); // open, active = Apple
+    await userEvent.keyboard('a'); // next A-match after Apple -> Apricot
+    expect(screen.getByRole('option', { name: 'Apricot' })).toHaveClass(/optionActive/);
+    await userEvent.keyboard('a'); // cycle back to Apple
+    expect(screen.getByRole('option', { name: 'Apple' })).toHaveClass(/optionActive/);
+  });
+
+  it('leaves the active option unchanged when nothing matches', async () => {
+    render(<Select aria-label="Sort" options={OPTS} value="updated" onChange={() => {}} />);
+    screen.getByRole('combobox').focus();
+    await userEvent.keyboard('{ArrowDown}'); // active = Recently updated
+    await userEvent.keyboard('zzz');
+    expect(screen.getByRole('option', { name: 'Recently updated' })).toHaveClass(/optionActive/);
+  });
+});
