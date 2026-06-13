@@ -56,6 +56,31 @@ describe('useAiSummary', () => {
     expect(result.current.isStale).toBe(true);
   });
 
+  it('keeps staleness when a base change arrives mid-fetch (baseShaChangedRef guard)', async () => {
+    // The base change lands WHILE the initial GET is in-flight. When the fetch resolves, the
+    // .then() must see baseShaChangedRef.current === true and skip setStaleCleared(true), so the
+    // freshly-fetched summary is still flagged stale (it was already superseded on the server).
+    let resolveFetch!: (r: { kind: 'ok'; summary: { body: string; category: string } }) => void;
+    const pending = new Promise<{ kind: 'ok'; summary: { body: string; category: string } }>(
+      (res) => {
+        resolveFetch = res;
+      },
+    );
+    vi.spyOn(api, 'getAiSummaryResult').mockReturnValue(pending);
+    const { result, rerender } = renderHook(
+      ({ baseChanged }) => useAiSummary(pr, true, true, baseChanged),
+      { initialProps: { baseChanged: false } },
+    );
+    // Base change arrives before the in-flight fetch resolves.
+    rerender({ baseChanged: true });
+    await act(async () => {
+      resolveFetch({ kind: 'ok', summary: { body: 'b', category: 'fix' } });
+      await pending;
+    });
+    expect(result.current.summary).toEqual({ body: 'b', category: 'fix' });
+    expect(result.current.isStale).toBe(true); // mid-fetch base change must not be cleared
+  });
+
   it('does NOT auto-refetch when baseShaChanged flips (token discipline)', async () => {
     const spy = vi
       .spyOn(api, 'getAiSummaryResult')
