@@ -111,9 +111,12 @@ internal sealed class GitHubAuthValidator : IReviewAuth
     {
         if (ex.InnerException is SocketException se)
         {
+            // Read se.Message (the inner SocketException), not ex.Message (the HttpRequestException
+            // wrapper) — the "Name or service not known" / "No such host" strings originate on the
+            // inner exception; reading the wrapper misses them where the messages differ (#321 PR2).
             return se.SocketErrorCode == SocketError.HostNotFound
-                || ex.Message.Contains("Name or service not known", StringComparison.OrdinalIgnoreCase)
-                || ex.Message.Contains("No such host", StringComparison.OrdinalIgnoreCase);
+                || se.Message.Contains("Name or service not known", StringComparison.OrdinalIgnoreCase)
+                || se.Message.Contains("No such host", StringComparison.OrdinalIgnoreCase);
         }
         return false;
     }
