@@ -91,6 +91,13 @@ internal static class GitHubHttp
                 resp.Headers.RetryAfter?.Delta);
     }
 
+    // Truncates HTTP error bodies for log/exception messages. Lives here next to
+    // ReadErrorBodyBestEffortAsync — both the GraphQL transport error path (GitHubGraphQL)
+    // and the REST comment-POST error paths (GitHubReviewSubmitter) reach it without a new
+    // dependency. Appends an ellipsis when clipped. (Moved from GitHubReviewService in PR2.)
+    internal static string Truncate(string s, int max)
+        => string.IsNullOrEmpty(s) ? string.Empty : (s.Length <= max ? s : string.Concat(s.AsSpan(0, max), "…"));
+
     // The ONE audited CA1031-suppressed best-effort error-body read. Returns the body,
     // or "" on a non-cancellation read failure. OperationCanceledException propagates
     // (caller shutdown), matching the existing convention.

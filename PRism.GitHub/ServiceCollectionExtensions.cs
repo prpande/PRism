@@ -17,9 +17,9 @@ public static class ServiceCollectionExtensions
     /// <summary>
     /// Registers PRism's GitHub adapter: the named <c>github</c> <see cref="HttpClient"/>
     /// (configured against <c>github.host</c>), <see cref="GitHubAuthValidator"/> bound to
-    /// <see cref="IReviewAuth"/>, <see cref="GitHubReviewService"/> bound to the
-    /// remaining three capability interfaces (<see cref="IPrDiscovery"/>,
-    /// <see cref="IPrReader"/>, <see cref="IReviewSubmitter"/> — one shared singleton instance),
+    /// <see cref="IReviewAuth"/>, <see cref="GitHubReviewService"/> bound to the Reader+Discovery
+    /// pairing (<see cref="IPrDiscovery"/>, <see cref="IPrReader"/> — one shared singleton),
+    /// <see cref="GitHubReviewSubmitter"/> bound to <see cref="IReviewSubmitter"/> (#321 PR2 split),
     /// and the four inbox-pipeline implementations under <c>PRism.GitHub/Inbox/</c>
     /// (<see cref="ISectionQueryRunner"/>, <see cref="IPrEnricher"/>,
     /// <see cref="IAwaitingAuthorFilter"/>, <see cref="ICiFailingDetector"/>).
@@ -47,10 +47,10 @@ public static class ServiceCollectionExtensions
         })
         .AddHttpMessageHandler<GitHubAuthHealthHandler>();
 
-        // GitHubReviewService implements three capability interfaces (ADR-S5-1; IReviewAuth was
-        // split out to GitHubAuthValidator in #321 PR1). Register the concrete type once and alias
-        // those three interfaces to that shared singleton so one instance backs discovery, read,
-        // and submit.
+        // GitHubReviewService is the Reader+Discovery pairing (ADR-S5-1; IReviewAuth was split out
+        // to GitHubAuthValidator in #321 PR1, IReviewSubmitter to GitHubReviewSubmitter in #321 PR2).
+        // Register the concrete type once and alias IPrDiscovery + IPrReader to that shared singleton
+        // so one instance backs both discovery and read.
         services.AddSingleton<GitHubReviewService>(sp =>
         {
             var config = sp.GetRequiredService<IConfigStore>();
@@ -76,7 +76,20 @@ public static class ServiceCollectionExtensions
         });
         services.AddSingleton<IPrDiscovery>(sp => sp.GetRequiredService<GitHubReviewService>());
         services.AddSingleton<IPrReader>(sp => sp.GetRequiredService<GitHubReviewService>());
-        services.AddSingleton<IReviewSubmitter>(sp => sp.GetRequiredService<GitHubReviewService>());
+        // IReviewSubmitter is backed by its own GitHubReviewSubmitter (split out of
+        // GitHubReviewService in #321 PR2) — single-capability class. Same late-bound host + token
+        // closure as the reader registration; the submit path shares no mutable state with read.
+        services.AddSingleton<IReviewSubmitter>(sp =>
+        {
+            var config = sp.GetRequiredService<IConfigStore>();
+            var tokens = sp.GetRequiredService<ITokenStore>();
+            var factory = sp.GetRequiredService<IHttpClientFactory>();
+            return new GitHubReviewSubmitter(
+                factory,
+                () => tokens.ReadAsync(CancellationToken.None),
+                config.Current.Github.Host,
+                sp.GetRequiredService<ILogger<GitHubReviewSubmitter>>());
+        });
 
         services.AddSingleton<ISectionQueryRunner>(sp =>
         {
