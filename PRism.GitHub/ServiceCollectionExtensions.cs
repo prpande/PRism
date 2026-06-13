@@ -16,8 +16,9 @@ public static class ServiceCollectionExtensions
 {
     /// <summary>
     /// Registers PRism's GitHub adapter: the named <c>github</c> <see cref="HttpClient"/>
-    /// (configured against <c>github.host</c>), <see cref="GitHubReviewService"/> bound to the
-    /// four capability interfaces (<see cref="IReviewAuth"/>, <see cref="IPrDiscovery"/>,
+    /// (configured against <c>github.host</c>), <see cref="GitHubAuthValidator"/> bound to
+    /// <see cref="IReviewAuth"/>, <see cref="GitHubReviewService"/> bound to the
+    /// remaining three capability interfaces (<see cref="IPrDiscovery"/>,
     /// <see cref="IPrReader"/>, <see cref="IReviewSubmitter"/> — one shared singleton instance),
     /// and the four inbox-pipeline implementations under <c>PRism.GitHub/Inbox/</c>
     /// (<see cref="ISectionQueryRunner"/>, <see cref="IPrEnricher"/>,
@@ -46,9 +47,10 @@ public static class ServiceCollectionExtensions
         })
         .AddHttpMessageHandler<GitHubAuthHealthHandler>();
 
-        // GitHubReviewService implements all four capability interfaces (ADR-S5-1). Register
-        // the concrete type once and bind each interface to that shared singleton so a single
-        // instance backs auth, discovery, read, and submit.
+        // GitHubReviewService implements three capability interfaces (ADR-S5-1; IReviewAuth was
+        // split out to GitHubAuthValidator in #321 PR1). Register the concrete type once and alias
+        // those three interfaces to that shared singleton so one instance backs discovery, read,
+        // and submit.
         services.AddSingleton<GitHubReviewService>(sp =>
         {
             var config = sp.GetRequiredService<IConfigStore>();
@@ -60,7 +62,18 @@ public static class ServiceCollectionExtensions
                 config.Current.Github.Host,
                 sp.GetRequiredService<ILogger<GitHubReviewService>>());
         });
-        services.AddSingleton<IReviewAuth>(sp => sp.GetRequiredService<GitHubReviewService>());
+        // IReviewAuth is backed by its own GitHubAuthValidator (split out of GitHubReviewService
+        // in #321 PR1) — the auth/scope path shares no state with the read/submit paths.
+        services.AddSingleton<IReviewAuth>(sp =>
+        {
+            var config = sp.GetRequiredService<IConfigStore>();
+            var tokens = sp.GetRequiredService<ITokenStore>();
+            var factory = sp.GetRequiredService<IHttpClientFactory>();
+            return new GitHubAuthValidator(
+                factory,
+                () => tokens.ReadAsync(CancellationToken.None),
+                config.Current.Github.Host);
+        });
         services.AddSingleton<IPrDiscovery>(sp => sp.GetRequiredService<GitHubReviewService>());
         services.AddSingleton<IPrReader>(sp => sp.GetRequiredService<GitHubReviewService>());
         services.AddSingleton<IReviewSubmitter>(sp => sp.GetRequiredService<GitHubReviewService>());
