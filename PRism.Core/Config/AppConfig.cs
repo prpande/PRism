@@ -47,11 +47,14 @@ public sealed record InboxConfig(
     string SectionOrder = "review-requested,awaiting-author,authored-by-me,mentioned",
     // #283 the activity rail (a non-AI inbox panel) was previously gated on the
     // AI-preview toggle (useAiGate('inboxRanking')); #283 decoupled it onto this
-    // dedicated flag, default OFF. #137 then wired it to the real /api/activity
-    // endpoint and surfaced it as a Settings toggle (InboxPane). A trailing-defaulted
-    // param, so the positional `new InboxConfig(true, …, 14)` default construction
-    // stays valid.
-    bool ShowActivityRail = false,
+    // dedicated flag. #137 then wired it to the real /api/activity endpoint and
+    // surfaced it as a Settings toggle (InboxPane). #439 flipped the default ON so
+    // the now-real rail is discoverable out of the box (same shape as #283's AiPreview
+    // flip). AppConfig.Default constructs `new InboxConfig(true, …, 14)` without
+    // passing this arg, so it inherits this constructor default — fresh installs get
+    // the rail on; a config that explicitly persisted `show-activity-rail` keeps its
+    // stored value. A trailing-defaulted param, so that positional construction stays valid.
+    bool ShowActivityRail = true,
     // #219 user toggle to switch the Inbox between grouped-by-repo (default) and flat
     // rendering. A pure frontend-render preference — it does NOT reshape the backend
     // feed. A trailing-defaulted param so the positional

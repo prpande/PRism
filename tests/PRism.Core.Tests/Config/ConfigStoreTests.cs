@@ -19,7 +19,7 @@ public class ConfigStoreTests
         store.Current.Ui.Theme.Should().Be("system");
         store.Current.Ui.Accent.Should().Be("indigo");
         store.Current.Ui.AiPreview.Should().BeTrue();   // #283 AI preview ON by default for fresh installs
-        store.Current.Inbox.ShowActivityRail.Should().BeFalse(); // #283 rail decoupled from AI, default OFF
+        store.Current.Inbox.ShowActivityRail.Should().BeTrue(); // #439 rail defaults ON for fresh installs
         store.Current.Github.Host.Should().Be("https://github.com");
         File.Exists(Path.Combine(dir.Path, "config.json")).Should().BeTrue();
     }
@@ -222,6 +222,43 @@ public class ConfigStoreTests
         store.Current.Ui.AiPreview.Should().BeFalse();       // missing key → default(bool), not new default-on
     }
 
+    // #439: a config whose `inbox` section is present (with `sections`, so ConfigStore
+    // keeps this parsed Inbox rather than backfilling the default) but lacks the
+    // `show-activity-rail` key. This is the preservation boundary the #283 AiPreview
+    // analogue documents above — but ShowActivityRail differs mechanically: its default
+    // lives ON the constructor parameter (`bool ShowActivityRail = true` since #439),
+    // whereas UiConfig.AiPreview is a required positional with no constructor default.
+    // This test pins STJ's actual behaviour for the missing key against that constructor
+    // default, so a future change can't silently shift whether an older-but-inbox-bearing
+    // config gets the rail.
+    [Fact]
+    public async Task LoadAsync_with_inbox_present_but_showActivityRail_key_absent()
+    {
+        using var dir = new TempDataDir();
+        var json = """
+            {
+              "inbox": {
+                "deduplicate": true,
+                "show-hidden-scope-footer": true,
+                "sections": {
+                  "review-requested": true,
+                  "awaiting-author": true,
+                  "authored-by-me": true,
+                  "mentioned": true,
+                  "recently-closed": true
+                }
+              }
+            }
+            """;
+        await File.WriteAllTextAsync(Path.Combine(dir.Path, "config.json"), json);
+
+        using var store = new ConfigStore(dir.Path);
+        await store.InitAsync(CancellationToken.None);
+
+        store.Current.Inbox.Deduplicate.Should().BeTrue();      // inbox section honored (not backfilled)
+        store.Current.Inbox.ShowActivityRail.Should().BeTrue(); // missing key → constructor default (#439, now ON)
+    }
+
     [Fact]
     public void AppConfig_roundtrips_expanded_inbox_config_via_json()
     {
@@ -236,6 +273,6 @@ public class ConfigStoreTests
         parsed.Inbox.Sections.AwaitingAuthor.Should().BeTrue();
         parsed.Inbox.Sections.AuthoredByMe.Should().BeTrue();
         parsed.Inbox.Sections.Mentioned.Should().BeTrue();
-        parsed.Inbox.ShowActivityRail.Should().BeFalse(); // #283 survives the JSON round-trip, default off
+        parsed.Inbox.ShowActivityRail.Should().BeTrue(); // #439 default ON survives the JSON round-trip
     }
 }

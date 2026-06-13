@@ -207,11 +207,11 @@ test('URL paste with host mismatch shows inline error', async ({ page }) => {
 test('activity rail is gated by inbox.showActivityRail, independent of AI preview', async ({
   page,
 }) => {
-  // #283: the activity rail is a fabricated, non-AI mockup decoupled from the AI-preview
-  // toggle onto inbox.showActivityRail (config-only, default false). This test proves the
-  // decouple: with AI preview ON the whole time, the rail stays hidden while the flag is
-  // false and only appears once the flag is flipped (simulating a config.json edit — there
-  // is deliberately no Settings UI for it).
+  // #283: the activity rail (real /api/activity data since #137) is decoupled from the
+  // AI-preview toggle onto inbox.showActivityRail. The product default is ON (#439), but
+  // this test starts from an explicit OFF and proves the decouple: with AI preview ON the
+  // whole time, the rail stays hidden while the flag is false and only appears once the
+  // flag is flipped (the InboxPane Settings toggle, or a config.json edit).
   let showActivityRail = false;
 
   // setupBaseRoutes wires auth/state + events (constant) + an all-off
