@@ -4,11 +4,11 @@
 
 ## Problem
 
-`inbox.showActivityRail` defaults to **false**, so the activity rail — which since
-#137 renders **real** GitHub activity (`received_events` + notifications + watching
-via `useActivity()`) — is hidden out of the box. Most users never discover a working,
-useful surface. Defaulting it ON puts it in front of early testers, who can still turn
-it off in Settings. Same shape as #283 (AI preview defaulted on).
+`inbox.showActivityRail` previously defaulted to **false** (prior to #439), so the activity
+rail — which since #137 renders **real** GitHub activity (`received_events` + notifications +
+watching via `useActivity()`) — was hidden out of the box. Most users never discovered a
+working, useful surface. Defaulting it ON puts it in front of early testers, who can still
+turn it off in Settings. Same shape as #283 (AI preview defaulted on).
 
 ## Decision
 
