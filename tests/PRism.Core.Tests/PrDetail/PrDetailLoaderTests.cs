@@ -240,7 +240,7 @@ public class PrDetailLoaderTests
         // subscribes to SingleCommentPostedBusEvent and evicts immediately. (Invalidate, not
         // RefreshAsync: the bus is synchronous and fires inside the comment-POST — see spec §2.2.)
         var review = new FakePrDetailReviewService();
-        review.DefaultPollResponse = new ActivePrPollSnapshot("head1", "MERGEABLE", "OPEN", 0, 0);
+        review.DefaultPollResponse = new ActivePrPollSnapshot("head1", "base1", "MERGEABLE", "OPEN", 0, 0);
         review.DefaultDetailResponse = MakeDetail(headSha: "head1");
         review.DefaultTimelineResponse = MakeTimeline(5);
         var bus = new ReviewEventBus();
@@ -259,7 +259,7 @@ public class PrDetailLoaderTests
     public async Task SingleCommentPostedBusEvent_for_other_prRef_does_not_evict_this_snapshot()
     {
         var review = new FakePrDetailReviewService();
-        review.DefaultPollResponse = new ActivePrPollSnapshot("head1", "MERGEABLE", "OPEN", 0, 0);
+        review.DefaultPollResponse = new ActivePrPollSnapshot("head1", "base1", "MERGEABLE", "OPEN", 0, 0);
         review.DefaultDetailResponse = MakeDetail(headSha: "head1");
         review.DefaultTimelineResponse = MakeTimeline(5);
         var bus = new ReviewEventBus();
@@ -282,7 +282,7 @@ public class PrDetailLoaderTests
         // The loader subscribes to DraftSubmitted (published only on full submit success, after the
         // server-side draft clear) and evicts the PR's snapshot so the reload re-fetches fresh detail.
         var review = new FakePrDetailReviewService();
-        review.DefaultPollResponse = new ActivePrPollSnapshot("head1", "MERGEABLE", "OPEN", 0, 0);
+        review.DefaultPollResponse = new ActivePrPollSnapshot("head1", "base1", "MERGEABLE", "OPEN", 0, 0);
         review.DefaultDetailResponse = MakeDetail(headSha: "head1");
         review.DefaultTimelineResponse = MakeTimeline(5);
         var bus = new ReviewEventBus();
@@ -303,7 +303,7 @@ public class PrDetailLoaderTests
         // Eviction is scoped to evt.PrRef — a review submitted on a different PR must not drop
         // this PR's cached snapshot (which would 422 /file & /viewed for no reason).
         var review = new FakePrDetailReviewService();
-        review.DefaultPollResponse = new ActivePrPollSnapshot("head1", "MERGEABLE", "OPEN", 0, 0);
+        review.DefaultPollResponse = new ActivePrPollSnapshot("head1", "base1", "MERGEABLE", "OPEN", 0, 0);
         review.DefaultDetailResponse = MakeDetail(headSha: "head1");
         review.DefaultTimelineResponse = MakeTimeline(5);
         var bus = new ReviewEventBus();
