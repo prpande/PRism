@@ -1,4 +1,9 @@
-import { test, expect, _electron as electron, ElectronApplication } from "@playwright/test";
+import {
+  test,
+  expect,
+  _electron as electron,
+  ElectronApplication,
+} from "@playwright/test";
 import { spawnSync } from "node:child_process";
 import * as path from "node:path";
 import * as os from "node:os";
@@ -33,7 +38,10 @@ function launchEnv(dataDir: string) {
  * + cookie store cold and makes the suite hermetic. The single-instance test passes
  * the SAME userDataDir to both launches so the requestSingleInstanceLock() collides.
  */
-async function launch(dataDir: string, userDataDir: string): Promise<ElectronApplication> {
+async function launch(
+  dataDir: string,
+  userDataDir: string,
+): Promise<ElectronApplication> {
   const app = await electron.launch({
     args: [MAIN, `--user-data-dir=${userDataDir}`],
     env: { ...process.env, ...launchEnv(dataDir) },
@@ -82,7 +90,10 @@ test("startup timing line is written to the logs dir (#282)", async () => {
   // emitStartupSummary() appends synchronously right after loadURL resolves; poll
   // briefly to absorb the gap between firstWindow() and that append landing.
   await expect
-    .poll(() => (fs.existsSync(logFile) ? fs.readFileSync(logFile, "utf8") : ""), { timeout: 10_000 })
+    .poll(
+      () => (fs.existsSync(logFile) ? fs.readFileSync(logFile, "utf8") : ""),
+      { timeout: 10_000 },
+    )
     .toMatch(/^\[startup\] .*\(ms\)$/m);
 });
 
@@ -99,9 +110,13 @@ test("session handshake: prism-session cookie is set on the document response", 
   // (Renamed from "...present and echoed": this asserts the cookie is SET; the echo
   // back as X-PRism-Session on later fetches is exercised implicitly by the SPA load.)
   await expect
-    .poll(async () => (await win.context().cookies()).some((c) => c.name === "prism-session"), {
-      timeout: 30_000,
-    })
+    .poll(
+      async () =>
+        (await win.context().cookies()).some((c) => c.name === "prism-session"),
+      {
+        timeout: 30_000,
+      },
+    )
     .toBe(true);
 });
 

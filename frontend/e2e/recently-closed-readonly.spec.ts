@@ -155,8 +155,13 @@ for (const { state, label } of [
     await expect(inlineComposer).toBeVisible({ timeout: 10_000 });
     // OLD banner is gone (#302).
     await expect(inlineComposer.getByText(/text not saved/i)).toHaveCount(0);
-    // New note is present (#302: closedBanner path in InlineCommentComposer).
-    await expect(inlineComposer.getByText(/comments post immediately/i)).toBeVisible();
+    // #390 — the inline "comments post immediately" note is gone; the merged/closed
+    // context now lives on the Comment button's tooltip (title), keeping "Comment"
+    // as the accessible name.
+    await expect(inlineComposer.getByText(/comments post immediately/i)).toHaveCount(0);
+    await expect(
+      inlineComposer.getByRole('button', { name: 'Comment', exact: true }),
+    ).toHaveAttribute('title', /Post directly to this (merged|closed) PR/);
 
     let draftPutFired = false;
     const onDraftPut = (req: import('@playwright/test').Request) => {

@@ -1,7 +1,7 @@
 import { render, renderHook, screen, waitFor, act } from '@testing-library/react';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { apiClient } from '../src/api/client';
-import { PreferencesProvider, readKey, writeKey } from '../src/contexts/PreferencesContext';
+import { PreferencesProvider } from '../src/contexts/PreferencesContext';
 import { usePreferences } from '../src/hooks/usePreferences';
 import type { PreferencesResponse } from '../src/api/types';
 
@@ -140,57 +140,24 @@ describe('PreferencesProvider', () => {
     await waitFor(() => expect(result.current.error).toBeNull());
     expect(result.current.preferences?.ui.theme).toBe('dark');
   });
-});
 
-// #262 PR3: inbox.defaultSort is the first scalar inbox preference. It must route
-// through its own readKey/writeKey branch (prefs.inbox.defaultSort), NOT the
-// inbox.sections.* slice fallthrough (which would land it at sections['defaultSort']).
-describe('readKey/writeKey — inbox.defaultSort routing', () => {
-  it('routes inbox.defaultSort to the scalar branch, not sections', () => {
-    const base = prefs();
-    expect(readKey(base, 'inbox.defaultSort')).toBe('updated');
+  it('set() is apply-on-success: a failed POST leaves state unchanged, toasts, and rejects', async () => {
+    // Contract (#330): set writes local state ONLY after POST /api/preferences
+    // resolves. On failure there is no optimistic apply to roll back — the prior
+    // value stays put, an error toast fires, and the promise rejects so callers can
+    // react. (Earlier the interface doc claimed an "optimistic rollback" that the
+    // implementation never performed; option (b) deleted the dead rollback.)
+    vi.spyOn(apiClient, 'get').mockResolvedValue(prefs({ theme: 'system' }));
+    vi.spyOn(apiClient, 'post').mockRejectedValue(new Error('save failed'));
+    const { result } = renderHook(() => usePreferences());
+    await waitFor(() => expect(result.current.preferences?.ui.theme).toBe('system'));
 
-    const next = writeKey(base, 'inbox.defaultSort', 'pushed');
-    expect(next.inbox.defaultSort).toBe('pushed');
-    // Did NOT leak into the sections slice.
-    expect((next.inbox.sections as unknown as Record<string, unknown>).defaultSort).toBeUndefined();
-  });
-});
+    await act(async () => {
+      await expect(result.current.set('theme', 'dark')).rejects.toThrow('save failed');
+    });
 
-// #275: inbox.sectionOrder is a new scalar inbox preference. It must route
-// through its own readKey/writeKey branch, NOT the inbox.sections.* slice
-// fallthrough (which would corrupt the sections map).
-describe('readKey/writeKey — inbox.sectionOrder routing', () => {
-  it('writes inbox.sectionOrder via its own arm without touching inbox.sections', () => {
-    const before = {
-      ui: {},
-      github: {},
-      inbox: {
-        sections: {
-          'review-requested': true,
-          'awaiting-author': true,
-          'authored-by-me': true,
-          mentioned: true,
-          'recently-closed': true,
-        },
-        defaultSort: 'updated',
-        sectionOrder: 'review-requested,awaiting-author,authored-by-me,mentioned',
-      },
-    } as unknown as import('../src/api/types').PreferencesResponse;
-
-    const after = writeKey(
-      before,
-      'inbox.sectionOrder',
-      'mentioned,review-requested,authored-by-me,awaiting-author',
-    );
-
-    expect(after.inbox.sectionOrder).toBe(
-      'mentioned,review-requested,authored-by-me,awaiting-author',
-    );
-    // The slice-fallthrough trap: sections must be untouched.
-    expect(after.inbox.sections).toEqual(before.inbox.sections);
-    expect(readKey(after, 'inbox.sectionOrder')).toBe(
-      'mentioned,review-requested,authored-by-me,awaiting-author',
-    );
+    // Prior value untouched — no optimistic apply, no clobbering rollback.
+    expect(result.current.preferences?.ui.theme).toBe('system');
+    expect(showMock).toHaveBeenCalledWith(expect.objectContaining({ kind: 'error' }));
   });
 });

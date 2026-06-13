@@ -115,8 +115,10 @@ export interface PreferencesContextValue {
   preferences: PreferencesResponse | null;
   error: Error | null;
   refetch(): Promise<void>;
-  // Resolves with the updated snapshot, or throws on POST failure (after the
-  // optimistic rollback + error toast) — never resolves `undefined`.
+  // Resolves with the updated snapshot, or throws on POST failure (with an error
+  // toast). Apply-on-success (NOT optimistic): local state is written only after
+  // the POST resolves, so a failed save leaves the prior value untouched — there
+  // is nothing to roll back, and this never resolves `undefined`.
   set(key: PreferenceKey, value: unknown): Promise<PreferencesResponse>;
 }
 
@@ -126,7 +128,7 @@ export interface PreferencesContextValue {
 export const PreferencesContext = createContext<PreferencesContextValue | null>(null);
 
 // The actual preferences store: state + the GET /api/preferences fetch + the
-// window-`focus` refetch listener + the optimistic `set`. Used in two ways:
+// window-`focus` refetch listener + the apply-on-success `set`. Used in two ways:
 //  - PreferencesProvider calls it once (enabled) and shares the value, so the
 //    whole app gets ONE fetch on mount + ONE per focus (the #143 dedup).
 //  - usePreferences() calls it as an INERT instance (enabled=false) while a
@@ -161,19 +163,14 @@ function usePreferencesStore(enabled: boolean): PreferencesContextValue {
     return () => window.removeEventListener('focus', handler);
   }, [enabled, refetch]);
 
-  // Spec § 2.6 rollback: on POST failure, revert ONLY the failing key against
-  // the latest state — not the whole-snapshot `prior` that captured pre-call
-  // baseline. Whole-snapshot revert cascades: two near-simultaneous toggles
-  // each snapshot the same `prior = P0`; if A succeeds and B fails, B's
-  // rollback to P0 silently undoes A's successful local apply (the server is
-  // still correct; the UI lies until a focus refetch). Key-scoped patching via
-  // the functional setState form is race-safe because it composes against
-  // current state, not the captured snapshot. Under the shared provider this is
-  // strictly safer than before — two consumers toggling now hit one
-  // setPreferences queue instead of two independent states that could diverge.
+  // Apply-on-success (NOT optimistic): the new value is written to local state
+  // only after POST /api/preferences resolves — `set` never mutates state ahead
+  // of the round-trip, so a failed save leaves the prior value in place with no
+  // rollback to perform. Because it reads no state, `set` keeps a stable identity
+  // across preference updates; consumers still re-render on the `preferences`
+  // field changing, which is the real "value changed" signal.
   const set = useCallback(
     async (key: PreferenceKey, value: unknown) => {
-      const priorValue = preferences ? readKey(preferences, key) : undefined;
       try {
         const next = await apiClient.post<PreferencesResponse>('/api/preferences', {
           [key]: value,
@@ -181,28 +178,24 @@ function usePreferencesStore(enabled: boolean): PreferencesContextValue {
         setPreferences(next);
         return next;
       } catch (e) {
-        if (preferences && priorValue !== undefined) {
-          setPreferences((cur) => (cur ? writeKey(cur, key, priorValue) : cur));
-        }
         // Generic copy: the internal dotted-path key (`inbox.sections.awaiting-author`,
         // etc.) is a wire-format detail with no value to the end user. If a
         // consumer wants key-specific wording it can catch the rejection and
         // show its own toast.
         show({
           kind: 'error',
-          message: "Couldn't save preference — your change was reverted.",
+          message: "Couldn't save preference.",
         });
         throw e;
       }
     },
-    [preferences, show],
+    [show],
   );
 
   // Memoized so an unrelated provider re-render doesn't churn every consumer
-  // (mirrors OpenTabsContext.tsx). `set`'s identity legitimately tracks
-  // `preferences` (its useCallback dep — inherent to rollback-against-current-
-  // state), so the value changes on each preference update; that is the intended
-  // "value changed" signal to consumers, not churn.
+  // (mirrors OpenTabsContext.tsx). `set` and `refetch` are stable useCallbacks,
+  // so the value's identity changes only when `preferences` or `error` does —
+  // exactly the "value changed" signal consumers should re-render on.
   return useMemo<PreferencesContextValue>(
     () => ({ preferences, error, refetch, set }),
     [preferences, error, refetch, set],

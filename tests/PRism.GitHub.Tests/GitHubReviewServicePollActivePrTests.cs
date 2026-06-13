@@ -10,10 +10,7 @@ namespace PRism.GitHub.Tests;
 public class GitHubReviewServicePollActivePrTests
 {
     private static GitHubReviewService NewService(HttpMessageHandler handler)
-    {
-        var factory = new FakeHttpClientFactory(handler, new Uri("https://api.github.com/"));
-        return new GitHubReviewService(factory, () => Task.FromResult<string?>("ghp_test"), "https://github.com");
-    }
+        => GitHubReviewServiceFactory.Create(handler);
 
     private const string PullJson = "{" +
         "\"head\":{\"sha\":\"head-1\"}," +

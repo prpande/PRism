@@ -68,9 +68,7 @@ function setHooks(
     reload: vi.fn().mockResolvedValue(undefined),
   });
   vi.mocked(useInboxUpdates).mockReturnValue({
-    hasUpdate: opts.hasUpdate ?? false,
-    summary: opts.hasUpdate ? '3 new updates' : '',
-    dismiss: vi.fn(),
+    announce: '',
   });
   // InboxPage now uses useAiGate for both gates.
   // useCapabilities / usePreferences are no longer called directly by InboxPage
@@ -234,11 +232,14 @@ describe('InboxPage', () => {
     expect(screen.getByText(/nothing in your inbox right now/i)).toBeInTheDocument();
   });
 
-  it('renders banner when updates are pending', () => {
-    setHooks({ data: sampleData, hasUpdate: true });
+  it('announces auto-refresh to screen readers via live region', () => {
+    // #450 — the old "N new updates" reload banner was replaced by silent auto-refresh.
+    // The announce signal for screen readers now lives in the inbox-autorefresh-status
+    // live region, populated by useInboxUpdates.announce after each completed refresh.
+    setHooks({ data: sampleData });
+    vi.mocked(useInboxUpdates).mockReturnValue({ announce: 'Inbox updated' });
     renderPage();
-    expect(screen.getByText(/3 new updates/i)).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /reload/i })).toBeInTheDocument();
+    expect(screen.getByTestId('inbox-autorefresh-status')).toHaveTextContent('Inbox updated');
   });
 
   it('renders ActivityRail when inbox.showActivityRail is on', () => {
@@ -347,9 +348,7 @@ describe('InboxPage — useAiGate migrations', () => {
       reload: vi.fn().mockResolvedValue(undefined),
     });
     vi.mocked(useInboxUpdates).mockReturnValue({
-      hasUpdate: false,
-      summary: '',
-      dismiss: vi.fn(),
+      announce: '',
     });
     // These mocks are only needed if InboxPage still calls them directly.
     // After migration they become no-ops, but the vi.mock() hoisting keeps them registered.

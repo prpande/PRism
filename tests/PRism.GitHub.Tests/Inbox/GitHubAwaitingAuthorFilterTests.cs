@@ -40,10 +40,8 @@ public sealed class GitHubAwaitingAuthorFilterTests
         ]
         """;
 
-    private static HttpResponseMessage Respond(HttpStatusCode code, string body) => new(code)
-    {
-        Content = new StringContent(body, Encoding.UTF8, "application/json"),
-    };
+    private static HttpResponseMessage Respond(HttpStatusCode code, string body)
+        => JsonHttpResponse.Create(code, body);
 
     [Fact]
     public async Task Includes_pr_with_newer_commits_than_last_review()

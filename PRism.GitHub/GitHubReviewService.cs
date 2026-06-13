@@ -1,5 +1,4 @@
 using System.Net;
-using System.Net.Sockets;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -9,24 +8,8 @@ using PRism.Core.Iterations;
 
 namespace PRism.GitHub;
 
-public sealed partial class GitHubReviewService : IReviewAuth, IPrDiscovery, IPrReader, IReviewSubmitter
+public sealed partial class GitHubReviewService : IPrDiscovery, IPrReader, IReviewSubmitter
 {
-    // Classic-PAT scope requirements, expressed as (capability, scopes that satisfy it).
-    // GitHub reports only the literally-granted scope in X-OAuth-Scopes — a parent scope is
-    // NOT expanded into its children — so any parent that supersets a requirement must be
-    // listed explicitly as an accepting scope:
-    //   • `repo` has no parent; only the full `repo` scope reads private PRs. Its children
-    //     (`public_repo`, `repo:status`, …) are narrower and must NOT satisfy it.
-    //   • `read:org` is satisfied by itself or either parent, `write:org` / `admin:org`.
-    // `read:user` is intentionally absent: no PRism API call needs it (commenter avatars and
-    // public profiles are returned without any user scope, and /user returns the token-holder's
-    // login regardless of scope). Requiring it rejected tokens that granted the `user` parent.
-    private static readonly (string Capability, string[] AcceptedBy)[] RequiredScopes =
-    [
-        ("repo", ["repo"]),
-        ("read:org", ["read:org", "write:org", "admin:org"]),
-    ];
-
     // Single source of truth for the PR-detail GraphQL query shape. Lifted out of
     // GetPrDetailAsync so the integration test 7g (Frozen_pr_graphql_shape_unchanged) can
     // replay the EXACT same query the production code issues — and so a future schema
@@ -80,167 +63,6 @@ public sealed partial class GitHubReviewService : IReviewAuth, IPrDiscovery, IPr
         _readToken = readToken;
         _host = host;
         _log = log ?? NullLogger<GitHubReviewService>.Instance;
-    }
-
-    public async Task<AuthValidationResult> ValidateCredentialsAsync(CancellationToken ct, bool skipCredentialHealth = false)
-    {
-        var token = await _readToken().ConfigureAwait(false);
-        if (string.IsNullOrEmpty(token))
-            return new AuthValidationResult(false, null, null, AuthValidationError.InvalidToken, "no token");
-
-        var tokenType = ClassifyToken(token);
-
-        using var http = _httpFactory.CreateClient("github");
-        using var req = new HttpRequestMessage(HttpMethod.Get, "user");
-        GitHubHttp.ApplyHeaders(req, http, token);
-        if (skipCredentialHealth) req.Options.Set(GitHubAuthHealthHandler.SkipHealthKey, true);
-
-        try
-        {
-            using var resp = await http.SendAsync(req, ct).ConfigureAwait(false);
-            var primary = await InterpretAsync(resp, tokenType, ct).ConfigureAwait(false);
-            if (!primary.Ok || tokenType != TokenType.FineGrained) return primary;
-
-            // Fine-grained: probe Search to detect the no-repos-selected case.
-            try
-            {
-                var warning = await ProbeRepoVisibilityAsync(token, skipCredentialHealth, ct).ConfigureAwait(false);
-                return primary with { Warning = warning };
-            }
-            catch (HttpRequestException ex) when (ex.StatusCode is { } c && (int)c >= 500)
-            {
-                throw;  // let the outer 5xx catch surface it as ServerError per spec
-            }
-            catch (HttpRequestException)
-            {
-                // Probe failed for a non-5xx reason (403/422/transport). The token auth itself
-                // succeeded — fail open so a probe anomaly doesn't reject a valid token.
-                return primary;
-            }
-            catch (JsonException)
-            {
-                // Probe returned 200 with non-JSON body (captive portal, broken proxy). Same
-                // fail-open intent as the non-5xx HttpRequestException case above — primary
-                // auth already succeeded; don't reject a valid token over a probe anomaly.
-                return primary;
-            }
-        }
-        catch (HttpRequestException ex) when (ex.StatusCode is { } code && (int)code >= 500)
-        {
-            return new AuthValidationResult(false, null, null, AuthValidationError.ServerError, $"GitHub returned {(int)code}.");
-        }
-        catch (HttpRequestException ex) when (IsDnsFailure(ex))
-        {
-            return new AuthValidationResult(false, null, null, AuthValidationError.DnsError, $"Couldn't reach {_host}.");
-        }
-        catch (HttpRequestException ex)
-        {
-            return new AuthValidationResult(false, null, null, AuthValidationError.NetworkError, ex.Message);
-        }
-    }
-
-    private enum TokenType { Classic, FineGrained }
-
-    // PRism only supports user PATs for the PoC: classic (ghp_…) and fine-grained (github_pat_…).
-    // Any other prefix (gho_, ghs_, ghr_, legacy hex) routes through FineGrained, which is the
-    // most permissive: no X-OAuth-Scopes check, so a non-classic token never trips
-    // InsufficientScopes spuriously. App-token shapes are not officially supported as auth
-    // in PoC; this classification is a "fail safely" default rather than affirmative support.
-    private static TokenType ClassifyToken(string token) =>
-        token.StartsWith("ghp_", StringComparison.Ordinal) ? TokenType.Classic : TokenType.FineGrained;
-
-    private static bool IsDnsFailure(HttpRequestException ex)
-    {
-        if (ex.InnerException is SocketException se)
-        {
-            return se.SocketErrorCode == SocketError.HostNotFound
-                || ex.Message.Contains("Name or service not known", StringComparison.OrdinalIgnoreCase)
-                || ex.Message.Contains("No such host", StringComparison.OrdinalIgnoreCase);
-        }
-        return false;
-    }
-
-    private static async Task<AuthValidationResult> InterpretAsync(HttpResponseMessage resp, TokenType tokenType, CancellationToken ct)
-    {
-        if (resp.StatusCode == HttpStatusCode.Unauthorized)
-            return new AuthValidationResult(false, null, null, AuthValidationError.InvalidToken, "GitHub rejected this token.");
-
-        if ((int)resp.StatusCode >= 500)
-            return new AuthValidationResult(false, null, null, AuthValidationError.ServerError, $"GitHub returned {(int)resp.StatusCode}.");
-
-        if (!resp.IsSuccessStatusCode)
-            return new AuthValidationResult(false, null, null, AuthValidationError.NetworkError, $"unexpected status {(int)resp.StatusCode}");
-
-        var scopesHeader = resp.Headers.TryGetValues("X-OAuth-Scopes", out var values) ? string.Join(",", values) : "";
-        var scopes = scopesHeader.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-
-        if (tokenType == TokenType.Classic)
-        {
-            var granted = scopes.ToHashSet(StringComparer.Ordinal);
-            // A capability is satisfied when the token grants any scope that accepts it
-            // (the scope itself or one of its parents). Report the capability name — not the
-            // accepting set — so the user sees what to add, e.g. "missing scopes: read:org".
-            var missing = RequiredScopes
-                .Where(r => !r.AcceptedBy.Any(granted.Contains))
-                .Select(r => r.Capability)
-                .ToArray();
-            if (missing.Length > 0)
-                return new AuthValidationResult(false, null, scopes, AuthValidationError.InsufficientScopes,
-                    $"missing scopes: {string.Join(", ", missing)}");
-        }
-
-        var body = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
-        string? login;
-        try
-        {
-            using var doc = JsonDocument.Parse(body);
-            login = doc.RootElement.TryGetProperty("login", out var l) ? l.GetString() : null;
-        }
-        catch (JsonException)
-        {
-            // GitHub-side intermediaries (proxy, captive portal, GHES misconfig) can return
-            // 200 with HTML or otherwise malformed JSON. Surface as ServerError, not 500.
-            return new AuthValidationResult(false, null, scopes, AuthValidationError.ServerError,
-                "GitHub returned an unparseable response body.");
-        }
-
-        if (string.IsNullOrEmpty(login))
-        {
-            // 200 with valid JSON but no `login` field — same shape as the JsonException path
-            // above (an intermediary stripped or rewrote the body). Treating this as Ok=true
-            // would commit a token but leave IViewerLoginProvider empty, breaking the
-            // awaiting-author inbox section.
-            return new AuthValidationResult(false, null, scopes, AuthValidationError.ServerError,
-                "GitHub returned a response with no login field.");
-        }
-
-        return new AuthValidationResult(true, login, scopes, AuthValidationError.None, null);
-    }
-
-    private async Task<AuthValidationWarning> ProbeRepoVisibilityAsync(string token, bool skipCredentialHealth, CancellationToken ct)
-    {
-        if (await SearchHasResultsAsync(token, "is:pr author:@me", skipCredentialHealth, ct).ConfigureAwait(false))
-            return AuthValidationWarning.None;
-        if (await SearchHasResultsAsync(token, "is:pr review-requested:@me", skipCredentialHealth, ct).ConfigureAwait(false))
-            return AuthValidationWarning.None;
-        return AuthValidationWarning.NoReposSelected;
-    }
-
-    private async Task<bool> SearchHasResultsAsync(string token, string query, bool skipCredentialHealth, CancellationToken ct)
-    {
-        var url = $"search/issues?q={Uri.EscapeDataString(query)}&per_page=1";
-        using var http = _httpFactory.CreateClient("github");
-        using var req = new HttpRequestMessage(HttpMethod.Get, url);
-        GitHubHttp.ApplyHeaders(req, http, token);
-        if (skipCredentialHealth) req.Options.Set(GitHubAuthHealthHandler.SkipHealthKey, true);
-
-        using var resp = await http.SendAsync(req, ct).ConfigureAwait(false);
-        resp.EnsureSuccessStatusCode();
-        var body = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
-        using var doc = JsonDocument.Parse(body);
-        return doc.RootElement.TryGetProperty("total_count", out var tc)
-            && tc.ValueKind == JsonValueKind.Number
-            && tc.GetInt32() > 0;
     }
 
     // Stubs for methods that land in later slices.
@@ -298,9 +120,9 @@ public sealed partial class GitHubReviewService : IReviewAuth, IPrDiscovery, IPr
         if (!TryGetPath(doc.RootElement, out var pull, "data", "repository", "pullRequest")) return null;
         if (pull.ValueKind == JsonValueKind.Null) return null;
 
-        var pr = ParsePr(pull, reference);
-        var rootComments = ParseRootComments(pull);
-        var reviewComments = ParseReviewThreads(pull);
+        var pr = GitHubPrParser.ParsePr(pull, reference);
+        var rootComments = GitHubPrParser.ParseRootComments(pull);
+        var reviewComments = GitHubPrParser.ParseReviewThreads(pull);
         var timelineCapHit = HasAnyNextPage(pull);
         if (timelineCapHit) Log.TimelineCapHit(_log, reference.Owner, reference.Repo, reference.Number);
 
@@ -380,10 +202,10 @@ public sealed partial class GitHubReviewService : IReviewAuth, IPrDiscovery, IPr
                 Array.Empty<ClusteringAuthorComment>());
         }
 
-        var rawCommits = ParseTimelineCommits(pull);
-        var forcePushes = ParseForcePushes(pull);
-        var reviewEvents = ParseReviewEvents(pull);
-        var authorComments = ParseAuthorComments(pull);
+        var rawCommits = GitHubPrParser.ParseTimelineCommits(pull);
+        var forcePushes = GitHubPrParser.ParseForcePushes(pull);
+        var reviewEvents = GitHubPrParser.ParseReviewEvents(pull);
+        var authorComments = GitHubPrParser.ParseAuthorComments(pull);
 
         // Per-commit changedFiles fan-out — concurrency cap 8, 100ms inter-batch pace.
         // 4xx on any commit marks the session degraded (skip remaining fan-out, leave
@@ -780,105 +602,6 @@ public sealed partial class GitHubReviewService : IReviewAuth, IPrDiscovery, IPr
         LoggerMessage.Define<int, string, string>(LogLevel.Warning, new EventId(5, "GraphQLTransportFailed"),
             "GraphQL HTTP request failed: {StatusCode} {ReasonPhrase}. Body: {Body}");
 
-    private static List<ClusteringCommit> ParseTimelineCommits(JsonElement pull)
-    {
-        var result = new List<ClusteringCommit>();
-        if (!pull.TryGetProperty("timelineItems", out var ti) ||
-            !ti.TryGetProperty("nodes", out var nodes) ||
-            nodes.ValueKind != JsonValueKind.Array)
-            return result;
-
-        foreach (var node in nodes.EnumerateArray())
-        {
-            if (!IsTypeName(node, "PullRequestCommit")) continue;
-            if (!node.TryGetProperty("commit", out var c)) continue;
-            var sha = c.TryGetProperty("oid", out var o) ? o.GetString() ?? "" : "";
-            var date = c.TryGetProperty("committedDate", out var d) ? d.GetDateTimeOffset() : default;
-            var message = c.TryGetProperty("message", out var m) ? m.GetString() ?? "" : "";
-            var add = c.TryGetProperty("additions", out var a) ? a.GetInt32() : 0;
-            var del = c.TryGetProperty("deletions", out var dl) ? dl.GetInt32() : 0;
-            // ChangedFiles is filled in later by the per-commit REST fan-out (or stays null
-            // when fan-out is skipped above the commit-count cap or after a 4xx degrade).
-            result.Add(new ClusteringCommit(sha, date, message, add, del, ChangedFiles: null));
-        }
-        return result;
-    }
-
-    private static List<ClusteringForcePush> ParseForcePushes(JsonElement pull)
-    {
-        var result = new List<ClusteringForcePush>();
-        if (!pull.TryGetProperty("timelineItems", out var ti) ||
-            !ti.TryGetProperty("nodes", out var nodes) ||
-            nodes.ValueKind != JsonValueKind.Array)
-            return result;
-
-        foreach (var node in nodes.EnumerateArray())
-        {
-            if (!IsTypeName(node, "HeadRefForcePushedEvent")) continue;
-            string? before = null;
-            if (node.TryGetProperty("beforeCommit", out var b) && b.ValueKind == JsonValueKind.Object)
-                before = b.TryGetProperty("oid", out var bo) ? bo.GetString() : null;
-            string? after = null;
-            if (node.TryGetProperty("afterCommit", out var aft) && aft.ValueKind == JsonValueKind.Object)
-                after = aft.TryGetProperty("oid", out var ao) ? ao.GetString() : null;
-            var occurred = node.TryGetProperty("createdAt", out var ca) ? ca.GetDateTimeOffset() : default;
-            result.Add(new ClusteringForcePush(before, after, occurred));
-        }
-        return result;
-    }
-
-    private static List<ClusteringReviewEvent> ParseReviewEvents(JsonElement pull)
-    {
-        var result = new List<ClusteringReviewEvent>();
-        if (!pull.TryGetProperty("timelineItems", out var ti) ||
-            !ti.TryGetProperty("nodes", out var nodes) ||
-            nodes.ValueKind != JsonValueKind.Array)
-            return result;
-
-        foreach (var node in nodes.EnumerateArray())
-        {
-            if (!IsTypeName(node, "PullRequestReview")) continue;
-            // PENDING reviews (the viewer's own OR a hand-created one via the GitHub web UI / gh)
-            // appear in this timelineItems connection with submittedAt = null — they have not been
-            // submitted yet, by definition. Calling GetDateTimeOffset() on a Null-kind JsonElement
-            // throws InvalidOperationException → unhandled → HTTP 500 on the PR detail load. The
-            // clustering signal needs a real submission moment to be useful (it's a "reviewer
-            // activity" timestamp), so a pending review carries no signal and is skipped entirely
-            // rather than included with default(DateTimeOffset) (= 0001-01-01) which would pollute
-            // clustering with an event from year 1.
-            if (!node.TryGetProperty("submittedAt", out var s) || s.ValueKind != JsonValueKind.String)
-                continue;
-            result.Add(new ClusteringReviewEvent(s.GetDateTimeOffset()));
-        }
-        return result;
-    }
-
-    private static List<ClusteringAuthorComment> ParseAuthorComments(JsonElement pull)
-    {
-        var result = new List<ClusteringAuthorComment>();
-        if (!pull.TryGetProperty("comments", out var comments) ||
-            !comments.TryGetProperty("nodes", out var nodes) ||
-            nodes.ValueKind != JsonValueKind.Array)
-            return result;
-
-        foreach (var node in nodes.EnumerateArray())
-        {
-            // The clustering signal cares about *author* comments, not all PR-root comments.
-            // Identifying the PR author requires a separate `author { login }` field on the
-            // PR. PoC is fine with all root comments treated as candidates — clustering
-            // doesn't differentiate; the signal is "PR-side conversation activity."
-            var ts = node.TryGetProperty("createdAt", out var c) ? c.GetDateTimeOffset() : default;
-            result.Add(new ClusteringAuthorComment(ts));
-        }
-        return result;
-    }
-
-    private static bool IsTypeName(JsonElement node, string expected)
-    {
-        if (!node.TryGetProperty("__typename", out var tn)) return false;
-        return string.Equals(tn.GetString(), expected, StringComparison.Ordinal);
-    }
-
     // GraphQL is "200 with errors" rather than HTTP-error-coded; the `errors` array
     // carries execution failures. Throw only when errors are present AND there is no
     // usable data (data missing entirely, or data:null). Per GraphQL spec, partial
@@ -930,139 +653,6 @@ public sealed partial class GitHubReviewService : IReviewAuth, IPrDiscovery, IPr
         }
         leaf = current;
         return true;
-    }
-
-    // #320 — (login, avatarUrl) from an `author{login avatarUrl}` node; ("", null) when the
-    // author is absent/non-object. Matches the prior inline extractions exactly: login is read
-    // without a ValueKind check (GitHub always returns a string), avatar only when it's a string.
-    private static (string Login, string? AvatarUrl) ReadActor(JsonElement node)
-    {
-        if (!node.TryGetProperty("author", out var a) || a.ValueKind != JsonValueKind.Object)
-            return ("", null);
-        var login = a.TryGetProperty("login", out var l) ? l.GetString() ?? "" : "";
-        var avatar = a.TryGetProperty("avatarUrl", out var av) && av.ValueKind == JsonValueKind.String
-            ? av.GetString() : null;
-        return (login, avatar);
-    }
-
-    private static Pr ParsePr(JsonElement pull, PrReference reference)
-    {
-        string GetStr(string name) =>
-            pull.TryGetProperty(name, out var el) && el.ValueKind == JsonValueKind.String
-                ? el.GetString() ?? "" : "";
-        DateTimeOffset GetDate(string name) =>
-            pull.TryGetProperty(name, out var el) && el.ValueKind != JsonValueKind.Null
-                ? el.GetDateTimeOffset() : default;
-        var (author, avatarUrl) = ReadActor(pull);
-        string? HtmlUrl()
-        {
-            var url = GetStr("url");
-            return string.IsNullOrEmpty(url) ? null : url;
-        }
-
-        // GitHub returns "MERGEABLE" | "CONFLICTING" | "UNKNOWN" — pass through as-is.
-        // mergeStateStatus is a finer-grained signal ("BEHIND", "DIRTY", etc.); we collapse
-        // both into a single `Mergeability` field for the Pr record. Spec § 6.1.
-        var mergeability = GetStr("mergeable");
-        var ciSummary = "";   // computed by PrDetailLoader (or by an upstream enrichment); placeholder here.
-
-        var state = GetStr("state");
-        // DateTimeOffset? (nullable) — unlike GetDate, which returns default for absent/null.
-        DateTimeOffset? mergedAt = pull.TryGetProperty("mergedAt", out var mAt) && mAt.ValueKind != JsonValueKind.Null
-            ? mAt.GetDateTimeOffset() : null;
-        DateTimeOffset? closedAt = pull.TryGetProperty("closedAt", out var cAt) && cAt.ValueKind != JsonValueKind.Null
-            ? cAt.GetDateTimeOffset() : null;
-        var isMerged = string.Equals(state, "MERGED", StringComparison.Ordinal) || mergedAt.HasValue;
-        // IsClosed means "closed without merging" — a separate state from merged.
-        // Consumers that want "no longer open" should spell `IsMerged || IsClosed`.
-        // Treating MERGED as IsClosed=true forced the inverse spelling on every
-        // consumer and was a footgun (PR #19 review).
-        var isClosed = string.Equals(state, "CLOSED", StringComparison.Ordinal) && !isMerged;
-
-        return new Pr(
-            reference,
-            Title: GetStr("title"),
-            Body: GetStr("body"),
-            Author: author,
-            State: state,
-            HeadSha: GetStr("headRefOid"),
-            BaseSha: GetStr("baseRefOid"),
-            HeadBranch: GetStr("headRefName"),
-            BaseBranch: GetStr("baseRefName"),
-            Mergeability: mergeability,
-            CiSummary: ciSummary,
-            IsMerged: isMerged,
-            IsClosed: isClosed,
-            OpenedAt: GetDate("createdAt"),
-            MergedAt: mergedAt,
-            ClosedAt: closedAt,
-            AvatarUrl: avatarUrl,
-            HtmlUrl: HtmlUrl());
-    }
-
-    private static List<IssueCommentDto> ParseRootComments(JsonElement pull)
-    {
-        var result = new List<IssueCommentDto>();
-        if (!pull.TryGetProperty("comments", out var c) ||
-            !c.TryGetProperty("nodes", out var nodes) ||
-            nodes.ValueKind != JsonValueKind.Array)
-            return result;
-
-        foreach (var node in nodes.EnumerateArray())
-        {
-            var id = node.TryGetProperty("databaseId", out var db) ? db.GetInt64() : 0L;
-            var (author, avatar) = ReadActor(node);
-            var ts = node.TryGetProperty("createdAt", out var ca) ? ca.GetDateTimeOffset() : default;
-            var body = node.TryGetProperty("body", out var b) ? b.GetString() ?? "" : "";
-            result.Add(new IssueCommentDto(id, author, ts, body, avatar));
-        }
-        return result;
-    }
-
-    internal static List<ReviewThreadDto> ParseReviewThreads(JsonElement pull)
-    {
-        var result = new List<ReviewThreadDto>();
-        if (!pull.TryGetProperty("reviewThreads", out var rt) ||
-            !rt.TryGetProperty("nodes", out var threadNodes) ||
-            threadNodes.ValueKind != JsonValueKind.Array)
-            return result;
-
-        foreach (var t in threadNodes.EnumerateArray())
-        {
-            var threadId = t.TryGetProperty("id", out var ti) ? ti.GetString() ?? "" : "";
-            var path = t.TryGetProperty("path", out var p) ? p.GetString() ?? "" : "";
-            var line = t.TryGetProperty("line", out var ln) && ln.ValueKind == JsonValueKind.Number ? ln.GetInt32() : 0;
-            var resolved = t.TryGetProperty("isResolved", out var ir) && ir.ValueKind == JsonValueKind.True;
-            var comments = new List<ReviewCommentDto>();
-            if (t.TryGetProperty("comments", out var cs) &&
-                cs.TryGetProperty("nodes", out var cnodes) &&
-                cnodes.ValueKind == JsonValueKind.Array)
-            {
-                foreach (var cn in cnodes.EnumerateArray())
-                {
-                    var cid = cn.TryGetProperty("id", out var idEl) ? idEl.GetString() ?? "" : "";
-                    long? cDatabaseId = cn.TryGetProperty("databaseId", out var dbEl) && dbEl.ValueKind == JsonValueKind.Number
-                        ? dbEl.GetInt64() : null;
-                    var (cauthor, cavatar) = ReadActor(cn);
-                    var cts = cn.TryGetProperty("createdAt", out var cca) ? cca.GetDateTimeOffset() : default;
-                    var cbody = cn.TryGetProperty("body", out var cb) ? cb.GetString() ?? "" : "";
-                    DateTimeOffset? edited = null;
-                    if (cn.TryGetProperty("lastEditedAt", out var le) && le.ValueKind != JsonValueKind.Null)
-                        edited = le.GetDateTimeOffset();
-                    comments.Add(new ReviewCommentDto(cid, cauthor, cts, cbody, edited, cavatar, cDatabaseId));
-                }
-            }
-            // AnchorSha is intentionally empty here. The reviewThreads GraphQL connection
-            // doesn't return the per-thread anchor SHA in the current query shape (the SHA
-            // a thread was originally posted against lives on `comments.nodes[0].originalCommit.oid`,
-            // which we don't fetch yet). PrDetailLoader (Task 4) is responsible for resolving
-            // the anchor against the PR diff and stamping a real SHA onto each thread before
-            // the DTO ships to the frontend. Defaulting to HeadSha here would be misleading —
-            // a thread anchored to an older iteration's snapshot would falsely report it
-            // applies to the current head.
-            result.Add(new ReviewThreadDto(threadId, path, line, AnchorSha: "", IsResolved: resolved, Comments: comments));
-        }
-        return result;
     }
 
     // The three GraphQL connections inside `pullRequest` that the spec § 6.1 cap-hit

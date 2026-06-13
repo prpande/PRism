@@ -11,7 +11,6 @@ using PRism.Core.Json;
 using PRism.Core.PrDetail;
 using PRism.Core.State;
 using PRism.Web.Endpoints;
-using PRism.Web.Middleware;
 using PRism.Web.Tests.TestHelpers;
 
 namespace PRism.Web.Tests.Endpoints;
@@ -29,22 +28,11 @@ public class PrDraftEndpointTests : IClassFixture<PRismWebApplicationFactory>
         return c;
     }
 
-    // Builds an authenticated client against a derived factory (typically one created via
-    // WithWebHostBuilder). The derived factory is a WebApplicationFactory<Program>, not a
-    // PRismWebApplicationFactory, so its ConfigureClient override does NOT auto-inject
-    // auth headers. We pull the token from the derived factory's own DI container so it
-    // matches that container's SessionTokenProvider singleton.
-    private static HttpClient AuthedClient(WebApplicationFactory<Program> factory, string tabId)
-    {
-        var token = factory.Services.GetRequiredService<SessionTokenProvider>().Current;
-        var c = factory.CreateClient();
-        c.DefaultRequestHeaders.Add("X-PRism-Session", token);
-        c.DefaultRequestHeaders.Add("Cookie", $"prism-session={token}");
-        var origin = c.BaseAddress?.GetLeftPart(UriPartial.Authority);
-        if (!string.IsNullOrEmpty(origin)) c.DefaultRequestHeaders.Add("Origin", origin);
-        c.DefaultRequestHeaders.Add("X-PRism-Tab-Id", tabId);
-        return c;
-    }
+    // Authenticated client against a WithWebHostBuilder-derived factory (which doesn't inherit
+    // PRismWebApplicationFactory.ConfigureClient). Credentials + tab id come from the shared
+    // TestClientExtensions seam.
+    private static HttpClient AuthedClient(WebApplicationFactory<Program> factory, string tabId) =>
+        factory.CreateAuthenticatedClient(tabId);
 
     private static async Task<T?> ReadApiJsonAsync<T>(HttpResponseMessage resp)
         => await resp.Content.ReadFromJsonAsync<T>(JsonSerializerOptionsFactory.Api).ConfigureAwait(false);
@@ -142,6 +130,23 @@ public class PrDraftEndpointTests : IClassFixture<PRismWebApplicationFactory>
         var resp = await client.PutAsJsonAsync("/api/pr/acme/api/123/draft", patch);
 
         resp.StatusCode.Should().Be(HttpStatusCode.UnprocessableEntity);
+    }
+
+    [Fact]
+    public async Task NewDraftComment_path_with_empty_segment_is_rejected()
+    {
+        var client = ClientWithTab();
+        // "src//foo.cs" contains an empty segment between the two slashes.
+        // main's IsCanonicalFilePath uses substring matching ("/../", "/./") and does NOT
+        // reject empty segments — accepted on main. The shared PathValidation.Canonicalize
+        // splits on '/' and rejects any zero-length segment, so this must return 422.
+        var patch = NewCommentPatch(filePath: "src//foo.cs");
+
+        var resp = await client.PutAsJsonAsync("/api/pr/acme/api/123/draft", patch);
+
+        resp.StatusCode.Should().Be(HttpStatusCode.UnprocessableEntity);
+        (await resp.Content.ReadFromJsonAsync<System.Text.Json.JsonElement>())
+            .GetProperty("error").GetString().Should().Be("file-path-invalid");
     }
 
     [Fact]

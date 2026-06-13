@@ -10,10 +10,7 @@ namespace PRism.GitHub.Tests;
 public class GitHubReviewServiceFileContentTests
 {
     private static GitHubReviewService NewService(HttpMessageHandler handler)
-    {
-        var factory = new FakeHttpClientFactory(handler, new Uri("https://api.github.com/"));
-        return new GitHubReviewService(factory, () => Task.FromResult<string?>("ghp_test"), "https://github.com");
-    }
+        => GitHubReviewServiceFactory.Create(handler);
 
     private static FakeHttpMessageHandler RawHandler(byte[] bytes, HttpStatusCode status = HttpStatusCode.OK) =>
         new(_ => new HttpResponseMessage(status) { Content = new ByteArrayContent(bytes) });

@@ -390,12 +390,7 @@ public class AuthEndpointsTests
         {
             ArgumentNullException.ThrowIfNull(client);
             base.ConfigureClient(client);
-            var token = Services.GetRequiredService<SessionTokenProvider>().Current;
-            client.DefaultRequestHeaders.Add("X-PRism-Session", token);
-            client.DefaultRequestHeaders.Add("Cookie", $"prism-session={token}");
-            var origin = client.BaseAddress?.GetLeftPart(UriPartial.Authority);
-            if (!string.IsNullOrEmpty(origin))
-                client.DefaultRequestHeaders.Add("Origin", origin);
+            client.AddPrismSessionHeaders(Services.GetRequiredService<SessionTokenProvider>().Current);
         }
 
         public async Task SeedPriorLoginAsync(string login)
@@ -410,13 +405,6 @@ public class AuthEndpointsTests
             base.Dispose(disposing);
             Base.Dispose();
         }
-    }
-
-    private sealed class StubReviewAuth : IReviewAuth
-    {
-        private readonly Func<Task<AuthValidationResult>> _validate;
-        public StubReviewAuth(Func<Task<AuthValidationResult>> validate) { _validate = validate; }
-        public Task<AuthValidationResult> ValidateCredentialsAsync(CancellationToken ct, bool skipCredentialHealth = false) => _validate();
     }
 
     // Counts Reset() calls. GetActivityAsync is never exercised by these tests (the auth

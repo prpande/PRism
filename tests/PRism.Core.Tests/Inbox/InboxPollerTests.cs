@@ -1,42 +1,34 @@
 using FluentAssertions;
-using Microsoft.Extensions.Logging;
-using Moq;
+using Microsoft.Extensions.Logging.Abstractions;
 using PRism.Core.Config;
 using PRism.Core.Inbox;
+using PRism.Core.Tests.PrDetail;
+using PRism.Core.Tests.TestHelpers;
 
 namespace PRism.Core.Tests.Inbox;
 
 public sealed class InboxPollerTests
 {
+    private static FakeConfigStore FastConfig() =>
+        // Near-zero cadence (0 rounds toward the poller's 1s clamp) for fast ticks.
+        new() { Current = AppConfig.Default with { Polling = new PollingConfig(30, 0) } };
+
     private static (
         InboxPoller Poller,
-        Mock<IInboxRefreshOrchestrator> OrchestratorMock,
+        FakeInboxRefreshOrchestrator Orchestrator,
         InboxSubscriberCount Subs)
         Build()
     {
-        var orchestratorMock = new Mock<IInboxRefreshOrchestrator>();
-        orchestratorMock
-            .Setup(o => o.RefreshAsync(It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
-
-        // Use a real PollingConfig with a near-zero cadence (1 second minimum for TimeSpan.FromSeconds,
-        // but 0 rounds to zero which means Task.Delay(0,...) — effectively immediate)
-        var fastConfig = new Mock<IConfigStore>();
-        fastConfig.Setup(c => c.Current).Returns(AppConfig.Default with
-        {
-            Polling = new PollingConfig(30, 0)
-        });
-
-        var logMock = new Mock<ILogger<InboxPoller>>();
+        var orchestrator = new FakeInboxRefreshOrchestrator();
         var subs = new InboxSubscriberCount();
 
         var poller = new InboxPoller(
-            orchestratorMock.Object,
+            orchestrator,
             subs,
-            fastConfig.Object,
-            logMock.Object);
+            FastConfig(),
+            NullLogger<InboxPoller>.Instance);
 
-        return (poller, orchestratorMock, subs);
+        return (poller, orchestrator, subs);
     }
 
     private static async Task StopAsync(InboxPoller poller, CancellationTokenSource cts)
@@ -48,7 +40,7 @@ public sealed class InboxPollerTests
     [Fact]
     public async Task Subscriber_count_zero_no_refresh_fires()
     {
-        var (poller, orchestratorMock, _) = Build();
+        var (poller, orchestrator, _) = Build();
         using var cts = new CancellationTokenSource();
 
         await poller.StartAsync(cts.Token);
@@ -56,13 +48,13 @@ public sealed class InboxPollerTests
 
         await StopAsync(poller, cts);
 
-        orchestratorMock.Verify(o => o.RefreshAsync(It.IsAny<CancellationToken>()), Times.Never);
+        orchestrator.RefreshCalls.Should().Be(0);
     }
 
     [Fact]
     public async Task First_subscriber_kicks_immediate_refresh()
     {
-        var (poller, orchestratorMock, subs) = Build();
+        var (poller, orchestrator, subs) = Build();
         using var cts = new CancellationTokenSource();
 
         await poller.StartAsync(cts.Token);
@@ -71,13 +63,13 @@ public sealed class InboxPollerTests
         await Task.Delay(200);
         await StopAsync(poller, cts);
 
-        orchestratorMock.Verify(o => o.RefreshAsync(It.IsAny<CancellationToken>()), Times.AtLeastOnce);
+        orchestrator.RefreshCalls.Should().BeGreaterOrEqualTo(1);
     }
 
     [Fact]
     public async Task Cadence_continues_while_subscriber_present()
     {
-        var (poller, orchestratorMock, subs) = Build();
+        var (poller, orchestrator, subs) = Build();
         using var cts = new CancellationTokenSource();
 
         await poller.StartAsync(cts.Token);
@@ -88,13 +80,13 @@ public sealed class InboxPollerTests
         await Task.Delay(2500);
         await StopAsync(poller, cts);
 
-        orchestratorMock.Verify(o => o.RefreshAsync(It.IsAny<CancellationToken>()), Times.AtLeast(2));
+        orchestrator.RefreshCalls.Should().BeGreaterOrEqualTo(2);
     }
 
     [Fact]
     public async Task Decrement_to_zero_pauses_refresh()
     {
-        var (poller, orchestratorMock, subs) = Build();
+        var (poller, orchestrator, subs) = Build();
         using var cts = new CancellationTokenSource();
 
         await poller.StartAsync(cts.Token);
@@ -102,20 +94,16 @@ public sealed class InboxPollerTests
 
         // Wait for at least one tick
         await Task.Delay(100);
-        var callsAfterFirstTick = orchestratorMock.Invocations
-            .Count(i => i.Method.Name == nameof(IInboxRefreshOrchestrator.RefreshAsync));
 
         // Now remove subscriber
         subs.Decrement();
 
-        // Reset mock count tracking by capturing calls at this point
-        var callsBeforePause = orchestratorMock.Invocations
-            .Count(i => i.Method.Name == nameof(IInboxRefreshOrchestrator.RefreshAsync));
+        // Capture the call count at the pause point.
+        var callsBeforePause = orchestrator.RefreshCalls;
 
         // Wait several cadence durations — no more calls should fire
         await Task.Delay(200);
-        var callsAfterPause = orchestratorMock.Invocations
-            .Count(i => i.Method.Name == nameof(IInboxRefreshOrchestrator.RefreshAsync));
+        var callsAfterPause = orchestrator.RefreshCalls;
 
         await StopAsync(poller, cts);
 
@@ -126,7 +114,7 @@ public sealed class InboxPollerTests
     [Fact]
     public async Task Resume_after_pause_kicks_immediate_refresh()
     {
-        var (poller, orchestratorMock, subs) = Build();
+        var (poller, orchestrator, subs) = Build();
         using var cts = new CancellationTokenSource();
 
         await poller.StartAsync(cts.Token);
@@ -138,8 +126,7 @@ public sealed class InboxPollerTests
 
         // Allow any in-flight call to settle
         await Task.Delay(50);
-        var callsAtPause = orchestratorMock.Invocations
-            .Count(i => i.Method.Name == nameof(IInboxRefreshOrchestrator.RefreshAsync));
+        var callsAtPause = orchestrator.RefreshCalls;
 
         // Re-subscribe. The InboxSeconds=0 cadence is clamped to a 1s floor, so we
         // must wait > 1s for the immediate refresh on resume to fire (the poller is
@@ -149,8 +136,7 @@ public sealed class InboxPollerTests
 
         await StopAsync(poller, cts);
 
-        var callsAfterResume = orchestratorMock.Invocations
-            .Count(i => i.Method.Name == nameof(IInboxRefreshOrchestrator.RefreshAsync));
+        var callsAfterResume = orchestrator.RefreshCalls;
 
         callsAfterResume.Should().BeGreaterThan(callsAtPause,
             "a new subscriber should have triggered at least one additional refresh");
@@ -159,29 +145,14 @@ public sealed class InboxPollerTests
     [Fact]
     public async Task Refresh_exception_does_not_break_poller()
     {
-        var orchestratorMock = new Mock<IInboxRefreshOrchestrator>();
+        var (poller, orchestrator, subs) = Build();
         var callCount = 0;
-        orchestratorMock
-            .Setup(o => o.RefreshAsync(It.IsAny<CancellationToken>()))
-            .Returns(() =>
-            {
-                callCount++;
-                if (callCount == 1) throw new InvalidOperationException("transient error");
-                return Task.CompletedTask;
-            });
-
-        var fastConfig = new Mock<IConfigStore>();
-        fastConfig.Setup(c => c.Current).Returns(AppConfig.Default with
+        orchestrator.RefreshOverride = _ =>
         {
-            Polling = new PollingConfig(30, 0)
-        });
-
-        var subs = new InboxSubscriberCount();
-        var poller = new InboxPoller(
-            orchestratorMock.Object,
-            subs,
-            fastConfig.Object,
-            new Mock<ILogger<InboxPoller>>().Object);
+            callCount++;
+            if (callCount == 1) throw new InvalidOperationException("transient error");
+            return Task.CompletedTask;
+        };
 
         using var cts = new CancellationTokenSource();
         await poller.StartAsync(cts.Token);
@@ -193,62 +164,28 @@ public sealed class InboxPollerTests
         await StopAsync(poller, cts);
 
         // Both calls happened (exception + at least one success)
-        orchestratorMock.Verify(o => o.RefreshAsync(It.IsAny<CancellationToken>()), Times.AtLeast(2));
+        orchestrator.RefreshCalls.Should().BeGreaterOrEqualTo(2);
     }
 
     [Fact]
     public async Task RefreshAsync_throws_RateLimitExceededException_then_next_delay_is_max_of_retry_after_and_cadence()
     {
-        var orchestratorMock = new Mock<IInboxRefreshOrchestrator>();
+        var (poller, orchestrator, subs) = Build();
         var callTimes = new List<DateTime>();
         var callCount = 0;
-        orchestratorMock
-            .Setup(o => o.RefreshAsync(It.IsAny<CancellationToken>()))
-            .Returns(() =>
-            {
-                callTimes.Add(DateTime.UtcNow);
-                callCount++;
-                if (callCount == 1)
-                {
-                    throw new RateLimitExceededException("test", TimeSpan.FromMilliseconds(300));
-                }
-                return Task.CompletedTask;
-            });
-
-        // Cadence = 1s; Retry-After = 300ms. The poller should wait max(retryAfter, cadence) = 1s.
-        // Inverting the test assumption: if the code used cadence-only it would still wait 1s,
-        // so we instead invert: cadence = 100ms, retryAfter = 400ms. Expected delay between
-        // call 1 and call 2 is ~400ms (retryAfter > cadence). Bug behaviour would yield ~100ms.
-        callTimes.Clear();
-        callCount = 0;
-        orchestratorMock
-            .Setup(o => o.RefreshAsync(It.IsAny<CancellationToken>()))
-            .Returns(() =>
-            {
-                callTimes.Add(DateTime.UtcNow);
-                callCount++;
-                if (callCount == 1)
-                {
-                    throw new RateLimitExceededException("test", TimeSpan.FromMilliseconds(400));
-                }
-                return Task.CompletedTask;
-            });
-
-        var fastConfig = new Mock<IConfigStore>();
-        fastConfig.Setup(c => c.Current).Returns(AppConfig.Default with
+        // Cadence = 0 (clamped to a 1s floor); Retry-After = 400ms. The poller should wait
+        // max(retryAfter, clampedCadence). The gap between call 1 (rate-limited) and call 2
+        // must be at least the Retry-After window; a bug that ignored Retry-After would yield ~0ms.
+        orchestrator.RefreshOverride = _ =>
         {
-            // PollingConfig.InboxSeconds is int seconds; 0 → cadence = 0s (effectively immediate).
-            // With cadence = 0, max(retryAfter=400ms, cadence=0) = 400ms — that's the gap we expect.
-            // Bug behaviour ignores RetryAfter → gap ≈ 0ms.
-            Polling = new PollingConfig(30, 0)
-        });
-
-        var subs = new InboxSubscriberCount();
-        var poller = new InboxPoller(
-            orchestratorMock.Object,
-            subs,
-            fastConfig.Object,
-            new Mock<ILogger<InboxPoller>>().Object);
+            callTimes.Add(DateTime.UtcNow);
+            callCount++;
+            if (callCount == 1)
+            {
+                throw new RateLimitExceededException("test", TimeSpan.FromMilliseconds(400));
+            }
+            return Task.CompletedTask;
+        };
 
         using var cts = new CancellationTokenSource();
         await poller.StartAsync(cts.Token);
@@ -273,28 +210,13 @@ public sealed class InboxPollerTests
         // Regression: Polling.InboxSeconds=0 used to produce a tight loop because
         // TimeSpan.FromSeconds(0) → Task.Delay(0,...) returns immediately. The
         // poller now clamps to a 1s minimum (defensive against config typos).
-        var orchestratorMock = new Mock<IInboxRefreshOrchestrator>();
+        var (poller, orchestrator, subs) = Build();
         var callTimes = new List<DateTime>();
-        orchestratorMock
-            .Setup(o => o.RefreshAsync(It.IsAny<CancellationToken>()))
-            .Returns(() =>
-            {
-                callTimes.Add(DateTime.UtcNow);
-                return Task.CompletedTask;
-            });
-
-        var fastConfig = new Mock<IConfigStore>();
-        fastConfig.Setup(c => c.Current).Returns(AppConfig.Default with
+        orchestrator.RefreshOverride = _ =>
         {
-            Polling = new PollingConfig(30, 0)
-        });
-
-        var subs = new InboxSubscriberCount();
-        var poller = new InboxPoller(
-            orchestratorMock.Object,
-            subs,
-            fastConfig.Object,
-            new Mock<ILogger<InboxPoller>>().Object);
+            callTimes.Add(DateTime.UtcNow);
+            return Task.CompletedTask;
+        };
 
         using var cts = new CancellationTokenSource();
         await poller.StartAsync(cts.Token);
@@ -318,28 +240,25 @@ public sealed class InboxPollerTests
         // Regression: Polling.InboxSeconds<0 used to throw ArgumentOutOfRangeException
         // out of Task.Delay(negative TimeSpan), killing the BackgroundService. The
         // poller now clamps to a 1s minimum so negative values are tolerated.
-        var orchestratorMock = new Mock<IInboxRefreshOrchestrator>();
+        var orchestrator = new FakeInboxRefreshOrchestrator();
         var callTimes = new List<DateTime>();
-        orchestratorMock
-            .Setup(o => o.RefreshAsync(It.IsAny<CancellationToken>()))
-            .Returns(() =>
-            {
-                callTimes.Add(DateTime.UtcNow);
-                return Task.CompletedTask;
-            });
-
-        var fastConfig = new Mock<IConfigStore>();
-        fastConfig.Setup(c => c.Current).Returns(AppConfig.Default with
+        orchestrator.RefreshOverride = _ =>
         {
-            Polling = new PollingConfig(30, -10)
-        });
+            callTimes.Add(DateTime.UtcNow);
+            return Task.CompletedTask;
+        };
+
+        var negativeCadence = new FakeConfigStore
+        {
+            Current = AppConfig.Default with { Polling = new PollingConfig(30, -10) },
+        };
 
         var subs = new InboxSubscriberCount();
         var poller = new InboxPoller(
-            orchestratorMock.Object,
+            orchestrator,
             subs,
-            fastConfig.Object,
-            new Mock<ILogger<InboxPoller>>().Object);
+            negativeCadence,
+            NullLogger<InboxPoller>.Instance);
 
         using var cts = new CancellationTokenSource();
         await poller.StartAsync(cts.Token);

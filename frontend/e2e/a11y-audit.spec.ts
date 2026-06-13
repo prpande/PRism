@@ -1,6 +1,8 @@
 import { test, expect, type Route, type Page } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 import { resetBackendState, setupAndOpenScenarioPr } from './helpers/s4-setup';
+import { setupBaseRoutes } from './helpers/base-mocks';
+import { makeDefaultPreferences } from './fixtures/preferences';
 
 // ---------------------------------------------------------------------------
 // Spec § 6 — Accessibility baseline audit (Pass 1: automated axe-core).
@@ -20,45 +22,19 @@ import { resetBackendState, setupAndOpenScenarioPr } from './helpers/s4-setup';
 // `prefers-reduced-motion: reduce`.
 // ---------------------------------------------------------------------------
 
-const authedAuthState = {
-  hasToken: true,
-  host: 'https://github.com',
-  hostMismatch: null,
-};
-
+// Canonical preferences shape (#332), but with the deliberately synthetic
+// data-dir sentinels kept: the Settings page just renders these paths as
+// copyable strings, axe-core doesn't care, and a clearly fake value avoids
+// implying any real platform's data-dir layout. Spread the canonical github
+// block (rather than replacing it) so any future wire field is inherited —
+// only the two path strings are overridden.
+const canonicalPreferences = makeDefaultPreferences();
 const defaultPreferences = {
-  ui: { theme: 'system', accent: 'indigo', aiMode: 'off' as const, density: 'comfortable' },
-  inbox: {
-    sections: {
-      'review-requested': true,
-      'awaiting-author': true,
-      'authored-by-me': true,
-      mentioned: true,
-      'recently-closed': true,
-    },
-    defaultSort: 'updated',
-  },
+  ...canonicalPreferences,
   github: {
-    host: 'https://github.com',
-    // Fixture-only sentinel paths — the Settings page just renders these as
-    // copyable strings, axe-core doesn't care, and using a clearly synthetic
-    // value avoids implying any real platform's data-dir layout.
+    ...canonicalPreferences.github,
     configPath: '<dataDir>/config.json',
     logsPath: '<dataDir>/logs',
-  },
-};
-
-const allOffCapabilities = {
-  ai: {
-    summary: false,
-    fileFocus: false,
-    hunkAnnotations: false,
-    preSubmitValidators: false,
-    composerAssist: false,
-    draftSuggestions: false,
-    draftReconciliation: false,
-    inboxEnrichment: false,
-    inboxRanking: false,
   },
 };
 
@@ -141,29 +117,13 @@ const emptyDraftSession = {
 };
 
 async function setupBaseMocks(p: Page): Promise<void> {
-  await p.route('**/api/auth/state', (route: Route) =>
-    route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify(authedAuthState),
-    }),
-  );
+  await setupBaseRoutes(p);
   await p.route('**/api/preferences', (route: Route) =>
     route.fulfill({
       status: 200,
       contentType: 'application/json',
       body: JSON.stringify(defaultPreferences),
     }),
-  );
-  await p.route('**/api/capabilities', (route: Route) =>
-    route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify(allOffCapabilities),
-    }),
-  );
-  await p.route('**/api/events', (route: Route) =>
-    route.fulfill({ status: 200, contentType: 'text/event-stream', body: ':heartbeat\n\n' }),
   );
   await p.route('**/api/inbox', (route: Route) =>
     route.fulfill({

@@ -13,7 +13,6 @@ using PRism.Core.Events;
 using PRism.Core.PrDetail;
 using PRism.Core.State;
 using PRism.Core.Submit;
-using PRism.Web.Middleware;
 using PRism.Web.Tests.TestHelpers;
 
 namespace PRism.Web.Tests.Endpoints;
@@ -224,19 +223,22 @@ public class PrCommentEndpointTests
         ctx.Submitter.ReviewCommentReplies.Should().BeEmpty("must not call GitHub when ParentThreadId is missing");
     }
 
-    // ── 7. Unauthorized → 401 ─────────────────────────────────────────────────
+    // ── 7. Unauthorized → 403 ─────────────────────────────────────────────────
 
     [Fact]
-    public async Task PostComment_unauthorized_returns_401()
+    public async Task PostComment_unauthorized_returns_403()
     {
         using var ctx = CommentTestContext.Create(subscribeAll: false);
         await ctx.SeedSessionAsync("o", "r", 8, SessionWithInlineDraft());
 
         var resp = await ctx.Post(8, "d1");
 
-        resp.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+        resp.StatusCode.Should().Be(HttpStatusCode.Forbidden);
         var body = await resp.Content.ReadFromJsonAsync<JsonElement>(CamelCase);
         body.GetProperty("code").GetString().Should().Be("unauthorized");
+        // The per-verb message is surfaced by the frontend (api/comment.ts maps payload.message);
+        // #319 moves the status 401->403 but must NOT change this user-visible text.
+        body.GetProperty("message").GetString().Should().Be("Subscribe to this PR before posting a comment.");
     }
 
     // ── 8. GitHub 5xx → 502 sanitized ────────────────────────────────────────
@@ -346,17 +348,8 @@ internal sealed class CommentTestContext : IDisposable
     private IAppStateStore StateStore =>
         _derived.Services.GetRequiredService<IAppStateStore>();
 
-    public HttpClient CreateClient(string? tabId = null)
-    {
-        var token = _derived.Services.GetRequiredService<SessionTokenProvider>().Current;
-        var c = _derived.CreateClient();
-        c.DefaultRequestHeaders.Add("X-PRism-Session", token);
-        c.DefaultRequestHeaders.Add("Cookie", $"prism-session={token}");
-        var origin = c.BaseAddress?.GetLeftPart(UriPartial.Authority);
-        if (!string.IsNullOrEmpty(origin)) c.DefaultRequestHeaders.Add("Origin", origin);
-        if (!string.IsNullOrEmpty(tabId)) c.DefaultRequestHeaders.Add("X-PRism-Tab-Id", tabId);
-        return c;
-    }
+    public HttpClient CreateClient(string? tabId = null) =>
+        _derived.CreateAuthenticatedClient(tabId);
 
     public async Task<HttpResponseMessage> Post(int number, string draftId, string owner = "o", string repo = "r")
     {

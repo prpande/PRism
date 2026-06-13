@@ -1,8 +1,11 @@
+import type { ReactNode } from 'react';
 import { Link, useLocation, useSearchParams } from 'react-router-dom';
 import { Logo } from './Logo';
 import { WindowControls } from './WindowControls';
 import { GearIcon } from '../PrDetail/FilesTab/diffIcons';
 import { HelpIcon } from './HelpIcon';
+import { FeedbackIcon } from './FeedbackIcon';
+import { useEffectiveLocation, type EffectiveLocation } from '../../hooks/useEffectiveLocation';
 import styles from './Header.module.css';
 
 interface HeaderProps {
@@ -13,9 +16,11 @@ interface HeaderProps {
   isAuthed: boolean;
 }
 
-// Active-state (authed nav only — Inbox + Settings):
+// Active-state (authed nav only — Inbox, Settings, Help, Feedback):
 //   Inbox    → pathname === '/' || '/inbox'
 //   Settings → pathname === '/settings' || (pathname === '/setup' && ?replace=…)
+//   Help     → pathname === '/help'
+//   Feedback → pathname === '/feedback'
 // Replace-token UX is a Settings affordance, so /setup?replace=1 keeps Settings
 // active. There is no standalone Setup tab (#130): first-run hides the nav, and
 // re-running setup lives in Settings → Auth ("Replace token").
@@ -41,6 +46,15 @@ export function Header({ isAuthed }: HeaderProps) {
     pathname.startsWith('/settings/') ||
     (pathname === '/setup' && isReplaceMode);
   const helpActive = pathname === '/help';
+  const feedbackActive = pathname === '/feedback';
+
+  // The page each cluster modal (Settings/Help/Feedback) should open OVER. The
+  // shared hook returns the real background: the forwarded backgroundLocation when
+  // a modal route is already open, the synthetic Inbox for a cold deep-link to a
+  // modal route, else the current page. Using it (rather than a bare `location`)
+  // keeps a modal URL from being nested as the next modal's background — the same
+  // reason SettingsLink uses it for intra-Settings navigation.
+  const effectiveBg = useEffectiveLocation();
 
   const classFor = (active: boolean) => (active ? styles.tabActive : styles.tab);
 
@@ -80,27 +94,32 @@ export function Header({ isAuthed }: HeaderProps) {
           aria-label="Global search (placeholder)"
         />
       )}
+      {/* Right-side control cluster, left-to-right: Settings · Help · Feedback ·
+          WindowControls (#430). Settings leads the cluster as the primary "system"
+          affordance; Feedback is rightmost (closest to the window controls) so the new
+          entry point reads as its own thing rather than burying it between the two
+          existing icons. All three share .gear / .gearOn so hover, focus, and
+          route-active styling are identical — rendered via NavIconLink so that shared
+          shape lives in one place. */}
       {isAuthed && (
-        <Link
-          to="/help"
-          state={{ backgroundLocation: location }}
-          className={helpActive ? `${styles.gear} ${styles.gearOn}` : styles.gear}
-          aria-label="Help"
-          aria-current={helpActive ? 'page' : undefined}
-        >
-          <HelpIcon />
-        </Link>
-      )}
-      {isAuthed && (
-        <Link
+        <NavIconLink
           to="/settings/appearance"
-          state={{ backgroundLocation: location }}
-          className={settingsActive ? `${styles.gear} ${styles.gearOn}` : styles.gear}
-          aria-label="Settings"
-          aria-current={settingsActive ? 'page' : undefined}
+          label="Settings"
+          active={settingsActive}
+          bg={effectiveBg}
         >
           <GearIcon />
-        </Link>
+        </NavIconLink>
+      )}
+      {isAuthed && (
+        <NavIconLink to="/help" label="Help" active={helpActive} bg={effectiveBg}>
+          <HelpIcon />
+        </NavIconLink>
+      )}
+      {isAuthed && (
+        <NavIconLink to="/feedback" label="Send feedback" active={feedbackActive} bg={effectiveBg}>
+          <FeedbackIcon />
+        </NavIconLink>
       )}
       {/* Desktop shell only — renders nothing in the browser. The theme/accent/AI
           quick toggles that used to live here were removed (they're in Settings);
@@ -108,5 +127,36 @@ export function Header({ isAuthed }: HeaderProps) {
           headless <AppearanceSync /> mounted by App. */}
       <WindowControls />
     </header>
+  );
+}
+
+// One icon-link in the right-side .gear cluster (Settings / Help / Feedback). They
+// differ only by route, label, icon, and active flag; the route-modal `state`, the
+// .gear/.gearOn class swap, and the aria-current coupling are identical, so they live
+// here once. `bg` is forwarded as the modal's backgroundLocation so each opens over the
+// current page rather than snapping to the Inbox.
+function NavIconLink({
+  to,
+  label,
+  active,
+  bg,
+  children,
+}: {
+  to: string;
+  label: string;
+  active: boolean;
+  bg: EffectiveLocation;
+  children: ReactNode;
+}) {
+  return (
+    <Link
+      to={to}
+      state={{ backgroundLocation: bg }}
+      className={active ? `${styles.gear} ${styles.gearOn}` : styles.gear}
+      aria-label={label}
+      aria-current={active ? 'page' : undefined}
+    >
+      {children}
+    </Link>
   );
 }

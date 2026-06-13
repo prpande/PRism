@@ -1,11 +1,13 @@
 import { test, expect, type Page, type Route } from '@playwright/test';
+import { setupBaseRoutes } from './helpers/base-mocks';
+import { makeDefaultPreferences } from './fixtures/preferences';
 
 // ---------------------------------------------------------------------------
 // #262 PR2 — inbox filter/sort bar e2e.
 //
-// Seeding mirrors inbox.spec.ts EXACTLY: setupBaseMocks() wires the same four
-// routes (auth/state, preferences, capabilities, events) and each test stubs
-// `/api/inbox` with a fulfilled JSON body. No fixture file or real backend —
+// Seeding mirrors inbox.spec.ts: setupBaseRoutes() wires the three constant
+// routes (auth/state, capabilities, events), setupInbox adds the per-test
+// `/api/preferences` + `/api/inbox` bodies. No fixture file or real backend —
 // this is the established inbox-e2e seeding approach (route mocks), which lets
 // us precisely control sections + per-PR CI so the CI facet has cross-section
 // data and filters can empty sections / match nothing.
@@ -146,54 +148,18 @@ const sampleInbox = {
   ciProbeComplete: true,
 };
 
-const authedAuthState = {
-  hasToken: true,
-  host: 'https://github.com',
-  hostMismatch: null,
-};
-
-// Nested preferences shape (S6 PR1). `inbox.sections` carries the PR1 taxonomy
-// (no `ci-failing`, awaiting-author present). `ui.theme` is parametrized per
-// test so the filter behaviour is exercised in BOTH light and dark.
+// Canonical preferences shape (#332) with `ui.theme` parametrized per test so
+// the filter behaviour is exercised in BOTH light and dark. The canonical
+// `inbox.sections` is the PR1 taxonomy (no `ci-failing`, awaiting-author present).
 function preferencesFor(theme: 'light' | 'dark') {
-  return {
-    ui: { theme, accent: 'indigo', aiPreview: false, density: 'comfortable' },
-    inbox: {
-      sections: {
-        'review-requested': true,
-        'awaiting-author': true,
-        'authored-by-me': true,
-        mentioned: true,
-        'recently-closed': true,
-      },
-      defaultSort: 'updated',
-    },
-    github: {
-      host: 'https://github.com',
-      configPath: '/fake/config.json',
-      logsPath: '/fake/logs',
-    },
-  };
+  const base = makeDefaultPreferences();
+  return { ...base, ui: { ...base.ui, theme } };
 }
 
-const allOffCapabilities = {
-  ai: {
-    summary: false,
-    fileFocus: false,
-    hunkAnnotations: false,
-    preSubmitValidators: false,
-    composerAssist: false,
-    draftSuggestions: false,
-    draftReconciliation: false,
-    inboxEnrichment: false,
-    inboxRanking: false,
-  },
-};
-
 // ---------------------------------------------------------------------------
-// Shared mock wiring — same four routes as inbox.spec.ts's setupBaseMocks,
-// plus the `/api/inbox` stub (always present for this suite). `ciProbeComplete`
-// override lets the incomplete-hint test flip it without rebuilding the body.
+// Shared mock wiring — the three constant routes via setupBaseRoutes, plus the
+// per-test `/api/preferences` + `/api/inbox` stubs. `ciProbeComplete` override
+// lets the incomplete-hint test flip it without rebuilding the body.
 // ---------------------------------------------------------------------------
 
 async function setupInbox(
@@ -204,29 +170,13 @@ async function setupInbox(
     ...sampleInbox,
     ciProbeComplete: opts.ciProbeComplete ?? true,
   };
-  await page.route('**/api/auth/state', (route: Route) =>
-    route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify(authedAuthState),
-    }),
-  );
+  await setupBaseRoutes(page);
   await page.route('**/api/preferences', (route: Route) =>
     route.fulfill({
       status: 200,
       contentType: 'application/json',
       body: JSON.stringify(preferencesFor(opts.theme)),
     }),
-  );
-  await page.route('**/api/capabilities', (route: Route) =>
-    route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify(allOffCapabilities),
-    }),
-  );
-  await page.route('**/api/events', (route: Route) =>
-    route.fulfill({ status: 200, contentType: 'text/event-stream', body: ':heartbeat\n\n' }),
   );
   await page.route('**/api/inbox', (route: Route) =>
     route.fulfill({

@@ -16,13 +16,7 @@ namespace PRism.GitHub.Tests;
 public class GitHubReviewServiceAuthHeaderTests
 {
     private static GitHubReviewService NewService(HttpMessageHandler handler, Func<Task<string?>>? readToken = null)
-    {
-        var factory = new FakeHttpClientFactory(handler, new Uri("https://api.github.com/"));
-        return new GitHubReviewService(
-            factory,
-            readToken ?? (() => Task.FromResult<string?>("ghp_test")),
-            "https://github.com");
-    }
+        => GitHubReviewServiceFactory.Create(handler, readToken);
 
     private sealed class CapturingHandler : HttpMessageHandler
     {

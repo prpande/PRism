@@ -90,5 +90,8 @@ public class ViewerLoginHydratorConfigWriteTests
 
         // Validation rejected → the existing (potentially stale) login stays; user must reauth at Setup.
         config.Current.Github.Accounts[0].Login.Should().Be("stale-login");
+        // ...and the in-memory login cache is left empty (folded in from the former
+        // Web.Tests invalid-token case).
+        loginCache.Get().Should().Be("");
     }
 }

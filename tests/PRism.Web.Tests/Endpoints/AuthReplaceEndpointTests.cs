@@ -77,14 +77,8 @@ public class AuthReplaceEndpointTests
         {
             ArgumentNullException.ThrowIfNull(client);
             base.ConfigureClient(client);
-            // Mirror PRismWebApplicationFactory's auto-credential injection so tests don't
-            // each have to add Origin / X-PRism-Session.
-            var token = Services.GetRequiredService<SessionTokenProvider>().Current;
-            client.DefaultRequestHeaders.Add("X-PRism-Session", token);
-            client.DefaultRequestHeaders.Add("Cookie", $"prism-session={token}");
-            var origin = client.BaseAddress?.GetLeftPart(UriPartial.Authority);
-            if (!string.IsNullOrEmpty(origin))
-                client.DefaultRequestHeaders.Add("Origin", origin);
+            // Mirror PRismWebApplicationFactory's auto-credential injection.
+            client.AddPrismSessionHeaders(Services.GetRequiredService<SessionTokenProvider>().Current);
         }
 
         protected override void Dispose(bool disposing)
@@ -92,13 +86,6 @@ public class AuthReplaceEndpointTests
             base.Dispose(disposing);
             Base.Dispose();
         }
-    }
-
-    private sealed class StubReviewAuth : IReviewAuth
-    {
-        private readonly Func<Task<AuthValidationResult>> _validate;
-        public StubReviewAuth(Func<Task<AuthValidationResult>> validate) { _validate = validate; }
-        public Task<AuthValidationResult> ValidateCredentialsAsync(CancellationToken ct, bool skipCredentialHealth = false) => _validate();
     }
 
     private static async Task SeedPriorLoginAsync(HarnessFactory f, string login)
@@ -677,47 +664,6 @@ public class AuthReplaceEndpointTests
             "bare `login` (any casing) is scrubber-blocked; LogIdentityChanged must use qualified names");
     }
 
-    // Mirror of the KV-capturing provider in AuthEndpointsLoggingTests — duplicated
-    // rather than shared so each test file stays independently runnable. If a third
-    // file needs it, promote to a TestHelpers/KvCapturingLoggerProvider.cs.
-    private sealed class KvCapturingLoggerProvider : ILoggerProvider
-    {
-        public List<KvRecord> Records { get; } = new();
-        public ILogger CreateLogger(string categoryName) => new KvLogger(categoryName, Records);
-        public void Dispose() { }
-
-        public sealed record KvRecord(string Category, IReadOnlyDictionary<string, object?> Args)
-        {
-            public IEnumerable<string> Keys => Args.Keys;
-            public object? GetValue(string key) => Args.TryGetValue(key, out var v) ? v : null;
-        }
-
-        private sealed class KvLogger : ILogger
-        {
-            private readonly string _category;
-            private readonly List<KvRecord> _records;
-            public KvLogger(string category, List<KvRecord> records) { _category = category; _records = records; }
-            public IDisposable BeginScope<TState>(TState state) where TState : notnull => NullScope.Instance;
-            public bool IsEnabled(LogLevel logLevel) => true;
-            public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
-            {
-                if (state is IReadOnlyList<KeyValuePair<string, object?>> kvList)
-                {
-                    var dict = new Dictionary<string, object?>(StringComparer.Ordinal);
-                    foreach (var kv in kvList)
-                        if (!string.Equals(kv.Key, "{OriginalFormat}", StringComparison.Ordinal))
-                            dict[kv.Key] = kv.Value;
-                    lock (_records) { _records.Add(new KvRecord(_category, dict)); }
-                }
-            }
-            private sealed class NullScope : IDisposable
-            {
-                public static readonly NullScope Instance = new();
-                public void Dispose() { }
-            }
-        }
-    }
-
 #pragma warning disable CA1812 // System.Text.Json instantiates via reflection — analyzer can't see the use.
     private sealed record ReplaceResponseDto(bool Ok, string? Login, string? Host, bool IdentityChanged);
 #pragma warning restore CA1812
@@ -734,7 +680,7 @@ public class AuthReplaceEndpointTests
         {
             // Use the test factory's own DataDir convention; tests await InitWith*Async
             // before exercising. dataDir uniqueness per-test isolates the on-disk config.json.
-            var dataDir = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"PRism-replace-throw-{Guid.NewGuid():N}");
+            var dataDir = TempDataDir.NewPath("PRism-replace-throw");
             System.IO.Directory.CreateDirectory(dataDir);
             _inner = new PRism.Core.Config.ConfigStore(dataDir);
         }

@@ -15,7 +15,6 @@ using PRism.Core.PrDetail;
 using PRism.Core.State;
 using PRism.Core.Submit;
 using PRism.Web.Endpoints;
-using PRism.Web.Middleware;
 using PRism.Web.Submit;
 using PRism.Web.Tests.TestHelpers;
 
@@ -176,16 +175,16 @@ public class PrSubmitDiscardEndpointTests
         loaded!.PendingReviewId.Should().Be("PRR_existing", "stamps must NOT be cleared on non-HTTP GitHub exception");
     }
 
-    // ── unauthorized → 401 ───────────────────────────────────────────────────
+    // ── unauthorized → 403 ───────────────────────────────────────────────────
 
     [Fact]
-    public async Task Discard_unauthorized_returns_401()
+    public async Task Discard_unauthorized_returns_403()
     {
         using var ctx = DiscardTestContext.Create(subscribeAll: false);
 
         var resp = await ctx.Discard(199);
 
-        resp.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+        resp.StatusCode.Should().Be(HttpStatusCode.Forbidden);
         var body = await resp.Content.ReadFromJsonAsync<JsonElement>(CamelCase);
         body.GetProperty("code").GetString().Should().Be("unauthorized");
     }
@@ -227,6 +226,11 @@ public class PrSubmitDiscardEndpointTests
         var loaded = await ctx.LoadSessionAsync("o", "r", 200);
         loaded!.PendingReviewId.Should().BeNull("discard clears the pending-review stamps");
     }
+
+    // Note: the foreign-pending-review discard → 204 contract is pinned by
+    // PrSubmitEndpointsTests.PostDiscard_TOCTOU_pass_deletes_pending_review_and_clears_session_returns_204
+    // (the pre-existing TOCTOU success test, flipped 200→204 in this PR). A duplicate test here
+    // was dropped to avoid redundant coverage of the same endpoint/path/assertions.
 
     // ── pipeline-cancellation-timeout → 504 ─────────────────────────────────
 
@@ -384,17 +388,8 @@ internal sealed class DiscardTestContext : IDisposable
 
     private IAppStateStore StateStore => _derived.Services.GetRequiredService<IAppStateStore>();
 
-    public HttpClient CreateClient(string? tabId = "tab-test")
-    {
-        var token = _derived.Services.GetRequiredService<SessionTokenProvider>().Current;
-        var c = _derived.CreateClient();
-        c.DefaultRequestHeaders.Add("X-PRism-Session", token);
-        c.DefaultRequestHeaders.Add("Cookie", $"prism-session={token}");
-        var origin = c.BaseAddress?.GetLeftPart(UriPartial.Authority);
-        if (!string.IsNullOrEmpty(origin)) c.DefaultRequestHeaders.Add("Origin", origin);
-        if (!string.IsNullOrEmpty(tabId)) c.DefaultRequestHeaders.Add("X-PRism-Tab-Id", tabId);
-        return c;
-    }
+    public HttpClient CreateClient(string? tabId = "tab-test") =>
+        _derived.CreateAuthenticatedClient(tabId);
 
     public async Task<HttpResponseMessage> Discard(int number, string owner = "o", string repo = "r",
         TimeSpan? timeout = null)

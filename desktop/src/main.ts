@@ -5,6 +5,7 @@ import { startSidecar, Sidecar } from "./sidecar";
 import { sidecarBinaryName } from "./platform";
 import { isOpenableUrl, windowOpenDecision } from "./urls";
 import { attribute, formatSummary, Phase } from "./startupTimings";
+import { applicationMenuTemplate, editableContextMenuTemplate } from "./menu";
 
 let sidecar: Sidecar | null = null;
 let mainWindow: BrowserWindow | null = null;
@@ -30,10 +31,11 @@ if (!gotLock) {
     }
   });
 
-  // The SPA navbar IS the title bar (titleBarStyle: "hidden" below), so the
-  // default Electron application menu (File/Edit/View/Window/Help) is redundant
-  // chrome — remove it app-wide so the navbar is the topmost UI.
-  Menu.setApplicationMenu(null);
+  // The SPA navbar is the visible title bar, so we drop Electron's default menu
+  // chrome everywhere except macOS, where the app-level Edit menu is what wires
+  // standard text selectors like ⌘V / ⌘A into focused inputs.
+  const appMenu = applicationMenuTemplate(process.platform);
+  Menu.setApplicationMenu(appMenu ? Menu.buildFromTemplate(appMenu) : null);
 
   // Windows groups taskbar buttons by AppUserModelID and reads the icon from it.
   // Without an explicit ID, an unpackaged dev run groups under electron.exe and
@@ -52,8 +54,9 @@ if (!gotLock) {
   // these channels act on the window, so only the window's own renderer should
   // reach them. It's a single-window app today, but this keeps the surface tight
   // if a second BrowserWindow/webview is ever added.
-  const fromMainWindow = (e: Electron.IpcMainEvent | Electron.IpcMainInvokeEvent) =>
-    mainWindow !== null && e.sender === mainWindow.webContents;
+  const fromMainWindow = (
+    e: Electron.IpcMainEvent | Electron.IpcMainInvokeEvent,
+  ) => mainWindow !== null && e.sender === mainWindow.webContents;
   ipcMain.on("window:minimize", (e) => {
     if (fromMainWindow(e)) mainWindow?.minimize();
   });
@@ -85,9 +88,17 @@ if (!gotLock) {
     }
   });
 
-  app.whenReady().then(bootstrap);
+  // bootstrap self-handles every failure (its catch emits the startup summary and
+  // quits), so the promise is intentionally not awaited here.
+  void app.whenReady().then(bootstrap);
 
   app.on("window-all-closed", () => app.quit());
+  // Async before-quit handler is deliberate and safe: preventDefault() runs
+  // SYNCHRONOUSLY before the first await, so the quit is reliably deferred; the
+  // awaited sidecar stop then runs and app.quit() re-triggers the (now sidecar-
+  // null) quit. Electron does not await the returned promise, which is exactly
+  // what we want — hence the targeted no-misused-promises suppression.
+  // eslint-disable-next-line @typescript-eslint/no-misused-promises
   app.on("before-quit", async (e) => {
     if (sidecar) {
       e.preventDefault();
@@ -190,6 +201,12 @@ async function bootstrap(): Promise<void> {
     if (open) void shell.openExternal(url);
     return { action };
   });
+  mainWindow.webContents.on("context-menu", (_event, params) => {
+    if (!params.isEditable || !mainWindow) return;
+    Menu.buildFromTemplate(editableContextMenuTemplate()).popup({
+      window: mainWindow,
+    });
+  });
 
   // macOS: "hidden" still shows the native traffic lights. Hide them so the SPA's
   // own controls are the only ones — identical experience to Windows.
@@ -200,7 +217,10 @@ async function bootstrap(): Promise<void> {
   // Tell the renderer when the window maximizes/unmaximizes so its maximize
   // button can switch to a restore glyph.
   const emitMaximized = () => {
-    mainWindow?.webContents.send("window:maximized-changed", mainWindow.isMaximized());
+    mainWindow?.webContents.send(
+      "window:maximized-changed",
+      mainWindow.isMaximized(),
+    );
   };
   mainWindow.on("maximize", emitMaximized);
   mainWindow.on("unmaximize", emitMaximized);

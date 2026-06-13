@@ -289,3 +289,15 @@
   width: fit-content;
   margin: 0 auto var(--s-3);
 }
+
+/* #390 — pin the full-span comment/composer cell content to the visible diff
+   width so a wide (unified-mode) file can't push the submit button off-screen.
+   No-op in split/wrap (the cell is already viewport-width). The wrapper wraps
+   cell CONTENT, not a `.diffContent > *`, so split-mode translateX doesn't
+   move it. The `100%` fallback covers the first paint before the first measure. */
+.diffStickyViewport {
+  position: sticky;
+  left: 0;
+  width: var(--diff-viewport-w, 100%);
+  box-sizing: border-box;
+}

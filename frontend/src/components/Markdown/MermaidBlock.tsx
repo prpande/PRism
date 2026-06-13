@@ -16,36 +16,40 @@ export function MermaidBlock({ code }: MermaidBlockProps) {
     let cancelled = false;
     const id = `mermaid-${++mermaidIdCounter}`;
 
-    import('mermaid').then(async (mod) => {
-      const mermaid = mod.default;
-      if (!mermaidInitialized) {
-        mermaid.initialize({
-          securityLevel: 'strict',
-          htmlLabels: false,
-          flowchart: { htmlLabels: false },
-          startOnLoad: false,
-          // #191: on a parse/render failure Mermaid otherwise injects its "Syntax
-          // error" bomb SVG into a temp container on document.body before throwing,
-          // and our catch never removes it — so leaked error graphics pile up at
-          // the bottom of every page. With this flag Mermaid calls
-          // removeTempElements() and re-throws instead, leaving nothing behind; our
-          // catch + .mermaid-error fallback still handle the throw.
-          suppressErrorRendering: true,
-        });
-        mermaidInitialized = true;
-      }
+    import('mermaid')
+      .then(async (mod) => {
+        const mermaid = mod.default;
+        if (!mermaidInitialized) {
+          mermaid.initialize({
+            securityLevel: 'strict',
+            htmlLabels: false,
+            flowchart: { htmlLabels: false },
+            startOnLoad: false,
+            // #191: on a parse/render failure Mermaid otherwise injects its "Syntax
+            // error" bomb SVG into a temp container on document.body before throwing,
+            // and our catch never removes it — so leaked error graphics pile up at
+            // the bottom of every page. With this flag Mermaid calls
+            // removeTempElements() and re-throws instead, leaving nothing behind; our
+            // catch + .mermaid-error fallback still handle the throw.
+            suppressErrorRendering: true,
+          });
+          mermaidInitialized = true;
+        }
 
-      try {
         const result = await mermaid.render(id, code);
         if (!cancelled) {
           setSvg(result.svg);
         }
-      } catch (err) {
+      })
+      .catch((err: unknown) => {
+        // Covers BOTH a failed dynamic import (offline / CSP-blocked chunk — without
+        // this the rejection is unhandled and the block hangs on "Loading diagram…"
+        // forever) and a render/initialize throw. The sibling shiki path degrades to
+        // bare code; a diagram has no such fallback, so we surface the error state.
         if (!cancelled) {
-          setError(err instanceof Error ? err.message : 'Mermaid render failed');
+          setError(err instanceof Error ? err.message : 'Mermaid failed to load');
         }
-      }
-    });
+      });
 
     return () => {
       cancelled = true;

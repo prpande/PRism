@@ -10,6 +10,7 @@ import { PrDetailView } from './PrDetailView';
 import { FilesTab } from './FilesTab/FilesTab';
 import { PrDetailContextProvider } from './prDetailContext';
 import type { PrDetailContextValue } from './prDetailContext';
+import { makePrDetailDto, makePr } from '../../../__tests__/helpers/prDetail';
 
 // ---------------------------------------------------------------------------
 // PR2 Task 8 — data freshness on tab re-activation.
@@ -35,32 +36,9 @@ import type { PrDetailContextValue } from './prDetailContext';
 // stub whose clearUnread is a cross-render-stable hoisted spy.
 // ---------------------------------------------------------------------------
 
-const PR_DETAIL: PrDetailDto = {
-  pr: {
-    reference: { owner: 'acme', repo: 'api', number: 7 },
-    title: 'Keep-alive title',
-    body: 'A realistic body.',
-    author: 'alice',
-    state: 'open',
-    headSha: 'abc123',
-    baseSha: 'def456',
-    headBranch: 'feat',
-    baseBranch: 'main',
-    mergeability: 'mergeable',
-    ciSummary: '',
-    isMerged: false,
-    isClosed: false,
-    openedAt: new Date('2026-01-01T00:00:00Z').toISOString(),
-    mergedAt: null,
-    closedAt: null,
-  },
-  clusteringQuality: 'ok',
-  iterations: [],
-  commits: [],
-  rootComments: [],
-  reviewComments: [],
-  timelineCapHit: false,
-};
+const PR_DETAIL = makePrDetailDto({
+  pr: makePr({ reference: { owner: 'acme', repo: 'api', number: 7 }, title: 'Keep-alive title' }),
+});
 
 // Hoisted spies + a mutable result holder so individual tests can reshape what
 // usePrDetail returns (e.g. inject an error for the OQ6 failure case) without
@@ -87,6 +65,11 @@ const { reloadSpy, clearUnreadSpy, updatesClearSpy, prDetailResult, updatesResul
     },
   }),
 );
+
+// #450 — hoisted ref capturing the single-comment-posted subscriber's onPosted.
+const { singleCommentOnPosted } = vi.hoisted(() => ({
+  singleCommentOnPosted: { current: null as null | (() => void) },
+}));
 
 vi.mock('../../hooks/usePrDetail', () => ({
   usePrDetail: () => ({
@@ -145,6 +128,17 @@ vi.mock('../../hooks/useStateChangedSubscriber', () => ({
 
 vi.mock('../../hooks/useRootCommentPostedSubscriber', () => ({
   useRootCommentPostedSubscriber: () => {},
+}));
+
+// #450 — capture the single-comment-posted subscriber's onPosted so the test can fire it.
+vi.mock('../../hooks/useSingleCommentPostedSubscriber', () => ({
+  useSingleCommentPostedSubscriber: ({ onPosted }: { onPosted: () => void }) => {
+    singleCommentOnPosted.current = onPosted;
+  },
+}));
+
+vi.mock('../../hooks/useDraftSubmittedSubscriber', () => ({
+  useDraftSubmittedSubscriber: () => {},
 }));
 
 vi.mock('../../hooks/useCrossTabPrPresence', () => ({
@@ -262,6 +256,21 @@ describe('PrDetailView — freshness on activation (Task 8)', () => {
     expect(reloadSpy).toHaveBeenCalledTimes(1);
     expect(clearUnreadSpy).toHaveBeenCalledTimes(1);
     expect(clearUnreadSpy).toHaveBeenCalledWith('acme/api/7');
+  });
+
+  // #450 — a single inline comment/reply post emits a 'single-comment-posted' SSE
+  // frame. PrDetailView subscribes (mirroring the root-comment subscriber) and its
+  // onPosted fires usePrDetail.reload so the new thread surfaces with its
+  // ReplyComposer — without a manual reload.
+  test('a single-comment-posted event triggers usePrDetail.reload', () => {
+    prDetailResult.current = { data: PR_DETAIL, isLoading: false, error: null };
+    renderPrDetailView({ active: true });
+    reloadSpy.mockClear();
+
+    expect(singleCommentOnPosted.current).toBeTypeOf('function');
+    singleCommentOnPosted.current!();
+
+    expect(reloadSpy).toHaveBeenCalledTimes(1);
   });
 
   // OQ8 — a backgrounded tab can latch a "PR updated" banner (useActivePrUpdates

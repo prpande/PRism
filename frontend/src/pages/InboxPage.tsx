@@ -7,7 +7,6 @@ import { useAiGate } from '../hooks/useAiGate';
 import { usePreferences } from '../hooks/usePreferences';
 import { useMediaQuery } from '../hooks/useMediaQuery';
 import { INBOX_RAIL_MIN_WIDTH } from '../components/Inbox/inboxLayout';
-import { InboxBanner } from '../components/Inbox/InboxBanner';
 import { orderInboxSections } from '../components/Inbox/sectionOrder';
 import { InboxToolbar } from '../components/Inbox/InboxToolbar';
 import { InboxSection } from '../components/Inbox/InboxSection';
@@ -24,11 +23,13 @@ import styles from './InboxPage.module.css';
 
 export function InboxPage() {
   const { data, error, isLoading, reload } = useInbox();
-  const updates = useInboxUpdates();
+  // #450 — an inbox-updated frame now silently auto-refreshes (debounced) instead of
+  // surfacing the old reload banner. `announce` carries the screen-reader signal the
+  // removed banner's role=status region used to provide.
+  const autoRefresh = useInboxUpdates({ onUpdate: reload });
   const toast = useToast();
   const { isRefreshing, justRefreshed, announce, refresh } = useInboxRefresh({
     reload,
-    dismiss: updates.dismiss,
     onError: (message) => toast.show({ kind: 'error', message }),
   });
   const { preferences } = usePreferences();
@@ -94,11 +95,6 @@ export function InboxPage() {
     );
   if (!data) return null;
 
-  const onReload = async () => {
-    await reload();
-    updates.dismiss();
-  };
-
   return (
     <>
       {/* Background reload (data present, isLoading): the bar is the non-intrusive
@@ -107,6 +103,10 @@ export function InboxPage() {
           no width/position jump when the skeleton is replaced by content. */}
       <LoadingBar active={isLoading || isRefreshing} data-testid="inbox-loading-bar" />
       <main className={styles.page} data-testid="inbox-page" tabIndex={-1}>
+        {/* Two independent live regions. The manual-refresh announce is sticky
+            ('Inbox refreshed' until the next error), so OR-ing the two into one
+            region would let it permanently mask the auto-refresh signal (#450).
+            Keeping them separate guarantees each is announced on its own. */}
         <div
           className="sr-only"
           role="status"
@@ -115,9 +115,14 @@ export function InboxPage() {
         >
           {announce}
         </div>
-        {updates.hasUpdate && (
-          <InboxBanner summary={updates.summary} onReload={onReload} onDismiss={updates.dismiss} />
-        )}
+        <div
+          className="sr-only"
+          role="status"
+          aria-live="polite"
+          data-testid="inbox-autorefresh-status"
+        >
+          {autoRefresh.announce}
+        </div>
         <InboxToolbar
           sections={sections}
           initialSort={initialSort}

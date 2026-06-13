@@ -9,10 +9,10 @@ namespace PRism.GitHub.Tests;
 
 public class GitHubReviewService_ValidateCredentialsAsyncTests
 {
-    private static GitHubReviewService BuildSut(HttpMessageHandler handler, string token = "ghp_test", string host = "https://github.com")
+    private static GitHubAuthValidator BuildSut(HttpMessageHandler handler, string token = "ghp_test", string host = "https://github.com")
     {
         var factory = new FakeHttpClientFactory(handler, HostUrlResolver.ApiBase(host));
-        return new GitHubReviewService(factory, () => Task.FromResult<string?>(token), host);
+        return new GitHubAuthValidator(factory, () => Task.FromResult<string?>(token), host);
     }
 
     [Fact]

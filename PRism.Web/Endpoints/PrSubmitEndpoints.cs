@@ -106,8 +106,8 @@ internal static class PrSubmitEndpoints
         var prRef = new PrReference(owner, repo, number);
         var sessionKey = prRef.ToString();
 
-        if (!activePrCache.IsSubscribed(prRef))
-            return Results.Json(new SubmitErrorDto("unauthorized", "Subscribe to this PR before submitting."), statusCode: StatusCodes.Status401Unauthorized);
+        if (RequireSubscribed.Check(activePrCache, prRef, "Subscribe to this PR before submitting.") is { } notSubscribed)
+            return notSubscribed;
 
         if (!TryParseVerdict(request?.Verdict, out var verdict))
             return Results.Json(new SubmitErrorDto("verdict-invalid", "verdict must be approve, request-changes, or comment."), statusCode: StatusCodes.Status400BadRequest);
@@ -117,7 +117,7 @@ internal static class PrSubmitEndpoints
         // "head-sha-not-stamped" the empty-stamp case still emits) so the frontend can
         // distinguish a missing/poisoned tab id (reload the tab) from a wire-up gap (call
         // /mark-viewed). The allowlist is the same shared regex as mark-viewed / reload.
-        var tabId = httpContext.Request.Headers["X-PRism-Tab-Id"].FirstOrDefault();
+        var tabId = httpContext.Request.Headers[TabStamps.TabIdHeader].FirstOrDefault();
         if (string.IsNullOrEmpty(tabId) || !PrDetailEndpoints.TabIdAllowlistRegex().IsMatch(tabId))
             return Results.Json(new SubmitErrorDto("tab-id-missing", "Reload this browser tab and try again."),
                 statusCode: StatusCodes.Status422UnprocessableEntity);
@@ -126,7 +126,7 @@ internal static class PrSubmitEndpoints
         // The Submit Review button enforces the same rules client-side; this is the backstop.
         var appState = await stateStore.LoadAsync(ct).ConfigureAwait(false);
         if (!appState.Reviews.Sessions.TryGetValue(sessionKey, out var session))
-            return Results.Json(new SubmitErrorDto("no-session", "No draft session for this PR."), statusCode: StatusCodes.Status400BadRequest);
+            return Results.Json(new SubmitErrorDto("no-session", "No draft session for this PR."), statusCode: StatusCodes.Status404NotFound);
 
         // Rule (b): any non-overridden Stale draft / reply blocks submit.
         if (session.DraftComments.Any(d => d.Status == DraftStatus.Stale && !d.IsOverriddenStale)
@@ -233,7 +233,7 @@ internal static class PrSubmitEndpoints
                         // PendingReviewId / ThreadId for the in-flight-recovery surface. Uses
                         // CancellationToken.None — the pipeline already returned (it caught the
                         // cancellation, if any); this cleanup write must land even during host shutdown.
-                        await stateStore.UpdateAsync(state => WithSession(state, sessionKey, failed.NewSession), CancellationToken.None).ConfigureAwait(false);
+                        await stateStore.UpdateAsync(state => state.WithSession(sessionKey, failed.NewSession), CancellationToken.None).ConfigureAwait(false);
                         bus.Publish(new StateChanged(prRef, PendingReviewFields, SourceTabId: null));
                         break;
                     case SubmitOutcome.ForeignPendingReviewPromptRequired prompt:
@@ -305,8 +305,8 @@ internal static class PrSubmitEndpoints
         var prRef = new PrReference(owner, repo, number);
         var sessionKey = prRef.ToString();
 
-        if (!activePrCache.IsSubscribed(prRef))
-            return Results.Json(new SubmitErrorDto("unauthorized", "Subscribe to this PR before discarding."), statusCode: StatusCodes.Status401Unauthorized);
+        if (RequireSubscribed.Check(activePrCache, prRef, "Subscribe to this PR before discarding.") is { } notSubscribed)
+            return notSubscribed;
 
         // Signal cancellation to any in-flight pipeline for this PR. Idempotent — no-op if nothing
         // is registered (either idle or already past registration). When a pipeline IS running,
@@ -344,7 +344,7 @@ internal static class PrSubmitEndpoints
                 // Log the detailed hre (full message incl. any raw GitHub body) server-side BEFORE
                 // returning the sanitized DTO — MapGithubError strips the detail from the client response.
                 s_ownDiscardGitHubFailed(loggerFactory.CreateLogger(LoggerCategory), sessionKey, hre);
-                return Results.Json(MapGithubError(hre), statusCode: StatusCodes.Status502BadGateway);
+                return GitHubErrorMapper.ToResult(hre);
             }
 #pragma warning disable CA1031  // catch-all so a rare GitHub SDK exception (non-HTTP) still surfaces a 502 instead of a bare 500
             catch (Exception ex) when (ex is not OperationCanceledException)
@@ -374,9 +374,9 @@ internal static class PrSubmitEndpoints
                     // Non-404 GitHub error: surface as 502. Do NOT clear local stamps — the pending
                     // review still exists on GitHub, so a re-detect on the next submit would catch it.
                     // Log the detailed hre (full message incl. any raw GitHub body) server-side BEFORE
-                    // returning the sanitized DTO — MapGithubError strips the detail from the client response.
+                    // returning the sanitized DTO — GitHubErrorMapper strips the detail from the client response.
                     s_ownDiscardGitHubFailed(loggerFactory.CreateLogger(LoggerCategory), sessionKey, hre);
-                    return Results.Json(MapGithubError(hre), statusCode: StatusCodes.Status502BadGateway);
+                    return GitHubErrorMapper.ToResult(hre);
                 }
 #pragma warning disable CA1031  // catch-all so a rare GitHub SDK exception (non-HTTP) still surfaces a 502 instead of a bare 500
                 catch (Exception ex) when (ex is not OperationCanceledException)
@@ -415,8 +415,8 @@ internal static class PrSubmitEndpoints
     {
         var prRef = new PrReference(owner, repo, number);
         var sessionKey = prRef.ToString();
-        if (!activePrCache.IsSubscribed(prRef))
-            return Results.Json(new SubmitErrorDto("unauthorized", "Subscribe to this PR before resuming."), statusCode: StatusCodes.Status401Unauthorized);
+        if (RequireSubscribed.Check(activePrCache, prRef, "Subscribe to this PR before resuming.") is { } notSubscribed)
+            return notSubscribed;
         if (string.IsNullOrEmpty(request?.PullRequestReviewId))
             return Results.Json(new SubmitErrorDto("pull-request-review-id-missing", "pullRequestReviewId is required."), statusCode: StatusCodes.Status400BadRequest);
 
@@ -471,7 +471,7 @@ internal static class PrSubmitEndpoints
                 PendingReviewId = snapshotB.PullRequestReviewId,
                 PendingReviewCommitOid = snapshotB.CommitOid,
             };
-            return WithSession(state, sessionKey, merged);
+            return state.WithSession(sessionKey, merged);
         }, ct).ConfigureAwait(false);
 
         bus.Publish(new StateChanged(prRef, PendingReviewFields, SourceTabId: null));
@@ -520,8 +520,8 @@ internal static class PrSubmitEndpoints
     {
         var prRef = new PrReference(owner, repo, number);
         var sessionKey = prRef.ToString();
-        if (!activePrCache.IsSubscribed(prRef))
-            return Results.Json(new SubmitErrorDto("unauthorized", "Subscribe to this PR before discarding."), statusCode: StatusCodes.Status401Unauthorized);
+        if (RequireSubscribed.Check(activePrCache, prRef, "Subscribe to this PR before discarding.") is { } notSubscribed)
+            return notSubscribed;
         if (string.IsNullOrEmpty(request?.PullRequestReviewId))
             return Results.Json(new SubmitErrorDto("pull-request-review-id-missing", "pullRequestReviewId is required."), statusCode: StatusCodes.Status400BadRequest);
 
@@ -552,11 +552,11 @@ internal static class PrSubmitEndpoints
         await stateStore.UpdateAsync(state =>
         {
             if (!state.Reviews.Sessions.TryGetValue(sessionKey, out var existing)) return state;
-            return WithSession(state, sessionKey, existing with { PendingReviewId = null, PendingReviewCommitOid = null });
+            return state.WithSession(sessionKey, existing with { PendingReviewId = null, PendingReviewCommitOid = null });
         }, ct).ConfigureAwait(false);
 
         bus.Publish(new StateChanged(prRef, PendingReviewFields, SourceTabId: null));
-        return Results.Ok();
+        return Results.NoContent();
     }
 
     // ------------------------------------------------------------------ helpers
@@ -605,37 +605,6 @@ internal static class PrSubmitEndpoints
         // normalisation (LineMatching.SplitLines TrimEnd('\r')); otherwise a CRLF-ending file's
         // imported draft would never exact-match and would land Stale / mis-anchor on the next Reload.
         return (lines[t.LineNumber - 1].TrimEnd('\r'), DraftStatus.Draft);
-    }
-
-    private static AppState WithSession(AppState state, string sessionKey, ReviewSessionState session)
-    {
-        var sessions = new Dictionary<string, ReviewSessionState>(state.Reviews.Sessions) { [sessionKey] = session };
-        return state.WithDefaultReviews(state.Reviews with { Sessions = sessions });
-    }
-
-    // Maps an HttpRequestException to a SubmitErrorDto using the same code vocabulary as
-    // PrRootCommentEndpoints.MapGithubError. Private copy to avoid cross-class coupling (each file
-    // is internal static; refactoring to a shared helper is a future cleanup if a third consumer
-    // appears). Codes must stay in sync when either file adds a new status mapping.
-    //
-    // The DTO MESSAGE is a STATIC, sanitized per-code string — NOT hre.Message. hre.Message can
-    // embed up to 512 bytes of GitHub's raw error RESPONSE BODY (see GitHubReviewService.IssueComments),
-    // so forwarding it to the browser would leak raw upstream error detail. The detailed hre is
-    // logged server-side via s_ownDiscardGitHubFailed at each catch site before this maps the
-    // sanitized client response.
-    private static SubmitErrorDto MapGithubError(HttpRequestException hre)
-    {
-        var (code, message) = hre.StatusCode switch
-        {
-            System.Net.HttpStatusCode.Forbidden =>
-                ("github-forbidden", "GitHub rejected the request (forbidden). Check your token's permissions."),
-            System.Net.HttpStatusCode.Unauthorized =>
-                ("github-unauthorized", "GitHub authentication failed. Reconnect your account."),
-            System.Net.HttpStatusCode.UnprocessableEntity =>
-                ("github-validation-error", "GitHub rejected the request as invalid."),
-            _ => ("github-network-error", "Couldn't reach GitHub. Try again."),
-        };
-        return new SubmitErrorDto(code, message);
     }
 
     // The pipeline's onDuplicateMarker notices look like "draft <id>: …" or "reply <id>: …". Pull

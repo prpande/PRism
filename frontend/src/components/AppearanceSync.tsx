@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { usePreferences } from '../hooks/usePreferences';
+import { useMediaQuery } from '../hooks/useMediaQuery';
 import {
   applyThemeToDocument,
   applyDensityToDocument,
@@ -15,6 +16,12 @@ import {
 // application timing is unchanged.
 export function AppearanceSync() {
   const { preferences } = usePreferences();
+  // Live-resolve the 'system' theme: applyThemeToDocument samples prefers-color-scheme
+  // at call time, so without re-running on an OS light↔dark switch the page keeps the
+  // stale resolution until the next preference refetch. Tracking the media query here
+  // re-fires the effect on the switch. For an explicit theme the value is ignored by
+  // applyThemeToDocument, so the extra (idempotent) re-apply is harmless. (#330)
+  const prefersDark = useMediaQuery('(prefers-color-scheme: dark)');
 
   useEffect(() => {
     if (preferences) {
@@ -22,7 +29,7 @@ export function AppearanceSync() {
       applyDensityToDocument(preferences.ui.density);
       applyContentScaleToDocument(preferences.ui.contentScale);
     }
-  }, [preferences]);
+  }, [preferences, prefersDark]);
 
   return null;
 }

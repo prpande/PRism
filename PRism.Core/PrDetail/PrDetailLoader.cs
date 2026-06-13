@@ -37,6 +37,15 @@ public sealed class PrDetailLoader : IDisposable
     // wire-up explains why waiting for the poller's CommentCountChanged is too slow.
     private readonly IDisposable _rootCommentSubscription;
 
+    // #392: evict the PR's snapshot immediately on a review submit — same gap #353 closed for
+    // root-comment posts (a submit moves no head SHA, so the cache key alone re-serves stale).
+    private readonly IDisposable _draftSubmittedSubscription;
+
+    // #450: evict the PR's snapshot immediately on a single-comment post-now — same gap as
+    // #353/#392 (an inline comment/reply moves no head SHA, so the cache key alone re-serves
+    // stale); eviction is no longer inert now that the client has a reload trigger.
+    private readonly IDisposable _singleCommentSubscription;
+
     // Snapshot cache. PoC: unbounded ConcurrentDictionary; if dogfooding shows growth
     // (rare — user opens many distinct PRs in one process lifetime), introduce a bounded
     // LRU here. The (prRef → most-recent CacheKey) sidecar lets TryGetCachedSnapshot do
@@ -89,10 +98,26 @@ public sealed class PrDetailLoader : IDisposable
         // pre-post snapshot on the SSE-driven reload. Evict the PR's snapshot immediately
         // on the post so the reload re-fetches fresh detail, instead of waiting for the
         // ActivePrPoller's CommentCountChanged (OnActivePrUpdated). Mirrors that handler.
-        // NOT subscribed to SingleCommentPostedBusEvent (diff post-now): that path has no
-        // immediate client reload trigger, so eviction there is inert and would open a
-        // /file & /viewed 422 window on the active diff tab — see #353 design doc.
         _rootCommentSubscription = eventBus.Subscribe<RootCommentPostedBusEvent>(OnRootCommentPosted);
+
+        // #450: single-comment post-now NOW has an immediate client reload trigger
+        // (single-comment-posted SSE → usePrDetail.reload), so eviction is no longer inert.
+        // Evict here so that reload re-fetches fresh detail and the new thread becomes
+        // reply-able without a manual reload. Invalidate (not RefreshAsync): the bus is
+        // synchronous and Publish runs inside the comment-POST, so RefreshAsync would block
+        // the post (or race the reload if backgrounded) — see spec §2.2. The small, graceful
+        // /file & /viewed 422 window during the evict→reload gap is accepted (spec §2.3).
+        _singleCommentSubscription = eventBus.Subscribe<SingleCommentPostedBusEvent>(OnSingleCommentPosted);
+
+        // #392: DraftSubmitted is published only on a full review-submit success, AFTER the
+        // pipeline's server-side draft clear (SubmitPipeline ClearSubmittedSession → endpoint
+        // publishes DraftSubmitted). Like a root-comment post, a submit moves no head SHA, so
+        // the (prRef, headSha, generation) key would re-serve the stale pre-submit snapshot on
+        // the post-submit reload — leaving the just-posted threads + Overview comment invisible
+        // even after the user clicks Reload (#392). Evict the PR's snapshot so that reload
+        // re-fetches fresh detail. Mirrors OnRootCommentPosted; unconditional (DraftSubmitted
+        // fires only on an actual submit, so there is no no-op event to suppress).
+        _draftSubmittedSubscription = eventBus.Subscribe<DraftSubmitted>(OnDraftSubmitted);
     }
 
     // Evicts the PR's snapshot only on a real change: a head-SHA or comment-count
@@ -113,6 +138,14 @@ public sealed class PrDetailLoader : IDisposable
     // unlike OnActivePrUpdated's quiet-hydration guard, RootCommentPostedBusEvent fires
     // only on an actual post, so there is no no-op event to suppress.
     private void OnRootCommentPosted(RootCommentPostedBusEvent evt) => Invalidate(evt.PrRef);
+
+    // #392: see the constructor wire-up. Eviction is unconditional — DraftSubmitted fires only
+    // on an actual review-submit success, so there is no no-op event to suppress.
+    private void OnDraftSubmitted(DraftSubmitted evt) => Invalidate(evt.PrRef);
+
+    // #450: see the constructor wire-up. Unconditional eviction — the event fires only on an
+    // actual post, so there is no quiet/no-op event to suppress (mirrors OnRootCommentPosted).
+    private void OnSingleCommentPosted(SingleCommentPostedBusEvent evt) => Invalidate(evt.PrRef);
 
     /// <summary>
     /// Loads or refreshes the snapshot for <paramref name="prRef"/>. Polls the active-PR
@@ -300,18 +333,19 @@ public sealed class PrDetailLoader : IDisposable
     }
 
     /// <summary>
-    /// Tears down the three subscriptions wired in the constructor (the
-    /// <c>_configStore.Changed</c> handler plus the two <see cref="IReviewEventBus.Subscribe"/>
-    /// IDisposables). The loader is a DI singleton, so this runs only on container/app
-    /// shutdown; it exists so the Subscribe IDisposables are released rather than held for
-    /// the process lifetime (Claude PR #150 review — the raw <c>_configStore.Changed</c>
-    /// event has no IDisposable, but Subscribe returns one).
+    /// Tears down the subscriptions wired in the constructor (the <c>_configStore.Changed</c>
+    /// handler plus the four <see cref="IReviewEventBus.Subscribe"/> IDisposables). The loader
+    /// is a DI singleton, so this runs only on container/app shutdown; it exists so the Subscribe
+    /// IDisposables are released rather than held for the process lifetime (Claude PR #150 review
+    /// — the raw <c>_configStore.Changed</c> event has no IDisposable, but Subscribe returns one).
     /// </summary>
     public void Dispose()
     {
         _configStore.Changed -= OnConfigChanged;
         _activePrSubscription.Dispose();
         _rootCommentSubscription.Dispose();
+        _draftSubmittedSubscription.Dispose();
+        _singleCommentSubscription.Dispose();
     }
 
     private (ClusteringQuality Quality, IReadOnlyList<IterationDto>? Iterations) DetermineQuality(

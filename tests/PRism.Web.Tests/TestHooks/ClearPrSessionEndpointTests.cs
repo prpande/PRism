@@ -5,6 +5,7 @@ using Microsoft.Extensions.DependencyInjection;
 using PRism.Core.Contracts;
 using PRism.Core.PrDetail;
 using PRism.Core.State;
+using PRism.Web.Tests.TestHelpers;
 using Xunit;
 
 namespace PRism.Web.Tests.TestHooks;
@@ -95,7 +96,7 @@ internal sealed class TestEnvAppFactory : WebApplicationFactory<Program>
 
     public TestEnvAppFactory()
     {
-        _dataDir = Path.Combine(Path.GetTempPath(), $"PRism-clear-prsess-test-{Guid.NewGuid():N}");
+        _dataDir = TempDataDir.NewPath("PRism-clear-prsess-test");
         Directory.CreateDirectory(_dataDir);
     }
 

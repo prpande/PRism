@@ -26,7 +26,7 @@ public class GitHubReviewServiceValidateSkipTests
         Assert.True(health.IsInvalid);
     }
 
-    private static (GitHubReviewService, IGitHubCredentialHealth) Build(HttpStatusCode status, string token)
+    private static (GitHubAuthValidator, IGitHubCredentialHealth) Build(HttpStatusCode status, string token)
     {
         var health = new GitHubCredentialHealth();
         var services = new ServiceCollection();
@@ -37,7 +37,7 @@ public class GitHubReviewServiceValidateSkipTests
             .AddHttpMessageHandler(() => new FixedStatusHandler(status));
         var sp = services.BuildServiceProvider();
         var factory = sp.GetRequiredService<IHttpClientFactory>();
-        var svc = new GitHubReviewService(factory, () => Task.FromResult<string?>(token), "github.com", null);
+        var svc = new GitHubAuthValidator(factory, () => Task.FromResult<string?>(token), "github.com");
         return (svc, health);
     }
 

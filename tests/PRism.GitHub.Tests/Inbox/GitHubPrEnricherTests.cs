@@ -36,10 +36,8 @@ public sealed class GitHubPrEnricherTests
         }
         """;
 
-    private static HttpResponseMessage Respond(HttpStatusCode code, string body) => new(code)
-    {
-        Content = new StringContent(body, Encoding.UTF8, "application/json"),
-    };
+    private static HttpResponseMessage Respond(HttpStatusCode code, string body)
+        => JsonHttpResponse.Create(code, body);
 
     private static GitHubPrEnricher BuildSut(FakeHttpMessageHandler handler) =>
         new(new FakeHttpClientFactory(handler, new Uri("https://api.github.com/")),
