@@ -41,6 +41,7 @@ export function Select<T extends string | number>({
   const instanceId = useId();
   const listboxId = `${instanceId}-listbox`;
 
+  // Empty options intentionally renders the trigger disabled/inert — a consumer passing an empty list gets a non-interactive control by design.
   const isDisabled = disabled || options.length === 0;
   const selectedIndex = options.findIndex((o) => o.value === value);
   const selectedLabel = selectedIndex >= 0 ? options[selectedIndex].label : '';
@@ -64,6 +65,7 @@ export function Select<T extends string | number>({
     (index: number) => {
       const opt = options[index];
       if (!opt || opt.disabled) return;
+      // Re-selecting the already-current value intentionally does not fire onChange — no spurious change events; locked by contract test.
       if (opt.value !== value) onChange(opt.value);
       close(true);
     },
@@ -111,7 +113,6 @@ export function Select<T extends string | number>({
         <div
           id={listboxId}
           role="listbox"
-          aria-label={ariaLabel}
           aria-activedescendant={activeId}
           tabIndex={-1}
           className={styles.listbox}
