@@ -1,4 +1,5 @@
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { describe, it, expect, vi } from 'vitest';
 import { ComparePicker } from '../src/components/PrDetail/FilesTab/ComparePicker';
 import type { IterationDto } from '../src/api/types';
@@ -23,11 +24,11 @@ describe('ComparePicker', () => {
         onCompare={vi.fn()}
       />,
     );
-    expect(screen.getByLabelText(/from/i)).toBeInTheDocument();
-    expect(screen.getByLabelText(/to/i)).toBeInTheDocument();
+    expect(screen.getByRole('combobox', { name: /from/i })).toBeInTheDocument();
+    expect(screen.getByRole('combobox', { name: /to/i })).toBeInTheDocument();
   });
 
-  it('calls onCompare with correct range when selection changes', () => {
+  it('calls onCompare with correct range when selection changes', async () => {
     const onCompare = vi.fn();
     render(
       <ComparePicker
@@ -37,11 +38,12 @@ describe('ComparePicker', () => {
         onCompare={onCompare}
       />,
     );
-    fireEvent.change(screen.getByLabelText(/from/i), { target: { value: '2' } });
+    await userEvent.click(screen.getByRole('combobox', { name: /from/i }));
+    await userEvent.click(screen.getByRole('option', { name: 'Iter 2' }));
     expect(onCompare).toHaveBeenCalledWith(2, 3);
   });
 
-  it('auto-swaps when from > to', () => {
+  it('auto-swaps when from > to', async () => {
     const onCompare = vi.fn();
     render(
       <ComparePicker
@@ -51,7 +53,8 @@ describe('ComparePicker', () => {
         onCompare={onCompare}
       />,
     );
-    fireEvent.change(screen.getByLabelText(/from/i), { target: { value: '3' } });
+    await userEvent.click(screen.getByRole('combobox', { name: /from/i }));
+    await userEvent.click(screen.getByRole('option', { name: 'Iter 3' }));
     expect(onCompare).toHaveBeenCalledWith(2, 3);
   });
 
@@ -62,7 +65,7 @@ describe('ComparePicker', () => {
     expect(screen.getByText(/no changes between/i)).toBeInTheDocument();
   });
 
-  it('disables non-resolvable iterations in selectors', () => {
+  it('disables non-resolvable iterations in selectors', async () => {
     render(
       <ComparePicker
         iterations={[iter(1, false), iter(2)]}
@@ -71,9 +74,10 @@ describe('ComparePicker', () => {
         onCompare={vi.fn()}
       />,
     );
-    const fromSelect = screen.getByLabelText(/from/i) as HTMLSelectElement;
-    const options = fromSelect.querySelectorAll('option');
-    const lostOption = Array.from(options).find((o) => o.textContent?.includes('snapshot lost'));
-    expect(lostOption?.disabled).toBe(true);
+    await userEvent.click(screen.getByRole('combobox', { name: /from/i }));
+    expect(screen.getByRole('option', { name: /snapshot lost/i })).toHaveAttribute(
+      'aria-disabled',
+      'true',
+    );
   });
 });
