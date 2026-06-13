@@ -232,11 +232,14 @@ describe('InboxPage', () => {
     expect(screen.getByText(/nothing in your inbox right now/i)).toBeInTheDocument();
   });
 
-  it('renders banner when updates are pending', () => {
-    setHooks({ data: sampleData, hasUpdate: true });
+  it('announces auto-refresh to screen readers via live region', () => {
+    // #450 — the old "N new updates" reload banner was replaced by silent auto-refresh.
+    // The announce signal for screen readers now lives in the inbox-autorefresh-status
+    // live region, populated by useInboxUpdates.announce after each completed refresh.
+    setHooks({ data: sampleData });
+    vi.mocked(useInboxUpdates).mockReturnValue({ announce: 'Inbox updated' });
     renderPage();
-    expect(screen.getByText(/3 new updates/i)).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /reload/i })).toBeInTheDocument();
+    expect(screen.getByTestId('inbox-autorefresh-status')).toHaveTextContent('Inbox updated');
   });
 
   it('renders ActivityRail when inbox.showActivityRail is on', () => {
