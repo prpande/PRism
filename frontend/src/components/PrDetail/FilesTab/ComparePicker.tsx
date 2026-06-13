@@ -1,4 +1,5 @@
 import type { IterationDto } from '../../../api/types';
+import { Select } from '../../controls/Select';
 import styles from './ComparePicker.module.css';
 
 export interface ComparePickerProps {
@@ -15,8 +16,7 @@ export function ComparePicker({ iterations, fromIter, toIter, onCompare }: Compa
   const effectiveFrom = fromIter ?? firstNum;
   const effectiveTo = toIter ?? lastNum;
 
-  const handleFromChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    const newFrom = Number(e.target.value);
+  const handleFromChange = (newFrom: number) => {
     if (newFrom > effectiveTo) {
       onCompare(effectiveTo, newFrom);
     } else {
@@ -24,8 +24,7 @@ export function ComparePicker({ iterations, fromIter, toIter, onCompare }: Compa
     }
   };
 
-  const handleToChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    const newTo = Number(e.target.value);
+  const handleToChange = (newTo: number) => {
     if (effectiveFrom > newTo) {
       onCompare(newTo, effectiveFrom);
     } else {
@@ -35,48 +34,38 @@ export function ComparePicker({ iterations, fromIter, toIter, onCompare }: Compa
 
   const isSameIter = effectiveFrom === effectiveTo;
 
+  const iterOptions = iterations.map((iter) => ({
+    value: iter.number,
+    label: iter.hasResolvableRange ? `Iter ${iter.number}` : `Iter ${iter.number} (snapshot lost)`,
+    disabled: !iter.hasResolvableRange,
+  }));
+
   return (
     <div className={`compare-picker ${styles.comparePicker}`} data-testid="compare-picker">
-      <label className={`compare-picker-label ${styles.comparePickerLabel}`}>
+      <div className={`compare-picker-label ${styles.comparePickerLabel}`}>
         <span className={`compare-picker-label-text ${styles.comparePickerLabelText}`}>
           Compare
         </span>
-        <select
+        <Select
           aria-label="From iteration"
           value={effectiveFrom}
           onChange={handleFromChange}
-          className={`compare-picker-select ${styles.comparePickerSelect}`}
-        >
-          {iterations.map((iter) => (
-            <option key={iter.number} value={iter.number} disabled={!iter.hasResolvableRange}>
-              {iter.hasResolvableRange
-                ? `Iter ${iter.number}`
-                : `Iter ${iter.number} (snapshot lost)`}
-            </option>
-          ))}
-        </select>
-      </label>
+          options={iterOptions}
+        />
+      </div>
 
       <span className={`compare-picker-arrow ${styles.comparePickerArrow}`} aria-hidden="true">
         ⇄
       </span>
 
-      <label className={`compare-picker-label ${styles.comparePickerLabel}`}>
-        <select
+      <div className={`compare-picker-label ${styles.comparePickerLabel}`}>
+        <Select
           aria-label="To iteration"
           value={effectiveTo}
           onChange={handleToChange}
-          className={`compare-picker-select ${styles.comparePickerSelect}`}
-        >
-          {iterations.map((iter) => (
-            <option key={iter.number} value={iter.number} disabled={!iter.hasResolvableRange}>
-              {iter.hasResolvableRange
-                ? `Iter ${iter.number}`
-                : `Iter ${iter.number} (snapshot lost)`}
-            </option>
-          ))}
-        </select>
-      </label>
+          options={iterOptions}
+        />
+      </div>
 
       {isSameIter && (
         <span className={`compare-picker-empty muted ${styles.comparePickerEmpty}`} role="status">
