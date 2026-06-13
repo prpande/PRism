@@ -26,21 +26,13 @@ internal static class AiEndpoints
             (string owner, string repo, int number, IAiSeamSelector ai, IActivePrCache activePrCache, CancellationToken ct) =>
                 ResolveSummaryAsync(new PrReference(owner, repo, number), ai, activePrCache, regenerate: true, ct));
 
-        // PR9b-ai-gating § 3.2. Mirrors /ai/summary's seam-resolve-and-map.
-        // D111: No per-PR IsSubscribed check while seam is canned-data only.
-        // When the binding swaps to a real AI implementation (real generation,
-        // not Noop/Placeholder), add an IsSubscribed gate before the seam call
-        // — DO NOT merge the seam swap without this gate.
+        // Spec § P1-2. Mirrors /ai/summary's gate chain. D111 (spec §6): tokens are only spent when
+        // someone is actively viewing the PR — the IsSubscribed gate runs FIRST so a non-subscribed
+        // request never reaches the (now real) ClaudeCodeFileFocusRanker seam. Provider failure → 503
+        // (never 500), matching ResolveSummaryAsync.
         app.MapGet("/api/pr/{owner}/{repo}/{number:int}/ai/file-focus",
-            async (string owner, string repo, int number,
-                   IAiSeamSelector ai, CancellationToken ct) =>
-            {
-                var ranker = ai.Resolve<IFileFocusRanker>();
-                var result = await ranker
-                    .RankAsync(new PrReference(owner, repo, number), ct)
-                    .ConfigureAwait(false);
-                return result.Entries.Count == 0 ? Results.NoContent() : Results.Ok(result);
-            });
+            (string owner, string repo, int number, IAiSeamSelector ai, IActivePrCache activePrCache, CancellationToken ct) =>
+                ResolveFileFocusAsync(new PrReference(owner, repo, number), ai, activePrCache, ct));
 
         // PR9b-ai-gating § 3.2. The seam interface takes (prRef, filePath, hunkIndex)
         // for v2 per-hunk queries; v1's placeholder ignores filePath/hunkIndex and
@@ -102,6 +94,29 @@ internal static class AiEndpoints
                 ? await summarizer.RegenerateAsync(prRef, ct).ConfigureAwait(false)
                 : await summarizer.SummarizeAsync(prRef, ct).ConfigureAwait(false);
             return summary is null ? Results.NoContent() : Results.Ok(summary);
+        }
+        catch (LlmProviderException)
+        {
+            return Results.StatusCode(StatusCodes.Status503ServiceUnavailable);
+        }
+    }
+
+    // Spec § P1-2. The file-focus gate chain, mirroring ResolveSummaryAsync: D111 IsSubscribed → seam
+    // resolve (tri-state gating lives in Resolve) → RankAsync. The IsSubscribed check runs BEFORE the
+    // seam is resolved/invoked so a non-subscribed view never spends tokens on the real ranker. An empty
+    // Entries list (empty diff, or all files low-by-rule with nothing to rank) → 204. Provider failure
+    // → 503 (never 500).
+    internal static async Task<IResult> ResolveFileFocusAsync(
+        PrReference prRef, IAiSeamSelector ai, IActivePrCache activePrCache, CancellationToken ct)
+    {
+        if (!activePrCache.IsSubscribed(prRef))
+            return Results.NoContent();
+
+        var ranker = ai.Resolve<IFileFocusRanker>();
+        try
+        {
+            var result = await ranker.RankAsync(prRef, ct).ConfigureAwait(false);
+            return result.Entries.Count == 0 ? Results.NoContent() : Results.Ok(result);
         }
         catch (LlmProviderException)
         {
