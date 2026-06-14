@@ -176,13 +176,23 @@ export function FilesTab() {
   //     guard: effect (1) called setActiveRange('all'), but useFileDiff refetches
   //     asynchronously — for one+ render ticks `fileList` is still the STALE narrowed
   //     list, which is NON-EMPTY, so a `fileList.length === 0` guard would NOT hold it
-  //     back. If the target isn't in the stale narrowed list, the else-branch would
-  //     seize fileList[0] and clear the intent before the full diff ever arrives —
-  //     landing on the wrong file. Gate on the range actually being 'all' AND that
-  //     range's diff not loading (`diff.isLoading`, the real in-flight flag).
+  //     back. Worse, `diff.isLoading` ALONE is insufficient: useFileDiff only flips
+  //     isLoading=true inside its OWN post-commit effect, so in the render where
+  //     effect (1) sets activeRange='all', diff.isLoading is still the STALE `false`
+  //     from the just-finished narrowed fetch. A `!diff.isLoading` gate would pass
+  //     PREMATURELY against the stale narrowed fileList, run the else-branch, and
+  //     clear the intent before the full diff ever arrives — stranding the user on the
+  //     wrong file. So we additionally require the LOADED diff to actually be the full
+  //     'all' range: `diff.data?.range === allRange`. DiffDto.range echoes the range it
+  //     was fetched for, and on 'all' the requested range is exactly `allRange`
+  //     (buildAllRange(pr) = base..head) — so this holds only once `fileList` reflects
+  //     the full diff. Both guards together: range matches the full request AND it has
+  //     settled.
   useEffect(() => {
     if (pendingFilePath === null) return;
-    if (activeRange !== 'all' || diff.isLoading) return; // full-range diff not settled yet — wait
+    // full-range diff not settled yet (still loading, or the still-loaded diff is the
+    // stale narrowed range whose isLoading hasn't yet flipped) — wait.
+    if (activeRange !== 'all' || diff.isLoading || diff.data?.range !== allRange) return;
     if (fileList.includes(pendingFilePath)) {
       setSelectedPath(pendingFilePath);
       // Single focus move + announce (option b): focus the tabIndex={-1} diff-region
@@ -194,7 +204,16 @@ export function FilesTab() {
       if (selectedPath === null || !fileList.includes(selectedPath)) setSelectedPath(fileList[0]);
     }
     clearPendingFilePath();
-  }, [pendingFilePath, activeRange, diff.isLoading, fileList, selectedPath, clearPendingFilePath]);
+  }, [
+    pendingFilePath,
+    activeRange,
+    diff.isLoading,
+    diff.data?.range,
+    allRange,
+    fileList,
+    selectedPath,
+    clearPendingFilePath,
+  ]);
 
   // (3) Auto-select the first file in tree order when none is selected, OR when the
   //     previously-selected path is no longer in the diff's file list (e.g. a pr-updated

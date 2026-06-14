@@ -12,6 +12,11 @@ import type { UseDraftSessionResult } from '../../../hooks/useDraftSession';
 const BASE_SHA = 'basesha';
 const HEAD_SHA = 'headsha';
 const DIFF_RANGE = `${BASE_SHA}..${HEAD_SHA}`;
+// A NARROWED iteration range string distinct from the full 'all' range
+// (`base..head`). The full diff carries DIFF_RANGE; the narrowed iteration diff
+// carries this. The deep-link readiness gate keys on the loaded diff's `range`
+// matching the full range, so a settled-but-narrowed diff must NOT satisfy it.
+const NARROWED_RANGE = `${BASE_SHA}..iterhead`;
 
 const OTHER: FileChange = {
   path: 'other.cs',
@@ -32,6 +37,15 @@ const TARGET: FileChange = {
 // no target). Effect 2 must NOT seize fileList[0] ('other.cs') in that window.
 const NARROWED: DiffDto = { range: DIFF_RANGE, files: [OTHER], truncated: false };
 const FULL: DiffDto = { range: DIFF_RANGE, files: [OTHER, TARGET], truncated: false };
+// A settled diff for the NARROWED iteration range: isLoading=false (the prior
+// narrowed fetch finished), data.range is the narrowed range (NOT the full
+// range), and the target is absent. This is the exact stale window the
+// `diff.isLoading`-only gate fails to suppress.
+const NARROWED_SETTLED: DiffDto = {
+  range: NARROWED_RANGE,
+  files: [OTHER],
+  truncated: false,
+};
 
 // Controllable per-render diff result. Every useFileDiff/useUnionDiff call reads
 // this same value (FilesTab uses `rangeDiff` for the non-low-quality path).
@@ -147,6 +161,61 @@ describe('FilesTab deep-link (range-reset async race)', () => {
 
     const live = screen.getByTestId('files-tab-live-region');
     expect(live).toHaveAttribute('aria-live', 'polite');
+    expect(live).toHaveTextContent('target.cs');
+  });
+
+  it('waits for the full-range diff (not just !isLoading) when last viewed on a narrowed range', async () => {
+    // Regression for the stale-isLoading race. useFileDiff only flips isLoading=true
+    // inside its OWN post-commit effect, so in the render where effect (1) sets
+    // activeRange='all', the loaded diff is still the SETTLED narrowed fetch:
+    // isLoading=false, data.range=NARROWED_RANGE, target absent. A `!diff.isLoading`
+    // gate alone would pass PREMATURELY against the stale narrowed fileList, run the
+    // else-branch, and clearPendingFilePath() — stranding the user. The added
+    // `diff.data?.range === allRange` gate must hold effect (2) back here.
+    const clearPendingFilePath = vi.fn();
+    // 1st render: narrowed fetch SETTLED (isLoading already false) but its range is
+    // the narrowed range, NOT the full 'all' range. Target is absent from it.
+    currentDiff = { data: NARROWED_SETTLED, isLoading: false, showSkeleton: false, error: null };
+    const value = makeContextValue({ pendingFilePath: 'target.cs', clearPendingFilePath });
+
+    const { rerender } = render(
+      <PrDetailContextProvider value={value}>
+        <FilesTab />
+      </PrDetailContextProvider>,
+    );
+
+    // Stale window: the loaded diff is the settled-narrowed one. Effect (2) must NOT
+    // have seized fileList[0] ('other.cs') nor cleared the intent, even though
+    // isLoading is already false.
+    expect(getRow('other.cs')).not.toHaveAttribute('data-selected', 'true');
+    expect(clearPendingFilePath).not.toHaveBeenCalled();
+
+    // 2nd render: the in-flight full-range fetch is now marked loading (useFileDiff's
+    // post-commit effect having run). Still must not consume the intent.
+    currentDiff = { data: NARROWED_SETTLED, isLoading: true, showSkeleton: false, error: null };
+    rerender(
+      <PrDetailContextProvider value={value}>
+        <FilesTab />
+      </PrDetailContextProvider>,
+    );
+    expect(getRow('other.cs')).not.toHaveAttribute('data-selected', 'true');
+    expect(clearPendingFilePath).not.toHaveBeenCalled();
+
+    // 3rd render: the full-range diff lands — range matches allRange, target present.
+    currentDiff = { data: FULL, isLoading: false, showSkeleton: false, error: null };
+    rerender(
+      <PrDetailContextProvider value={value}>
+        <FilesTab />
+      </PrDetailContextProvider>,
+    );
+
+    // The TARGET (only in the full diff) ends selected — never transiently 'other.cs'.
+    await waitFor(() => {
+      expect(getRow('target.cs')).toHaveAttribute('data-selected', 'true');
+    });
+    expect(clearPendingFilePath).toHaveBeenCalled();
+
+    const live = screen.getByTestId('files-tab-live-region');
     expect(live).toHaveTextContent('target.cs');
   });
 
