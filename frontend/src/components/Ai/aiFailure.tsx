@@ -65,23 +65,24 @@ export function AiFailureProvider({ children }: { children: ReactNode }) {
 
   const clear = useCallback((prRef: PrReference, seam: AiSeam) => {
     const key = prRefKey(prRef);
+    // Compute full-recovery decision from current snapshot BEFORE the updater runs so the
+    // updater stays pure (StrictMode double-invokes updaters; side-effects inside them are unsafe).
+    const forPr = failures[key];
+    const fullRecovery = !!forPr && seam in forPr && Object.keys(forPr).length === 1;
     setFailures((prev) => {
-      const forPr = prev[key];
-      if (!forPr || !(seam in forPr)) return prev;
-      const next = { ...forPr };
+      const entry = prev[key];
+      if (!entry || !(seam in entry)) return prev;
+      const next = { ...entry };
       delete next[seam];
       const out = { ...prev };
-      if (Object.keys(next).length === 0) {
-        delete out[key];
-        // Real recovery for this PR: reset any dismissal so a later identical failure re-shows.
-        setDismissedFingerprint((d) => (d && d.startsWith(`${key}:`) ? null : d));
-      } else {
-        out[key] = next;
-      }
+      if (Object.keys(next).length === 0) { delete out[key]; }
+      else out[key] = next;
       return out;
     });
+    // Real recovery for this PR: reset any dismissal so a later identical failure re-shows.
+    if (fullRecovery) setDismissedFingerprint((d) => (d && d.startsWith(`${key}:`) ? null : d));
     settle(key, seam);
-  }, [settle]);
+  }, [failures, settle]);
 
   const clearPr = useCallback((prRef: PrReference) => {
     const key = prRefKey(prRef);
