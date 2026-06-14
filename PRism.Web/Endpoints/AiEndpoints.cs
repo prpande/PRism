@@ -29,7 +29,9 @@ internal static class AiEndpoints
         // Spec § P1-2. Mirrors /ai/summary's gate chain. D111 (spec §6): tokens are only spent when
         // someone is actively viewing the PR — the IsSubscribed gate runs FIRST so a non-subscribed
         // request never reaches the (now real) ClaudeCodeFileFocusRanker seam. Provider failure → 503
-        // (never 500), matching ResolveSummaryAsync.
+        // (never 500), matching ResolveSummaryAsync. 204 fires ONLY when diff.Files is empty (zero
+        // changed files). An all-low-by-rule PR (every file has an empty hunk body but diff.Files is
+        // non-empty) returns 200 with a non-empty all-Low entries list — it never produces 204.
         app.MapGet("/api/pr/{owner}/{repo}/{number:int}/ai/file-focus",
             (string owner, string repo, int number, IAiSeamSelector ai, IActivePrCache activePrCache, CancellationToken ct) =>
                 ResolveFileFocusAsync(new PrReference(owner, repo, number), ai, activePrCache, ct));

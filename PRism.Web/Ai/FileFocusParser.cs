@@ -120,7 +120,7 @@ internal static class FileFocusParser
         var scanLimit = Math.Min(text.Length, MaxScanChars);
         var searchFrom = 0;
         var restarts = 0;
-        while (restarts <= MaxRestarts)
+        while (restarts < MaxRestarts)
         {
             var start = text.IndexOf('[', searchFrom, scanLimit - searchFrom);
             if (start < 0) return null;

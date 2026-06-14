@@ -161,6 +161,11 @@ internal sealed partial class ClaudeCodeFileFocusRanker : IFileFocusRanker, IDis
             }
 #pragma warning restore CA1031
 
+            // Per-call Ok audit: each Ok record represents one provider call that egressed (up to 2 on
+            // a retry-then-success, each logged separately). This intentionally mirrors ClaudeCodeSummarizer.
+            // A terminal all-medium fallback additionally records a distinct Fallback outcome (below) so
+            // the experienced-fallback rate can be computed against unique rank requests, not against the
+            // raw Ok count (which would undercount the rate when retries inflate Ok tallies).
             _interactionLog.Record(new AiInteractionRecord(
                 ComponentName, ClaudeProviderId, FileFocusModel, pr.PrId, headSha,
                 AiInteractionOutcome.Ok, Egressed: true, LatencyMs: ElapsedMs(startTimestamp),

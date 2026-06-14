@@ -217,6 +217,25 @@ public sealed class ClaudeCodeFileFocusRankerTests
     }
 
     [Fact]
+    public async Task Evicts_on_base_change()
+    {
+        var diff = Diff(F("a.cs", FileChangeStatus.Modified, "x"));
+        var provider = new FakeLlmProvider(
+            """[{"path":"a.cs","score":"high","rationale":"1"}]""",
+            """[{"path":"a.cs","score":"low","rationale":"2"}]""");
+        var bus = new ReviewEventBus(); // real bus so Subscribe actually delivers the eviction
+        var ranker = Build(provider, diff, bus: bus);
+
+        await ranker.RankAsync(Pr, default);
+        // BaseShaChanged only — HeadShaChanged must be false so this test is a pure-base check.
+        bus.Publish(new ActivePrUpdated(Pr, HeadShaChanged: false, CommentCountChanged: false,
+            NewHeadSha: null, CommentCountDelta: 0, BaseShaChanged: true, NewBaseSha: "base2"));
+        await ranker.RankAsync(Pr, default);
+
+        provider.CallCount.Should().Be(2); // evicted by BaseShaChanged → recomputed
+    }
+
+    [Fact]
     public async Task Provider_exception_propagates_uncached()
     {
         var diff = Diff(F("a.cs", FileChangeStatus.Modified, "x"));
