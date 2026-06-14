@@ -23,9 +23,7 @@ public sealed class ClaudeCodeStreamingSession : IStreamingLlmSession
     private int _turnTextCount, _turnToolCount;      // per-turn output counters (drift guard, Task 8)
 #pragma warning restore CA1823, CS0169
     private Task _lastWrite = Task.CompletedTask;     // last stdin write, drained by DisposeAsync (4e)
-#pragma warning disable CS0169, CA1823  // _disposed used in 4e's Interlocked.Exchange (not yet implemented)
     private int _disposed;
-#pragma warning restore CS0169, CA1823
 
     public ClaudeCodeStreamingSession(IStreamingCliProcess process)
         : this(process, NullLogger<ClaudeCodeStreamingSession>.Instance) { }
@@ -188,12 +186,21 @@ public sealed class ClaudeCodeStreamingSession : IStreamingLlmSession
         await _process.WaitForExitAsync(TimeSpan.FromSeconds(2), CancellationToken.None).ConfigureAwait(false);
     }
 
-    // Minimal DisposeAsync so 4a's `await using` works; replaced by the full version in 4e. Do NOT leave throwing.
     public async ValueTask DisposeAsync()
     {
+        if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
         await _readerCts.CancelAsync().ConfigureAwait(false);
         _channel.Writer.TryComplete();
+        // Drain an in-flight stdin write so a broken-pipe IOException (child killed below mid-write) does
+        // NOT escape dispose. Swallow only IOException/OperationCanceledException — a real fault elsewhere
+        // should still surface. (spec §7 dispose-race.)
+        try { await _lastWrite.ConfigureAwait(false); }
+        catch (IOException) { /* broken pipe — child exited/killed before stdin drained */ }
+        catch (OperationCanceledException) { /* write cancelled by the caller's ct */ }
+#pragma warning disable CA1031  // Best-effort reader teardown during dispose — any exception here is a secondary failure
+        try { await _readerTask.ConfigureAwait(false); } catch { /* reader teardown best-effort */ }
+#pragma warning restore CA1031
+        await _process.DisposeAsync().ConfigureAwait(false);   // SystemStreamingCliProcess KillTrees here
         _readerCts.Dispose();
-        await _process.DisposeAsync().ConfigureAwait(false);
     }
 }

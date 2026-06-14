@@ -219,4 +219,48 @@ public sealed class ClaudeCodeStreamingSessionTests
         var end = await session.EndCleanlyAsync(TimeSpan.FromSeconds(5), cts.Token);
         end.LastTurnEndedCleanly.Should().BeFalse();   // forced-end, no throw
     }
+
+    [Fact]
+    public async Task Dispose_is_idempotent_and_disposes_process()
+    {
+        var proc = new FakeStreamingCliProcess();
+        var session = new ClaudeCodeStreamingSession(proc);
+        await session.DisposeAsync();
+        await session.DisposeAsync();   // second call no-ops
+        proc.Disposed.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task Unrecoverable_death_throws_but_delivers_buffered_events_first()
+    {
+        var proc = new FakeStreamingCliProcess();
+        await using var session = new ClaudeCodeStreamingSession(proc);
+        await session.SendUserTurnAsync("hi", CancellationToken.None);
+        proc.EmitLines(Init, Delta("partial"));
+        proc.KillStdout();              // process dies mid-turn, no result
+
+        var received = new List<LlmEvent>();
+        var act = async () => { await foreach (var e in session.Events) received.Add(e); };
+        await act.Should().ThrowAsync<LlmProviderException>();
+        // No data loss before death: the buffered partial delta is delivered, THEN the throw surfaces.
+        received.OfType<LlmTextDelta>().Should().ContainSingle().Which.Text.Should().Be("partial");
+    }
+
+    [Fact]
+    public async Task Dispose_drains_a_broken_pipe_stdin_write_without_escaping(/* spec §7 dispose-race */)
+    {
+        // The child dies mid-write: the in-flight stdin write faults with IOException (broken pipe).
+        // DisposeAsync must DRAIN that write and SWALLOW the IOException — no exception escapes dispose.
+        var proc = new FakeStreamingCliProcess { WriteException = new IOException("broken pipe") };
+        var session = new ClaudeCodeStreamingSession(proc);
+
+        // The caller's send observes the broken pipe (their concern, not dispose's).
+        var send = () => session.SendUserTurnAsync("hi", CancellationToken.None);
+        await send.Should().ThrowAsync<IOException>();
+
+        // Dispose drains the faulted _lastWrite and must NOT throw.
+        var dispose = async () => await session.DisposeAsync();
+        await dispose.Should().NotThrowAsync();
+        proc.Disposed.Should().BeTrue();
+    }
 }
