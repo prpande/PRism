@@ -139,8 +139,54 @@ public sealed class ClaudeCodeStreamingSession : IStreamingLlmSession
         return _lastWrite;
     }
 
-    // EndCleanlyAsync added in 4d.
-    public Task<SessionEndState> EndCleanlyAsync(TimeSpan gracefulTimeout, CancellationToken ct) => throw new NotImplementedException();
+    public async Task<SessionEndState> EndCleanlyAsync(TimeSpan gracefulTimeout, CancellationToken ct)
+    {
+        // 1) Wait for the in-flight turn's completion (or init, if no turn) up to gracefulTimeout.
+        Task waitOn;
+        lock (_turnGate) waitOn = _turnInFlight && _turnTcs is not null ? _turnTcs.Task : _initTcs.Task;
+
+        if (!await WaitBounded(waitOn, gracefulTimeout, ct).ConfigureAwait(false))
+        {
+            await ForceTerminateAsync().ConfigureAwait(false);     // timeout/cancel -> forced end, no throw
+            return new SessionEndState(LastTurnEndedCleanly: false, ProviderSessionId: _providerSessionId);
+        }
+
+        // 2) Clean boundary: close stdin (child exits at the boundary), await exit.
+        await _process.CloseStdinAsync().ConfigureAwait(false);
+        var exit = await _process.WaitForExitAsync(gracefulTimeout, CancellationToken.None).ConfigureAwait(false);
+
+        // 3) Let the reader drain to stdout-EOF and complete the channel ITSELF, so a consumer still
+        //    draining receives the terminal LlmTurnComplete. Do NOT cancel the reader on the clean path —
+        //    cancelling here would race the reader's terminal write (issued on CancellationToken.None) and,
+        //    for a stalled consumer, drop it. Bound the wait; only force if the reader is wedged on a
+        //    non-draining consumer (which has abandoned the stream anyway).
+        if (!await WaitBounded(_readerTask, gracefulTimeout, CancellationToken.None).ConfigureAwait(false))
+        {
+            await _readerCts.CancelAsync().ConfigureAwait(false);
+            _channel.Writer.TryComplete();
+        }
+        return new SessionEndState(LastTurnEndedCleanly: exit == 0, ProviderSessionId: _providerSessionId);
+    }
+
+    private static async Task<bool> WaitBounded(Task task, TimeSpan timeout, CancellationToken ct)
+    {
+        try
+        {
+            using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            timeoutCts.CancelAfter(timeout);
+            var delay = Task.Delay(Timeout.Infinite, timeoutCts.Token);
+            var winner = await Task.WhenAny(task, delay).ConfigureAwait(false);
+            return winner == task;
+        }
+        catch (OperationCanceledException) { return false; }
+    }
+
+    private async Task ForceTerminateAsync()
+    {
+        await _readerCts.CancelAsync().ConfigureAwait(false);
+        _channel.Writer.TryComplete();
+        await _process.WaitForExitAsync(TimeSpan.FromSeconds(2), CancellationToken.None).ConfigureAwait(false);
+    }
 
     // Minimal DisposeAsync so 4a's `await using` works; replaced by the full version in 4e. Do NOT leave throwing.
     public async ValueTask DisposeAsync()

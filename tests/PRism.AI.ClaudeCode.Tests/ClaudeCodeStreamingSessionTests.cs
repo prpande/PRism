@@ -143,4 +143,80 @@ public sealed class ClaudeCodeStreamingSessionTests
     {
         await foreach (var e in s.Events) if (e is LlmTurnComplete) return;
     }
+
+    [Fact]
+    public async Task EndCleanly_zero_turns_awaits_init_returns_true_with_session_id()
+    {
+        var proc = new FakeStreamingCliProcess { ExitCodeToReturn = 0 };
+        await using var session = new ClaudeCodeStreamingSession(proc);
+        proc.EmitLines(Init);   // init arrives, no turns
+
+        var end = await session.EndCleanlyAsync(TimeSpan.FromSeconds(5), CancellationToken.None);
+
+        end.LastTurnEndedCleanly.Should().BeTrue();
+        end.ProviderSessionId.Should().Be("sess-1");
+        proc.StdinClosed.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task EndCleanly_with_completed_turn_returns_true()
+    {
+        var proc = new FakeStreamingCliProcess { ExitCodeToReturn = 0 };
+        await using var session = new ClaudeCodeStreamingSession(proc);
+        await session.SendUserTurnAsync("hi", CancellationToken.None);
+        proc.EmitLines(Init, Result("hi"));
+
+        var end = await session.EndCleanlyAsync(TimeSpan.FromSeconds(5), CancellationToken.None);
+        end.LastTurnEndedCleanly.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task EndCleanly_stalled_consumer_trip_before_write_returns_clean()
+    {
+        // cap=1: the single Delta fills the channel, so when the terminal Result arrives the
+        // LlmTurnComplete WRITE blocks. With NO consumer draining, EndCleanly can return clean (true)
+        // ONLY if the TCS was tripped BEFORE that blocking write. Invert the trip/write order in
+        // CompleteTurnAsync and this asserts FALSE (EndCleanly's TCS wait times out -> forced end).
+        var proc = new FakeStreamingCliProcess { ExitCodeToReturn = 0 };
+        await using var session = new ClaudeCodeStreamingSession(
+            proc, NullLogger<ClaudeCodeStreamingSession>.Instance, channelCapacity: 1);
+        await session.SendUserTurnAsync("hi", CancellationToken.None);
+        proc.EmitLines(Init, Delta("x"), Result("hi"));   // Delta fills cap=1; the complete-write blocks
+
+        var end = await session.EndCleanlyAsync(TimeSpan.FromSeconds(2), CancellationToken.None);
+        end.LastTurnEndedCleanly.Should().BeTrue();        // FALSE if the trip came after the write
+    }
+
+    [Fact]
+    public async Task EndCleanly_clean_path_delivers_terminal_event_to_a_draining_consumer()
+    {
+        // Regression guard for the cancel-race: the clean path must NOT cancel the reader and drop the
+        // turn's terminal LlmTurnComplete out from under a consumer still draining.
+        var proc = new FakeStreamingCliProcess { ExitCodeToReturn = 0 };
+        await using var session = new ClaudeCodeStreamingSession(proc);
+        await session.SendUserTurnAsync("hi", CancellationToken.None);
+
+        var received = new List<LlmEvent>();
+        var draining = Task.Run(async () => { await foreach (var e in session.Events) received.Add(e); });
+        proc.EmitLines(Init, Delta("a"), Result("ans"));
+
+        var end = await session.EndCleanlyAsync(TimeSpan.FromSeconds(5), CancellationToken.None);
+        await draining;
+
+        end.LastTurnEndedCleanly.Should().BeTrue();
+        received.OfType<LlmTurnComplete>().Should().ContainSingle().Which.FullText.Should().Be("ans");
+    }
+
+    [Fact]
+    public async Task EndCleanly_cancelled_ct_forces_end_without_throwing()
+    {
+        var proc = new FakeStreamingCliProcess { ExitCodeToReturn = -1 };
+        await using var session = new ClaudeCodeStreamingSession(proc);
+        await session.SendUserTurnAsync("hi", CancellationToken.None);
+        proc.EmitLines(Init);                    // turn never completes
+        using var cts = new CancellationTokenSource(); await cts.CancelAsync();
+
+        var end = await session.EndCleanlyAsync(TimeSpan.FromSeconds(5), cts.Token);
+        end.LastTurnEndedCleanly.Should().BeFalse();   // forced-end, no throw
+    }
 }
