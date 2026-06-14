@@ -1,5 +1,7 @@
 using FluentAssertions;
+using Microsoft.Extensions.Logging;
 using PRism.AI.ClaudeCode;
+using PRism.AI.ClaudeCode.Tests.TestHelpers;
 using PRism.AI.Contracts.Provider;
 
 namespace PRism.AI.ClaudeCode.Tests;
@@ -29,6 +31,38 @@ public sealed class ClaudeCodeStreamingProviderTests
         args.Should().Contain("--include-partial-messages"); // mandatory: enables the streaming text_delta + full tool_use blocks
         args.Should().NotContain("--bare");
         args.Should().ContainInOrder("--model", "m");
+    }
+
+    [Fact]
+    public void Model_flag_is_omitted_when_model_is_null()
+    {
+        var baseDir = Directory.CreateTempSubdirectory().FullName;
+        var (provider, factory) = Build(baseDir);
+        provider.StartSession(new StreamingSessionOptions(Model: null));
+        factory.CapturedSpec!.Arguments.Should().NotContain("--model");   // omitted entirely, not passed empty
+    }
+
+    [Fact]
+    public async Task Provider_injects_a_real_logger_so_drift_warnings_reach_a_sink()
+    {
+        // Regression for the NullLogger-in-production gap: the provider is the production construction site
+        // for a session, so a session it builds must log to the injected factory — NOT NullLogger. Drive a
+        // zero-output turn (fires the Task 8 drift warning) and assert it lands in the capturing factory.
+        var baseDir = Directory.CreateTempSubdirectory().FullName;
+        var proc = new FakeStreamingCliProcess();
+        var factory = new FakeStreamingCliProcessFactory(proc);
+        var loggerFactory = new CapturingLoggerFactory();
+        var provider = new ClaudeCodeStreamingProvider(
+            factory, new ClaudeCodeProviderOptions { WorkingDirectory = baseDir }, loggerFactory);
+
+        await using var session = provider.StartSession(new StreamingSessionOptions());
+        proc.EmitLines(
+            """{"type":"system","subtype":"init","session_id":"s"}""",
+            """{"type":"result","subtype":"success","is_error":false,"result":"done","total_cost_usd":0.0,"usage":{"input_tokens":1,"output_tokens":2,"cache_read_input_tokens":3}}""");
+        proc.EndStdout();
+        await foreach (var _ in session.Events) { }
+
+        loggerFactory.Entries.Should().Contain(e => e.Level == LogLevel.Warning && e.Message.Contains("zero"));
     }
 
     [Fact]

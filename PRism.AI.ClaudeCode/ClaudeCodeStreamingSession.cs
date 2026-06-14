@@ -19,7 +19,10 @@ public sealed partial class ClaudeCodeStreamingSession : IStreamingLlmSession
     private volatile bool _turnInFlight;
     private TaskCompletionSource? _turnTcs;          // guarded by lock(_turnGate)
     private readonly object _turnGate = new();
-    private int _turnTextCount, _turnToolCount;      // per-turn output counters (drift guard, Task 8)
+    // volatile: incremented + read on the reader thread, but RESET on the caller thread (SendUserTurnAsync,
+    // under _turnGate) — the reader reads them at CompleteTurnAsync WITHOUT the gate, so on a weak memory
+    // model (ARM64) it could miss the reset and suppress a drift warning. Same discipline as _providerSessionId.
+    private volatile int _turnTextCount, _turnToolCount;   // per-turn output counters (drift guard, Task 8)
     private volatile Task _lastWrite = Task.CompletedTask;     // last stdin write, drained by DisposeAsync (4e)
     private int _disposed;
 
@@ -146,6 +149,9 @@ public sealed partial class ClaudeCodeStreamingSession : IStreamingLlmSession
         return _lastWrite;
     }
 
+    /// <remarks><paramref name="gracefulTimeout"/> bounds EACH of three successive waits independently
+    /// (in-flight turn, process exit, reader drain), so the worst-case wall-clock ceiling is
+    /// <c>3 × gracefulTimeout</c> — it is not an end-to-end SLA. Size it per-phase, not as a total budget.</remarks>
     public async Task<SessionEndState> EndCleanlyAsync(TimeSpan gracefulTimeout, CancellationToken ct)
     {
         // 1) Wait for the in-flight turn's completion (or init, if no turn) up to gracefulTimeout.

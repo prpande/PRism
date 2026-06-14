@@ -1,4 +1,5 @@
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using PRism.AI.Contracts.Provider;
 
 namespace PRism.AI.ClaudeCode;
@@ -22,7 +23,8 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IStreamingCliProcessFactory, SystemStreamingCliProcessFactory>();
         services.AddSingleton<IStreamingLlmProvider>(sp => new ClaudeCodeStreamingProvider(
             sp.GetRequiredService<IStreamingCliProcessFactory>(),
-            sp.GetRequiredService<ClaudeCodeProviderOptions>()));
+            sp.GetRequiredService<ClaudeCodeProviderOptions>(),
+            sp.GetRequiredService<ILoggerFactory>()));   // inject a real logger so drift-guard warnings reach a sink
         services.AddSingleton<ITokenUsageTracker>(_ => new JsonlTokenUsageTracker(usageDir));
         // Register the concrete type so Web's AddPrismAi can resolve it directly when
         // wrapping it with CachedLlmAvailabilityProbe. The interface forwarding below keeps

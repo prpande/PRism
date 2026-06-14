@@ -1,3 +1,5 @@
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using PRism.AI.Contracts.Provider;
 
 namespace PRism.AI.ClaudeCode;
@@ -6,8 +8,16 @@ namespace PRism.AI.ClaudeCode;
 /// Enforces every spec §6 invariant: env allowlist, unconditional tool deny-list, working-dir
 /// confinement (canonical + symlink-resolved), mandatory <c>--verbose</c>.</summary>
 public sealed class ClaudeCodeStreamingProvider(
-    IStreamingCliProcessFactory factory, ClaudeCodeProviderOptions providerOptions) : IStreamingLlmProvider
+    IStreamingCliProcessFactory factory,
+    ClaudeCodeProviderOptions providerOptions,
+    ILoggerFactory? loggerFactory = null) : IStreamingLlmProvider
 {
+    // The session's drift-guard warnings (Task 8: MalformedResult / ZeroOutputTurn) only reach an operator
+    // sink if the session is built with a REAL logger. The provider is the PRODUCTION construction site, so
+    // it must inject one — DI supplies ILoggerFactory. Defaulting to NullLoggerFactory keeps the 2-arg
+    // test/manual-P1 construction path working without forcing a logger on every caller.
+    private readonly ILoggerFactory _loggerFactory = loggerFactory ?? NullLoggerFactory.Instance;
+
     // Forced-deny: the write/exec-capable tools, taken from the PROBED v2.1.177 init `tools` array
     // (.scratch probe 5). NOTE there is NO "Computer"/"computer-use" tool in this CLI — do not ship a
     // phantom. `PowerShell` IS present (a Windows shell-exec tool) and MUST be denied alongside `Bash`.
@@ -42,7 +52,8 @@ public sealed class ClaudeCodeStreamingProvider(
             Environment: ClaudeCliEnvironment.BuildAllowlisted(),
             WorkingDirectory: workingDir);
 
-        return new ClaudeCodeStreamingSession(factory.Start(spec));
+        return new ClaudeCodeStreamingSession(
+            factory.Start(spec), _loggerFactory.CreateLogger<ClaudeCodeStreamingSession>());
     }
 
     private static (IReadOnlyList<string> allow, IReadOnlyList<string> deny) MergeTools(
