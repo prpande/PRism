@@ -21,14 +21,29 @@ nothing — the only signal was a `503` in the browser console.
 | Summary | Overview tab (`AiSummaryCard`) | inline error block (`aiSummaryError`) | inline **Regenerate** |
 | File-focus | Hotspots tab (`HotspotsTab`) | inline error message (`status:'error'`) | inline **Retry** |
 | Hunk annotations | in-diff, Files tab (`AiHunkAnnotation`) | **nothing** — `catch(() => setEntries(null))` | none |
-| Draft suggestions | comment composer | **nothing** — `catch(() => setEntries(null))` | none |
+| Draft suggestions | Reconciliation panel (`UnresolvedPanel`) | **nothing** — `catch(() => setEntries(null))` | none |
 
-Backend (`PRism.Web/Endpoints/AiEndpoints.cs`): every seam maps provider failure
-to a **bare** `Results.StatusCode(503)` (no body). `204` = no-content / not
-subscribed / AI off. The api client (`frontend/src/api/client.ts`) throws
-`ApiError(status, requestId, body)` on non-2xx and returns `undefined` on `204`,
-so failure-vs-no-content **is** distinguishable at the hook layer — the silent
-hooks just discard it in `.catch`.
+> Draft-suggestions renders in the reconciliation flow (`UnresolvedPanel`), **not**
+> the live comment composer. Its background classification (below) rests on that.
+
+### Backend contract (verified `PRism.Web/Endpoints/AiEndpoints.cs`)
+
+Summary, file-focus, and hunk-annotations each wrap the seam call in
+`try/catch (LlmProviderException)` and map provider failure to a **bare**
+`Results.StatusCode(503)` (no body); `204` = no-content / not-subscribed / AI off.
+
+**Draft-suggestions is the exception:** its endpoint has **no `try/catch`** — it is
+a canned-data seam (Noop/Placeholder) today and returns only `200`/`204`, so it
+**cannot `503`** yet. A real suggester would currently surface as `500`, not `503`
+(and the file carries a D111 note to add an `IsSubscribed` gate when the real seam
+lands). #484 wires draft-suggestions into the *same* report-on-throw mechanism for
+uniformity and future-proofing, but in practice **draft-suggestions will not
+surface a failure until the real suggester + its `503` mapping land** — that
+backend work is **not** #484 (see Deferred).
+
+The api client (`frontend/src/api/client.ts`) throws `ApiError(status, requestId,
+body)` on non-2xx and returns `undefined` on `204`, so failure-vs-no-content **is**
+distinguishable at the hook layer — the silent hooks just discard it in `.catch`.
 
 ## Goals
 
@@ -47,6 +62,8 @@ hooks just discard it in `.catch`.
   "timed out" label is "raise your timeout", which has no lever until #485 makes
   the timeout configurable.)
 - Retiring `ErrorModal` / inline fatal-error states → **#446**.
+- The backend `try/catch → 503` + `IsSubscribed` gate for a *real* draft-suggestions
+  seam → owned by the future draft-suggestions seam work, not #484.
 - Any backend change. #484 reads only what the api client already exposes.
 
 ## Delivery principle
@@ -56,131 +73,169 @@ failing container**, not by who triggered the work:
 
 - **Background** — the user can navigate to other tabs / keep working while the AI
   runs. Its failure must **follow them** → a global, **persistent**, coalesced
-  toast with Retry. This covers all four current seams **and** their
-  regenerate/retry paths (a user commonly kicks off a regenerate and wanders off).
+  toast with Retry. This covers all four current seams (summary, file-focus,
+  hunk-annotations, draft-suggestions) **and** their regenerate/retry paths (a user
+  commonly kicks off a regenerate and wanders off — owner decision).
 - **Interactive / inline** — the user is live in that container, blocked on the
-  result (the *upcoming* AI chat turn, analyse-this-comment in the composer).
-  Failure stays **in that container**, no toast. (No current seam is in this mode;
-  this is the forward-looking half of the mechanism.)
+  result. **No current seam is in this mode**; it is the forward-looking half (the
+  upcoming AI chat turn, an analyse-this-comment action). It adds no implementation
+  scope here — it only defines what the toast deliberately does *not* claim, so a
+  future interactive seam knows to render inline instead.
 
 Summary and file-focus **keep** their existing inline error blocks. They coexist
 with the toast: inline detail if you happen to be on that tab, toast to catch you
 if you are elsewhere. The two silent seams (hunk / draft) get the toast only — they
 have no natural content region to host an inline block.
 
-## Architecture — `AiFailureProvider` context (option 1)
+## Architecture — `AiFailureProvider` context
 
 A new React context provider, mounted next to `ToastProvider` in `App`, is the
 single registry every seam reports to.
 
 ```ts
-// frontend/src/components/Ai/aiFailure.ts  (provider + hook)
+// frontend/src/components/Ai/aiFailure.tsx  (provider + hook)
 export type AiSeam = 'summary' | 'file-focus' | 'hunk-annotations' | 'draft-suggestions';
 
 interface AiFailureApi {
   // Report a CURRENT background failure for (prRef, seam). retry re-runs the seam's fetch.
   report: (prRef: PrReference, seam: AiSeam, opts: { retry: () => void }) => void;
-  // Clear (prRef, seam) on success / no-content / off — removes it from the toast.
+  // Clear (prRef, seam) on success / no-content / off / 401 — removes it from the set.
   clear: (prRef: PrReference, seam: AiSeam) => void;
-  // Clear ALL failures for a prRef (used on PR switch / unmount).
+  // Clear ALL failures for a prRef (used when a PR tab is actually closed/unmounted).
   clearPr: (prRef: PrReference) => void;
 }
 ```
 
-- The provider holds a map keyed by `(prRefKey, seam)` → `{ retry }`. It derives a
-  single coalesced toast from the **currently-failed set for the active PR**.
-- It renders **one persistent toast** (see "Toast" below) listing the failed seams,
-  with one **Retry-all** that invokes every registered `retry()` for the active PR,
-  plus dismiss.
-- When the failed set for the active PR empties, the toast disappears.
+- The provider holds a map keyed by `(prRefKey, seam)` → `{ retry }`, for **all
+  mounted PR tabs** (see Lifecycle — every keep-alive tab's hooks can report).
+- It renders **one** notification for the **active PR's** failed set only, derived
+  from `activeKey` (below). When that set is empty — or `activeKey` is null (inbox /
+  non-PR route) — nothing renders.
 
 **Why a context, not a wrapper hook or event bus:** the retry **closure** rides the
 context cleanly (an event-detail callback is stale-prone); and we avoid rewriting
 the tested, intricate summary/file-focus hooks (their stale/regenerate/
-`baseShaChanged` logic does not fit a generic wrapper without leaking). New simple
-seams use a tiny optional helper (below) so they don't hand-roll discrimination,
-but no seam is *forced* onto a wrapper.
+`baseShaChanged` logic does not fit a generic wrapper without leaking). The two
+*silent* seams (hunk/draft) use a tiny optional helper so they don't hand-roll the
+discrimination, but no seam is *forced* onto a wrapper.
+
+### The notification element — provider-owned, not via `useToast`
+
+The existing `useToast` API is append-only (`show` + `dismiss`), auto-dismisses
+after 10s, and de-dups on `(kind, message)` — it has **no `update`**, so a changing
+coalesced message would either spawn duplicate toasts or fail to mutate in place.
+Rather than widen the shared `ToastSpec` with `action` / `sticky` / `update` for a
+single consumer, **`AiFailureProvider` renders its own persistent notification
+element**, reusing the `Toast` module's visual tokens/styles for consistency. It is:
+
+- **Persistent** — no auto-dismiss timer; stays until Retry succeeds for all, or the
+  user dismisses it. (A background failure may not be seen for a minute, and it
+  carries the only Retry — a 10s window would strand it.)
+- **Single & coalesced** — exactly one element; its message lists the active PR's
+  currently-failed seams. It is never pushed N times.
+- **Action-bearing** — a **Retry** button and a **Dismiss** button.
+
+Existing `Toast`/`useToast` usage is untouched.
 
 ### Seam adoption (per hook — minimal, inside existing `.then/.catch`)
 
-Each hook gains `report` on error and `clear` on the non-error branches. Illustrated
-for the two currently-silent hooks, which also gain a retry nonce:
+Each hook gains `report` on a genuine failure and `clear` on every non-failure
+branch (success, `204`/no-content, off, **and `401`**). The two currently-silent
+hooks also gain a retry nonce. Full shape for `useAiHunkAnnotations` /
+`useAiDraftSuggestions`:
 
 ```ts
-// useAiHunkAnnotations / useAiDraftSuggestions (same shape)
 const { report, clear } = useAiFailure();
 const [retryNonce, setRetryNonce] = useState(0);
 const retry = useCallback(() => setRetryNonce((n) => n + 1), []);
-// ...inside the effect, deps include retryNonce:
+// ...inside the effect (deps include retryNonce):
+const myNonce = retryNonce;                       // last-write-wins guard (see Retry semantics)
 getAiHunkAnnotations(prRef)
   .then((result) => {
-    if (cancelled) return;
+    if (cancelled || myNonce !== retryNonce) return;
     setEntries(result);
-    clear(prRef, 'hunk-annotations');   // success OR 204→null both clear
+    clear(prRef, 'hunk-annotations');             // success OR 204→null both clear
   })
-  .catch(() => {
-    if (cancelled) return;
+  .catch((err) => {
+    if (cancelled || myNonce !== retryNonce) return;
     setEntries(null);
-    report(prRef, 'hunk-annotations', { retry });
+    if (err instanceof ApiError && err.status === 401) {
+      clear(prRef, 'hunk-annotations');           // 401 → auth banner owns it; do NOT report
+    } else {
+      report(prRef, 'hunk-annotations', { retry });  // 503 / network / other throws
+    }
   });
 ```
 
 For **summary** and **file-focus**, the hooks already discriminate
 `{ok|absent/no-content|error}` and already own a retry/regenerate callback —
 adoption is `report(..., { retry/regenerate })` on the `error` branch and
-`clear(...)` on the `ok`/`absent`/`no-content` branches. Their inline error state is
-untouched.
-
-> Distinguishing `503`/network (report) from `401` (do **not** report) uses
-> `ApiError.status`. The two silent api wrappers (`api/aiHunkAnnotations.ts`,
-> `api/aiDraftSuggestions.ts`) currently `return result ?? null` and let throws
-> propagate — the hook's `.catch` already receives the `ApiError`. The hook checks
-> `err instanceof ApiError && err.status === 401` and **skips reporting** for auth
-> (it still clears any prior failure). All other throws (incl. `503` and network)
-> report.
-
-## Toast — persistent, coalesced
-
-The current `Toast` auto-dismisses errors after 10s and de-dups on `(kind, message)`.
-A background failure is exactly the case where the user may be on another tab and
-miss a 10s window — and the toast carries the **only** Retry. So the AI-failure toast
-must be **persistent** (no auto-dismiss; stays until Retry or dismiss).
-
-Decision: extend `ToastSpec` with an optional `action` (`{ label, onClick }`) and an
-optional `sticky?: boolean` (suppresses the auto-dismiss timer). The
-`AiFailureProvider` owns exactly one such sticky toast and updates its `message` as
-the failed-seam set changes — it does **not** push N toasts. This reuses the existing
-toast surface (single visual language) rather than introducing the separate
-`Snackbar` component.
-
-- `action` = `{ label: 'Retry', onClick: retryAll }`.
-- `message` lists the human names of the currently-failed seams, e.g.
-  *"AI couldn't generate: summary, hotspots, annotations."*
-- Existing non-AI toasts are unchanged (no `sticky`, no `action`).
+`clear(...)` on the `ok`/`absent`/`no-content` branches, with the same `401` skip
+applied where the api wrapper surfaces status. Their inline error state is
+untouched. (The summary/file-focus api wrappers currently collapse `401` into
+`kind:'error'`; #484 threads `ApiError.status` far enough to skip reporting `401`,
+without otherwise changing their inline behaviour.)
 
 ## Behaviour
 
-### Consolidation (multiple seams fail at once)
+### Coalescing multiple failures
 
-Provider-down on PR open can fail all four. The provider coalesces: **one** toast,
-listing every currently-failed seam for the active PR. As more seams fail within the
-same render cycle they fold into the same toast (the derived message updates); they
-never stack as separate toasts.
+Provider-down on PR open can fail all of summary, file-focus, and hunk-annotations
+(and draft-suggestions once it can `503`). Seams that report **synchronously** (same
+effect/event tick) fold into one element. A seam that reports **after** the element
+already exists **mutates the existing element's message** — it does not spawn a
+second element. Result: one notification, message = the active PR's failed-seam set,
+never stacked.
 
 ### Retry-all + partial recovery
 
-Retry-all invokes every registered `retry()` for the active PR. Each seam's retry
-re-runs its fetch (cached server-side results are served as-is — token discipline;
-this is a re-GET, not a forced re-rank). On completion each seam independently
-`clear`s (recovered) or re-`report`s (still failing). The toast message updates to
-the still-failing set; when the set empties, the toast disappears.
+Retry-all invokes every registered `retry()` for the **active** PR. Each seam's retry
+bumps its nonce → re-runs its fetch (cached server-side results are served as-is —
+token discipline; a re-GET, not a forced re-rank). On completion each seam
+independently `clear`s (recovered) or re-`report`s (still failing); the message
+updates to the still-failing set; when the set empties the element disappears.
 
-### Lifecycle / PR scoping
+**Stale-resolution guard (last-write-wins).** A pre-Retry request still in flight can
+resolve *after* the Retry's request and wrongly re-report a seam the Retry just
+cleared. Each hook captures the nonce at fetch start and drops any resolution whose
+captured nonce is stale (`myNonce !== retryNonce`), so only the latest attempt's
+outcome reaches `report`/`clear`.
 
-Failures are keyed by `(prRef, seam)`. On navigating to a different PR — or the
-`PrDetailView` unmounting — `clearPr(prRef)` runs, so a stale `retry()` can never
-fire against a PR the user has left. The active PR is the one `PrDetailView` is
-mounted for; the provider only renders a toast for the active PR's failures.
+### Interaction & accessibility states
+
+- **Retry in-flight.** While any seam's retry is in flight, the Retry button is
+  **disabled** and labelled **"Retrying…"**; it re-enables when all in-flight seam
+  fetches settle. This prevents double-fire and confirms the click registered.
+- **Dismiss.** Hides the element for its *current* failure set. A **new** failure
+  reported afterwards — a later PR load, or a Retry that itself `503`s — re-shows it.
+  Dismissal does **not** persist across PR navigation.
+- **Focus.** On full recovery / dismissal the element is removed; focus moves to the
+  active tab's content region (not left on a destroyed button — WCAG 2.4.3).
+- **Live region.** The element is a polite live region, but it announces only on
+  **(a) first appearance** (set becomes non-empty) and **(b) disappearance** (set
+  empties). Intermediate partial-recovery message mutations must NOT re-announce
+  (render the mutable seam list outside the announced text node, or hold `aria-live`
+  off during the batch settle), so a four-seam recovery does not fire four
+  screen-reader announcements.
+
+### Lifecycle / PR scoping (keep-alive aware)
+
+`PrTabHost` keeps **one `PrDetailView` mounted per open tab** and only hides the
+inactive ones (`active` prop) so each PR keeps its scroll/sub-tab/draft state. So
+"mounted" is **not** "active", and switching tabs does **not** unmount. Therefore:
+
+- **Active PR** is `PrTabHost`'s route-derived `activeKey`
+  (`route.valid ? prRefKey(route.ref) : null`) — null on the inbox / any non-PR
+  route. The provider tracks this and renders the notification **only** for the
+  active prRef's failed set. On a non-PR route nothing renders.
+- **Reporting** is keyed by `(prRef, seam)` and may come from any mounted (incl.
+  backgrounded) tab. A backgrounded tab's failure is *recorded* but not *shown*
+  while its PR is inactive; switching to that PR re-derives and shows it (and
+  switching away hides it again) — failures persist with their tab, not the screen.
+- **`clearPr`** runs when a PR tab is **actually closed** (removed from `openTabs`) or
+  its `PrDetailView` truly unmounts — **not** on tab switch. This is what prevents a
+  stale Retry firing against a PR the user has left, given that tab-switch alone
+  never unmounts.
 
 ### Not reported (no false failures)
 
@@ -195,36 +250,58 @@ Generic, honest, actionable:
 > **AI couldn't generate: {seam list}** — the provider failed or timed out.
 > **[ Retry ]  [ Dismiss ]**
 
-Seam display names: `summary` → "summary", `file-focus` → "hotspots",
-`hunk-annotations` → "annotations", `draft-suggestions` → "draft suggestions".
-Timeout-specific copy + the settings pointer are #485's, once the timeout is tunable.
+Seam display names (kept in sync with their UI labels): `summary` → "summary",
+`file-focus` → "hotspots" (matches the **Hotspots** tab), `hunk-annotations` →
+"annotations", `draft-suggestions` → "draft suggestions". Timeout-specific copy +
+the settings pointer are #485's, once the timeout is tunable.
 
 ## Testing
 
-- **Provider unit** (`aiFailure` provider): N seams reported → exactly one toast
-  with all names; partial recovery shrinks the message then clears; `clearPr` on PR
-  switch removes the toast; Retry-all calls every registered `retry`.
-- **Hook unit** (the four hooks): `503`/throw → `report`; `204`/`ok`/off → `clear`;
-  `401` → **not** reported (still clears). Hunk/draft gain a retry nonce that
-  re-runs the fetch.
-- **Toast unit:** `sticky` suppresses auto-dismiss; `action` renders a button that
-  fires `onClick`; non-AI toasts keep the 10s/dedup behaviour.
-- **Component:** summary/file-focus inline error states still render *and* the toast
-  appears (coexistence); hunk/draft render nothing inline but the toast appears.
-- **e2e + visual:** persistent AI-failure toast with Retry on a forced-`503` PR
-  (new baseline expected); Retry path clears it on recovery.
+- **Provider unit** (`aiFailure`): N seams reported → one element with all names;
+  partial recovery shrinks the message then clears; Retry-all calls every registered
+  `retry`; a report from a non-active prRef is recorded but **not** rendered;
+  `activeKey === null` renders nothing; `clearPr` removes a closed PR's failures.
+- **Hook unit** (the four hooks): `503`/network throw → `report`; `204`/`ok`/off →
+  `clear`; **`401` → not reported (still clears)**; stale-nonce resolution is dropped.
+  Hunk/draft gain a retry nonce that re-runs the fetch.
+- **Component:** summary/file-focus inline error states still render *and* the
+  notification appears (coexistence); hunk/draft render nothing inline but the
+  notification appears.
+- **e2e + visual:** force `503` via Playwright `page.route(... fulfill({status:503}))`
+  on the `**/api/pr/.../ai/*` routes (the pattern `ai-gating-sweep.spec.ts` /
+  `ai-live-consent.spec.ts` already use — frontend-only, no backend change); assert
+  the persistent notification + Retry, the Retrying… disabled state, and that Retry
+  clears it on recovery (new visual baseline expected). Assert a backgrounded-tab
+  failure does not show while another PR is active.
 
 ## Acceptance criteria
 
-- [ ] All four AI seams report `503`/network failures to one shared mechanism;
-      a new seam opts in with `report`/`clear` (no per-seam toast plumbing).
-- [ ] A single **coalesced, persistent** toast lists the failed seams and offers
-      **Retry-all** + dismiss; multiple concurrent failures never stack.
-- [ ] Retry re-runs the failed seams; partial recovery updates the toast; full
-      recovery dismisses it.
+- [ ] All four AI seams report `503`/network failures to one shared mechanism; a new
+      seam opts in with `report`/`clear` (no per-seam toast plumbing).
+- [ ] A single **coalesced, persistent** notification lists the failed seams and
+      offers **Retry-all** + dismiss; multiple concurrent failures never stack.
+- [ ] Retry re-runs the failed seams; the button shows a disabled "Retrying…" state
+      in-flight; partial recovery updates the message; full recovery removes it.
+- [ ] A stale pre-Retry resolution cannot re-report a seam the Retry cleared.
 - [ ] Summary and file-focus keep their inline error blocks (coexist with the toast).
-- [ ] No toast for `204`/no-content, AI off, not-subscribed, or `401`.
-- [ ] Failures are PR-scoped; switching PRs clears stale failures/retries.
-- [ ] `#484` ships frontend-only; the timeout reason/copy is deferred to #485 and
-      logged there.
+- [ ] No notification for `204`/no-content, AI off, not-subscribed, or `401`.
+- [ ] The notification renders only for the **active** PR (route `activeKey`); a
+      backgrounded tab's failure is recorded but not shown; non-PR routes show nothing.
+- [ ] Closing a PR tab (or unmounting its `PrDetailView`) clears that PR's failures
+      and retries; no stale retry can fire against a PR the user has left.
+- [ ] Live region announces only on appearance and disappearance, not on each
+      partial-recovery message change.
 - [ ] Tests per the section above; visual baselines regenerated from CI.
+
+## Deferred / Open Questions
+
+- **Same-tab toast/inline redundancy (owner call).** `product-lens` and `design-lens`
+  both flagged that when the user is *on* the Overview/Hotspots tab, the inline error
+  block **and** the toast name the same seam. The owner chose coexistence
+  deliberately. Optional refinement for the owner to accept or decline: omit a seam
+  from the toast while the user is viewing that seam's tab, so the toast carries only
+  what the user cannot currently see. Default (this spec): keep full coexistence.
+- **Draft-suggestions real-seam `503` dependency.** Draft-suggestions cannot fail
+  with a `503` until the real suggester lands with its own endpoint `try/catch → 503`
+  and `IsSubscribed` gate. Until then it is wired into the mechanism but inert. That
+  backend work is owned by the draft-suggestions seam effort, not #484.
