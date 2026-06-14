@@ -109,13 +109,13 @@ The provider still carries the single-token injection guard (§ 3) regardless �
 ## 8. Exit criteria
 
 - [x] Probe run and **production-faithful re-run** complete; outcome + operational invariants recorded here (§ 2). To be propagated to parent § 6, verification-notes § C4 (gating checkbox resolved), and the project AI README.
-- [ ] `ResumeSessionId` added to `StreamingSessionOptions` with semantics-pinning XML doc (same-cwd, fail-hard, re-persist-new-id, fallback); deferred-fields note updated.
-- [ ] Provider appends `--resume <id>` when set; single-CLI-token guard applied via a correctly-named/commented validator (§ 3).
-- [ ] Unit tests green: present→flag-in-order, null→omitted, malformed-id→rejected. Plus an integration assertion that an `EndCleanlyAsync`-ended session is resumable (clean-end ↔ resume-eligible, § 2.4).
-- [ ] **Mechanical tripwire** in place (§ 5) that fails if a production caller wires `ResumeSessionId` before #412's ownership check exists.
-- [ ] Session-id ownership + confidentiality + resume-failure handling recorded as **unchecked ACs on the #479 issue body** (concrete artifact, not just spec prose), binding #412.
-- [ ] Full backend build + test suite green; secrets scan clean.
-- [ ] `ce-doc-review` dispositions recorded in PR `## Proof`; owner spec + plan gates cleared. **B2 → owner merges (no auto-merge).**
+- [x] `ResumeSessionId` added to `StreamingSessionOptions` with semantics-pinning XML doc (same-cwd, fail-hard, re-persist-new-id, fallback); deferred-fields note updated.
+- [x] Provider appends `--resume <id>` when set; single-CLI-token guard applied via a correctly-named/commented validator (§ 3).
+- [x] Unit tests green: present→flag-in-order, null→omitted, malformed-id→rejected. Clean-end ↔ resume-eligible pinned by the documentary characterization test (§ 2.4) and validated live through the real provider's `EndCleanlyAsync` path (manual driver, non-durable). The **durable** `[Integration]` resume assertion is deferred to #412 (recorded as a forward AC on the #479 issue body).
+- [x] **Mechanical tripwire** in place (§ 5) that fails if a production caller wires `ResumeSessionId` before #412's ownership check exists.
+- [x] Session-id ownership + confidentiality + resume-failure handling recorded as **unchecked ACs on the #479 issue body** (concrete artifact, not just spec prose), binding #412.
+- [x] Full backend build + test suite green; secrets scan clean.
+- [x] `ce-doc-review` dispositions recorded in PR `## Proof`; owner spec + plan gates cleared. **B2 → owner merges (no auto-merge).**
 
 ## 9. Resolved decisions
 
