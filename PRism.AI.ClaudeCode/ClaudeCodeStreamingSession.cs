@@ -22,7 +22,7 @@ public sealed class ClaudeCodeStreamingSession : IStreamingLlmSession
 #pragma warning disable CA1823, CS0169  // Fields used in later sub-tasks (4e/Task 8) — not yet referenced
     private int _turnTextCount, _turnToolCount;      // per-turn output counters (drift guard, Task 8)
 #pragma warning restore CA1823, CS0169
-    private Task _lastWrite = Task.CompletedTask;     // last stdin write, drained by DisposeAsync (4e)
+    private volatile Task _lastWrite = Task.CompletedTask;     // last stdin write, drained by DisposeAsync (4e)
     private int _disposed;
 
     public ClaudeCodeStreamingSession(IStreamingCliProcess process)
