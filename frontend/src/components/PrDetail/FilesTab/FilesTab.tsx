@@ -4,8 +4,6 @@ import { postFileViewed } from '../../../api/fileViewed';
 import { useFileDiff } from '../../../hooks/useFileDiff';
 import { useUnionDiff } from '../../../hooks/useUnionDiff';
 import { useFilesTabShortcuts } from '../../../hooks/useFilesTabShortcuts';
-import { useAiGate } from '../../../hooks/useAiGate';
-import { useAiFileFocus } from '../../../hooks/useAiFileFocus';
 import { FileTree } from './FileTree';
 import { DiffPane } from './DiffPane';
 import type { DiffMode } from './DiffPane';
@@ -78,16 +76,40 @@ function useViewportWidth() {
 }
 
 export function FilesTab() {
-  const { prRef, prDetail, draftSession, readOnly } = usePrDetailContext();
+  const {
+    prRef,
+    prDetail,
+    draftSession,
+    readOnly,
+    fileFocus,
+    pendingFilePath,
+    clearPendingFilePath,
+  } = usePrDetailContext();
 
   const isLowQuality = prDetail.clusteringQuality === 'low';
 
-  const fileFocusEnabled = useAiGate('fileFocus');
-  const focusEntries = useAiFileFocus(prRef, fileFocusEnabled);
+  // Files-tree wayfinding dots are fed by the SINGLE shared file-focus fetch
+  // (spec §8), owned by PrDetailView and carried in context — no second GET.
+  // The dot only renders for high/medium (FileTree's own logic), so empty /
+  // fallback cases (no high/medium entries) naturally show no dots. The column
+  // (its data-on flag + the region SampleBadge) is visible only when AI is
+  // genuinely active for this PR: `not-subscribed` is Live-without-subscription,
+  // and `no-changes` is ALSO what useFileFocusResult returns when the fileFocus
+  // capability is OFF entirely (AI off) — both mean "AI not active here", so the
+  // column stays off for them. Preview/Live with a real (or in-flight) result
+  // turns it on.
+  const focusEntries = fileFocus.entries;
+  const aiDotsOn = fileFocus.status !== 'not-subscribed' && fileFocus.status !== 'no-changes';
 
   const [activeRange, setActiveRange] = useState<string>('all');
   const [selectedCommits, setSelectedCommits] = useState<string[] | null>(null);
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
+  // Deep-link a11y: a single programmatic focus move to the diff region + one
+  // polite live-region announcement when a pending path is applied (spec §8,
+  // option b — no intermediate tab-button focus, so the SR makes ONE coherent
+  // announcement of the destination).
+  const diffRegionRef = useRef<HTMLDivElement>(null);
+  const [liveMessage, setLiveMessage] = useState('');
   const [diffMode, setDiffMode] = useState<DiffMode>('side-by-side');
   // #115 — line-wrap is a view-wide preference (like diffMode, not per-file):
   // false = a single synthetic scrollbar shifts both split panes in lockstep
@@ -135,19 +157,79 @@ export function FilesTab() {
   const tree = useMemo(() => buildTree(files), [files]);
   const fileList = useMemo(() => flattenPaths(tree), [tree]);
 
-  // Auto-select the first file in tree order when none is selected, OR when
-  // the previously-selected path is no longer in the diff's file list (e.g.
-  // a pr-updated SSE shifted the diff and the user's selected file is gone).
-  // Mirrors GitHub / ADO / GitLab: landing on /files opens the first changed
-  // file rather than showing the empty-pane prompt. Re-fires after iteration
-  // or commit-multi-select changes (both reset selectedPath to null), and on
-  // orphaned-selection refreshes (preflight finding).
+  // Deep-link from the Hotspots tab (spec §8). HotspotsTab calls requestFileView(path),
+  // which switches to this tab and stashes `pendingFilePath` in context. The three
+  // effects below cooperate to land on that path even when it is absent from the
+  // CURRENTLY-loaded (possibly narrowed-iteration) diff and only present in the full
+  // diff, without ever transiently grabbing the wrong file.
+
+  // (1) On a NEW pendingFilePath, reset the range to 'all' so the target can appear
+  //     in the full diff. Do NOT read fileList here — setActiveRange re-fires
+  //     useFileDiff asynchronously; the stale list updates a render or more later.
   useEffect(() => {
+    if (pendingFilePath === null) return;
+    setActiveRange('all');
+    setSelectedCommits(null);
+  }, [pendingFilePath]);
+
+  // (2) Apply the pending path once the FULL-range diff has settled. CRITICAL race
+  //     guard: effect (1) called setActiveRange('all'), but useFileDiff refetches
+  //     asynchronously — for one+ render ticks `fileList` is still the STALE narrowed
+  //     list, which is NON-EMPTY, so a `fileList.length === 0` guard would NOT hold it
+  //     back. Worse, `diff.isLoading` ALONE is insufficient: useFileDiff only flips
+  //     isLoading=true inside its OWN post-commit effect, so in the render where
+  //     effect (1) sets activeRange='all', diff.isLoading is still the STALE `false`
+  //     from the just-finished narrowed fetch. A `!diff.isLoading` gate would pass
+  //     PREMATURELY against the stale narrowed fileList, run the else-branch, and
+  //     clear the intent before the full diff ever arrives — stranding the user on the
+  //     wrong file. So we additionally require the LOADED diff to actually be the full
+  //     'all' range: `diff.data?.range === allRange`. DiffDto.range echoes the range it
+  //     was fetched for, and on 'all' the requested range is exactly `allRange`
+  //     (buildAllRange(pr) = base..head) — so this holds only once `fileList` reflects
+  //     the full diff. Both guards together: range matches the full request AND it has
+  //     settled.
+  useEffect(() => {
+    if (pendingFilePath === null) return;
+    // full-range diff not settled yet (still loading, or the still-loaded diff is the
+    // stale narrowed range whose isLoading hasn't yet flipped) — wait.
+    if (activeRange !== 'all' || diff.isLoading || diff.data?.range !== allRange) return;
+    if (fileList.includes(pendingFilePath)) {
+      setSelectedPath(pendingFilePath);
+      // Single focus move + announce (option b): focus the tabIndex={-1} diff-region
+      // container and announce the destination via the polite live region.
+      diffRegionRef.current?.focus();
+      setLiveMessage(`Navigated to ${pendingFilePath} on the Files tab.`);
+    } else {
+      // genuinely absent on the FULL diff (PR changed between fetch and click) — fall back.
+      if (selectedPath === null || !fileList.includes(selectedPath)) setSelectedPath(fileList[0]);
+    }
+    clearPendingFilePath();
+  }, [
+    pendingFilePath,
+    activeRange,
+    diff.isLoading,
+    diff.data?.range,
+    allRange,
+    fileList,
+    selectedPath,
+    clearPendingFilePath,
+  ]);
+
+  // (3) Auto-select the first file in tree order when none is selected, OR when the
+  //     previously-selected path is no longer in the diff's file list (e.g. a pr-updated
+  //     SSE shifted the diff and the user's selected file is gone). Mirrors GitHub /
+  //     ADO / GitLab: landing on /files opens the first changed file rather than showing
+  //     the empty-pane prompt. Re-fires after iteration or commit-multi-select changes
+  //     (both reset selectedPath to null), and on orphaned-selection refreshes (preflight
+  //     finding). GUARDED to no-op while a deep-link is outstanding — effect (2) owns
+  //     selection then, so this must not seize fileList[0] from under it.
+  useEffect(() => {
+    if (pendingFilePath !== null) return; // deep-link in progress owns selection
     if (fileList.length === 0) return;
     if (selectedPath === null || !fileList.includes(selectedPath)) {
       setSelectedPath(fileList[0]);
     }
-  }, [fileList, selectedPath]);
+  }, [fileList, selectedPath, pendingFilePath]);
 
   const selectedFile = useMemo(
     () => (selectedPath ? (files.find((f) => f.path === selectedPath) ?? null) : null),
@@ -553,6 +635,12 @@ export function FilesTab() {
 
   return (
     <div className={`files-tab ${styles.filesTab}`} data-testid="files-tab-root">
+      {/* Polite live region for the deep-link announcement (spec §8). Visually
+          hidden; effect (2) sets it once when a pending path is applied so the
+          screen reader announces the destination. */}
+      <div aria-live="polite" className="sr-only" data-testid="files-tab-live-region">
+        {liveMessage}
+      </div>
       <div className={`files-tab-toolbar ${styles.filesTabToolbar}`}>
         {isLowQuality ? (
           <CommitMultiSelectPicker
@@ -628,11 +716,16 @@ export function FilesTab() {
               onToggleViewed={handleToggleViewed}
               isLoading={diff.isLoading}
               focusEntries={focusEntries}
-              aiPreview={fileFocusEnabled}
+              aiPreview={aiDotsOn}
             />
           )}
         </div>
-        <div className={`files-tab-diff ${styles.filesTabDiff}`} data-testid="files-tab-diff">
+        <div
+          ref={diffRegionRef}
+          tabIndex={-1}
+          className={`files-tab-diff ${styles.filesTabDiff}`}
+          data-testid="files-tab-diff"
+        >
           <DiffPane
             prRef={prRef}
             selectedPath={selectedPath}

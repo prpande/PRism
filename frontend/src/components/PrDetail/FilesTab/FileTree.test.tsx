@@ -426,7 +426,7 @@ describe('FileTree — AI focus dot (D32a)', () => {
   });
 
   it('renders the high dot for level high', () => {
-    const entries: FileFocus[] = [{ path: 'src/Calc.cs', level: 'high' }];
+    const entries: FileFocus[] = [{ path: 'src/Calc.cs', level: 'high', rationale: 'core logic' }];
     const { container } = render(
       <FileTree
         files={files}
@@ -441,10 +441,16 @@ describe('FileTree — AI focus dot (D32a)', () => {
     const highDots = container.querySelectorAll('[class*="fileTreeAiHigh"]');
     expect(highDots).toHaveLength(1);
     expect(highDots[0]).toHaveAttribute('title', 'AI focus: high');
+    // the row also carries a trailing sr-only "AI focus: high" span so the signal
+    // reaches assistive tech (the dot itself is aria-hidden via the .file-tree-ai slot)
+    const srSpans = Array.from(container.querySelectorAll('.sr-only')).filter((n) =>
+      /AI focus: high/.test(n.textContent ?? ''),
+    );
+    expect(srSpans).toHaveLength(1);
   });
 
   it('renders the medium dot for level medium', () => {
-    const entries: FileFocus[] = [{ path: 'src/Calc.cs', level: 'medium' }];
+    const entries: FileFocus[] = [{ path: 'src/Calc.cs', level: 'medium', rationale: 'tests' }];
     const { container } = render(
       <FileTree
         files={files}
@@ -459,10 +465,14 @@ describe('FileTree — AI focus dot (D32a)', () => {
     const medDots = container.querySelectorAll('[class*="fileTreeAiMed"]');
     expect(medDots).toHaveLength(1);
     expect(medDots[0]).toHaveAttribute('title', 'AI focus: medium');
+    const srSpans = Array.from(container.querySelectorAll('.sr-only')).filter((n) =>
+      /AI focus: medium/.test(n.textContent ?? ''),
+    );
+    expect(srSpans).toHaveLength(1);
   });
 
   it('does NOT render a dot for level low (handoff has no .ai-focus-low)', () => {
-    const entries: FileFocus[] = [{ path: 'src/Calc.cs', level: 'low' }];
+    const entries: FileFocus[] = [{ path: 'src/Calc.cs', level: 'low', rationale: 'formatting' }];
     const { container } = render(
       <FileTree
         files={files}
@@ -477,6 +487,11 @@ describe('FileTree — AI focus dot (D32a)', () => {
     expect(
       container.querySelectorAll('[class*="fileTreeAiHigh"], [class*="fileTreeAiMed"]'),
     ).toHaveLength(0);
+    // low carries no sr-only AI-focus span either (no spoken focus signal for low)
+    const srSpans = Array.from(container.querySelectorAll('.sr-only')).filter((n) =>
+      /AI focus:/.test(n.textContent ?? ''),
+    );
+    expect(srSpans).toHaveLength(0);
   });
 
   it('outer .file-tree-ai slot carries aria-hidden=true so AT ignores the column', () => {

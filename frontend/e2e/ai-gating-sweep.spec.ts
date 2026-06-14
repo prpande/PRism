@@ -304,10 +304,13 @@ async function setupMocks(page: import('@playwright/test').Page): Promise<{
     route.fulfill({
       status: 200,
       contentType: 'application/json',
-      body: JSON.stringify([
-        { path: 'src/Calc.cs', level: 'high' },
-        { path: 'src/Calc.Tests.cs', level: 'medium' },
-      ]),
+      body: JSON.stringify({
+        entries: [
+          { path: 'src/Calc.cs', level: 'high', rationale: 'sample' },
+          { path: 'src/Calc.Tests.cs', level: 'medium', rationale: 'sample' },
+        ],
+        fallback: false,
+      }),
     }),
   );
 

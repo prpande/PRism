@@ -11,6 +11,10 @@ public enum AiInteractionOutcome
 
     /// <summary>The provider was invoked but failed — egress was attempted.</summary>
     ProviderError,
+
+    /// <summary>The structured seam returned an all-medium fallback (real ranking failed after retry).
+    /// Distinct from Ok so fallback rate = count(Fallback) / count(rank attempts) is computable (spec §13).</summary>
+    Fallback,
 }
 
 /// <summary>One metadata-only audit record per AI seam invocation. <see cref="Component"/> names the

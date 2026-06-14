@@ -107,6 +107,33 @@ internal static class ServiceCollectionExtensions
                 sp.GetRequiredService<IActivePrCache>());
         });
 
+        // Net-new STRUCTURED resolver for the file-focus seam: returns DiffDto (not a flattened
+        // string) + the SHAs. Mirrors the summarizer's cold-path guard: TryGetCachedSnapshot first,
+        // then LoadAsync so GetOrFetchDiffAsync is never called with empty SHAs.
+        services.AddSingleton<ClaudeCodeFileFocusRanker>(sp =>
+        {
+            var loader = sp.GetRequiredService<PrDetailLoader>();
+            ClaudeCodeFileFocusRanker.DiffResolver resolve = async (pr, ct) =>
+            {
+                var snapshot = loader.TryGetCachedSnapshot(pr)
+                    ?? await loader.LoadAsync(pr, ct).ConfigureAwait(false)
+                    ?? throw new InvalidOperationException($"PR detail unavailable for {pr}");
+                var baseSha = snapshot.Detail.Pr.BaseSha;
+                var headSha = snapshot.Detail.Pr.HeadSha;
+                var diffDto = await loader.GetOrFetchDiffAsync(pr, new DiffRangeRequest(baseSha, headSha), ct)
+                                          .ConfigureAwait(false);
+                return (diffDto, baseSha, headSha);
+            };
+            return new ClaudeCodeFileFocusRanker(
+                sp.GetRequiredService<ILlmProvider>(),
+                sp.GetRequiredService<ITokenUsageTracker>(),
+                resolve,
+                sp.GetRequiredService<ILogger<ClaudeCodeFileFocusRanker>>(),
+                sp.GetRequiredService<IAiInteractionLog>(),
+                sp.GetRequiredService<IReviewEventBus>(),
+                sp.GetRequiredService<IActivePrCache>());
+        });
+
         var realSeams = new Dictionary<Type, object>();   // P1: populated below with the first real impl
         // Pass the live dictionary BY REFERENCE (not a .Keys snapshot) — the resolver and the selector
         // (real: realSeams below) must read the same instance so P1's first real impl lights up both
@@ -117,6 +144,7 @@ internal static class ServiceCollectionExtensions
             // §1: populate realSeams before constructing the selector so both the capability
             // resolver and the seam selector see the same live entry.
             realSeams[typeof(IPrSummarizer)] = sp.GetRequiredService<ClaudeCodeSummarizer>();
+            realSeams[typeof(IFileFocusRanker)] = sp.GetRequiredService<ClaudeCodeFileFocusRanker>();
             return new AiSeamSelector(
             sp.GetRequiredService<AiModeState>(),
             noop: new Dictionary<Type, object>

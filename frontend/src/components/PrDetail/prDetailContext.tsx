@@ -1,6 +1,7 @@
 import { createContext, useContext, type ReactNode } from 'react';
 import type { PrDetailDto, PrReference } from '../../api/types';
 import type { UseDraftSessionResult } from '../../hooks/useDraftSession';
+import type { FileFocusState } from '../../hooks/useFileFocusResult';
 import type { PrTabId } from './PrSubTabStrip';
 
 // Carries everything a sub-tab needs, replacing the old Outlet context +
@@ -20,6 +21,17 @@ export interface PrDetailContextValue {
   // Switches the active sub-tab. Replaces the old navigate(`${base}/files`)
   // call sites (OverviewTab CTA, DraftsTab handleEdit, StaleDraftRow handleShowMe).
   onSelectSubTab: (tab: PrTabId) => void;
+  // The single shared file-focus result (spec §8) — consumed by FileTree dots
+  // AND HotspotsTab. One owner (PrDetailView) fetches it; both readers share it,
+  // so there is no duplicate GET.
+  fileFocus: FileFocusState;
+  // Deep-link navigation intent: HotspotsTab calls requestFileView(path) (which
+  // switches to the Files tab and stashes the path); FilesTab consumes
+  // pendingFilePath, applies it, then calls clearPendingFilePath(). The state
+  // lives in PrDetailView (the value object), not this module.
+  pendingFilePath: string | null;
+  requestFileView: (path: string) => void;
+  clearPendingFilePath: () => void;
 }
 
 const PrDetailContext = createContext<PrDetailContextValue | null>(null);

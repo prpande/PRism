@@ -22,6 +22,10 @@ export function makePrDetailContextValue(
     subscribed: false,
     baseShaChanged: false,
     onSelectSubTab: vi.fn(),
+    fileFocus: { status: 'no-changes', entries: [], retry: vi.fn() },
+    pendingFilePath: null,
+    requestFileView: vi.fn(),
+    clearPendingFilePath: vi.fn(),
     ...overrides,
   };
 }

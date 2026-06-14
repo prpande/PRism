@@ -5,5 +5,5 @@ namespace PRism.AI.Contracts.Seams;
 
 public interface IFileFocusRanker
 {
-    Task<IReadOnlyList<FileFocus>> RankAsync(PrReference pr, CancellationToken ct);
+    Task<FileFocusResult> RankAsync(PrReference pr, CancellationToken ct);
 }

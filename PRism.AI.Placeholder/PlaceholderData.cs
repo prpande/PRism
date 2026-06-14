@@ -12,7 +12,8 @@ internal static class PlaceholderData
 
     public static IReadOnlyList<FileFocus> FileFocus { get; } = new[]
     {
-        new FileFocus("src/Calc.cs", FocusLevel.High),
+        new FileFocus("src/Calc.cs", FocusLevel.High, "Sample: core calculation logic — review closely."),
+        new FileFocus("src/Calc.Tests.cs", FocusLevel.Medium, "Sample: tests for the changed logic."),
     };
 
     public static IReadOnlyList<HunkAnnotation> HunkAnnotations { get; } = new[]

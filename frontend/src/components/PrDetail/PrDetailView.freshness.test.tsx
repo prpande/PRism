@@ -188,7 +188,6 @@ vi.mock('../../hooks/useUnionDiff', () => ({
 vi.mock('../../hooks/useAiSummary', () => ({
   useAiSummary: () => ({ summary: null, loading: false, error: false }),
 }));
-vi.mock('../../hooks/useAiFileFocus', () => ({ useAiFileFocus: () => null }));
 vi.mock('../../hooks/useAiDraftSuggestions', () => ({ useAiDraftSuggestions: () => null }));
 vi.mock('../../hooks/useFilesTabShortcuts', () => ({ useFilesTabShortcuts: () => {} }));
 vi.mock('../../hooks/useFirstActivePrPollComplete', () => ({
@@ -380,6 +379,10 @@ describe('FilesTab — stale selected file resets to first after refetch (OQ5)',
       subscribed: false,
       baseShaChanged: false,
       onSelectSubTab: vi.fn(),
+      fileFocus: { status: 'no-changes', entries: [], retry: vi.fn() },
+      pendingFilePath: null,
+      requestFileView: vi.fn(),
+      clearPendingFilePath: vi.fn(),
     };
   }
 
