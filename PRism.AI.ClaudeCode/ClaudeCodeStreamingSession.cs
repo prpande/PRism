@@ -16,18 +16,16 @@ public sealed class ClaudeCodeStreamingSession : IStreamingLlmSession
     private readonly Task _readerTask;
 
     private volatile string _providerSessionId = "";
-#pragma warning disable CS0414  // Assigned but value never used — read in 4b's SendUserTurnAsync (not yet implemented)
     private volatile bool _turnInFlight;
-#pragma warning restore CS0414
-#pragma warning disable CS0649  // Field is never assigned — assigned in 4b's SendUserTurnAsync
     private TaskCompletionSource? _turnTcs;          // guarded by lock(_turnGate)
-#pragma warning restore CS0649
     private readonly object _turnGate = new();
-#pragma warning disable CA1823, CS0169  // Fields used in later sub-tasks (4b/4e/Task 8) — not yet referenced in 4a skeleton
+#pragma warning disable CA1823, CS0169  // Fields used in later sub-tasks (4e/Task 8) — not yet referenced
     private int _turnTextCount, _turnToolCount;      // per-turn output counters (drift guard, Task 8)
-    private Task _lastWrite = Task.CompletedTask;     // last stdin write, drained by DisposeAsync (Task 4b/4e)
-    private int _disposed;
 #pragma warning restore CA1823, CS0169
+    private Task _lastWrite = Task.CompletedTask;     // last stdin write, drained by DisposeAsync (4e)
+#pragma warning disable CS0169, CA1823  // _disposed used in 4e's Interlocked.Exchange (not yet implemented)
+    private int _disposed;
+#pragma warning restore CS0169, CA1823
 
     public ClaudeCodeStreamingSession(IStreamingCliProcess process)
         : this(process, NullLogger<ClaudeCodeStreamingSession>.Instance) { }
@@ -112,8 +110,31 @@ public sealed class ClaudeCodeStreamingSession : IStreamingLlmSession
             CancellationToken.None).ConfigureAwait(false);
     }
 
-    // SendUserTurnAsync / EndCleanlyAsync / DisposeAsync added in 4b/4d/4e.
-    public Task SendUserTurnAsync(string content, CancellationToken ct) => throw new NotImplementedException();
+    private static readonly System.Text.Json.JsonSerializerOptions JsonOpts = new();
+
+    public Task SendUserTurnAsync(string content, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(content);
+        lock (_turnGate)
+        {
+            if (_turnInFlight)
+                throw new InvalidOperationException("A turn is already in flight; await its LlmTurnComplete first.");
+            _turnInFlight = true;
+            _turnTcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            _turnTextCount = 0; _turnToolCount = 0;     // reset per-turn output counters (drift guard)
+        }
+        var line = System.Text.Json.JsonSerializer.Serialize(new
+        {
+            type = "user",
+            message = new { role = "user", content = new[] { new { type = "text", text = content } } },
+        }, JsonOpts);
+        // Retain the write task so DisposeAsync can drain a broken-pipe IOException (spec §7 dispose-race).
+        // Sequential-turn enforcement above guarantees no overlapping writer, so a plain field assign is safe.
+        _lastWrite = _process.WriteLineAsync(line, ct);
+        return _lastWrite;
+    }
+
+    // EndCleanlyAsync added in 4d.
     public Task<SessionEndState> EndCleanlyAsync(TimeSpan gracefulTimeout, CancellationToken ct) => throw new NotImplementedException();
 
     // Minimal DisposeAsync so 4a's `await using` works; replaced by the full version in 4e. Do NOT leave throwing.
