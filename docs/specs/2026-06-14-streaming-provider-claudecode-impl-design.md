@@ -22,6 +22,7 @@ The one-shot `ClaudeCodeLlmProvider` shells out per call via `ICliProcessRunner.
 - `SendUserTurnAsync`, `Events`, `ProviderSessionId`, dispose-within-2s, `EndCleanlyAsync`.
 - The deferred recoverable-error event: add `LlmTurnError` to the Contracts `LlmEvent` hierarchy (the subtype Slice 1 promised "defined empirically in Slice 2").
 - Real-provider registration in `AddPrismClaudeCode` (the Slice-1 `TryAdd` default then no-ops).
+- **A minimal wire-drift guard** (§ 9.1) so a CLI format change surfaces as an observable signal instead of silent empty turns — pulled into this slice, not the deferred CLI-compat suite, because #412/#414 consume the format at runtime.
 - All [#478 carry-forward acceptance criteria](https://github.com/prpande/PRism/issues/478).
 
 **Out of scope / deferred:**
@@ -33,29 +34,48 @@ The one-shot `ClaudeCodeLlmProvider` shells out per call via `ICliProcessRunner.
 ## 3. Architecture
 
 ```
-ClaudeCodeStreamingProvider.StartSession(opts)
-  └─ builds args (§9 flags) + env allowlist + ProcessSpec-like StreamingProcessSpec
-  └─ IStreamingCliProcess.Start(spec)         // persistent process, redirected stdin/stdout
-  └─ returns ClaudeCodeStreamingSession
-        ├─ background Task: read stdout lines → parse NDJSON → map → Channel<LlmEvent>.Writer (Wait)
-        ├─ Events  => channel.Reader.ReadAllAsync()
-        ├─ ProviderSessionId  <- captured from system/init event
-        ├─ SendUserTurnAsync  -> write one user NDJSON line to stdin (concurrent write)
-        ├─ EndCleanlyAsync    -> await current turn's result, close stdin, await exit
-        └─ DisposeAsync       -> cancel + KillTree, ensure exit <2s
+ClaudeCodeStreamingProvider.StartSession(opts)          // provider holds an injected IStreamingCliProcessFactory
+  └─ builds args (§9 flags) + env allowlist → StreamingProcessSpec
+  └─ factory.Start(spec)  →  IStreamingCliProcess        // persistent process, redirected stdin/stdout
+  └─ returns ClaudeCodeStreamingSession(process)
+        ├─ background Task: read process.StdoutLines → parse NDJSON → map → Channel<LlmEvent>.Writer (Wait)
+        │                   AND, on the turn-terminal `result`, trip the current turn's completion signal (below)
+        ├─ Events            => channel.Reader.ReadAllAsync()                  // single consumer, single pass
+        ├─ ProviderSessionId <- captured from system/init event
+        ├─ SendUserTurnAsync -> set turnInFlight + new TaskCompletionSource; write one user NDJSON line to stdin (concurrent)
+        ├─ turn completion    <- a per-turn TaskCompletionSource the reader trips when it maps LlmTurnComplete
+        │                        (NOT observed by draining the channel — a 2nd reader would steal events from Events)
+        ├─ EndCleanlyAsync   -> await the in-flight turn's completion signal, close stdin, await exit
+        └─ DisposeAsync      -> cancel + KillTree, ensure exit <2s
 ```
 
-**`IStreamingCliProcess` seam** (testable; keeps `System.Diagnostics` in one class):
+**Turn-completion signal — decoupled from the channel.** The session must observe "the current turn ended" *without* reading `Events`, because `Events` is a single-consumer / single-pass channel the external caller drains — a second reader inside `EndCleanlyAsync` or the `turnInFlight` bookkeeping would steal events from that caller. The reader task therefore trips a per-turn `TaskCompletionSource` when it parses the turn-terminal `result`. `SendUserTurnAsync` allocates the TCS and sets `turnInFlight`; the reader's trip clears `turnInFlight` and is exactly what `EndCleanlyAsync` awaits. This resolves the feasibility tension that `EndCleanlyAsync` "awaits the current turn's result" while the result is itself an item on the single-reader channel.
+
+Three ordering/construction requirements make this correct (each is a load-bearing invariant, not an implementation nicety):
+- **Trip BEFORE the blocking channel-write.** On the terminal `result` the reader must `TrySetResult` on the TCS **before** it `WriteAsync`es the `LlmTurnComplete` into the bounded channel. The channel write uses `Wait` (below) and can block on a stalled consumer; if the reader wrote first and tripped second, a stalled consumer would block the write, the TCS would never trip, and `EndCleanlyAsync` would hang until `gracefulTimeout` — the very deadlock this decoupling exists to remove. Trip-first publishes completion off the blockable path.
+- **`TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously)`.** Otherwise the reader thread inlines `EndCleanlyAsync`'s continuation (stdin-close / await-exit) onto itself, stalling the stdout drain.
+- **One TCS per turn, published with a memory barrier.** `SendUserTurnAsync` (caller thread) writes the field the reader (background thread) trips; the `turnInFlight` gate serializes turns, but the field handoff is still cross-thread — guard it (e.g. `Volatile`/lock) rather than relying on the gate alone.
+
+**`EndCleanlyAsync` with no turn in flight (zero-turns / already-completed).** When `turnInFlight` is false there is no per-turn TCS to await. `EndCleanlyAsync` instead awaits **session init** (the `system/init` line that sets `ProviderSessionId`), then closes stdin and awaits exit, returning `LastTurnEndedCleanly=true` with the captured non-empty `ProviderSessionId` — honoring the Slice-1 contract that a cleanly ended session *with zero turns sent* still returns a non-empty id. Wiring `EndCleanlyAsync` to await only the in-flight TCS would NRE / hang on a session that never sent a turn.
+
+**Back-pressure semantics — the `Wait` policy.** The single reader writes mapped events into the bounded channel with `BoundedChannelFullMode.Wait`. If the consumer stops draining `Events` mid-turn, the channel fills at cap 1024 and the reader blocks on the write — transiently halting its drain of the child's stdout, so the child blocks on its stdout write. This is **normal, recoverable back-pressure**: it clears the instant the consumer reads again. The only non-recoverable shape is a consumer that abandons the session without disposing it *and* never reads again — a misuse, bounded by `DisposeAsync` (KillTree) and `EndCleanlyAsync`'s `gracefulTimeout`. On forced end / dispose the reader may itself be blocked on a full-channel `Wait` write: KillTree breaks the pipe (the next `ReadLineAsync` faults) **and** the session completes the channel writer / cancels the reader's linked CT, so a reader blocked on the write is released rather than leaking. Because the turn-completion signal is tripped **before** that blockable write, a stalled consumer never blocks `EndCleanlyAsync` from observing a turn that already produced its `result`. (Memory is bounded by the cap; liveness of shutdown is bounded by the two timeouts — neither relies on the consumer being prompt.)
+
+**`IStreamingCliProcess` seam** (testable; keeps `System.Diagnostics` in one class). It exists **solely for test-double injection** — `SystemStreamingCliProcess` is the only planned real implementor; the interface is **not** an extension point for additional providers (do not build indirection on top of it):
 ```csharp
+public interface IStreamingCliProcessFactory
+{
+    IStreamingCliProcess Start(StreamingProcessSpec spec);   // spawns the persistent process
+}
+
 public interface IStreamingCliProcess : IAsyncDisposable
 {
-    IAsyncEnumerable<string> StdoutLines { get; }   // line-delimited stdout
+    IAsyncEnumerable<string> StdoutLines { get; }            // line-delimited stdout; loops StandardOutput.ReadLineAsync (NOT BeginOutputReadLine — that buffers and cannot stream per-line)
     Task WriteLineAsync(string line, CancellationToken ct);  // append one NDJSON line to stdin
-    Task CloseStdinAsync();                          // signal clean end
+    Task CloseStdinAsync();                                  // signal clean end
     Task<int> WaitForExitAsync(TimeSpan timeout, CancellationToken ct);  // returns exit code; kills tree on timeout
 }
 ```
-Tests inject a fake (scripted stdout lines, recorded stdin writes); the parser/session logic is verified without spawning. `SystemStreamingCliProcess` is the real impl, validated manually (§ 8).
+`StreamingProcessSpec` mirrors the one-shot `ProcessSpec` record's fields — `FileName`, `Arguments` (`IReadOnlyList<string>`), `Environment` (the allowlisted dictionary), `WorkingDirectory` — **minus** the one-shot `StdinText`/`Timeout` (stdin is live; there is no single per-call timeout). Tests inject a fake factory (scripted stdout lines, recorded stdin writes); the parser/session logic is verified without spawning. `SystemStreamingCliProcess` is the real impl, validated manually (§ 8).
 
 ## 4. Event mapping (verified against § 9)
 
@@ -63,52 +83,71 @@ Tests inject a fake (scripted stdout lines, recorded stdin writes); the parser/s
 |---|---|
 | `type=system, subtype=init` | (no event) capture `.session_id` → `ProviderSessionId` |
 | `type=stream_event, .event.type=content_block_delta, .event.delta.type=text_delta` | `LlmTextDelta(.event.delta.text)` |
-| `type=stream_event, .event.type=content_block_start, .content_block.type=tool_use` (+ `input_json_delta` accumulation, or the `assistant` event's full `tool_use` block) | `LlmToolUse(name, input)` |
+| `type=assistant`, a `.message.content[]` block of `.type=tool_use` | `LlmToolUse(name=.name, input=.input)` — sourced from the **one complete** `tool_use` block on the `assistant` event (input already a full parsed object). The streaming `content_block_start`/`input_json_delta` tool framing is **ignored** in Slice 2: incremental input accumulation is a stateful sub-protocol no Slice-2 consumer needs, deferred to the consuming slice (#414/#412) that defines what partial tool input means to it. Emit `LlmToolUse` **exactly once** per tool call. **DESIGNED, NOT CAPTURED** — § 9's probes were text-only; no tool_use turn was observed, so this row has the same unverified status as the `is_error` row. Two open assumptions it must confirm at manual P1 (§ 7): (a) a tool-only turn *does* emit an `assistant` block carrying the `tool_use` (if a tool-only turn can omit it, "emit from the assistant block" emits zero — the parser would then need the streaming framing after all); (b) `--include-partial-messages` does not *also* surface a competing `tool_use` representation that must be actively suppressed to keep "exactly once". |
 | `type=result, is_error=false` | `LlmTurnComplete(FullText=.result, tokens=.usage.*, cost=.total_cost_usd)` |
-| `type=result, is_error=true` | `LlmTurnError(Message, Code=.subtype/.api_error_status)` **then** `LlmTurnComplete(...)` (informational event precedes the terminal — honors the Slice-1 contract) |
-| other `system` / `rate_limit_event` / `assistant` / `message_*` framing | ignored in Slice 2 (open hierarchy lets consumers ignore; `rate_limit_event` is advisory, turn still completes — observed in § 9) |
+| `type=result, is_error=true` | `LlmTurnError(Message, Code=.subtype/.api_error_status)` **then** `LlmTurnComplete(...)` (informational event precedes the terminal — honors the Slice-1 contract). See § 5.6 for what `LlmTurnComplete` carries on the error path — **this row is designed, not empirically captured** (§ 9: no `is_error=true` sample was observed). |
+| `type=assistant` / `type=message*` `text`/`thinking` blocks, `content_block_start/stop`, `message_start/delta/stop`, `signature_delta`, `rate_limit_event`, other `system` | ignored in Slice 2. **Text is taken only from `stream_event` `text_delta` — the `assistant`/`message` events carry a duplicate full copy of the same text (empirically confirmed, § 9); mapping both would double-count the turn's text.** `rate_limit_event` is advisory (turn still completes `success` — § 9); the open hierarchy lets consumers ignore the rest. |
 | process exits with no `result` for the in-flight turn / nonzero exit / broken pipe | **throw `LlmProviderException`** from `Events` enumeration (unrecoverable session death) |
 
 **Token mapping** (matches one-shot `LlmResult`): `InputTokens=.usage.input_tokens`, `OutputTokens=.usage.output_tokens`, `CacheReadInputTokens=.usage.cache_read_input_tokens`, `EstimatedCostUsd=.total_cost_usd`.
+
+**Turn-termination liveness (every `type=result` resolves the turn).** Any line with `type=result` — `is_error=false`, `is_error=true`, or a shape the parser only partially recognizes — **must** trip the turn's completion TCS and clear `turnInFlight`. The parser never silently drops a `result` line: if a `result` arrives whose shape it cannot map at all (missing `.result`/`.usage` etc.), it treats that as **unrecoverable** (throw `LlmProviderException` from `Events`, § 5.1) rather than ignoring it — because a `result` that neither completes nor throws would leave the TCS un-tripped and hang `EndCleanlyAsync` until `gracefulTimeout`. This closes the liveness hole where an unverified `is_error` shape (§ 5.6) could otherwise strand the turn.
 
 ## 5. Open-fork resolutions (the design decisions Slice 1 left to here)
 
 1. **Recoverable vs unrecoverable taxonomy.** Recoverable = a `result` arrives with `is_error=true` (the turn terminated, session still alive) → emit `LlmTurnError` (informational) then `LlmTurnComplete`. Unrecoverable = the process dies / pipe breaks / a turn yields no `result` → throw from `Events`. This matches the wire reality (§ 9) and the Slice-1 turn-termination invariant exactly.
 2. **`LlmTurnError` shape.** `public sealed record LlmTurnError(string Message, string? Code) : LlmEvent;` added to `LlmEvent.cs`. Informational, non-terminal (always followed by `LlmTurnComplete` in the same turn). `Code` carries `result.subtype` (e.g. `error_max_turns`) or `api_error_status`.
 3. **`EndCleanlyAsync` `ct` semantics.** A cancelled `ct` means "abandon the graceful wait now": stop waiting for the current turn's `result`, force-terminate (KillTree), and return `LastTurnEndedCleanly=false`. It does **not** throw `OperationCanceledException` — `EndCleanlyAsync` is a best-effort shutdown, so cancellation degrades to forced-end rather than propagating. (Distinct from `SendUserTurnAsync`/`Events`, where `ct`/abandonment surfaces normally.)
-4. **`SendUserTurnAsync` ordering enforcement.** The session tracks a `turnInFlight` flag set on send, cleared on the turn's `LlmTurnComplete`. A second send while in flight throws `InvalidOperationException` **synchronously** (before writing to stdin) — content provably not enqueued, session usable (Slice-1 contract).
+4. **`SendUserTurnAsync` ordering enforcement.** The session tracks a `turnInFlight` flag set on send, cleared when the reader maps the turn-terminal `result` (which always yields a `LlmTurnComplete`, on **both** the success and the `is_error=true` path — so the flag clears regardless of turn outcome). A second send while in flight throws `InvalidOperationException` **synchronously** (before writing to stdin) — content provably not enqueued, session usable (Slice-1 contract).
 5. **`--verbose` is mandatory** (empirically required, § 9) and is always passed.
+6. **Error-path `LlmTurnComplete` semantics.** On an `is_error=true` turn the reader emits `LlmTurnError` then `LlmTurnComplete` — but a consumer following the forward-compat rule ("ignore unrecognized subtypes") sees only the `LlmTurnComplete` and must not render an error string as if it were the answer. Resolution: on the error path, `LlmTurnComplete.FullText` carries **`.result` as-is** (which on an error turn is the CLI's error/summary string, not assistant prose) and tokens/cost carry whatever `.usage`/`.total_cost_usd` the error `result` reports (may be zero). The `LlmTurnError` that precedes it is the authoritative failure signal; the contract already states consumers SHOULD handle it. **This is designed, not verified** — no `is_error=true` sample was captured (§ 9); the exact `.result` contents on error are an assumption the manual P1 validation and the CLI-compat follow-up must confirm. Until confirmed, consumers treat a turn that emitted `LlmTurnError` as failed irrespective of `FullText`.
+7. **Dispose / end racing an in-flight stdin write.** `SendUserTurnAsync` writes the user line to stdin **concurrently** (so a line larger than the OS pipe buffer cannot deadlock — same rationale as `SystemCliProcessRunner`). If `DisposeAsync` (KillTree) or a forced `EndCleanlyAsync` fires while that write is mid-flight, killing the child breaks the pipe and the write surfaces an `IOException`. Resolution: mirror the one-shot runner — the session retains the write `Task` and, on dispose/forced-end, awaits it inside a drain helper that **swallows `IOException`** (broken pipe = child already gone); the process end-state already reflects the real outcome. `DisposeAsync` is idempotent and never propagates the broken-pipe exception.
 
 ## 6. Security (carries the § 7 Slice-1 invariants)
 
-- **Env allowlist:** reuse `ClaudeCliEnvironment.BuildAllowlisted()` verbatim; **a Slice-2 test asserts parity** (not assumed by inheritance, per the carry-forward).
+- **Env allowlist:** reuse `ClaudeCliEnvironment.BuildAllowlisted()` verbatim; **a Slice-2 test asserts parity** (not assumed by inheritance, per the carry-forward). Parity proves the two slices agree but **not** that the allowlist is leak-free, so a second test asserts **completeness**: enumerate `BuildAllowlisted()`'s output and assert no key matches a credential-bearing pattern (`GITHUB_TOKEN`, `GH_TOKEN`, `*_PAT`, `*_SECRET`, `*_KEY`, `*_PASSWORD`, `*_CREDENTIAL`). This runs in CI, where those variables are actually injected, so ambient leakage to the egress-capable `claude` subprocess is caught.
 - **No `--bare`**, `--output-format stream-json`.
-- **`WorkingDirectory` confinement:** the provider rejects a `WorkingDirectory` outside the operator-sanctioned base dir (per-PR worktree root or app data dir) before spawn.
-- **Default-deny tools:** spawn with tools disallowed; server-side allowlist permits only a fixed read-only built-in set (+ MCP tools when P0-7 lands) and force-denies `Bash`, `computer-use`, and file-write tools regardless of caller `AllowedTools`. Concrete lists pinned from the CLI tool manifest at implementation time (the `init` event's `tools` array enumerates available tool names — see § 9).
-- **`AppendSystemPrompt`** passed via `--append-system-prompt`; not sanitized here (PR3 gate); single-spawn window documented.
+- **User-turn line is JSON-serialized, never concatenated.** The `{"type":"user",…,"text":"<prompt>"}` stdin line is produced by a JSON serializer (`System.Text.Json`), never string interpolation — so untrusted prompt content (PR/diff text from #412/#414) containing quotes, newlines, or null bytes cannot break out of the `text` field and forge a second NDJSON frame or inject a control event. A test feeds a prompt containing `"`, `\n`, and `}{"type":"user"…` and asserts exactly one well-formed frame is written.
+- **`WorkingDirectory` confinement (canonical-path check, symlinks resolved).** The operator-sanctioned base dir is supplied to the provider at construction (a per-PR worktree root in server context, or the app data dir for the desktop/local context — the host picks one at startup; the provider does not invent it). Before spawn, the provider resolves **both** the caller's `WorkingDirectory` and the base to a real, symlink-free absolute path, then rejects any working dir whose resolved form is not under the resolved base. **`Path.GetFullPath` alone is insufficient — it only normalizes `..` *lexically* and does NOT resolve symlinks**, so a symlink `<base>/link → /etc` would pass a `GetFullPath` prefix check while the spawned `claude` reads `/etc`. The check therefore combines `Path.GetFullPath` (lexical `..` collapse) **with** OS symlink resolution — `Directory.ResolveLinkTarget(path, returnFinalTarget: true)` (net6+; null return = not a link, use the GetFullPath result) — on both paths before the prefix comparison. Confinement matters because the spawned `claude` inherits this dir as the implicit root for its read-only built-in file tools. Tests cover a `..`-traversal path **and** a symlink fixture pointing outside the base (asserting the symlink is actually resolved and rejected, not lexically passed).
+- **Default-deny tools (deny list pinned here, not deferred).** Spawn always passes a **hardcoded `--disallowedTools` constant** covering `Bash`, `computer-use`, and every file-write/edit tool, plus `--allowedTools` limited to a fixed read-only built-in set (+ MCP tools when P0-7 lands). Caller `AllowedTools`/`DisallowedTools` are **merged additively**: a caller may further restrict but **cannot remove** an entry from the hardcoded deny list (deny wins on conflict), and `Bash`/`computer-use`/file-write are **never** added to `--allowedTools` regardless of caller input. The concrete tool identifiers are enumerated from the `init` event's `tools` array (§ 9) and pinned in the implementation as a constant; the CLI-compat follow-up re-checks them on upgrade. A unit test asserts the spawned spec always contains the deny entries for `Bash` and a file-write tool **regardless of** what `AllowedTools` the caller passes. **The CLI's flag precedence between `--allowedTools` and `--disallowedTools` is undocumented (§ 9), so the unit test only proves the spec data structure, not runtime enforcement** — manual P1 validation (§ 7) must empirically confirm `--disallowedTools` wins (spawn a turn that would invoke `Bash` with `Bash` named in both lists and confirm it is denied). Defense-in-depth: because `Bash` is never placed in `--allowedTools`, a deny-loses precedence would still leave it un-allowed.
+- **`AppendSystemPrompt` is operator-config-sourced, not per-call untrusted input.** It is passed via `--append-system-prompt` and carries operator-authored system text, **not** the untrusted PR/diff content (that flows through the user turn, above). Content sanitization of the system prompt is out of scope here (PR3 gate); this slice's obligation is only that callers cannot smuggle untrusted per-call content into this flag — documented as a single-spawn window. (If a future consumer wants to surface user text into the system prompt, that is the consumer's sanitization obligation, gated at PR3.)
 - No credential/PAT passed to `claude`.
 
 ## 7. Testing strategy
 
 Fake-`IStreamingCliProcess` unit tests (no real spawn):
-- **Parser/mapping:** scripted stdout (real § 9 samples in `.scratch` as fixtures) → assert the `LlmEvent` sequence: init→id captured; text_delta→`LlmTextDelta`; `result`→`LlmTurnComplete` with correct tokens/cost; `is_error` result→`LlmTurnError` then `LlmTurnComplete`.
-- **Multi-turn:** two scripted turns → two `LlmTurnComplete`s, one stable `ProviderSessionId`.
-- **Sequential enforcement (carry-forward):** `SendUserTurnAsync` throws `InvalidOperationException` synchronously while a turn is in flight; content not written to the fake's stdin; session still usable.
+- **Parser/mapping:** scripted stdout (real § 9 samples in `.scratch` as fixtures) → assert the `LlmEvent` sequence: init→id captured; text_delta→`LlmTextDelta`; `assistant` tool_use block→one `LlmToolUse`; `result`→`LlmTurnComplete` with correct tokens/cost. The `is_error`→`LlmTurnError` then `LlmTurnComplete` case uses a **hand-authored** fixture (no `is_error=true` was captured, § 9) per the § 5.6 designed shape.
+- **Text not double-counted:** a fixture carrying both `stream_event` `text_delta`s and the duplicate `assistant` full-message text → exactly one `LlmTextDelta` per delta, none from the `assistant` copy.
+- **Multi-turn:** two scripted turns → two `LlmTurnComplete`s, one stable `ProviderSessionId`, **and per-turn token/cost asserted distinct** (turn N's `.usage`/cost not leaked into turn N+1).
+- **Turn-completion decoupling:** with a live `Events` consumer draining the channel, `EndCleanlyAsync` observes turn completion via the TCS **without** the consumer losing any event (assert the consumer's received sequence is complete).
+- **Trip-before-write (stalled consumer):** with a consumer that does **not** drain `Events` so the channel is full at the terminal `result`, `EndCleanlyAsync` still returns `true` promptly (the TCS tripped before the blocking write) — guards against the trip-after-write deadlock regression.
+- **Sequential enforcement (carry-forward):** `SendUserTurnAsync` throws `InvalidOperationException` synchronously while a turn is in flight; content not written to the fake's stdin; session still usable. `turnInFlight` clears on **both** success and `is_error` turns (second send succeeds after either).
 - **`ProviderSessionId` temporal (carry-forward):** empty before init line; non-empty after.
 - **Unrecoverable death:** fake signals process exit mid-turn → `Events` enumeration throws `LlmProviderException`.
-- **Back-pressure:** a blocked consumer stalls the reader at channel capacity (assert no unbounded growth) — bounded via cap 1024 `Wait`.
-- **`EndCleanlyAsync`:** clean (await result, `true`) vs timeout (`false`) vs cancelled-`ct` (forced-end `false`, no throw).
-- **`DisposeAsync`:** cancels + requests KillTree; idempotent.
+- **Back-pressure:** a blocked consumer stalls the reader at channel capacity (assert no unbounded growth) — bounded via cap 1024 `Wait`; on resume the consumer receives the buffered events in order (recoverable, not a deadlock).
+- **`EndCleanlyAsync`:** clean (await completion, `true`) vs timeout (`false`) vs cancelled-`ct` (forced-end `false`, no throw) vs **zero turns sent** (awaits init only → `true`, non-empty `ProviderSessionId`).
+- **`DisposeAsync`:** cancels + requests KillTree; idempotent; **dispose racing an in-flight stdin write** drains the write and swallows the broken-pipe `IOException` (no exception escapes dispose).
+- **User-turn framing:** a prompt containing `"`, `\n`, and a literal `}{"type":"user"…` is JSON-serialized into **exactly one** well-formed NDJSON frame (no frame-break / control-event injection).
+- **WorkingDirectory confinement:** a `..`-traversal path and a symlink fixture pointing outside the base are **rejected** before spawn — the symlink test asserts the link is *resolved* (`Directory.ResolveLinkTarget`) and rejected, not lexically passed by `Path.GetFullPath`.
+- **Tool deny list is unconditional:** the spawned spec always carries the deny entries for `Bash` and a file-write tool **even when** caller `AllowedTools` names `Bash` (deny wins).
+- **Drift guard (§ 9.1):** an unmappable `init`/`result` fixture logs the unrecognized-envelope `warn`; a turn with a terminal `result` but zero `text_delta`s logs the suspect `warn`; a mismatched live CLI version logs the version `warn`-and-continue.
 - **Registration:** `AddPrismClaudeCode` resolves `IStreamingLlmProvider` → `ClaudeCodeStreamingProvider` (real wins over the Slice-1 `TryAdd` Noop default); singleton.
-- **Env-allowlist parity (carry-forward):** the spawned spec's env equals `ClaudeCliEnvironment.BuildAllowlisted()`.
+- **Env-allowlist parity + completeness (carry-forward):** the spawned spec's env equals `ClaudeCliEnvironment.BuildAllowlisted()`; **and** no allowlisted key matches a credential-bearing pattern (`GITHUB_TOKEN`/`GH_TOKEN`/`*_PAT`/`*_SECRET`/`*_KEY`/`*_PASSWORD`/`*_CREDENTIAL`), run under CI env.
 
-**Manual P1 validation** (real `claude`, documented in PR Proof): a "say hello" turn emits ≥1 `LlmTextDelta` + one `LlmTurnComplete`; dispose mid-generation exits the process <2s; uninstalled CLI → provider stays dark.
+**Manual P1 validation** (real `claude`, documented in PR Proof) — note several items close §9 wire-format assumptions the fakes cannot:
+- a "say hello in three sentences" turn emits ≥1 `LlmTextDelta` + one `LlmTurnComplete`, and **`FullText` equals the concatenation of the streamed `text_delta`s** (closes the § 9 unverified equivalence on multi-sentence output);
+- **provoke one `is_error=true` turn** (e.g. `--max-turns 1` on a tool-requiring prompt, or an auth-less invocation) and record the real `result` shape against the § 5.6 designed mapping;
+- **a tool-requiring turn** (e.g. "read file X") — record the real tool_use wire shape: confirm an `assistant` block carries the `tool_use` (§ 4 assumption a) and whether `--include-partial-messages` also streams a competing representation (assumption b); confirm exactly one `LlmToolUse` is emitted;
+- **flag-precedence:** spawn with `Bash` named in **both** `--allowedTools` and `--disallowedTools` on a turn that would shell out, and confirm `Bash` is denied (closes the § 6 undocumented-precedence assumption);
+- dispose mid-generation exits the process <2s;
+- uninstalled CLI → provider stays dark.
 
 ## 8. Exit criteria
-- [ ] `IStreamingCliProcess` + `SystemStreamingCliProcess`; `ClaudeCodeStreamingProvider`/`Session`; `LlmTurnError` added to contracts.
+- [ ] `IStreamingCliProcessFactory` + `IStreamingCliProcess` + `SystemStreamingCliProcess`; `StreamingProcessSpec`; `ClaudeCodeStreamingProvider`/`Session`; `LlmTurnError` added to contracts.
+- [ ] Turn-completion TCS decoupled from the channel; back-pressure semantics (§ 3) implemented; wire-drift guard (§ 9.1) shipped.
 - [ ] Real-provider registration in `AddPrismClaudeCode`; Slice-1 `TryAdd` default no-ops (test).
-- [ ] All § 7 unit tests green; full backend suite green; secrets scan clean.
-- [ ] Manual real-CLI validation recorded in the PR `## Proof`.
+- [ ] All § 7 unit tests green (incl. security: canonical-path confinement, unconditional deny list, JSON-framed user turn, env completeness); full backend suite green; secrets scan clean.
+- [ ] Manual real-CLI validation recorded in the PR `## Proof` — incl. the `FullText`==deltas check and one provoked `is_error` turn (§ 7).
 - [ ] 2× `ce-doc-review` dispositions recorded; owner B2 gate cleared.
 - [ ] #478 carry-forward checklist fully addressed (the items the real provider can now test).
 
@@ -137,9 +176,25 @@ claude -p --verbose --input-format stream-json --output-format stream-json \
  "total_cost_usd":0.0375,"usage":{"input_tokens":10,"output_tokens":142,"cache_read_input_tokens":21105},
  "num_turns":1,"stop_reason":...,"session_id":"fd63a7f1-..."}
 ```
-Also observed: `assistant` (full message, `.message.content[]` of `thinking`/`text`), `message_start/message_delta/message_stop` and `content_block_start/stop` framing inside `stream_event`, and a `rate_limit_event` (advisory; turn still completed `success`).
+Also observed: `assistant` (full message, `.message.content[]` of `thinking`/`text`), `message_start/message_delta/message_stop` and `content_block_start/stop` framing inside `stream_event`, `thinking_delta`/`signature_delta` (extended-thinking deltas), and a `rate_limit_event` (advisory; turn still completed `success`). **The `assistant`/`message` full-message lines duplicate the same `text` already delivered via `stream_event` `text_delta` — confirmed by inspection — which is why § 4 maps text from the deltas only and ignores the full-message copy (else the turn's text doubles).**
+
+**`result` ↔ deltas equivalence (partially verified).** For the captured trivial responses, `.result` equals the concatenation of the turn's `text_delta`s (`"hello"`; and across two turns `"one"`,`"two"` ↔ deltas `"one"`+`"two"`). This was **not** exercised on a multi-paragraph response, so `.result == concat(text_delta)` for real output is an **assumption**, not a verified fact — the manual P1 validation (§ 7) must check it on a multi-sentence turn before any consumer relies on `FullText` matching the streamed deltas.
+
+**`is_error=true` shape NOT captured.** Both probes returned `is_error:false`; no error turn was provoked. The error-path mapping (§ 4, § 5.6) is therefore **designed from the field's presence, not from a sample**. The manual P1 validation should provoke one error turn (e.g. an `error_max_turns` via `--max-turns 1` on a tool-requiring prompt, or an auth-less invocation) and record the real `result` shape.
+
+**`tool_use` shape NOT captured.** The probes were text-only — no turn invoked a tool — so the § 4 `tool_use` row (sourcing `LlmToolUse` from the `assistant` block, ignoring the streaming framing) is likewise **designed, not captured**, with the same status as `is_error`. The manual P1 tool-requiring turn (§ 7) records the real shape and confirms the row's two open assumptions.
 
 **Multi-turn (the load-bearing confirmation):** two user lines on one stdin → **two `result` events** (`num_turns:1` each), **one `session_id`** across both → a single persistent process serves sequential turns; **`result` is per-turn and terminal**. Closing stdin after a turn → process exits 0 (clean end).
+
+### 9.1 Wire-drift guard (shipped in this slice)
+
+The § 7 fixtures freeze the v2.1.177 shapes, so the unit suite stays green even after the live CLI changes a field — production parsing would then silently stop emitting `LlmTextDelta` and consumers would render **empty turns with no failure signal**. To make drift observable without waiting for the deferred CLI-compat suite, this slice ships a minimal guard, both halves cheap:
+
+1. **Version assertion at session start.** The provider records the probed CLI version (`2.1.177`) as a constant and, on the first spawn (or via `claude --version` at startup), logs a loud `warn`-and-continue when the live version differs — a breadcrumb that points at § 9 re-verification when a downstream feature later misbehaves.
+2. **Unrecognized-envelope diagnostic.** When the parser sees an `init`- or `result`-position line whose shape it cannot map (missing the fields § 4 depends on), it logs a structured `warn` rather than silently dropping it — so a rename on those two **load-bearing** lines surfaces as a signal. The turn-termination liveness rule (§ 4) already hard-fails an unmappable `result`, so that half is enforced, not just logged.
+3. **Zero-output suspect heuristic (the text-path backstop).** A rename on the `text_delta` path lands on a `stream_event` line, which § 4 otherwise *ignores* — so the parser cannot distinguish a renamed delta from a legitimately-ignored `message_delta`/`signature_delta`, and item 2 does **not** catch it. The only backstop is: a turn that produced a terminal `result` **and** emitted zero `LlmTextDelta` **and** zero `LlmToolUse` is logged as suspect (the tool-only and zero-and-tool cases are excluded so normal tool turns don't false-fire). **Be honest about the limit:** this is heuristic, not reliable — a partial rename that still matches *some* deltas slips it. The real guarantee for the text path is the **manual § 9 re-verification on CLI upgrade** (item 1's version `warn` is the trigger to do it); §9.1's in-process checks are a cheap early-warning, not a substitute.
+
+These guards cover the gap the recoverable/unrecoverable taxonomy (§ 5.1) does not: the "process alive, `result` arrives, but intermediate shapes changed → deltas dropped" case falls in neither bucket and would otherwise complete "successfully" with degraded content. Items 1+2 make `init`/`result` drift loud; item 3 makes text-path drift *detectable-but-not-guaranteed*, deferring the hard guarantee to the version-gated re-verify.
 
 ## 10. Risk & gates
 T3, gated B2 (subprocess/egress). Owner reviews this spec before plan/impl. `ce-doc-review` 2× is the machine sign-off; human merge is the boundary. Real-CLI behavior can shift on Anthropic CLI updates — § 9 must be re-verified then (tracked CLI-compat follow-up).
