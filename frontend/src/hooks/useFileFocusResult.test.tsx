@@ -1,7 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook, waitFor, act } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
+import type { ReactNode } from 'react';
 import { useFileFocusResult } from './useFileFocusResult';
 import * as api from '../api/aiFileFocus';
+import { AiFailureProvider, useAiFailure } from '../components/Ai/aiFailure';
 
 vi.mock('../api/aiFileFocus');
 const PR = { owner: 'octo', repo: 'repo', number: 1 };
@@ -74,4 +77,22 @@ describe('useFileFocusResult', () => {
     await waitFor(() => expect(result.current.status).toBe('ok'));
     expect(api.getAiFileFocusResult).toHaveBeenCalledTimes(2);
   });
+});
+
+const FF_PR = { owner: 'o', repo: 'r', number: 1 } as const;
+const ffWrapper = ({ children }: { children: ReactNode }) => (
+  <MemoryRouter initialEntries={['/pr/o/r/1']}><AiFailureProvider>{children}</AiFailureProvider></MemoryRouter>
+);
+
+it('reports file-focus on kind:error', async () => {
+  vi.spyOn(api, 'getAiFileFocusResult').mockResolvedValue({ kind: 'error' });
+  const { result } = renderHook(() => ({ s: useFileFocusResult(FF_PR, true, true), f: useAiFailure() }), { wrapper: ffWrapper });
+  await waitFor(() => expect(result.current.f.activeFailedSeams).toContain('file-focus'));
+});
+
+it('does NOT report on kind:auth', async () => {
+  vi.spyOn(api, 'getAiFileFocusResult').mockResolvedValue({ kind: 'auth' });
+  const { result } = renderHook(() => ({ s: useFileFocusResult(FF_PR, true, true), f: useAiFailure() }), { wrapper: ffWrapper });
+  await waitFor(() => {});
+  expect(result.current.f.activeFailedSeams).not.toContain('file-focus');
 });
