@@ -1,0 +1,208 @@
+# Streaming LLM provider (P0-1b / #404) — design
+
+- **Issue:** [#404 — [AI] P0-1b — Streaming LLM provider (stream-json session)](https://github.com/prpande/PRism/issues/404)
+- **Roadmap:** backlog `01-P0-foundations.md` § P0-1 (streaming-path bullets); seam contract in `spec/04-ai-seam-architecture.md` § "`ILlmProvider` and `IStreamingLlmProvider`".
+- **Base branch:** `V2` (AI feature track), not `main`.
+- **Tier / risk:** T3, **gated** (B2 — AI foundation seam + subprocess/egress lifecycle; `needs-design`). The owner reviews this spec before the plan/implementation of any subprocess-bearing slice.
+
+## 1. Problem & context
+
+`ILlmProvider` is one-shot **by design** — its own doc comment states *"A streaming/chat provider (v3) is deliberately NOT defined here."* V2 shipped only the one-shot path (`ClaudeCodeLlmProvider.CompleteAsync` over `claude -p --output-format json`). Every sustained-conversation feature — PR chat (#412, the headline v2-AI feature) and the lazy/streamed per-hunk annotation UX (#414) — needs a **streaming session**: a persistent `claude` subprocess driven over `--input-format stream-json --output-format stream-json`, emitting incremental events the backend relays to the UI.
+
+This is **P0-1b**, the unshipped streaming subset of P0-1. It is the long pole for chat and a prerequisite (with #405 GitRepoCloneService and #406 MCP server) for chat-with-repo-access.
+
+**Why slice it.** The full streaming path is large and carries two distinct sources of risk: (a) persistent-pipe subprocess lifecycle (back-pressure, cancellation, graceful end), and (b) an **empirically undocumented** `claude --resume` behavior (verification-notes § C4) that gates cross-restart chat resume. Bundling both into one PR produces an un-reviewable, high-risk change. Instead we land the **contract first** (small, pure, low-risk — unblocks #414/#412 targeting), then the implementation and the `--resume` probe as separate, contained child issues.
+
+## 2. Scope & non-goals
+
+**In scope — this PR (Slice 1):**
+- Net-new streaming contracts in `PRism.AI.Contracts/Provider/`: `IStreamingLlmProvider`, `IStreamingLlmSession`, `StreamingSessionOptions`, the `LlmEvent` hierarchy, `SessionEndState`.
+- A `NoopStreamingLlmProvider` / `NoopStreamingLlmSession` reference implementation, registered **dark** (no consumer resolves it yet) so the seam is resolvable and test-doublable, and so Slice 2's real provider has a clean override point.
+- Unit tests pinning the Noop's contract behavior and the dark registration.
+
+**Out of scope — tracked as child issues / deferrals (§ 8–10):**
+- The Claude Code streaming implementation (subprocess, channel, parser) — **Slice 2**, child issue.
+- The C4 `--resume` empirical probe + cross-restart decision — **Slice 3**, child issue/spike.
+- Any feature seam consuming streaming (chat #412, lazy hunk load #414). #414 ships its one-shot version now against the existing `ILlmProvider`; it converges with streaming only at its later streamed-load slice.
+- Frontend / SSE relay of stream events — a chat-feature concern, not this substrate.
+- A second substrate (Ollama, Anthropic API). The contract is **shaped for Claude Code** (see § 4.2); multi-substrate is aspirational and explicitly out of scope.
+
+## 3. Decomposition (roadmap & tracking)
+
+| Slice | Deliverable | Risk | Where |
+|-------|-------------|------|-------|
+| **1 — Contracts** | `IStreamingLlmProvider` + `IStreamingLlmSession` + `StreamingSessionOptions` + `LlmEvent` hierarchy + `SessionEndState`; dark `NoopStreamingLlmProvider`. Pure contract, no subprocess. | Low (B2 by virtue of being an AI foundation seam, but no runtime egress) | **This PR** |
+| **2 — Claude Code impl** | Persistent-pipe process seam; `ClaudeCodeStreamingProvider`; background stdout reader → bounded `Channel<LlmEvent>` (cap 1024, `Wait`); stream-json parser; `SendUserTurnAsync`; `Events`; dispose-cancels-within-2s; `EndCleanlyAsync`. | High (subprocess + egress) | Child issue |
+| **3 — `--resume` probe** | Run verification-notes § C4 clean-end resume probe; record which of three outcomes holds; pin the P2-2 cross-restart resume UX and the `ResumeSessionId` contract semantics accordingly. | Medium (empirical gate; documents, doesn't ship a feature) | Child issue / spike |
+
+Slices are **sequential**: 2 depends on 1; 3 depends on 2 (the probe drives a live session). Slice 1 is independently mergeable and immediately useful as a compile target for #414/#412 design.
+
+## 4. Slice 1 — streaming contracts
+
+### 4.1 Interface & DTO listing (as shipped this PR)
+
+All in namespace `PRism.AI.Contracts.Provider`.
+
+```csharp
+/// <summary>Sustained, multi-turn streaming LLM session factory. The v3 counterpart to the
+/// one-shot <see cref="ILlmProvider"/>. v2 ships one impl (Claude Code, Slice 2); the dark default
+/// is <see cref="Noop.NoopStreamingLlmProvider"/>.</summary>
+public interface IStreamingLlmProvider
+{
+    IStreamingLlmSession StartSession(StreamingSessionOptions options);
+}
+
+/// <summary>One live streaming conversation. Caller drives turns with
+/// <see cref="SendUserTurnAsync"/> and reads incremental output from <see cref="Events"/>.
+/// Disposal cancels any in-flight generation and tears down the underlying session.</summary>
+public interface IStreamingLlmSession : IAsyncDisposable
+{
+    /// <summary>The underlying provider's session id — load-bearing for `--resume` cross-restart
+    /// persistence (Slice 3). For Claude Code this is the id the CLI reports at session start; it
+    /// MAY be empty until the session's init event has been observed (after the first
+    /// <see cref="Events"/> item or first <see cref="SendUserTurnAsync"/>).</summary>
+    string ProviderSessionId { get; }
+
+    /// <summary>Submit one user turn. Multiple turns may be sent across the session's lifetime;
+    /// callers should await the prior turn's <see cref="LlmTurnComplete"/> before sending the next.</summary>
+    Task SendUserTurnAsync(string content, CancellationToken ct);
+
+    /// <summary>Incremental events for the lifetime of the session, in arrival order: zero or more
+    /// <see cref="LlmTextDelta"/> / <see cref="LlmToolUse"/>, terminated per turn by an
+    /// <see cref="LlmTurnComplete"/>. A fatal session error surfaces by THROWING from enumeration
+    /// (the provider chooses the exception type — Claude Code throws its `LlmProviderException`,
+    /// mirroring the one-shot path; the Contracts layer does not name it). Consumers MUST treat the
+    /// hierarchy as open and ignore unrecognized event subtypes (forward-compat).</summary>
+    IAsyncEnumerable<LlmEvent> Events { get; }
+
+    /// <summary>End the session at a turn boundary: wait for the current turn's
+    /// <see cref="LlmTurnComplete"/> (up to <paramref name="gracefulTimeout"/>), then signal the
+    /// underlying session a clean exit. On a clean boundary returns
+    /// <c>LastTurnEndedCleanly = true</c> (the session is `--resume`-eligible per § C4); on timeout
+    /// falls back to forced termination and returns <c>false</c> (not resumable — chat then falls
+    /// through to fresh-with-injection).</summary>
+    Task<SessionEndState> EndCleanlyAsync(TimeSpan gracefulTimeout, CancellationToken ct);
+}
+
+public sealed record SessionEndState(bool LastTurnEndedCleanly, string ProviderSessionId);
+
+/// <summary>Per-session options. SHAPED FOR CLAUDE CODE (see § 4.2). Null fields fall back to the
+/// provider's configured defaults.</summary>
+public sealed record StreamingSessionOptions(
+    string? Model = null,                 // --model; null => provider's configured default
+    string? AppendSystemPrompt = null,    // --append-system-prompt (keeps the cross-process cache lever)
+    string? WorkingDirectory = null,      // session cwd; null => provider default (stable, non-git)
+    IReadOnlyList<string>? AddDirs = null,        // --add-dir (repo-access state 2; lazy upgrade)
+    IReadOnlyList<string>? AllowedTools = null,   // --allowedTools
+    IReadOnlyList<string>? DisallowedTools = null,// --disallowedTools
+    string? ResumeSessionId = null,       // --resume <id> (cross-restart; Slice 3 gates semantics)
+    string? McpConfigPath = null);        // --mcp-config (host MCP tools; P0-7)
+
+/// <summary>A streaming event. Open hierarchy (NOT sealed) — consumers switch on known subtypes
+/// with a default arm so a future subtype (e.g. an error event) is non-breaking.</summary>
+public abstract record LlmEvent;
+
+/// <summary>Incremental assistant text.</summary>
+public sealed record LlmTextDelta(string Text) : LlmEvent;
+
+/// <summary>The model invoked a tool. <paramref name="Input"/> is the raw tool input as reported
+/// by the provider; the host does not interpret it for non-MCP tools.</summary>
+public sealed record LlmToolUse(string ToolName, JsonElement Input) : LlmEvent;
+
+/// <summary>Terminal event for one turn: the assembled full text plus usage. Token fields are
+/// FLATTENED to match the shipped one-shot <see cref="LlmResult"/> (see § 4.3).</summary>
+public sealed record LlmTurnComplete(
+    string FullText,
+    int InputTokens,
+    int OutputTokens,
+    int CacheReadInputTokens,
+    decimal EstimatedCostUsd) : LlmEvent;
+```
+
+### 4.2 Honest framing — the contract is shaped for Claude Code
+
+Carried verbatim from `spec/04-ai-seam-architecture.md`: `AddDirs`, `AllowedTools`, `DisallowedTools`, `ResumeSessionId`, `McpConfigPath` are Claude-Code concepts. A future `AnthropicApiLlmProvider`/`OllamaLlmProvider` would ignore most of them. **v2's shipped substrate is Claude Code**; the substrate-neutral interface *name* is aspirational. If a second substrate ever ships (Ollama, P4-N4), `StreamingSessionOptions` refactors into a substrate-specific discriminated union — a coordinated `PRism.Core` change ahead of that substrate, consistent with the per-feature reshape policy. Documented now so the reshape is not surprising. **Not built now.**
+
+### 4.3 Contract reconciliation — three calls (drift from the year-old sketch)
+
+The spec sketch in `04-ai-seam-architecture.md` predates what P0-1 actually shipped. We reconcile to **shipped reality**, not the sketch:
+
+1. **Terminal event renamed `LlmResult` → `LlmTurnComplete`.** The shipped one-shot result is already `LlmResult(Text, InputTokens, OutputTokens, CacheReadInputTokens, EstimatedCostUsd)` in this same namespace; the sketch's `LlmResult : LlmEvent` would be a hard name collision. `LlmTurnComplete` also reads correctly as a per-turn streaming signal (a session has many).
+
+2. **No `ProviderId` on the interface.** The sketch put `ProviderId` on both provider interfaces; the shipped `ILlmProvider` dropped it in favor of the `ProviderCapabilityDescriptor` / `ClaudeProviderDescriptor` pattern. The streaming interface follows the shipped convention — provider identity lives on the descriptor, not the seam.
+
+3. **Flattened token fields (no phantom `TokenUsage` record); two session fields added.** The sketch's `LlmResult(FullText, TokenUsage?)` references a `TokenUsage` record that **does not exist** in shipped code (the one-shot flattened the fields onto `LlmResult`, and `TokenUsageRecord` is a tracker-only shape). Inventing a parallel token model is exactly the drift to avoid, so `LlmTurnComplete` flattens the same four fields as `LlmResult`. (A shared token value-object that both reuse is a deliberate non-goal here: it would require editing the shipped/tested `LlmResult`, out of scope for a contract-only slice — noted as a possible future tidy.) Separately, `StreamingSessionOptions` gains `Model` + `AppendSystemPrompt`: the one-shot supplies these per-call via `LlmRequest`, but a streaming session has no per-call request object, so they belong on the session options.
+
+### 4.4 Noop reference implementation + dark registration
+
+`PRism.AI.Contracts/Noop/NoopStreamingLlmProvider.cs`:
+- `NoopStreamingLlmProvider.StartSession` returns a `NoopStreamingLlmSession`.
+- `NoopStreamingLlmSession`: `ProviderSessionId` returns a constant (`"noop-session"`); `SendUserTurnAsync` is a no-op; `Events` yields an empty async sequence; `EndCleanlyAsync` returns `new SessionEndState(true, ProviderSessionId)`; `DisposeAsync` is a no-op.
+
+**Registration (dark).** Register `IStreamingLlmProvider → NoopStreamingLlmProvider` as the default singleton, so the seam is resolvable and Slice 2's `AddPrismClaudeCode` overrides it with the real provider (last-registration-wins). This mirrors `04-ai-seam-architecture.md` line 851 (`AddSingleton<IStreamingLlmProvider, NoopStreamingLlmProvider>()`) and § "v2 replaces the Noop registration." Exact wiring location (extend `AddNoopSeams` vs. a dedicated provider-default registration) is finalized during TDD; the seam-selector path that routes the per-feature `Noop*` services is **not** involved — the provider is an infra seam, not a flag-selected feature seam.
+
+### 4.5 Testing strategy (Slice 1)
+
+Pure-contract slice, so tests pin behavior + wiring, not subprocess I/O:
+- `NoopStreamingLlmSession.Events` completes empty; `EndCleanlyAsync` returns `LastTurnEndedCleanly = true` with the constant session id; `SendUserTurnAsync` / `DisposeAsync` complete without throwing.
+- Registration test: the DI container resolves `IStreamingLlmProvider` to `NoopStreamingLlmProvider` by default (mirrors the existing `ServiceRegistrationTests` pattern).
+- A compile-time "consumer" assertion is unnecessary — the interface existing is the deliverable; #414/#412 target it in their own PRs.
+
+## 5. Slice 2 — Claude Code streaming implementation (child issue, design-ahead)
+
+Not built in this PR. Captured here so the child issue and the next session start from a complete design.
+
+- **New persistent-pipe process seam.** The shipped `ICliProcessRunner.RunAsync(ProcessSpec, ct)` is run-to-completion (captures stdout, returns once) and cannot express a live session. Slice 2 adds a sibling seam (e.g. `IStreamingCliProcess` with `StdinWriter` + an stdout line stream + `KillTree`/`WaitForExit`), keeping `System.Diagnostics` isolated to one class exactly as `SystemCliProcessRunner` does today.
+- **Security parity with the one-shot provider.** Reuse `ClaudeCliEnvironment.BuildAllowlisted()` (env allowlist excluding `ANTHROPIC_*`, proxy vars, `CLAUDE_CONFIG_DIR`), never `--bare`, `--output-format stream-json`. Tool access for chat is gated via `AllowedTools`/`DisallowedTools` and `--add-dir` (not the one-shot's `--tools ""`).
+- **Bounded channel + back-pressure.** Background reader parses line-delimited stream-json from stdout into `Channel<LlmEvent>` (cap 1024, `BoundedChannelFullMode.Wait`). The bound is load-bearing: a blocked consumer back-pressures the reader and stalls the subprocess on its stdout write — preferable to unbounded buffering that would OOM the backend on runaway output.
+- **stream-json mapping.** Map CLI event kinds → `LlmTextDelta` / `LlmToolUse` / `LlmTurnComplete`; capture `ProviderSessionId` from the init/system event; surface fatal errors by throwing `LlmProviderException` from the `Events` enumeration.
+- **`SendUserTurnAsync`.** Serialize a stream-json user message to the persistent stdin, concurrently (never block the timeout), reusing the deadlock-avoidance discipline from `SystemCliProcessRunner.WriteStdinAsync`.
+- **Disposal within 2s.** `DisposeAsync` cancels the in-flight call and kills the process tree; acceptance: process exits within 2 seconds (backlog P0-1 criterion).
+- **`EndCleanlyAsync`.** Wait for the current turn's `LlmTurnComplete` up to `gracefulTimeout`, close stdin, await exit; set `LastTurnEndedCleanly` accordingly.
+- **Availability / capability** reuse `ClaudeCodeAvailabilityProbe` and `ClaudeProviderDescriptor` (no new descriptor axis).
+- **Manual validation** against the real `claude` binary (the one-shot provider's tests don't spawn; real invocation is validated manually in P1). Acceptance: a "say hello" turn emits ≥1 `LlmTextDelta` and one `LlmTurnComplete`.
+
+## 6. Slice 3 — C4 `--resume` empirical probe (child issue / spike)
+
+Not built in this PR. The **load-bearing empirical gate** for cross-restart chat resume (P2-2 / #412). Per verification-notes § C4, run the clean-end resume probe against the real CLI:
+
+1. Start a stream-json session; send a turn; capture `LlmTurnComplete`.
+2. Close stdin; await exit; capture `ProviderSessionId`.
+3. `claude -p --resume <id>` with the same flags; send a follow-up referencing the prior turn ("what did I just ask?"); verify recall.
+
+Record **which of three outcomes** holds (full-context resume / session-id-only / resume-fails) in the project README and pin the P2-2 "Resumed your chat" UX + the `ResumeSessionId` contract semantics accordingly. The dangling-`tool_use` resume probe and the CLI-update-survival probe are forward-compat (non-gating) and stay tracked but unrun.
+
+## 7. Security & egress
+
+- Slice 1 ships **no runtime egress** — pure types + a Noop that does nothing. No subprocess, no network, no filesystem.
+- Slices 2–3 (subprocess) inherit the one-shot provider's security invariants verbatim: env allowlist (no `ANTHROPIC_*`/proxy/`CLAUDE_CONFIG_DIR` leakage), no `--bare`, PAT/credential never passed to `claude`. Egress review happens at those child-issue gates, not here.
+- Token discipline (v2-ai-effort.md § 7) is unchanged: recovery on failure is a deliberate user action (no auto-retry), and every consuming feature carries a backend-enforced `userEnabled` toggle. The streaming substrate adds no auto-retry.
+
+## 8. Tracked deferrals
+
+- **Dangling-`tool_use` `--resume` probe** — forward-compat, non-gating (sessions ending uncleanly fall through to fresh-with-injection). Tracked in Slice 3's issue as an unchecked box.
+- **CLI-compatibility test suite** (spec line 823) — assert `--version` shape + stream-json event schema on CI against the latest CLI; P3 follow-up, separate issue.
+- **`StreamingSessionOptions` → substrate discriminated-union refactor** — only if a 2nd substrate (Ollama, P4-N4) ships. Documented in § 4.2; no issue until that substrate is scheduled.
+- **Shared token value-object** reused by `LlmResult` + `LlmTurnComplete` — a tidy that requires touching shipped code; optional, not scheduled.
+
+## 9. Risk classification & gates
+
+- **Tier:** T3. **Risk:** B2 (AI foundation seam; subprocess/egress in Slices 2–3) + `needs-design`. **Gated** — the owner reviews this spec/approach before the plan and before any subprocess-bearing slice.
+- Slice 1 itself touches no egress and adds only contracts + a dark Noop, but it remains owner-gated because it sets the foundation seam shape that chat depends on.
+- The human merge is the safety boundary; `ce-doc-review` (2×, T3) is the machine sign-off recorded in the PR `## Proof`.
+
+## 10. Exit criteria (this PR — Slice 1)
+
+- [ ] Streaming contracts compile in `PRism.AI.Contracts/Provider/` with the reconciled shapes (§ 4.1, § 4.3).
+- [ ] `NoopStreamingLlmProvider`/`NoopStreamingLlmSession` implemented and registered dark; DI resolves `IStreamingLlmProvider`.
+- [ ] Unit tests green (Noop contract behavior + registration).
+- [ ] Full backend build + test suite green; secrets scan clean.
+- [ ] Child issues filed for Slice 2 and Slice 3, linked under #404, with the § 5 / § 6 detail.
+- [ ] 2× `ce-doc-review` dispositions recorded in the PR `## Proof`; owner spec gate cleared.
+
+## 11. Child issues to file (after spec sign-off)
+
+- **Slice 2 — "[AI] P0-1b — Claude Code streaming provider (stream-json subprocess)"** — `area:ai`, `ai:foundation`; body = § 5 + acceptance from backlog P0-1; depends on this PR; blocks #412.
+- **Slice 3 — "[AI] P0-1b — `claude --resume` clean-end empirical probe (C4 gate)"** — `area:ai`, `ai:foundation`; body = § 6; depends on Slice 2; gates #412 cross-restart resume.
+
+Both cross-linked from #404; #404 stays open as the roadmap root until all slices land.
