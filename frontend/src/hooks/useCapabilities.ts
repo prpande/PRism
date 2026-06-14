@@ -50,8 +50,10 @@ const ALL_OFF: AiCapabilities = {
 // seam is registered AND the provider probe succeeds), pending the FE adopting that wire
 // (D112); the summary endpoint itself returns 204/503 when the seam/provider is unavailable,
 // so hardcoding `summary: true` here surfaces the real error card rather than hiding the seam.
-// For P1-2 the live seams are summary + fileFocus. (hunkAnnotations etc. stay off until their slices.)
-const LIVE_CAPABILITIES: AiCapabilities = { ...ALL_OFF, summary: true, fileFocus: true };
+// For P1-2 the live seams are summary + fileFocus; #414 (P2-4) adds hunkAnnotations now that the real
+// ClaudeCodeHunkAnnotator is registered in realSeams and the /ai/hunk-annotations endpoint gates on
+// IsSubscribed + maps provider failure to 503. (The remaining seams stay off until their slices.)
+const LIVE_CAPABILITIES: AiCapabilities = { ...ALL_OFF, summary: true, fileFocus: true, hunkAnnotations: true };
 
 // Stable no-op: capabilities are derived from the shared preferences store, which
 // owns refetching (mount + window focus). Retained for the { capabilities, error,
