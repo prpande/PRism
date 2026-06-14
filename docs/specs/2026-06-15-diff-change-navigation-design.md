@@ -28,6 +28,14 @@ to the AI review-guidance track (#136 hotspots, #468 per-hunk attention): those 
 3. The two share one source of truth, so the counter the buttons show always matches the
    ticks on the rail.
 
+**Why both ship together (not prev/next first).** The two are complementary by design — the
+issue asks for both ("the minimap shows the landscape, the prev/next buttons walk it").
+Prev/next is the cheaper, fully-accessible *core* navigation; the rail is the *positional-
+glance* layer that prev/next alone can't give (density, distribution, where-am-I). Splitting
+them would ship the headline ask (#486 is titled "minimap + prev/next") half-done. They
+share one change model (`computeChanges`), so the rail is incremental on top of the walker,
+not a separate build.
+
 ## Non-goals (v1)
 
 - **Minimap in hunks-only mode** — low value (the diff there *is* the changes). Prev/next
@@ -37,7 +45,8 @@ to the AI review-guidance track (#136 hotspots, #468 per-hunk attention): those 
   cover navigation.
 - **Per-line markers** — we mark per contiguous change run, not per line.
 - **Tick merging / clustering** on extreme density — v1 lets ticks pack by real position
-  (min height keeps them visible); clustering can come later if needed.
+  (min height keeps them visible). See the density note under Edge cases; clustering is the
+  designated first fast-follow if the B1 gate finds the rail unusable on big diffs.
 
 ## Scope matrix
 
@@ -48,7 +57,10 @@ to the AI review-guidance track (#136 hotspots, #468 per-hunk attention): those 
 
 Both affordances are fundamentally *row-position → scrollTop* operations, so they work
 across unified/split unchanged. The rail is gated to whole-file mode by product value, not
-by a technical limit.
+by a technical limit. **Note on split mode:** PRism's split (side-by-side) view is a single
+4-column `<table>` inside the *one* vertical scroll container (`.diff-pane-body`) — it is
+not two independent vertical panes. So there is exactly one rail, identical to unified; only
+the table's column layout differs.
 
 ## The "change" model (shared source of truth)
 
@@ -68,34 +80,64 @@ interface DiffChange {
 }
 ```
 
+**Line-type → change-kind mapping** (the change model uses different vocabulary from
+`DiffLine.type`, so implementers must translate, not compare directly):
+
+| Run composition (`DiffLine.type`) | `DiffChange.kind` |
+|---|---|
+| all `insert` rows | `add` |
+| all `delete` rows | `delete` |
+| mixed `insert` + `delete` rows | `modify` |
+
 **Derivation** — a pure function `computeChanges(lines: DiffLine[]): DiffChange[]`:
 scan `allLines`; a run starts at the first `insert`/`delete` row and extends across
 consecutive `insert`/`delete` rows; it ends at any `context` / `hunk-header` / filled row.
-Classify: all-insert → `add`, all-delete → `delete`, mixed → `modify`. Context, filled
-context (`isFilled`), and hunk-header rows are never part of a run. The function is
-DOM-independent and unit-tested in isolation.
+Context, filled context (`isFilled`), and hunk-header rows are never part of a run. The
+function is DOM-independent and unit-tested in isolation.
+
+**Block-replacements are one `modify` tick — by design.** Git unified hunks emit all
+`delete` lines then all `insert` lines for a replaced block, with no context between, and
+`parseHunkLines` preserves that order. So a "replace this block" edit is a single
+contiguous mixed run → one **blue `modify`** tick. This matches VS Code's gutter, where a
+changed block is "modified," not split into separate add/delete marks. Consequence:
+`modify` (blue) is the most common kind on real diffs, and pure `add`/`delete` ticks appear
+only for clean insertions/deletions. The B1 visual gate must validate the color mix on a
+**modify-heavy** diff, not just a synthetic add+delete one.
 
 This works identically in both modes: in hunks-only mode `allLines` is the parsed hunk
 bodies (with `hunk-header` rows that break runs); in whole-file mode it is the interleaved
 full file (no hunk-header rows, filled-context rows break runs). It is independent of
-unified/split — those differ only in *rendering* of the same `allLines`.
+unified/split — those differ only in *rendering* of the same `allLines`. The change list is
+**mode-stable**: the run set is the same set of `insert`/`delete` lines whether or not
+context surrounds them, so `M` and the change ordering do not jump when the whole-file
+toggle flips (one edge case: two *immediately adjacent* git hunks merge into one run in
+whole-file mode while a `hunk-header` splits them in hunks-only mode — rare, off-by-one,
+acceptable).
 
 ## Minimap rail
 
-A **dedicated thin gutter element we own**, rendered as the last flex child of the diff
-scroll area, just left of the native scrollbar. We do **not** overlay the native scroll
-track: native scrollbars render differently on Windows vs. macOS and cannot be painted
-into, so an overlay would force a full custom scrollbar (much larger surface) to do well.
+A **dedicated thin gutter element we own**, rendered as an **absolutely-positioned overlay
+on the diff pane, right-aligned and inset to match the `.diff-pane-body` bounds** — a
+sibling of the scroll container within a `position: relative` wrapper, **not** a flow child
+*inside* the overflow:auto scroll body (a child of the scroll body would scroll away with
+the content). It stays pinned beside the scrollbar while its ticks map the full
+`scrollHeight`. We do **not** overlay the native scroll track: native scrollbars render
+differently on Windows vs. macOS and cannot be painted into, so an overlay would force a
+full custom scrollbar (much larger surface) to do well.
 
 ### Resting vs. hover
 
-- **Resting (~5px):** ticks only — a positional glance at change density/location.
+- **Resting (~5px wide):** ticks only — a positional glance at change density/location.
   Background `--surface-2`.
-- **On hover of the rail (~48px):** width animates open (`--ease-out`, ~`--t-med`),
-  background lifts to `--surface-3`, ticks grow into comfortable click targets, and each
-  change's **start line number** appears beside its tick (Geist Mono, `--text-3`, tabular
-  figures). Collapses back on pointer-leave. Honors `prefers-reduced-motion` (no width
-  transition).
+- **On hover of the rail (~48px wide):** the **width** animates open (`--ease-out`,
+  ~`--t-med`) — the rail's **height is constant** (it always spans the scroll viewport;
+  only width changes, so click-ratio math is unaffected by the hover state). Background
+  lifts to `--surface-3`, ticks grow into comfortable click targets, and each change's
+  **start line number** appears beside its tick (Geist Mono, `--text-3`, tabular figures).
+  Collapses back on pointer-leave. Honors `prefers-reduced-motion` (no width transition).
+- **Touch / coarse pointer:** under `@media (pointer: coarse)` the rail renders
+  **permanently expanded** (48px, line numbers shown, no width transition) so tick targets
+  are usable without a hover event — a 5px rail is unreachable by touch.
 
 ### Ticks
 
@@ -111,26 +153,48 @@ into, so an overlay would force a full custom scrollbar (much larger surface) to
 
 A translucent box on the rail showing the current scroll position:
 `top% = scrollTop / scrollHeight`, `height% = clientHeight / scrollHeight`. Border
-`--border-strong`, fill `color-mix(--text-1 ~7%, transparent)`. `pointer-events: none`.
+`--border-strong` (the border carries the visible affordance and must clear WCAG 1.4.11
+non-text 3:1 against `--surface-2/3` in both themes — verify at the B1 gate), fill
+`color-mix(--text-1 ~7%, transparent)`. `pointer-events: none`.
 
 ### Pointer interactions
 
 - **Click a tick** → scroll that change into view and make it current.
 - **Click empty rail** → proportional jump: `scrollTop = (clickY / railHeight) * scrollHeight`
-  (the rail doubles as a scrubber).
-- **Hover a tick** → it highlights, cursor `pointer`, and a **tooltip card** appears
-  (`--surface-1` bg, `--border-2`, `--shadow-3`, `--radius-2`, Geist) reading
-  `change N of M · L<startLine> · +<adds> −<dels>`.
+  (the rail doubles as a scrubber; `railHeight` is constant per the hover note above).
+- **Hover a tick** → it highlights, cursor `pointer`, and a **tooltip** appears (a local
+  absolutely-positioned element inside `ChangeMinimap` — **not** a new shared Tooltip
+  primitive) styled `--surface-1` bg, `--border-2`, `--shadow-3`, `--radius-2`, Geist,
+  reading `change N of M · L<startLine> · +<adds> −<dels>`. ~100ms show delay (avoids flash
+  on a fast pass), closes immediately on pointer-leave; no show delay under
+  `prefers-reduced-motion`. The tooltip surfaces the focused tick's *full detail* (counts +
+  position) that the expanded rail's per-tick line numbers alone don't; it is a
+  pointer-only supplement (see Accessibility).
 
 ### Position measurement
 
-Rows are plain DOM (not virtualized) but heights vary (wrapped lines, AI annotation rows),
-so tick offsets are **measured**, not estimated from a fixed row height. Each change's
-first row is tagged `data-change-start="<changeIdx>"`; after layout, the rail reads each
-tagged row's offset relative to the scroll container and the container's `scrollHeight`.
-Re-measure on: `allLines` change, container resize (`ResizeObserver`), and font/density
-change. Scroll updates (viewport box + current-change) are read on `scroll`, throttled
-with `requestAnimationFrame`.
+Rows are plain DOM (not virtualized) but heights vary, so tick offsets are **measured**,
+not estimated from a fixed row height. Each change's first row's `<tr>` (the row element,
+not a cell — unambiguous in split mode) is tagged `data-change-start="<changeIdx>"`. The
+hook reads each tagged row's offset relative to the scroll container and the container's
+`scrollHeight`.
+
+**Re-measure triggers.** Several height changes fire *after* initial layout without changing
+`allLines` or the container's own size, so a single `ResizeObserver` on the scroll container
+is insufficient:
+
+- **Syntax highlighting** (shiki) tokenizes asynchronously, changing wrapped-line heights.
+- **AI annotation rows** mount as interleaved `<tr>`s keyed on `annotationsByRowIdx`, not
+  `allLines`.
+- **Inline comment / composer rows** mount on user action between diff rows.
+
+To catch all of these, **observe the inner content `<table>` with a `ResizeObserver`** (its
+height changes on any of the above and on `allLines` change), **and** observe the scroll
+container itself (its `clientHeight` changes when the locked-horizontal-scroll bar appears
+in split mode). The observer fires once synchronously on observation, which covers
+**initial mount** (measure after paint — `useLayoutEffect` / the observer's initial call —
+never synchronously before layout settles). Scroll updates (viewport box + current-change)
+are read on `scroll`, throttled with `requestAnimationFrame`.
 
 ## Prev/next controls
 
@@ -146,57 +210,78 @@ Cluster (right-aligned): **git-compare lead icon** + **prev chevron (▲)** + **
 - **Chevrons:** ghost icon buttons, **neutral (`--text-2`) at rest, `--accent` on hover**
   (background `--surface-3` on hover, per the app's ghost-button idiom). `aria-label`
   "Previous change" / "Next change".
+  - **Focus:** a visible `:focus-visible` ring (the app's focus-ring token / `--accent-ring`)
+    at ≥3:1 contrast against `--surface-1/2` in both themes — the ghost-button idiom
+    suppresses the native outline, so the focused state must be defined explicitly or
+    keyboard focus is invisible.
 - **Counter:** `N / M` (Geist Mono, `--text-1`, tabular), current change index (1-based)
-  over total.
-- **Clamp at ends:** prev disabled on the first change, next on the last (`disabled`
-  attribute → `--text-disabled`, no hover). No wrap-around — the disabled state
+  over total. When no change is current (scrolled above the first), shows `— / M`.
+- **Clamp at ends:** prev disabled at the first change (and above it), next at the last
+  (`disabled` attribute → `--text-disabled`, no hover). No wrap-around — the disabled state
   communicates "you're at an edge" more clearly than a silent jump to the other end.
 
 ### Current-change + navigation semantics
 
-- **currentIdx** = the last change whose start offset is at or above `scrollTop` + a small
-  top margin; clamped to `[0, M-1]` (0 when scrolled above the first change). The counter
-  shows `currentIdx + 1 / M`.
-- **next()** scrolls to `changes[currentIdx + 1]` (no-op/disabled at the last).
-- **prev()** scrolls to `changes[currentIdx - 1]` (no-op/disabled at the first).
-- **Scroll-to** places the change's first row near the top of the viewport with a small
-  margin; smooth behavior, instant under `prefers-reduced-motion`.
+- **currentIdx** ∈ `[-1, M-1]` = the index of the last change whose start offset is at or
+  **below** `scrollTop + 8px` (i.e. the most recently passed change). It is **-1** when
+  scrolled above the first change (no change passed yet).
+- **Counter** shows `currentIdx + 1 / M` when `currentIdx ≥ 0`, and `— / M` when `-1`.
+- **next()** scrolls to `changes[currentIdx + 1]`. From `-1` this targets change 1 (so the
+  first change is never skipped). Disabled when `currentIdx === M-1`.
+- **prev()** scrolls to `changes[currentIdx - 1]`. Disabled when `currentIdx ≤ 0`.
+- **Scroll-to** places the change's first row 8px below the viewport top; smooth behavior,
+  instant under `prefers-reduced-motion`. During a programmatic scroll-to, set `currentIdx`
+  to the target immediately and **suppress the scroll-driven recompute** until the animation
+  settles, so the counter and SR announcement don't flicker through intermediate changes.
 
 ### Keyboard
 
 - **`n`** = next change, **`p`** = previous change — a within-file vertical parallel to the
-  existing across-file `j`/`k`. Both keys are currently free in `useFilesTabShortcuts`.
+  existing across-file `j`/`k` (verified: `useFilesTabShortcuts` binds only `j`/`k`/`v`/`d`,
+  so `n`/`p` are free).
 - Naked keys only (no modifier), suppressed in text inputs — reuse the existing
-  `isInputTarget` guard in `useFilesTabShortcuts`. Respect the same clamp (no-op at ends).
+  `isInputTarget` guard. Respect the same clamp (no-op at ends). The listener is **scoped to
+  the FilesTab/DiffPane mount lifetime** (see the keyboard seam below); single naked-letter
+  keys are only safe behind that scope + the input guard.
 
 ## Accessibility
 
-- The **prev/next buttons + `n`/`p` keys are the accessible navigation path** — fully
-  labeled and keyboard-operable.
-- Each *actual* move (button, key, or tick click that changes position) updates an
-  `sr-only` `role="status"` / `aria-live="polite"` region with `change N of M` (reuse the
-  `.sr-only` pattern; mirror the live-region approach from #312/#450). No announcement on a
-  clamped no-op.
-- The **rail is a pointer-only enhancement** and is marked `aria-hidden` — it duplicates
-  navigation already exposed accessibly via the buttons/keys, so it should not add a second
-  (noisier) path to the SR tree.
+- The **prev/next buttons + `n`/`p` keys are the full accessible navigation path** — fully
+  labeled, keyboard-operable, and they reach **every** change (`next` from `-1` walks to the
+  last). That parity is what licenses hiding the rail.
+- The **rail (ticks + viewport box) is `aria-hidden`** — a pointer-only enhancement that
+  would otherwise add a noisier second path to the SR tree. Its pointer-only extras
+  (proportional rail-click scrub, direct tick-jump, the hover tooltip) have **no keyboard/SR
+  equivalent by design** — they are conveniences on top of the complete button/key nav, and
+  the per-tick tooltip detail (line + counts) is supplementary, not essential (the counter +
+  announcement carry the essential N-of-M).
+- **Live region:** any *actual* position change — button, key, **or tick/rail click** —
+  updates an `sr-only` `role="status"` / `aria-live="polite"` region with `change N of M`
+  (reuse the `.sr-only` pattern; mirror the live-region approach from #312/#450). `aria-hidden`
+  on the rail suppresses it from the SR *tree* but does **not** suppress JS-driven live-region
+  updates, so a pointer tick-click still announces. No announcement on a clamped no-op.
 
 ## Theming
 
 All colors are existing tokens (`--success` / `--danger` / `--info` for ticks,
 `--surface-2/3` for the rail, `--accent` for the icon, `--text-*`, `--border-*`,
-`--shadow-3`), so both themes derive automatically. Exact final shades are verified live
-against the running app in both themes before sign-off (the B1 visual gate).
+`--shadow-3`, `--accent-ring` for focus), so both themes derive automatically. Exact final
+shades are verified live against the running app in both themes before sign-off (the B1
+visual gate).
 
 ## Component breakdown (units & seams)
+
+New components live in a **`DiffChangeNav/` subdirectory** (not dropped into `DiffPane.tsx`,
+already the largest component in the codebase).
 
 1. **`diffChanges.ts`** — `computeChanges(lines): DiffChange[]` + `DiffChange` type. Pure,
    no DOM. *Depends on:* `DiffLine`. *Tested:* standalone.
 2. **`useChangeNavigation` hook** — inputs: scroll-container ref + `changes`. Owns offset
-   measurement (via `data-change-start` query), `ResizeObserver`, rAF scroll listener.
-   Returns `{ currentIdx, total, canPrev, canNext, goToPrev, goToNext, goToChange(i),
-   scrollToRatio(r), ticks: {top,height,kind,startLineNum,addCount,delCount}[], viewport:
-   {top,height} }`. *Tested:* with a fake container exposing offsets.
+   measurement (via `data-change-start` query), the two `ResizeObserver`s (content `<table>`
+   + scroll container), and the rAF scroll listener. Returns `{ currentIdx, total, canPrev,
+   canNext, goToPrev, goToNext, goToChange(i), scrollToRatio(r), ticks:
+   {top,height,kind,startLineNum,addCount,delCount}[], viewport: {top,height} }`. *Tested:*
+   with a fake container exposing offsets.
 3. **`ChangeMinimap` component** — presentational; given `ticks`, `viewport`, hover state,
    and `goToChange`/`scrollToRatio`. Renders rail (rest/expand), ticks, viewport box,
    expanded line numbers, tooltip. Whole-file mode only.
@@ -205,63 +290,85 @@ against the running app in both themes before sign-off (the B1 visual gate).
    sr-live region. Both modes.
 5. **`DiffPane.tsx` wiring** — `computeChanges(allLines)` (memoized), mount
    `useChangeNavigation(diffBodyRef, changes)`, render `ChangeNavControls` in
-   `diff-pane-header`, render `ChangeMinimap` inside the scroll area (whole-file only), tag
-   each change's first row with `data-change-start` in the row renderers.
-6. **Keyboard seam** — `n`/`p` register where the change-nav state lives. Recommended:
-   extend `FilesTabShortcutHandlers` with `onNextChange`/`onPrevChange`, and have
-   `DiffPane` expose its `goToNext`/`goToPrev` to `FilesTab` (e.g. via a ref handle) so all
-   naked-key shortcuts stay centralized in `useFilesTabShortcuts`. **Final seam confirmed
-   in the plan** — the alternative is a DiffPane-local key listener reusing `isInputTarget`;
-   avoid double-binding `n`/`p`.
+   `diff-pane-header`, render `ChangeMinimap` as the overlay sibling of `.diff-pane-body`
+   (whole-file only), tag each change's first `<tr>` with `data-change-start` in the row
+   renderers.
+6. **Keyboard seam — committed: a DiffPane-scoped key listener** (a `useEffect` document
+   listener mounted with DiffPane) that reuses the existing `isInputTarget` guard and calls
+   the hook's `goToNext`/`goToPrev`. This keeps the change-nav state and its keys co-located
+   where the data lives. The rejected alternative — extending `FilesTabShortcutHandlers` and
+   exposing `goToNext`/`goToPrev` upward via a ref handle — would require converting DiffPane
+   to `forwardRef` + `useImperativeHandle`, patterns absent from the codebase, for no real
+   benefit. Do not bind `n`/`p` in `useFilesTabShortcuts` (avoids double-binding).
+7. **Discoverability wiring** — register `n` (next change) and `p` (previous change) in the
+   Cheatsheet `SHORTCUTS` source (`Cheatsheet/shortcuts.ts`, "Diff" group) and update the
+   `ReviewFilesCta` footer hint, so the keys surface alongside `j`/`k`/`v`/`d` instead of
+   being source-only.
 
 ## Edge cases
 
 - **0 changes:** rail and controls hidden (shouldn't occur for a file in the diff, but
   guard on `changes.length === 0`).
-- **1 change:** counter `1 / 1`, both chevrons disabled, single tick.
-- **Whole-file not yet loaded / failed:** rail hidden until interleaved `allLines` is
-  ready; prev/next still operate on the current `allLines` (hunks fallback).
-- **Very large diffs:** hundreds of ticks render as cheap absolutely-positioned divs;
-  min-height keeps them visible.
-- **Split mode:** `computeChanges` runs on logical `allLines`, independent of the
-  delete+insert visual pairing; `data-change-start` lands on the first row of the run.
-- **Resize / theme / density change:** `ResizeObserver` re-measures offsets; theme is pure
-  CSS.
+- **1 change:** counter `1 / 1` once reached (`— / 1` above it), both chevrons disabled,
+  single tick.
+- **Whole-file loading vs. error:** in **both** states the rail stays hidden and prev/next
+  operate on the current `allLines` (the hunks fallback — `allLines` always falls back to
+  parsed hunks). Because the change list is mode-stable (see the change model), the counter
+  does **not** jump when whole-file content arrives mid-session; `currentIdx` re-derives
+  from scroll position against the new offsets on the next rAF tick.
+- **Very large / dense diffs:** hundreds of ticks render as cheap absolutely-positioned
+  divs; min-height keeps them visible but at extreme density (roughly >1 change per ~6px of
+  rail) ticks abut and the positional glance degrades. v1 ships without clustering; the B1
+  gate must exercise a large, dense real diff, and clustering is the designated first
+  fast-follow if it reads as unusable.
+- **Split mode:** one rail on the single scroll container (see Scope matrix);
+  `computeChanges` runs on logical `allLines` independent of the delete+insert visual
+  pairing; `data-change-start` lands on the run's first `<tr>` (survives the pair-consumption
+  `idx += 1` in `renderSplitRows` — the plan verifies this).
+- **Resize / theme / density change:** the `ResizeObserver`s re-measure; theme is pure CSS.
 
 ## Testing strategy
 
-- **Unit (`diffChanges`):** pure adds, pure deletes, mixed→modify, multiple runs within one
-  hunk, context-separated runs, filled-context boundaries, empty input.
-- **Hook (`useChangeNavigation`):** currentIdx math at/above/below changes, prev/next
-  clamping, tick positions and viewport ratio from injected offsets.
-- **Component:** `ChangeNavControls` counter text, disabled-at-ends, aria-labels, handler
-  calls, sr announcement on move (and *not* on clamped no-op); `ChangeMinimap` tick
-  color-by-kind, positioning, tick-click → `goToChange`, rail-click → proportional scroll,
-  rest/expand on hover.
+- **Unit (`diffChanges`):** pure adds, pure deletes, block-replacement → single `modify`,
+  multiple runs within one hunk, context-separated runs, filled-context boundaries, empty
+  input; verify the line-type → kind mapping.
+- **Hook (`useChangeNavigation`):** currentIdx math at/above/below changes (including the
+  `-1` above-first state and that `next()` from `-1` lands on change 1), prev/next clamping,
+  tick positions and viewport ratio from injected offsets, re-measure fires on content-table
+  resize.
+- **Component:** `ChangeNavControls` counter text (`— / M` and `N / M`), disabled-at-ends,
+  aria-labels, focus-visible ring presence, handler calls, sr announcement on move (and
+  *not* on clamped no-op); `ChangeMinimap` tick color-by-kind, positioning, tick-click →
+  `goToChange` (+ announcement), rail-click → proportional scroll, rest/expand on hover,
+  permanently-expanded under `pointer: coarse`.
 - **Integration (`DiffPane`):** rail renders only in whole-file mode; controls render in
-  both; `data-change-start` tagging on first rows.
+  both; `data-change-start` tagging on first rows; rail hidden during whole-file load/error.
 - **Keyboard:** `n`/`p` invoke next/prev, suppressed in inputs, respect clamp.
 - **Visual (B1, human-gated):** Playwright baselines for rail (rest + expanded) and the
-  header controls, both themes.
+  header controls, both themes; a **modify-heavy** diff (color mix) and a **dense** diff
+  (tick legibility) included.
 
 ## Acceptance criteria
 
 - [ ] In whole-file mode, changed runs are marked along the diff scroll track, colored by
-      kind (add/delete/modify), positioned by location in the full file.
+      kind (add/delete/modify), positioned by location in the full file; the rail stays
+      pinned beside the scrollbar (does not scroll with content).
 - [ ] Clicking a tick jumps to that change; clicking empty rail scrolls proportionally;
       hovering expands the rail with line numbers + a tooltip.
 - [ ] Prev/next controls (chevrons + `n`/`p`) move the viewport change-to-change, clamped
-      at the ends, with an `sr-only` "change N of M" announcement on each move.
-- [ ] The counter always matches the number/order of ticks on the rail.
+      at the ends, with an `sr-only` "change N of M" announcement on each move; the focused
+      chevron shows a visible focus ring.
+- [ ] The counter always matches the number/order of ticks on the rail (`— / M` above the
+      first change).
 - [ ] Prev/next work in hunks-only mode too; the rail appears only in whole-file mode.
+- [ ] `n`/`p` are discoverable in the shortcuts cheatsheet and the Review-files CTA hint.
 - [ ] Everything works with AI features off.
 - [ ] Markers/counter stay correct as the selected file and the whole-file toggle change.
-- [ ] Both themes verified live (B1 visual gate).
+- [ ] Both themes verified live, including a modify-heavy and a dense diff (B1 visual gate).
 
 ## Open decisions for the plan
 
-- The exact **keyboard seam** (ref handle up to `useFilesTabShortcuts` vs. DiffPane-local
-  listener) — pick one, no double-binding.
-- The small **top-margin epsilon** for current-change detection and scroll-to landing.
 - Whether the expanded-rail line number is a **single start line** (chosen) or a range
   (deferred unless review pushes back).
+- The precise **content-table observation target** in split mode (the `<table>` vs. its
+  `<tbody>`) — pick whichever reflects content height reliably; both are inside `diffBodyRef`.
