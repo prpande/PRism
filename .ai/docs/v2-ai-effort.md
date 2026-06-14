@@ -74,9 +74,12 @@ epic. P0-1b streaming + P0-4 clone + P0-7 MCP are the chat (P2-2) prerequisites.
   from a separate, per-user, non-pooled **Agent SDK credit** PRism can't read or set; when exhausted,
   calls stop until refresh unless paid usage credits are enabled. → **caching + lazy-load are budget
   management** for a wallet we can't see. This is the standing design baseline.
-- **Don't rely on `--resume`** for cross-feature context forwarding (restoring full context after a
-  clean end is undocumented; resumed turns re-send the whole transcript). Use prompt caching on a
-  stable diff prefix instead.
+- **`--resume` restores full context after a clean end** (probed v2.1.177, #479 / C4) — so cross-restart
+  chat resume (P2-2) is viable. BUT it is **working-directory-scoped** (resume MUST run from the same cwd;
+  PRism's stable per-user base satisfies this), **fails hard** on a cwd/id miss (must degrade to
+  fresh-with-injection), and the result is **version-conditional** (CLI-update survival untested). Do NOT
+  use `--resume` for cross-*feature* context forwarding (a separate session id); for that, use prompt
+  caching on a stable diff prefix.
 
 ## 6. Cross-cutting conventions & gotchas (these bite every increment)
 

@@ -442,7 +442,7 @@ C5, C6, C7, the C4 clean-end resume probe, and C8 are deferrable to P0 implement
 
 Outstanding empirical gates (these are not spec-text updates; they are tripwires the implementer hits during P0):
 
-- [ ] **C4 (clean-end resume)** — verify that `claude --resume <session-id>` after a *clean* session end restores the model's full conversation context. Run as part of P0-1's acceptance gate, before P2-2 chat ships. The result determines whether the spec's cross-restart "Resumed your chat from <timestamp>" UX is achievable or degrades to fresh-with-injection. Also probe whether resume survives a CLI update between session-end and resume.
+- [x] **C4 (clean-end resume)** — verified 2026-06-14 (#479): full-context resume confirmed (Outcome #1) on `claude` v2.1.177; a production-faithful re-run (confined cwd + stripped config) showed resume is working-directory-scoped and fails hard on a cwd/id miss (degrades to fresh-with-injection). P2-2's "Resumed your chat" full-context UX is achievable, version-conditional. CLI-update survival still unrun (non-gating). See `docs/specs/2026-06-14-claude-resume-probe-design.md`.
 - [ ] **C5** — verify the `--mcp-config` JSON shape (`"type": "http"` discriminator key) against the running Claude Code CLI version the project ships against. Run as the first task of P0-7.
 - [x] **C6** — verified 2026-05-12 (S5 PR0a): `pullRequestReviewId` present, not deprecated; spec's `AttachThreadAsync` shape stands. See § C6.
 - [x] **C7** — verified 2026-05-12 (S5 PR0a): marker preserved verbatim in all three body shapes; marker-based adoption ships as written, no fallback. See § C7.
