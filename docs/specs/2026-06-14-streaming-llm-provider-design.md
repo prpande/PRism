@@ -58,42 +58,53 @@ public interface IStreamingLlmProvider
 public interface IStreamingLlmSession : IAsyncDisposable
 {
     /// <summary>The underlying provider's session id — load-bearing for cross-restart resume
-    /// (Slice 3 pins the exact `--resume` semantics; see § 6). TEMPORAL CONTRACT: guaranteed
-    /// non-empty once the first <see cref="Events"/> item of the first turn has been observed (the
-    /// impl reads the provider's init event before surfacing any turn output). A caller persisting
-    /// the id for resume MUST read it after the first event, or take the final value from
-    /// <see cref="SessionEndState.ProviderSessionId"/>. It is empty ONLY if the session died before
-    /// init (paired with <c>LastTurnEndedCleanly = false</c>); callers must not persist an empty id.</summary>
+    /// (Slice 3 pins the exact `--resume` semantics; see § 6). TEMPORAL CONTRACT: it is populated
+    /// from the provider's init event and is non-empty by the time the first caller-observable
+    /// <see cref="Events"/> item of the first turn arrives. (A caller cannot observe the internal
+    /// init read; the earliest it can read a guaranteed-valid id off this property is after that
+    /// first <see cref="Events"/> item — which for a zero-delta turn is the terminal
+    /// <see cref="LlmTurnComplete"/> — or, most simply, from <see cref="SessionEndState.ProviderSessionId"/>.)
+    /// It is empty ONLY if the session never reached init (the process failed to start), which is
+    /// always paired with <c>LastTurnEndedCleanly = false</c>; callers must not persist an empty id.</summary>
     string ProviderSessionId { get; }
 
     /// <summary>Submit one user turn. Turns are STRICTLY SEQUENTIAL: the session processes one turn
     /// at a time, so a caller MUST await the prior turn's <see cref="LlmTurnComplete"/> on
-    /// <see cref="Events"/> before calling this again. Pipelined/concurrent turns are not supported;
-    /// the implementation MAY throw <see cref="InvalidOperationException"/> if called before the
-    /// prior turn completes. This sequential model is what lets the un-tagged <see cref="Events"/>
-    /// stream be unambiguous (see <see cref="Events"/>).</summary>
+    /// <see cref="Events"/> before calling this again. Pipelined/concurrent turns are not supported.
+    /// If called before the prior turn completes, the implementation throws
+    /// <see cref="InvalidOperationException"/> SYNCHRONOUSLY (it does not return a faulted Task), so
+    /// the rejected content is guaranteed NOT enqueued and the session REMAINS USABLE — the caller
+    /// may await the in-flight turn's <see cref="LlmTurnComplete"/> and retry. This is distinct from
+    /// the unrecoverable-death throw on <see cref="Events"/>. The sequential model is what lets the
+    /// un-tagged <see cref="Events"/> stream be unambiguous (see <see cref="Events"/>).</summary>
     Task SendUserTurnAsync(string content, CancellationToken ct);
 
     /// <summary>One event stream for the session's lifetime, in arrival order. Because turns are
     /// strictly sequential, every <see cref="LlmTextDelta"/> / <see cref="LlmToolUse"/> between two
     /// <see cref="LlmTurnComplete"/> events belongs to the turn opened by the most recent
-    /// <see cref="SendUserTurnAsync"/>; each turn ends with exactly one <see cref="LlmTurnComplete"/>.
-    /// ERROR MODEL: throwing from enumeration is reserved for UNRECOVERABLE session death (e.g. the
-    /// subprocess died) — it terminates the session (the provider chooses the exception type; Claude
-    /// Code throws its `LlmProviderException`, which the Contracts layer does not name). RECOVERABLE
-    /// per-turn failures (a model/tool error that leaves the session usable) are deliberately NOT
-    /// modeled in Slice 1: they will arrive as an additional <see cref="LlmEvent"/> subtype defined
-    /// empirically in Slice 2 (the open hierarchy makes that non-breaking). Consumers MUST treat the
-    /// hierarchy as open and ignore unrecognized subtypes (forward-compat).</summary>
+    /// <see cref="SendUserTurnAsync"/>. TURN-TERMINATION INVARIANT: EVERY turn — including one that
+    /// fails recoverably — ends with exactly one <see cref="LlmTurnComplete"/>; that is the
+    /// consumer's turn-loop terminal condition. ERROR MODEL: throwing from enumeration is reserved
+    /// for UNRECOVERABLE session death (e.g. the subprocess died) — it terminates the session (the
+    /// provider chooses the exception type; Claude Code throws its `LlmProviderException`, which the
+    /// Contracts layer does not name). RECOVERABLE per-turn failures (a model/tool error that leaves
+    /// the session usable) are deliberately NOT modeled in Slice 1: they will arrive as an additional
+    /// *informational* <see cref="LlmEvent"/> subtype defined empirically in Slice 2 that PRECEDES
+    /// the turn's terminal <see cref="LlmTurnComplete"/> — it NEVER replaces it. So a consumer that
+    /// ignores unrecognized subtypes (which it MUST, for forward-compat) still terminates the turn on
+    /// <see cref="LlmTurnComplete"/> rather than hanging.</summary>
     IAsyncEnumerable<LlmEvent> Events { get; }
 
     /// <summary>End the session at a turn boundary: wait for the current turn's
     /// <see cref="LlmTurnComplete"/> (up to <paramref name="gracefulTimeout"/>), then signal the
     /// underlying session a clean exit and COMPLETE the <see cref="Events"/> enumeration (a
-    /// concurrent reader's `await foreach` ends normally). On a clean boundary returns
-    /// <c>LastTurnEndedCleanly = true</c>; on timeout falls back to forced termination and returns
-    /// <c>false</c>. The boolean reports only that a clean turn boundary was reached — whether that
-    /// makes the session resumable is PROVISIONAL pending the Slice-3 § C4 probe (§ 6).
+    /// concurrent reader's `await foreach` ends normally). It awaits session init first, so a cleanly
+    /// ended session — EVEN ONE WITH ZERO TURNS SENT — returns a non-empty
+    /// <see cref="SessionEndState.ProviderSessionId"/>. On a clean boundary returns
+    /// <c>LastTurnEndedCleanly = true</c>; on timeout, or a session that never initialized, falls
+    /// back to forced termination and returns <c>false</c> (then, and only then, the id may be empty).
+    /// The boolean reports only that a clean turn boundary was reached — whether that makes the
+    /// session resumable is PROVISIONAL pending the Slice-3 § C4 probe (§ 6).
     /// <see cref="IAsyncDisposable.DisposeAsync"/> remains required after this call and is an
     /// idempotent no-op.</summary>
     Task<SessionEndState> EndCleanlyAsync(TimeSpan gracefulTimeout, CancellationToken ct);
@@ -154,7 +165,7 @@ The spec sketch in `04-ai-seam-architecture.md` predates what P0-1 actually ship
 
 4. **Collections are `IReadOnlyList<string>`, not `string[]`.** The sketch typed `AllowedTools`/`DisallowedTools` as `string[]`; the contract uses `IReadOnlyList<string>` to enforce immutability at the seam boundary (a caller cannot mutate an array the provider holds).
 
-5. **`StreamingSessionOptions` is trimmed to its Slice-1/Slice-2 consumers.** Doc-review (scope-guardian + product-lens + adversarial) converged on this: shipping option fields whose only consumer is a *later* slice freezes unvalidated surface into a foundation seam that #412/#414 compile against. `AddDirs` (repo-access state 2) and `McpConfigPath` (P0-7 MCP server) have **no consumer in slices 1–3**, and `ResumeSessionId`'s semantics are **empirically unknown until the Slice-3 § C4 probe** — so all three are deferred. They are nullable optional record params appended at the end when their slice lands, which is source-non-breaking for existing callers, so #412/#414 lose nothing by their absence now. Kept: `Model`, `AppendSystemPrompt`, `WorkingDirectory` (Slice-2 subprocess needs them) and `AllowedTools`/`DisallowedTools` (Slice-2 chat tool-gating has a concrete consumer per § 5).
+5. **`StreamingSessionOptions` is trimmed to its Slice-1/Slice-2 consumers.** Doc-review (scope-guardian + product-lens + adversarial) converged on this: shipping option fields whose only consumer is a *later* slice freezes unvalidated surface into a foundation seam that #412/#414 compile against. `AddDirs` (repo-access state 2) and `McpConfigPath` (P0-7 MCP server) have **no consumer in slices 1–3**, and `ResumeSessionId`'s semantics are **empirically unknown until the Slice-3 § C4 probe** — so all three are deferred. They are nullable optional record params appended at the end when their slice lands, which is source-non-breaking for existing callers, so #412/#414 lose nothing by their absence now. Kept: `Model`, `AppendSystemPrompt`, `WorkingDirectory` (Slice-2 subprocess needs them) and `AllowedTools`/`DisallowedTools` — the latter are the session's **default-deny tool-restriction lever**, the streaming analogue of the one-shot's `--tools ""`; Slice 2's impl needs them to spawn safely (tools off by default), so they are core substrate, not a chat-only field like `AddDirs`.
 
 ### 4.4 Noop reference implementation + dark registration
 
@@ -176,7 +187,8 @@ Pure-contract slice, so tests pin behavior + wiring, not subprocess I/O:
 > **Scope note.** This section is an **informational design brief for the Slice-2 child issue**, not part of this spec's review/sign-off scope. Nothing here ships in this PR; it is re-reviewed at the child-issue gate. It exists so the child issue and the next session start from a complete design.
 
 - **New persistent-pipe process seam.** The shipped `ICliProcessRunner.RunAsync(ProcessSpec, ct)` is run-to-completion (captures stdout, returns once) and cannot express a live session. Slice 2 adds a sibling seam (e.g. `IStreamingCliProcess` with `StdinWriter` + an stdout line stream + `KillTree`/`WaitForExit`), keeping `System.Diagnostics` isolated to one class exactly as `SystemCliProcessRunner` does today.
-- **Security parity with the one-shot provider.** Reuse `ClaudeCliEnvironment.BuildAllowlisted()` (env allowlist excluding `ANTHROPIC_*`, proxy vars, `CLAUDE_CONFIG_DIR`), never `--bare`, `--output-format stream-json`. Tool access for chat is gated via `AllowedTools`/`DisallowedTools` (not the one-shot's `--tools ""`); `--add-dir` repo access (`AddDirs`) is the later repo-access slice's concern, not Slice 2's.
+- **Security parity with the one-shot provider.** Reuse `ClaudeCliEnvironment.BuildAllowlisted()` (env allowlist excluding `ANTHROPIC_*`, proxy vars, `CLAUDE_CONFIG_DIR`), never `--bare`, `--output-format stream-json`. Tool access is gated via `AllowedTools`/`DisallowedTools` (not the one-shot's `--tools ""`); `--add-dir` repo access (`AddDirs`) is the later repo-access slice's concern, not Slice 2's.
+- **Concrete tool cap (Slice-2 acceptance criteria, per § 7 invariant).** Default-deny: spawn with tools disallowed (the streaming analogue of the one-shot `--tools ""`). The server-side allowlist permits only MCP-registered tools plus a fixed read-only built-in set; it force-denies dangerous built-ins (at minimum `Bash`, `computer-use`, and file-write tools) regardless of any caller-supplied `AllowedTools`. The authoritative permitted/denied lists are pinned in the Slice-2 child issue (derived from the Claude Code tool manifest at implementation time), and `ClaudeCliEnvironment.BuildAllowlisted()` parity is a Slice-2 acceptance test, not assumed by inheritance.
 - **Bounded channel + back-pressure.** Background reader parses line-delimited stream-json from stdout into `Channel<LlmEvent>` (cap 1024, `BoundedChannelFullMode.Wait`). The bound is load-bearing: a blocked consumer back-pressures the reader and stalls the subprocess on its stdout write — preferable to unbounded buffering that would OOM the backend on runaway output.
 - **stream-json mapping.** Map CLI event kinds → `LlmTextDelta` / `LlmToolUse` / `LlmTurnComplete`; capture `ProviderSessionId` from the init/system event; surface fatal errors by throwing `LlmProviderException` from the `Events` enumeration.
 - **`SendUserTurnAsync`.** Serialize a stream-json user message to the persistent stdin, concurrently (never block the timeout), reusing the deadlock-avoidance discipline from `SystemCliProcessRunner.WriteStdinAsync`.
@@ -199,11 +211,11 @@ Record **which of three outcomes** holds (full-context resume / session-id-only 
 
 - Slice 1 ships **no runtime egress** — pure types + a Noop that does nothing. No subprocess, no network, no filesystem.
 - Slices 2–3 (subprocess) inherit the one-shot provider's security invariants verbatim: env allowlist (no `ANTHROPIC_*`/proxy/`CLAUDE_CONFIG_DIR` leakage), no `--bare`, PAT/credential never passed to `claude`. Egress review happens at those child-issue gates, not here.
-- **Contract-level invariants the deferred/tool fields must carry when their slice lands** (recorded now so the introducing slice's gate enforces them, per doc-review security-lens):
-  - **`AppendSystemPrompt` is not sanitized at the provider** — same as the one-shot's `LlmRequest.SystemPrompt` (PR3's sanitization gate owns user-edited instruction content). The field comment states this so a feature routing user-editable text through it doesn't assume the streaming path sanitizes where the one-shot does not.
-  - **Path confinement** — when `AddDirs`/`McpConfigPath` land, the introducing slice MUST confine them to an operator-sanctioned base directory (the per-PR clone/worktree root for `AddDirs`; the app data dir for `McpConfigPath`) and reject anything outside it, rather than passing caller-supplied paths verbatim to `--add-dir`/`--mcp-config`. Untrusted paths are a model-readable-filesystem / attacker-controlled-MCP-server vector.
-  - **Tool allowlist cap** — `AllowedTools` is not a blank check: Slice 2 enforces a server-side cap (only MCP-registered tools + a fixed read-only built-in set) plus a forced-deny set (e.g. `Bash`) callers cannot override.
-  - **Session-id scoping** — `ProviderSessionId` / a future `ResumeSessionId` are treated as user-/PR-scoped opaque values: never stored in shared state, never returned to a caller who did not originate the session, and any `--resume` path verifies the requester owns the session before replaying.
+- **Contract-level invariants the tool/path/session fields must carry** (recorded now as firm requirements so the introducing slice's gate enforces them; concrete enumerations live in the child-issue acceptance criteria, per doc-review security-lens + scope-guardian):
+  - **`AppendSystemPrompt` is not sanitized at the provider** — same as the one-shot's `LlmRequest.SystemPrompt` (PR3's sanitization gate owns user-edited instruction content). STREAMING-SPECIFIC: because a session is spawned once, `--append-system-prompt` is evaluated at session-start only — the sanitization window does NOT reopen per turn (unlike the one-shot's per-call window). A caller MUST NOT route content whose source can mutate after spawn (e.g. a PR description) through `AppendSystemPrompt`; if the source changes, the session must be torn down and re-spawned, not resumed.
+  - **Path confinement (incl. the *shipped* `WorkingDirectory`)** — `WorkingDirectory` (ships in Slice 1) and, when they land, `AddDirs`/`McpConfigPath` MUST be confined to an operator-sanctioned base directory (the per-PR clone/worktree root, or the app data dir) and anything resolving outside it rejected, rather than passed verbatim to the subprocess cwd / `--add-dir` / `--mcp-config`. An unconfined cwd or dir is a model-readable-filesystem vector; an unconfined mcp path is an attacker-controlled-MCP-server vector. Enforcement lands in Slice 2 (Slice 1 ships only a Noop), but the invariant binds the Slice-2 gate — `WorkingDirectory` is **not** exempt just because it shipped early.
+  - **Tool allowlist cap** — `AllowedTools` is not a blank check: Slice 2 MUST enforce a server-side allowlist cap plus a forced-deny set that callers cannot override. The concrete permitted/denied sets are defined in the Slice-2 child issue's acceptance criteria (examples in § 5), not frozen here.
+  - **Session-id scoping** — `ProviderSessionId` / a future `ResumeSessionId` are user-/PR-scoped opaque values: never stored in shared state, never returned to a caller who did not originate the session. Ownership verification for any `--resume` path is enforced at the **application service layer** (the component mapping an incoming request to a resume call), not at `IStreamingLlmProvider`/`IStreamingLlmSession`, and is an explicit acceptance criterion of the Slice-3 child issue.
 - Token discipline (v2-ai-effort.md § 7) is unchanged: recovery on failure is a deliberate user action (no auto-retry), and every consuming feature carries a backend-enforced `userEnabled` toggle. The streaming substrate adds no auto-retry.
 
 ## 8. Tracked deferrals
