@@ -103,4 +103,25 @@ public sealed class SystemCliProcessRunnerTests
         var act = async () => await runner.RunAsync(spec, cts.Token);
         await act.Should().ThrowAsync<OperationCanceledException>();
     }
+
+    [Fact]
+    public async Task Streaming_process_streams_stdout_lines_and_exits()
+    {
+        var factory = new SystemStreamingCliProcessFactory();
+        var spec = new StreamingProcessSpec(
+            FileName: OperatingSystem.IsWindows() ? "cmd.exe" : "/bin/sh",
+            Arguments: OperatingSystem.IsWindows()
+                ? new[] { "/c", "echo line1& echo line2" }
+                : new[] { "-c", "printf 'line1\\nline2\\n'" },
+            Environment: new Dictionary<string, string> { ["PATH"] = Environment.GetEnvironmentVariable("PATH") ?? "" },
+            WorkingDirectory: Path.GetTempPath());
+
+        await using var proc = factory.Start(spec);
+        var lines = new List<string>();
+        await foreach (var l in proc.StdoutLines) lines.Add(l.Trim());
+        var exit = await proc.WaitForExitAsync(TimeSpan.FromSeconds(10), CancellationToken.None);
+
+        lines.Should().Contain("line1").And.Contain("line2");
+        exit.Should().Be(0);
+    }
 }
