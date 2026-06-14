@@ -51,8 +51,10 @@ export function AiFailureProvider({ children }: { children: ReactNode }) {
   failuresRef.current = failures;
 
   const { pathname } = useEffectiveLocation();
-  const route = parsePrRoute(pathname);
-  const activeKey = route && route.valid ? prRefKey(route.ref) : null;
+  const activeKey = useMemo(() => {
+    const route = parsePrRoute(pathname);
+    return route && route.valid ? prRefKey(route.ref) : null;
+  }, [pathname]);
 
   // Pure: compute decision from refs BEFORE setState; updater only returns the next value.
   const settle = useCallback((key: string, seam: AiSeam) => {
@@ -109,9 +111,12 @@ export function AiFailureProvider({ children }: { children: ReactNode }) {
   const fingerprint = activeKey ? `${activeKey}:${activeFailedSeams.join(',')}` : '';
   const dismissed = dismissedFingerprint !== null && dismissedFingerprint === fingerprint;
 
+  const fingerprintRef = useRef(fingerprint);
+  fingerprintRef.current = fingerprint;
+
   const retryAll = useCallback(() => {
     if (!activeKey) return;
-    const forPr = failures[activeKey];
+    const forPr = failuresRef.current[activeKey];
     if (!forPr) return;
     const seams = SEAM_ORDER.filter((s) => s in forPr);
     if (seams.length === 0) return;
@@ -119,9 +124,9 @@ export function AiFailureProvider({ children }: { children: ReactNode }) {
     setRetryingKey(activeKey);
     setDismissedFingerprint(null); // a retry un-dismisses
     seams.forEach((s) => forPr[s]?.retry());
-  }, [activeKey, failures]);
+  }, [activeKey]);
 
-  const dismiss = useCallback(() => setDismissedFingerprint(fingerprint), [fingerprint]);
+  const dismiss = useCallback(() => setDismissedFingerprint(fingerprintRef.current), []);
 
   const value = useMemo<AiFailureApi>(() => ({
     report, clear, clearPr, retryAll, dismiss,
