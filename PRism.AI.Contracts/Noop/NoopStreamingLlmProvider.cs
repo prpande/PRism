@@ -16,20 +16,16 @@ internal sealed class NoopStreamingLlmSession : IStreamingLlmSession
 {
     private const string NoopSessionId = "noop-session";
 
+    private static readonly Task<SessionEndState> CleanEnd =
+        Task.FromResult(new SessionEndState(LastTurnEndedCleanly: true, ProviderSessionId: NoopSessionId));
+
     public string ProviderSessionId => NoopSessionId;
 
     public Task SendUserTurnAsync(string content, CancellationToken ct) => Task.CompletedTask;
 
-    public IAsyncEnumerable<LlmEvent> Events => EmptyEvents();
+    public IAsyncEnumerable<LlmEvent> Events => AsyncEnumerable.Empty<LlmEvent>();
 
-    public Task<SessionEndState> EndCleanlyAsync(TimeSpan gracefulTimeout, CancellationToken ct) =>
-        Task.FromResult(new SessionEndState(LastTurnEndedCleanly: true, ProviderSessionId: NoopSessionId));
+    public Task<SessionEndState> EndCleanlyAsync(TimeSpan gracefulTimeout, CancellationToken ct) => CleanEnd;
 
     public ValueTask DisposeAsync() => ValueTask.CompletedTask;
-
-    private static async IAsyncEnumerable<LlmEvent> EmptyEvents()
-    {
-        await Task.CompletedTask.ConfigureAwait(false);
-        yield break;
-    }
 }

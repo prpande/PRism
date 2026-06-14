@@ -37,9 +37,10 @@ public sealed class NoopStreamingLlmSessionTests
     public async Task ProviderSessionId_is_a_stable_nonempty_value()
     {
         await using var session = StartSession();
+        await using var another = StartSession();
 
         session.ProviderSessionId.Should().NotBeNullOrEmpty();
-        session.ProviderSessionId.Should().Be(session.ProviderSessionId);
+        another.ProviderSessionId.Should().Be(session.ProviderSessionId);
     }
 
     [Fact]
