@@ -5,7 +5,7 @@ using PRism.AI.Contracts.Provider;
 
 namespace PRism.AI.ClaudeCode;
 
-public sealed class ClaudeCodeStreamingSession : IStreamingLlmSession
+public sealed partial class ClaudeCodeStreamingSession : IStreamingLlmSession
 {
     private readonly IStreamingCliProcess _process;
     private readonly ILogger<ClaudeCodeStreamingSession> _logger;   // drift-guard logging (Task 8)
@@ -19,9 +19,7 @@ public sealed class ClaudeCodeStreamingSession : IStreamingLlmSession
     private volatile bool _turnInFlight;
     private TaskCompletionSource? _turnTcs;          // guarded by lock(_turnGate)
     private readonly object _turnGate = new();
-#pragma warning disable CA1823, CS0169  // Fields used in later sub-tasks (4e/Task 8) — not yet referenced
     private int _turnTextCount, _turnToolCount;      // per-turn output counters (drift guard, Task 8)
-#pragma warning restore CA1823, CS0169
     private volatile Task _lastWrite = Task.CompletedTask;     // last stdin write, drained by DisposeAsync (4e)
     private int _disposed;
 
@@ -99,6 +97,17 @@ public sealed class ClaudeCodeStreamingSession : IStreamingLlmSession
     // EndCleanly/Dispose completing the writer, which surfaces as ChannelClosedException, caught above.)
     private async Task CompleteTurnAsync(ResultLine r, CancellationToken ct)
     {
+        if (r.Malformed)   // unmappable result -> unrecoverable (spec §4 turn-termination liveness)
+        {
+            Log.MalformedResult(_logger);
+            lock (_turnGate) { _turnInFlight = false; _turnTcs?.TrySetResult(); }   // resolve the turn
+            _channel.Writer.TryComplete(new LlmProviderException(
+                "claude streaming returned an unmappable result line.", stderr: string.Empty, exitCode: 0));
+            return;
+        }
+        if (!r.IsError && _turnTextCount == 0 && _turnToolCount == 0)
+            Log.ZeroOutputTurn(_logger);
+
         // TRIP BEFORE the (potentially blocking) channel write — else a stalled consumer hangs EndCleanly.
         lock (_turnGate) { _turnInFlight = false; _turnTcs?.TrySetResult(); }
 
@@ -184,6 +193,17 @@ public sealed class ClaudeCodeStreamingSession : IStreamingLlmSession
         await _readerCts.CancelAsync().ConfigureAwait(false);
         _channel.Writer.TryComplete();
         await _process.WaitForExitAsync(TimeSpan.FromSeconds(2), CancellationToken.None).ConfigureAwait(false);
+    }
+
+    private static partial class Log
+    {
+        [LoggerMessage(Level = LogLevel.Warning,
+            Message = "claude stream-json: unrecognized result envelope shape — possible CLI drift (spec §9.1).")]
+        internal static partial void MalformedResult(ILogger logger);
+
+        [LoggerMessage(Level = LogLevel.Warning,
+            Message = "claude stream-json: turn completed with zero text and zero tool output — possible CLI drift (spec §9.1).")]
+        internal static partial void ZeroOutputTurn(ILogger logger);
     }
 
     public async ValueTask DisposeAsync()

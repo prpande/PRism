@@ -265,6 +265,32 @@ public sealed class ClaudeCodeStreamingSessionTests
     }
 
     [Fact]
+    public async Task Malformed_result_logs_warn_and_throws_unrecoverable()
+    {
+        var proc = new FakeStreamingCliProcess();
+        var logger = new CapturingLogger<ClaudeCodeStreamingSession>();
+        await using var session = new ClaudeCodeStreamingSession(proc, logger);
+        proc.EmitLines(Init, """{"type":"result","subtype":"weird_new_shape"}""");
+
+        var act = async () => { await foreach (var _ in session.Events) { } };
+        await act.Should().ThrowAsync<LlmProviderException>();   // turn-termination liveness: unmappable result -> throw
+        logger.Entries.Should().Contain(e => e.Level == LogLevel.Warning && e.Message.Contains("unrecognized"));
+    }
+
+    [Fact]
+    public async Task Turn_with_no_text_and_no_tool_logs_suspect_warn()
+    {
+        var proc = new FakeStreamingCliProcess();
+        var logger = new CapturingLogger<ClaudeCodeStreamingSession>();
+        await using var session = new ClaudeCodeStreamingSession(proc, logger);
+        proc.EmitLines(Init, Result("done"));   // success but zero text_delta, zero tool_use this turn
+        proc.EndStdout();
+        await foreach (var _ in session.Events) { }
+
+        logger.Entries.Should().Contain(e => e.Level == LogLevel.Warning && e.Message.Contains("zero"));
+    }
+
+    [Fact]
     public async Task Back_pressure_small_cap_preserves_all_events_in_order()
     {
         // cap=4 with 50 deltas guarantees the reader BLOCKS on WriteAsync (load >> cap) until the consumer
