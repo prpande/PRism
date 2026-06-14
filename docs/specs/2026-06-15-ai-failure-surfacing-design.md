@@ -148,16 +148,16 @@ hooks also gain a retry nonce. Full shape for `useAiHunkAnnotations` /
 const { report, clear } = useAiFailure();
 const [retryNonce, setRetryNonce] = useState(0);
 const retry = useCallback(() => setRetryNonce((n) => n + 1), []);
-// ...inside the effect (deps include retryNonce):
-const myNonce = retryNonce;                       // last-write-wins guard (see Retry semantics)
+// ...inside the effect (retryNonce is a dep → bumping it re-runs the effect, whose cleanup
+// sets cancelled=true on the prior in-flight fetch — that IS the last-write-wins guard):
 getAiHunkAnnotations(prRef)
   .then((result) => {
-    if (cancelled || myNonce !== retryNonce) return;
+    if (cancelled) return;
     setEntries(result);
     clear(prRef, 'hunk-annotations');             // success OR 204→null both clear
   })
   .catch((err) => {
-    if (cancelled || myNonce !== retryNonce) return;
+    if (cancelled) return;
     setEntries(null);
     if (err instanceof ApiError && err.status === 401) {
       clear(prRef, 'hunk-annotations');           // 401 → auth banner owns it; do NOT report
@@ -197,9 +197,11 @@ updates to the still-failing set; when the set empties the element disappears.
 
 **Stale-resolution guard (last-write-wins).** A pre-Retry request still in flight can
 resolve *after* the Retry's request and wrongly re-report a seam the Retry just
-cleared. Each hook captures the nonce at fetch start and drops any resolution whose
-captured nonce is stale (`myNonce !== retryNonce`), so only the latest attempt's
-outcome reaches `report`/`clear`.
+cleared. The retry mechanism is a `retryNonce` that is an effect **dependency**: bumping
+it re-runs the effect, and the prior effect's cleanup sets `cancelled = true` on the
+in-flight fetch, so a stale pre-Retry resolution returns early on `cancelled` and never
+reaches `report`/`clear`. (`cancelled` is the guard; a `myNonce !== retryNonce` comparison
+within a single effect instance is always false and would be dead code.)
 
 ### Interaction & accessibility states
 

@@ -4,7 +4,7 @@
 
 **Goal:** Surface every AI seam failure (503 / network) through one shared frontend mechanism — a single coalesced, persistent, per-active-PR notification with Retry-all — without disturbing the existing inline error states.
 
-**Architecture:** A new `AiFailureProvider` React context is the single registry. The four AI hooks call `report(prRef, seam, {retry})` on a genuine failure and `clear(...)` on every non-failure branch (success / 204 / off / 401). The provider tracks failures keyed by `(prRefKey, seam)` across all keep-alive tabs, derives the **active** PR from the route (`parsePrRoute` → `prRefKey`), and renders one persistent `AiFailureToast` for the active PR's failed set only. Retry-all re-runs each failed seam's fetch (nonce bump) with last-write-wins guards.
+**Architecture:** A new `AiFailureProvider` React context is the single registry. The four AI hooks call `report(prRef, seam, {retry})` on a genuine failure and `clear(...)` on every non-failure branch (success / 204 / off / 401). The provider tracks failures keyed by `(prRefKey, seam)` across all keep-alive tabs, derives the **active** PR from the route (`parsePrRoute` → `prRefKey`), and a single always-mounted `AiFailureContainer` renders the persistent toast (and the a11y live region) for the active PR's failed set only. Retry-all re-runs each failed seam's fetch; the effect-cleanup `cancelled` flag (the nonce bump re-runs the effect) provides last-write-wins.
 
 **Tech Stack:** React 18 + TypeScript + Vite; vitest + Testing Library (unit/component); Playwright (e2e + visual). Backend untouched (frontend-only slice).
 
@@ -21,20 +21,23 @@
 
 | File | Responsibility | Action |
 |------|----------------|--------|
-| `frontend/src/components/Ai/aiFailure.tsx` | `AiFailureProvider` + `useAiFailure` hook + `AiSeam` type. Registry, active-PR derivation, retry-all + in-flight tracking. | Create |
+| `frontend/src/components/Ai/aiFailure.tsx` | `AiFailureProvider` + `useAiFailure` + `AiSeam` + exported `AiFailureContext` (test seam). Registry, active-PR derivation, retry-all + in-flight tracking. | Create |
 | `frontend/src/components/Ai/aiFailure.test.tsx` | Provider unit tests. | Create |
-| `frontend/src/components/Ai/AiFailureToast.tsx` | Presentational persistent notification (message, Retry, Dismiss, a11y, focus). | Create |
-| `frontend/src/components/Ai/AiFailureToast.module.css` | Styles (reuse Toast tokens). | Create |
-| `frontend/src/components/Ai/AiFailureToast.test.tsx` | Component tests. | Create |
+| `frontend/src/components/Ai/AiFailureToast.tsx` | Presentational toast shell (message, Retry, Dismiss). No live region. | Create |
+| `frontend/src/components/Ai/AiFailureToast.module.css` | Styles incl. fixed positioning (Snackbar pattern). | Create |
+| `frontend/src/components/Ai/AiFailureToast.test.tsx` | Toast component tests. | Create |
+| `frontend/src/components/Ai/AiFailureContainer.tsx` | Always-mounted: hosts the a11y live region + conditionally renders the toast + focus management. | Create |
+| `frontend/src/components/Ai/AiFailureContainer.test.tsx` | Container tests (visibility, live region, dismiss). | Create |
 | `frontend/src/components/Ai/index.ts` | Barrel re-export. | Create |
-| `frontend/src/App.tsx` | Mount provider; render toast next to `ToastContainer`. | Modify |
+| `frontend/src/App.tsx` | Mount provider; render container as a sibling of `ToastContainer`. | Modify |
 | `frontend/src/hooks/useAiHunkAnnotations.ts` | Report/clear + retry nonce + 401 skip. | Modify |
 | `frontend/src/hooks/useAiDraftSuggestions.ts` | Report/clear + retry nonce + 401 skip. | Modify |
-| `frontend/src/hooks/useAiSummary.ts` | Report on error branch; clear on ok/absent; 401 skip. | Modify |
-| `frontend/src/hooks/useFileFocusResult.ts` | Report on error branch; clear on ok/no-content; 401 skip. | Modify |
+| `frontend/src/hooks/useAiSummary.ts` | Report on error; clear on ok/absent/auth/off; 401 skip. | Modify |
+| `frontend/src/hooks/useFileFocusResult.ts` | Report on error; clear on ok/no-content/auth/off; 401 skip. | Modify |
 | `frontend/src/api/aiSummary.ts` + `frontend/src/api/aiFileFocus.ts` | Add `'auth'` outcome from `ApiError.status===401`. | Modify |
-| `frontend/src/api/types.ts` | Extend `AiSummaryResult` / `AiFileFocusOutcome` with `'auth'`. | Modify |
+| `frontend/src/api/types.ts` | Extend `AiSummaryResult` with `'auth'` (note: `AiFileFocusOutcome` lives in `aiFileFocus.ts`, not here). | Modify |
 | `frontend/src/components/PrDetail/PrDetailView.tsx` | `clearPr(prRef)` on unmount. | Modify |
+| `frontend/src/hooks/useAiSummary.test.ts` → `.tsx` | Rename (it will host JSX). | Rename + extend |
 | `frontend/e2e/ai-failure-surfacing.spec.ts` | e2e: forced-503 toast + Retry + recovery + backgrounded tab. | Create |
 
 ---
@@ -45,101 +48,95 @@
 - Create: `frontend/src/components/Ai/aiFailure.tsx`
 - Test: `frontend/src/components/Ai/aiFailure.test.tsx`
 
+> **Two correctness rules baked into this task (from review):**
+> 1. `settle` must NOT mutate `pendingRef` inside a `setState` updater — React 18 StrictMode (active in `main.tsx`) double-invokes updaters, and a ref-mutation inside one strands `retrying=true`. Do the mutation *before* `setState`, gated by a ref read outside the updater; keep the updater pure.
+> 2. `dismissedFingerprint` must reset to `null` whenever the active failed set transitions through empty (a real recovery), so a dismiss → recover → same-seam-refail shows a fresh toast instead of staying hidden on a fingerprint match.
+
 - [ ] **Step 1: Write the failing tests**
 
 ```tsx
 // frontend/src/components/Ai/aiFailure.test.tsx
 import { render, screen, act } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
-import { useEffect } from 'react';
 import { AiFailureProvider, useAiFailure, type AiSeam } from './aiFailure';
 import type { PrReference } from '../../api/types';
 
 const PR_A: PrReference = { owner: 'o', repo: 'r', number: 1 };
 const PR_B: PrReference = { owner: 'o', repo: 'r', number: 2 };
-
-// Test harness: a probe that reports for a given pr/seam and renders the active failed set.
-function Probe({ actions }: { actions: () => void }) {
-  const { activeFailedSeams, retrying } = useAiFailure();
-  useEffect(actions, []); // eslint-disable-line react-hooks/exhaustive-deps
-  return <div data-testid="active">{`${activeFailedSeams.join(',')}|retrying=${retrying}`}</div>;
-}
-
-function renderAt(path: string, actions: () => void) {
-  return render(
-    <MemoryRouter initialEntries={[path]}>
-      <AiFailureProvider>
-        <Probe actions={actions} />
-      </AiFailureProvider>
-    </MemoryRouter>,
-  );
-}
-
 const retryNoop = () => {};
 
-it('renders only the active PR failed set; coalesces multiple seams', () => {
+function Probe() {
+  const { activeFailedSeams, retrying, dismissed } = useAiFailure();
+  return <div data-testid="active">{`${activeFailedSeams.join(',')}|retrying=${retrying}|dismissed=${dismissed}`}</div>;
+}
+function grab(path: string) {
   let api!: ReturnType<typeof useAiFailure>;
   function Grab() { api = useAiFailure(); return null; }
   render(
-    <MemoryRouter initialEntries={['/pr/o/r/1']}>
-      <AiFailureProvider><Grab /><Probe actions={() => {}} /></AiFailureProvider>
+    <MemoryRouter initialEntries={[path]}>
+      <AiFailureProvider><Grab /><Probe /></AiFailureProvider>
     </MemoryRouter>,
   );
+  return () => api;
+}
+
+it('renders only the active PR failed set; coalesces multiple seams in stable order', () => {
+  const api = grab('/pr/o/r/1');
   act(() => {
-    api.report(PR_A, 'summary', { retry: retryNoop });
-    api.report(PR_A, 'hunk-annotations', { retry: retryNoop });
-    api.report(PR_B, 'file-focus', { retry: retryNoop }); // backgrounded PR — recorded, not shown
+    api().report(PR_A, 'hunk-annotations', { retry: retryNoop });
+    api().report(PR_A, 'summary', { retry: retryNoop });
+    api().report(PR_B, 'file-focus', { retry: retryNoop }); // backgrounded — recorded, not shown
   });
-  expect(screen.getByTestId('active').textContent).toBe('summary,hunk-annotations|retrying=false');
+  expect(screen.getByTestId('active').textContent).toBe('summary,hunk-annotations|retrying=false|dismissed=false');
 });
 
 it('clear removes a seam; clearPr removes a whole PR', () => {
-  let api!: ReturnType<typeof useAiFailure>;
-  function Grab() { api = useAiFailure(); return null; }
-  render(
-    <MemoryRouter initialEntries={['/pr/o/r/1']}>
-      <AiFailureProvider><Grab /><Probe actions={() => {}} /></AiFailureProvider>
-    </MemoryRouter>,
-  );
-  act(() => { api.report(PR_A, 'summary', { retry: retryNoop }); api.report(PR_A, 'file-focus', { retry: retryNoop }); });
-  act(() => { api.clear(PR_A, 'summary'); });
-  expect(screen.getByTestId('active').textContent).toBe('file-focus|retrying=false');
-  act(() => { api.clearPr(PR_A); });
-  expect(screen.getByTestId('active').textContent).toBe('|retrying=false');
+  const api = grab('/pr/o/r/1');
+  act(() => { api().report(PR_A, 'summary', { retry: retryNoop }); api().report(PR_A, 'file-focus', { retry: retryNoop }); });
+  act(() => { api().clear(PR_A, 'summary'); });
+  expect(screen.getByTestId('active').textContent).toContain('file-focus|');
+  act(() => { api().clearPr(PR_A); });
+  expect(screen.getByTestId('active').textContent).toBe('|retrying=false|dismissed=false');
 });
 
 it('renders nothing on a non-PR route (activeKey null)', () => {
-  let api!: ReturnType<typeof useAiFailure>;
-  function Grab() { api = useAiFailure(); return null; }
-  render(
-    <MemoryRouter initialEntries={['/']}>
-      <AiFailureProvider><Grab /><Probe actions={() => {}} /></AiFailureProvider>
-    </MemoryRouter>,
-  );
-  act(() => { api.report(PR_A, 'summary', { retry: retryNoop }); });
-  expect(screen.getByTestId('active').textContent).toBe('|retrying=false');
+  const api = grab('/');
+  act(() => { api().report(PR_A, 'summary', { retry: retryNoop }); });
+  expect(screen.getByTestId('active').textContent).toBe('|retrying=false|dismissed=false');
 });
 
-it('retryAll calls every active-PR retry and sets retrying until all settle', () => {
+it('retryAll calls every active-PR retry; retrying clears only after all settle', () => {
   const calls: AiSeam[] = [];
-  let api!: ReturnType<typeof useAiFailure>;
-  function Grab() { api = useAiFailure(); return null; }
-  render(
-    <MemoryRouter initialEntries={['/pr/o/r/1']}>
-      <AiFailureProvider><Grab /><Probe actions={() => {}} /></AiFailureProvider>
-    </MemoryRouter>,
-  );
+  const api = grab('/pr/o/r/1');
   act(() => {
-    api.report(PR_A, 'summary', { retry: () => calls.push('summary') });
-    api.report(PR_A, 'file-focus', { retry: () => calls.push('file-focus') });
+    api().report(PR_A, 'summary', { retry: () => calls.push('summary') });
+    api().report(PR_A, 'file-focus', { retry: () => calls.push('file-focus') });
   });
-  act(() => { api.retryAll(); });
+  act(() => { api().retryAll(); });
   expect(calls.sort()).toEqual(['file-focus', 'summary']);
   expect(screen.getByTestId('active').textContent).toContain('retrying=true');
-  act(() => { api.clear(PR_A, 'summary'); }); // one recovers
+  act(() => { api().clear(PR_A, 'summary'); });               // one recovers
   expect(screen.getByTestId('active').textContent).toContain('retrying=true'); // file-focus still pending
-  act(() => { api.report(PR_A, 'file-focus', { retry: () => {} }); }); // the other re-fails → settles
+  act(() => { api().report(PR_A, 'file-focus', { retry: () => {} }); }); // other re-fails → settles
   expect(screen.getByTestId('active').textContent).toContain('retrying=false');
+});
+
+it('dismiss hides; re-shows on a NEW (different) failure set', () => {
+  const api = grab('/pr/o/r/1');
+  act(() => { api().report(PR_A, 'summary', { retry: retryNoop }); });
+  act(() => { api().dismiss(); });
+  expect(screen.getByTestId('active').textContent).toContain('dismissed=true');
+  act(() => { api().report(PR_A, 'file-focus', { retry: retryNoop }); });
+  expect(screen.getByTestId('active').textContent).toContain('dismissed=false');
+});
+
+it('dismiss → recover → same-seam re-fail shows a fresh toast (fingerprint reset on empty)', () => {
+  const api = grab('/pr/o/r/1');
+  act(() => { api().report(PR_A, 'summary', { retry: retryNoop }); });
+  act(() => { api().dismiss(); });
+  act(() => { api().clear(PR_A, 'summary'); });   // recover → set empties → fingerprint resets
+  act(() => { api().report(PR_A, 'summary', { retry: retryNoop }); }); // same seam fails again
+  expect(screen.getByTestId('active').textContent).toBe('summary|retrying=false|dismissed=false');
 });
 
 it('useAiFailure outside a provider is a no-op (NOOP default)', () => {
@@ -177,41 +174,42 @@ export interface AiFailureApi {
   clearPr: (prRef: PrReference) => void;
   retryAll: () => void;
   dismiss: () => void;
-  // Derived view for the active PR:
-  activeFailedSeams: AiSeam[];
-  retrying: boolean;
-  dismissed: boolean;
+  // Read-only DERIVED views for the active PR (computed each render — not setters):
+  activeFailedSeams: AiSeam[]; // failed seams for the active PR, in stable SEAM_ORDER
+  retrying: boolean;           // a Retry-all is in flight for the active PR
+  dismissed: boolean;          // user dismissed the current failure-set fingerprint
 }
 
 const NOOP: AiFailureApi = {
   report: () => {}, clear: () => {}, clearPr: () => {}, retryAll: () => {}, dismiss: () => {},
   activeFailedSeams: [], retrying: false, dismissed: false,
 };
-// Exported as a test seam (mirrors OpenTabsContext) so a unit test can inject a
-// stub value with spy methods. App code consumes via useAiFailure(), not this directly.
+
+// Exported as a test seam (mirrors OpenTabsContext) so a unit test can inject a stub value with
+// spy methods. App code consumes via useAiFailure(), not this directly.
 export const AiFailureContext = createContext<AiFailureApi>(NOOP);
 
-// Stable seam ordering for display (summary first, then the rest).
 const SEAM_ORDER: AiSeam[] = ['summary', 'file-focus', 'hunk-annotations', 'draft-suggestions'];
 
 export function AiFailureProvider({ children }: { children: ReactNode }) {
   const [failures, setFailures] = useState<FailureMap>({});
   const [retryingKey, setRetryingKey] = useState<string | null>(null);
-  const pendingRef = useRef<Set<AiSeam>>(new Set());
-  // The failure-set fingerprint that was on screen when the user last dismissed;
-  // a new failure (different fingerprint) re-shows the toast.
   const [dismissedFingerprint, setDismissedFingerprint] = useState<string | null>(null);
+  // Refs read OUTSIDE setState updaters so the updaters stay pure (StrictMode double-invokes them).
+  const pendingRef = useRef<Set<AiSeam>>(new Set());
+  const retryingKeyRef = useRef<string | null>(null);
+  retryingKeyRef.current = retryingKey;
 
   const { pathname } = useEffectiveLocation();
   const route = parsePrRoute(pathname);
   const activeKey = route && route.valid ? prRefKey(route.ref) : null;
 
+  // Pure: compute decision from refs BEFORE setState; updater only returns the next value.
   const settle = useCallback((key: string, seam: AiSeam) => {
-    setRetryingKey((cur) => {
-      if (cur !== key || !pendingRef.current.has(seam)) return cur;
-      pendingRef.current.delete(seam);
-      return pendingRef.current.size === 0 ? null : cur;
-    });
+    if (retryingKeyRef.current !== key || !pendingRef.current.has(seam)) return;
+    pendingRef.current.delete(seam);
+    const empty = pendingRef.current.size === 0;
+    setRetryingKey((cur) => (cur === key && empty ? null : cur));
   }, []);
 
   const report = useCallback((prRef: PrReference, seam: AiSeam, opts: FailureEntry) => {
@@ -228,7 +226,13 @@ export function AiFailureProvider({ children }: { children: ReactNode }) {
       const next = { ...forPr };
       delete next[seam];
       const out = { ...prev };
-      if (Object.keys(next).length === 0) delete out[key]; else out[key] = next;
+      if (Object.keys(next).length === 0) {
+        delete out[key];
+        // Real recovery for this PR: reset any dismissal so a later identical failure re-shows.
+        setDismissedFingerprint((d) => (d && d.startsWith(`${key}:`) ? null : d));
+      } else {
+        out[key] = next;
+      }
       return out;
     });
     settle(key, seam);
@@ -241,13 +245,13 @@ export function AiFailureProvider({ children }: { children: ReactNode }) {
       const out = { ...prev }; delete out[key]; return out;
     });
     setRetryingKey((cur) => (cur === key ? null : cur));
+    setDismissedFingerprint((d) => (d && d.startsWith(`${key}:`) ? null : d));
   }, []);
 
   const activeFailedSeams = useMemo<AiSeam[]>(() => {
     if (!activeKey) return [];
     const forPr = failures[activeKey];
-    if (!forPr) return [];
-    return SEAM_ORDER.filter((s) => s in forPr);
+    return forPr ? SEAM_ORDER.filter((s) => s in forPr) : [];
   }, [activeKey, failures]);
 
   const fingerprint = activeKey ? `${activeKey}:${activeFailedSeams.join(',')}` : '';
@@ -285,25 +289,27 @@ export function useAiFailure(): AiFailureApi {
 - [ ] **Step 4: Run the tests to verify they pass**
 
 Run: `cd frontend && node ./node_modules/vitest/vitest.mjs run src/components/Ai/aiFailure.test.tsx`
-Expected: PASS (6 tests).
+Expected: PASS (7 tests).
 
 - [ ] **Step 5: Typecheck + commit**
 
 ```bash
 cd frontend && npx tsc -b
 git add frontend/src/components/Ai/aiFailure.tsx frontend/src/components/Ai/aiFailure.test.tsx
-git commit -m "feat(ai): #484 AiFailureProvider registry + active-PR derivation"
+git commit -m "feat(ai): #484 AiFailureProvider registry (pure settle, dismissal reset)"
 ```
 
 ---
 
-## Task 2: `AiFailureToast` presentational component
+## Task 2: `AiFailureToast` presentational shell
 
 **Files:**
 - Create: `frontend/src/components/Ai/AiFailureToast.tsx`, `AiFailureToast.module.css`, `index.ts`
 - Test: `frontend/src/components/Ai/AiFailureToast.test.tsx`
 
-Display-name map (spec Copy): `summary`→"summary", `file-focus`→"hotspots", `hunk-annotations`→"annotations", `draft-suggestions`→"draft suggestions".
+The toast is the **visible** shell only. The a11y live region is NOT here — it lives in the always-mounted `AiFailureContainer` (Task 3) so the empty→text content change reliably announces (a live region injected already-populated does not announce on mount). The toast needs **fixed positioning** or it renders in document flow and may be invisible — adopt the `Snackbar`/`StreamHealthSnackbar` pattern.
+
+Display-name map: `summary`→"summary", `file-focus`→"hotspots", `hunk-annotations`→"annotations", `draft-suggestions`→"draft suggestions".
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -313,12 +319,12 @@ import { render, screen, fireEvent } from '@testing-library/react';
 import { AiFailureToast } from './AiFailureToast';
 import type { AiSeam } from './aiFailure';
 
-function setup(over: Partial<Parameters<typeof AiFailureToast>[0]> = {}) {
+function setup(over: { seams?: AiSeam[]; retrying?: boolean } = {}) {
   const onRetry = vi.fn();
   const onDismiss = vi.fn();
   render(
     <AiFailureToast
-      seams={(over.seams ?? ['summary', 'file-focus', 'hunk-annotations']) as AiSeam[]}
+      seams={over.seams ?? (['summary', 'file-focus', 'hunk-annotations'] as AiSeam[])}
       retrying={over.retrying ?? false}
       onRetry={onRetry}
       onDismiss={onDismiss}
@@ -327,17 +333,12 @@ function setup(over: Partial<Parameters<typeof AiFailureToast>[0]> = {}) {
   return { onRetry, onDismiss };
 }
 
-it('renders nothing when there are no seams', () => {
-  const { container } = render(<AiFailureToast seams={[]} retrying={false} onRetry={() => {}} onDismiss={() => {}} />);
-  expect(container).toBeEmptyDOMElement();
-});
-
 it('lists failed seams using display names', () => {
   setup({ seams: ['summary', 'file-focus', 'hunk-annotations'] });
   expect(screen.getByText(/summary, hotspots, annotations/)).toBeInTheDocument();
 });
 
-it('Retry button fires onRetry and is enabled when not retrying', () => {
+it('Retry fires onRetry and is enabled when not retrying', () => {
   const { onRetry } = setup({ retrying: false });
   const btn = screen.getByRole('button', { name: 'Retry' });
   expect(btn).toBeEnabled();
@@ -347,21 +348,13 @@ it('Retry button fires onRetry and is enabled when not retrying', () => {
 
 it('shows a disabled "Retrying…" button while retrying', () => {
   setup({ retrying: true });
-  const btn = screen.getByRole('button', { name: 'Retrying…' });
-  expect(btn).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Retrying…' })).toBeDisabled();
 });
 
-it('Dismiss button fires onDismiss', () => {
+it('Dismiss fires onDismiss', () => {
   const { onDismiss } = setup();
   fireEvent.click(screen.getByRole('button', { name: 'Dismiss' }));
   expect(onDismiss).toHaveBeenCalledOnce();
-});
-
-it('announces via a polite live region on appearance only', () => {
-  setup();
-  const live = screen.getByTestId('ai-failure-live');
-  expect(live).toHaveAttribute('aria-live', 'polite');
-  expect(live.textContent).toBe('AI generation failed.'); // stable phrase, not the mutable seam list
 });
 ```
 
@@ -370,7 +363,7 @@ it('announces via a polite live region on appearance only', () => {
 Run: `cd frontend && node ./node_modules/vitest/vitest.mjs run src/components/Ai/AiFailureToast.test.tsx`
 Expected: FAIL — `Cannot find module './AiFailureToast'`.
 
-- [ ] **Step 3: Implement the component + styles + barrel**
+- [ ] **Step 3: Implement the shell + styles + barrel**
 
 ```tsx
 // frontend/src/components/Ai/AiFailureToast.tsx
@@ -392,22 +385,16 @@ interface Props {
 }
 
 export function AiFailureToast({ seams, retrying, onRetry, onDismiss }: Props) {
-  if (seams.length === 0) return null;
   const names = seams.map((s) => DISPLAY_NAME[s]).join(', ');
   return (
     <div className={styles.toast} role="group" aria-label="AI generation failure">
-      {/* Stable phrase in the live region — announced on appear/disappear only, NOT on
-          partial-recovery message mutation (the mutable seam list lives in aria-hidden text). */}
-      <span className="sr-only" aria-live="polite" data-testid="ai-failure-live">
-        AI generation failed.
-      </span>
-      <span className={styles.message} aria-hidden="true">
+      <span className={styles.message}>
         {`AI couldn't generate: ${names} — the provider failed or timed out.`}
       </span>
       <button type="button" className={styles.retry} onClick={onRetry} disabled={retrying}>
         {retrying ? 'Retrying…' : 'Retry'}
       </button>
-      <button type="button" className={styles.dismiss} onClick={onDismiss} aria-label="Dismiss">
+      <button type="button" className={styles.dismiss} onClick={onDismiss}>
         Dismiss
       </button>
     </div>
@@ -416,17 +403,24 @@ export function AiFailureToast({ seams, retrying, onRetry, onDismiss }: Props) {
 ```
 
 ```css
-/* frontend/src/components/Ai/AiFailureToast.module.css — reuse Toast visual tokens */
+/* frontend/src/components/Ai/AiFailureToast.module.css
+   Fixed-position, reusing Toast tokens + the Snackbar/StreamHealthSnackbar placement pattern
+   (position:fixed, centered, z-index in the existing ladder: Snackbar=200 < modal=1000). */
 .toast {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 200;
   display: flex;
   gap: 12px;
   align-items: center;
+  max-width: min(680px, calc(100vw - 32px));
   padding: 12px 16px;
   border-radius: 8px;
   background: var(--surface-1);
   border: 1px solid var(--danger, var(--border-1));
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
-  margin-bottom: 8px;
 }
 .message { flex: 1 1 auto; }
 .retry, .dismiss {
@@ -443,34 +437,38 @@ export function AiFailureToast({ seams, retrying, onRetry, onDismiss }: Props) {
 
 ```ts
 // frontend/src/components/Ai/index.ts
-export { AiFailureProvider, useAiFailure } from './aiFailure';
+export { AiFailureProvider, useAiFailure, AiFailureContext } from './aiFailure';
 export type { AiSeam, AiFailureApi } from './aiFailure';
 export { AiFailureToast } from './AiFailureToast';
+export { AiFailureContainer } from './AiFailureContainer';
 ```
+
+> The barrel re-exports `AiFailureContainer` (Task 3); create the barrel now but expect the `AiFailureContainer` line to be unresolved until Task 3 — or add that line in Task 3. (If your tooling errors on the missing module, omit the `AiFailureContainer` line here and add it in Task 3.)
 
 - [ ] **Step 4: Run to verify they pass**
 
 Run: `cd frontend && node ./node_modules/vitest/vitest.mjs run src/components/Ai/AiFailureToast.test.tsx`
-Expected: PASS (6 tests).
+Expected: PASS (4 tests).
 
 - [ ] **Step 5: Typecheck + commit**
 
 ```bash
 cd frontend && npx tsc -b
-git add frontend/src/components/Ai/
-git commit -m "feat(ai): #484 AiFailureToast persistent notification"
+git add frontend/src/components/Ai/AiFailureToast.tsx frontend/src/components/Ai/AiFailureToast.module.css frontend/src/components/Ai/index.ts frontend/src/components/Ai/AiFailureToast.test.tsx
+git commit -m "feat(ai): #484 AiFailureToast shell (fixed-position, Retry/Dismiss)"
 ```
 
 ---
 
-## Task 3: Mount provider + render the toast in `App`
+## Task 3: `AiFailureContainer` (live region + visibility + focus) + mount in `App`
 
 **Files:**
-- Modify: `frontend/src/App.tsx` (provider nesting near line 197–214; `tree` JSX near line 188 next to `<ToastContainer />`)
-- Create: `frontend/src/components/Ai/AiFailureContainer.tsx` (binds context → component)
-- Test: `frontend/src/components/Ai/AiFailureContainer.test.tsx`
+- Create: `frontend/src/components/Ai/AiFailureContainer.tsx`, `AiFailureContainer.test.tsx`
+- Modify: `frontend/src/App.tsx`
 
-- [ ] **Step 1: Write the failing test for the container binding**
+The container is **always mounted** so its `aria-live` region pre-exists in the DOM (empty), and the empty→"AI generation failed." content change announces on first failure (and reverts to empty on recovery). It renders the visible toast only when there is an active, non-dismissed failure. It also performs **focus management**: if the toast was visible and becomes hidden *while focus had fallen to the body* (the focused Retry/Dismiss button was destroyed), it moves focus to the PR main region — WCAG 2.4.3 — without stealing focus when the user is elsewhere.
+
+- [ ] **Step 1: Write the failing tests**
 
 ```tsx
 // frontend/src/components/Ai/AiFailureContainer.test.tsx
@@ -481,37 +479,54 @@ import { AiFailureContainer } from './AiFailureContainer';
 import type { PrReference } from '../../api/types';
 
 const PR_A: PrReference = { owner: 'o', repo: 'r', number: 1 };
-
-it('renders the toast for the active PR failed set and wires dismiss', () => {
+function harness(path = '/pr/o/r/1') {
   let api!: ReturnType<typeof useAiFailure>;
   function Grab() { api = useAiFailure(); return null; }
   render(
-    <MemoryRouter initialEntries={['/pr/o/r/1']}>
+    <MemoryRouter initialEntries={[path]}>
       <AiFailureProvider><Grab /><AiFailureContainer /></AiFailureProvider>
     </MemoryRouter>,
   );
-  expect(screen.queryByRole('group', { name: 'AI generation failure' })).toBeNull();
-  act(() => { api.report(PR_A, 'summary', { retry: () => {} }); });
+  return () => api;
+}
+
+it('live region pre-exists empty, populates on failure, empties on recovery', () => {
+  const api = harness();
+  const live = screen.getByTestId('ai-failure-live');
+  expect(live).toHaveAttribute('aria-live', 'polite');
+  expect(live.textContent).toBe('');
+  act(() => { api().report(PR_A, 'summary', { retry: () => {} }); });
+  expect(live.textContent).toBe('AI generation failed.');
   expect(screen.getByText(/AI couldn't generate: summary/)).toBeInTheDocument();
+  act(() => { api().clear(PR_A, 'summary'); });
+  expect(live.textContent).toBe('');
+  expect(screen.queryByText(/AI couldn't generate/)).toBeNull();
+});
+
+it('partial recovery does not change the live-region text (no re-announce)', () => {
+  const api = harness();
+  act(() => {
+    api().report(PR_A, 'summary', { retry: () => {} });
+    api().report(PR_A, 'file-focus', { retry: () => {} });
+  });
+  const live = screen.getByTestId('ai-failure-live');
+  expect(live.textContent).toBe('AI generation failed.');
+  act(() => { api().clear(PR_A, 'summary'); }); // 2 → 1 seam
+  expect(live.textContent).toBe('AI generation failed.'); // unchanged → no new announcement
+  expect(screen.getByText(/AI couldn't generate: hotspots/)).toBeInTheDocument();
 });
 
 it('hides the toast after dismiss until a new failure', () => {
-  let api!: ReturnType<typeof useAiFailure>;
-  function Grab() { api = useAiFailure(); return null; }
-  render(
-    <MemoryRouter initialEntries={['/pr/o/r/1']}>
-      <AiFailureProvider><Grab /><AiFailureContainer /></AiFailureProvider>
-    </MemoryRouter>,
-  );
-  act(() => { api.report(PR_A, 'summary', { retry: () => {} }); });
-  act(() => { api.dismiss(); });
+  const api = harness();
+  act(() => { api().report(PR_A, 'summary', { retry: () => {} }); });
+  act(() => { api().dismiss(); });
   expect(screen.queryByText(/AI couldn't generate/)).toBeNull();
-  act(() => { api.report(PR_A, 'file-focus', { retry: () => {} }); }); // new fingerprint → re-shows
+  act(() => { api().report(PR_A, 'file-focus', { retry: () => {} }); });
   expect(screen.getByText(/AI couldn't generate: summary, hotspots/)).toBeInTheDocument();
 });
 ```
 
-- [ ] **Step 2: Run to verify it fails**
+- [ ] **Step 2: Run to verify they fail**
 
 Run: `cd frontend && node ./node_modules/vitest/vitest.mjs run src/components/Ai/AiFailureContainer.test.tsx`
 Expected: FAIL — `Cannot find module './AiFailureContainer'`.
@@ -520,38 +535,63 @@ Expected: FAIL — `Cannot find module './AiFailureContainer'`.
 
 ```tsx
 // frontend/src/components/Ai/AiFailureContainer.tsx
+import { useEffect, useRef } from 'react';
 import { useAiFailure } from './aiFailure';
 import { AiFailureToast } from './AiFailureToast';
 
 export function AiFailureContainer() {
   const { activeFailedSeams, retrying, dismissed, retryAll, dismiss } = useAiFailure();
-  if (dismissed) return null;
+  const visible = activeFailedSeams.length > 0 && !dismissed;
+  const wasVisible = useRef(false);
+
+  // WCAG 2.4.3: if the toast's focused button is destroyed on hide (focus fell to body),
+  // move focus to the PR main region. Do NOT steal focus when the user is elsewhere.
+  useEffect(() => {
+    if (wasVisible.current && !visible) {
+      const focusLost = document.activeElement == null || document.activeElement === document.body;
+      if (focusLost) {
+        // Confirm this selector against PrDetailView's DOM during impl; falls back to <main>.
+        const target =
+          document.querySelector<HTMLElement>('[data-pr-main]') ??
+          document.querySelector<HTMLElement>('main');
+        target?.focus();
+      }
+    }
+    wasVisible.current = visible;
+  }, [visible]);
+
   return (
-    <AiFailureToast
-      seams={activeFailedSeams}
-      retrying={retrying}
-      onRetry={retryAll}
-      onDismiss={dismiss}
-    />
+    <>
+      {/* Always-mounted polite live region — empty until a failure, so the ''→text change
+          announces on appearance (and the text→'' change marks disappearance). The mutable
+          seam list is NOT in here, so partial recovery does not re-announce. */}
+      <span className="sr-only" aria-live="polite" data-testid="ai-failure-live">
+        {visible ? 'AI generation failed.' : ''}
+      </span>
+      {visible && (
+        <AiFailureToast
+          seams={activeFailedSeams}
+          retrying={retrying}
+          onRetry={retryAll}
+          onDismiss={dismiss}
+        />
+      )}
+    </>
   );
 }
 ```
 
-Add to the barrel `frontend/src/components/Ai/index.ts`:
-
-```ts
-export { AiFailureContainer } from './AiFailureContainer';
-```
+> If `[data-pr-main]` does not exist, add `data-pr-main tabIndex={-1}` to PrDetailView's top-level content wrapper (a `tabIndex=-1` element is programmatically focusable without entering the tab order). The fallback `<main>` keeps the call safe (no-op if neither is found).
 
 - [ ] **Step 4: Wire into `App.tsx`**
 
-In `frontend/src/App.tsx`, import:
+Import:
 
 ```ts
 import { AiFailureProvider, AiFailureContainer } from './components/Ai';
 ```
 
-Mount `AiFailureProvider` inside `PreferencesProvider` so it covers the authed tree (the AI hooks live under it) — wrap the `isAuthed ? ... : tree` expression:
+Mount `AiFailureProvider` inside `PreferencesProvider`, wrapping the authed/unauthed branch (the four AI hooks live under it; context crosses the `EventStreamProvider` boundary fine):
 
 ```tsx
 <PreferencesProvider>
@@ -561,23 +601,24 @@ Mount `AiFailureProvider` inside `PreferencesProvider` so it covers the authed t
 </PreferencesProvider>
 ```
 
-In the `tree` JSX, render the container right after `<ToastContainer />`:
+In the `tree` JSX, render the container as a **sibling** of `<ToastContainer />` (NOT nested inside it — `ToastContainer` is itself an `aria-live` region, and nesting live regions is undefined behavior):
 
 ```tsx
 <ToastContainer />
+{/* sibling of ToastContainer, not a child — both are independent live regions */}
 <AiFailureContainer />
 ```
 
 - [ ] **Step 5: Run container tests + full Ai suite + typecheck**
 
 Run: `cd frontend && node ./node_modules/vitest/vitest.mjs run src/components/Ai/`
-Expected: PASS (all Ai tests). Then `npx tsc -b`.
+Expected: PASS. Then `cd frontend && npx tsc -b`.
 
 - [ ] **Step 6: Commit**
 
 ```bash
 git add frontend/src/components/Ai/ frontend/src/App.tsx
-git commit -m "feat(ai): #484 mount AiFailureProvider + render container in App"
+git commit -m "feat(ai): #484 AiFailureContainer (live region + focus) mounted in App"
 ```
 
 ---
@@ -588,11 +629,13 @@ git commit -m "feat(ai): #484 mount AiFailureProvider + render container in App"
 - Modify: `frontend/src/hooks/useAiHunkAnnotations.ts`
 - Test: `frontend/src/hooks/useAiHunkAnnotations.test.tsx` (create if absent)
 
+> **Last-write-wins:** the retry mechanism is a `retryNonce` that is an effect **dependency** — bumping it re-runs the effect, whose cleanup sets `cancelled = true` on the prior in-flight fetch. A stale pre-retry resolution therefore returns early on `cancelled`. (Do NOT add a `myNonce !== retryNonce` comparison — within one effect instance the captured nonce equals the closure nonce, so that check is dead code; `cancelled` is the real guard.)
+
 - [ ] **Step 1: Write the failing tests**
 
 ```tsx
 // frontend/src/hooks/useAiHunkAnnotations.test.tsx
-import { renderHook, waitFor, act } from '@testing-library/react';
+import { renderHook, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import type { ReactNode } from 'react';
 import { useAiHunkAnnotations } from './useAiHunkAnnotations';
@@ -606,21 +649,20 @@ const wrapper = ({ children }: { children: ReactNode }) => (
   <MemoryRouter initialEntries={['/pr/o/r/1']}><AiFailureProvider>{children}</AiFailureProvider></MemoryRouter>
 );
 
-it('reports a failure on 503 and the active set lists annotations', async () => {
+it('reports a failure on 503', async () => {
   vi.spyOn(api, 'getAiHunkAnnotations').mockRejectedValue(new ApiError(503, null, ''));
-  const { result } = renderHook(() => ({ entries: useAiHunkAnnotations(PR, true), fail: useAiFailure() }), { wrapper });
-  await waitFor(() => expect(result.current.fail.activeFailedSeams).toContain('hunk-annotations'));
+  const { result } = renderHook(() => ({ e: useAiHunkAnnotations(PR, true), f: useAiFailure() }), { wrapper });
+  await waitFor(() => expect(result.current.f.activeFailedSeams).toContain('hunk-annotations'));
 });
 
-it('does NOT report on 401 (auth banner owns it); still clears', async () => {
+it('does NOT report on 401; still clears', async () => {
   vi.spyOn(api, 'getAiHunkAnnotations').mockRejectedValue(new ApiError(401, null, ''));
-  const { result } = renderHook(() => useAiFailure(), { wrapper });
-  renderHook(() => useAiHunkAnnotations(PR, true), { wrapper });
+  const { result } = renderHook(() => ({ e: useAiHunkAnnotations(PR, true), f: useAiFailure() }), { wrapper });
   await waitFor(() => {});
-  expect(result.current.activeFailedSeams).not.toContain('hunk-annotations');
+  expect(result.current.f.activeFailedSeams).not.toContain('hunk-annotations');
 });
 
-it('clears on success (or 204→null)', async () => {
+it('clears on success / 204→null', async () => {
   vi.spyOn(api, 'getAiHunkAnnotations').mockResolvedValue(null);
   const { result } = renderHook(() => ({ e: useAiHunkAnnotations(PR, true), f: useAiFailure() }), { wrapper });
   await waitFor(() => expect(result.current.f.activeFailedSeams).not.toContain('hunk-annotations'));
@@ -630,23 +672,19 @@ it('clears on success (or 204→null)', async () => {
 - [ ] **Step 2: Run to verify they fail**
 
 Run: `cd frontend && node ./node_modules/vitest/vitest.mjs run src/hooks/useAiHunkAnnotations.test.tsx`
-Expected: FAIL — no report happens (hook still swallows in `.catch`).
+Expected: FAIL — no report (hook still swallows).
 
 - [ ] **Step 3: Implement**
 
-Replace the body of `frontend/src/hooks/useAiHunkAnnotations.ts`:
-
 ```ts
+// frontend/src/hooks/useAiHunkAnnotations.ts
 import { useCallback, useEffect, useState } from 'react';
 import { getAiHunkAnnotations } from '../api/aiHunkAnnotations';
 import { ApiError } from '../api/client';
 import { useAiFailure } from '../components/Ai/aiFailure';
 import type { PrReference, HunkAnnotation } from '../api/types';
 
-export function useAiHunkAnnotations(
-  prRef: PrReference,
-  enabled: boolean,
-): HunkAnnotation[] | null {
+export function useAiHunkAnnotations(prRef: PrReference, enabled: boolean): HunkAnnotation[] | null {
   const [entries, setEntries] = useState<HunkAnnotation[] | null>(null);
   const [retryNonce, setRetryNonce] = useState(0);
   const retry = useCallback(() => setRetryNonce((n) => n + 1), []);
@@ -659,33 +697,25 @@ export function useAiHunkAnnotations(
       return;
     }
     let cancelled = false;
-    const myNonce = retryNonce;
     getAiHunkAnnotations(prRef)
       .then((result) => {
-        if (cancelled || myNonce !== retryNonce) return;
+        if (cancelled) return;
         setEntries(result);
         clear(prRef, 'hunk-annotations');
       })
       .catch((err) => {
-        if (cancelled || myNonce !== retryNonce) return;
+        if (cancelled) return;
         setEntries(null);
-        if (err instanceof ApiError && err.status === 401) {
-          clear(prRef, 'hunk-annotations');
-        } else {
-          report(prRef, 'hunk-annotations', { retry });
-        }
+        if (err instanceof ApiError && err.status === 401) clear(prRef, 'hunk-annotations');
+        else report(prRef, 'hunk-annotations', { retry });
       });
-    return () => {
-      cancelled = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- stable primitive prRef fields; retryNonce re-runs the fetch; report/clear/retry are stable (#331)
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- stable primitive prRef fields; retryNonce re-runs the fetch (cleanup cancels the prior); report/clear/retry are stable (#331)
   }, [prRef.owner, prRef.repo, prRef.number, enabled, retryNonce]);
 
   return entries;
 }
 ```
-
-> The `myNonce !== retryNonce` guard is the last-write-wins protection (spec §Retry semantics). `report`/`clear`/`retry` are stable identities (provider memoizes; `retry` is `useCallback`), so omitting them from deps does not stale.
 
 - [ ] **Step 4: Run to verify they pass**
 
@@ -726,7 +756,7 @@ const wrapper = ({ children }: { children: ReactNode }) => (
   <MemoryRouter initialEntries={['/pr/o/r/1']}><AiFailureProvider>{children}</AiFailureProvider></MemoryRouter>
 );
 
-it('reports draft-suggestions on a non-401 throw', async () => {
+it('reports on any non-401 throw (the seam has no backend 503 path today — see spec)', async () => {
   vi.spyOn(api, 'getAiDraftSuggestions').mockRejectedValue(new ApiError(500, null, ''));
   const { result } = renderHook(() => ({ e: useAiDraftSuggestions(PR, true), f: useAiFailure() }), { wrapper });
   await waitFor(() => expect(result.current.f.activeFailedSeams).toContain('draft-suggestions'));
@@ -740,26 +770,22 @@ it('does NOT report on 401', async () => {
 });
 ```
 
-> The 500 case in the first test reflects the spec's note that draft-suggestions has no backend `try/catch` today — the hook reports on *any* non-401 throw, future-proofing for when the real seam maps to 503.
-
 - [ ] **Step 2: Run to verify they fail**
 
 Run: `cd frontend && node ./node_modules/vitest/vitest.mjs run src/hooks/useAiDraftSuggestions.test.tsx`
 Expected: FAIL — no report.
 
-- [ ] **Step 3: Implement** — apply the exact same transform as Task 4, with seam `'draft-suggestions'`:
+- [ ] **Step 3: Implement** — same transform as Task 4 with seam `'draft-suggestions'`:
 
 ```ts
+// frontend/src/hooks/useAiDraftSuggestions.ts
 import { useCallback, useEffect, useState } from 'react';
 import { getAiDraftSuggestions } from '../api/aiDraftSuggestions';
 import { ApiError } from '../api/client';
 import { useAiFailure } from '../components/Ai/aiFailure';
 import type { PrReference, DraftSuggestion } from '../api/types';
 
-export function useAiDraftSuggestions(
-  prRef: PrReference,
-  enabled: boolean,
-): DraftSuggestion[] | null {
+export function useAiDraftSuggestions(prRef: PrReference, enabled: boolean): DraftSuggestion[] | null {
   const [entries, setEntries] = useState<DraftSuggestion[] | null>(null);
   const [retryNonce, setRetryNonce] = useState(0);
   const retry = useCallback(() => setRetryNonce((n) => n + 1), []);
@@ -772,25 +798,19 @@ export function useAiDraftSuggestions(
       return;
     }
     let cancelled = false;
-    const myNonce = retryNonce;
     getAiDraftSuggestions(prRef)
       .then((result) => {
-        if (cancelled || myNonce !== retryNonce) return;
+        if (cancelled) return;
         setEntries(result);
         clear(prRef, 'draft-suggestions');
       })
       .catch((err) => {
-        if (cancelled || myNonce !== retryNonce) return;
+        if (cancelled) return;
         setEntries(null);
-        if (err instanceof ApiError && err.status === 401) {
-          clear(prRef, 'draft-suggestions');
-        } else {
-          report(prRef, 'draft-suggestions', { retry });
-        }
+        if (err instanceof ApiError && err.status === 401) clear(prRef, 'draft-suggestions');
+        else report(prRef, 'draft-suggestions', { retry });
       });
-    return () => {
-      cancelled = true;
-    };
+    return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- stable primitive prRef fields; retryNonce re-runs the fetch (#331)
   }, [prRef.owner, prRef.repo, prRef.number, enabled, retryNonce]);
 
@@ -817,39 +837,66 @@ git commit -m "feat(ai): #484 wire draft-suggestions failure reporting + retry"
 
 **Files:**
 - Modify: `frontend/src/api/types.ts` (extend `AiSummaryResult`), `frontend/src/api/aiSummary.ts`, `frontend/src/hooks/useAiSummary.ts`
-- Test: extend `frontend/src/hooks/useAiSummary.test.tsx` (or create)
+- Rename + extend: `frontend/src/hooks/useAiSummary.test.ts` → `useAiSummary.test.tsx` (it will host JSX; the rename carries the existing 6 tests)
 
-- [ ] **Step 1: Write the failing tests**
+- [ ] **Step 1: Rename the test file, then write the failing tests**
+
+First rename so JSX compiles and the run path matches:
+
+```bash
+git mv frontend/src/hooks/useAiSummary.test.ts frontend/src/hooks/useAiSummary.test.tsx
+```
+
+Append (the regenerate path must mock `regenerateAiSummary` — the POST — NOT `getAiSummaryResult`; the existing regenerate tests in this file already mock `regenerateAiSummary`):
 
 ```tsx
-// add to frontend/src/hooks/useAiSummary.test.tsx
-import { renderHook, waitFor } from '@testing-library/react';
+// append to frontend/src/hooks/useAiSummary.test.tsx
 import { MemoryRouter } from 'react-router-dom';
 import type { ReactNode } from 'react';
-import { useAiSummary } from './useAiSummary';
 import { AiFailureProvider, useAiFailure } from '../components/Ai/aiFailure';
-import * as api from '../api/aiSummary';
-import type { PrReference } from '../api/types';
 
-const PR: PrReference = { owner: 'o', repo: 'r', number: 1 };
-const wrapper = ({ children }: { children: ReactNode }) => (
+const FAIL_PR = { owner: 'o', repo: 'r', number: 1 } as const;
+const failWrapper = ({ children }: { children: ReactNode }) => (
   <MemoryRouter initialEntries={['/pr/o/r/1']}><AiFailureProvider>{children}</AiFailureProvider></MemoryRouter>
 );
 
-it('reports summary on kind:error and clears on kind:auth', async () => {
-  const spy = vi.spyOn(api, 'getAiSummaryResult').mockResolvedValue({ kind: 'error' });
-  const { result, rerender } = renderHook(() => ({ s: useAiSummary(PR, true, true, false), f: useAiFailure() }), { wrapper });
+it('reports summary on initial-fetch kind:error', async () => {
+  vi.spyOn(api, 'getAiSummaryResult').mockResolvedValue({ kind: 'error' });
+  const { result } = renderHook(
+    () => ({ s: useAiSummary(FAIL_PR, true, true, false), f: useAiFailure() }),
+    { wrapper: failWrapper },
+  );
   await waitFor(() => expect(result.current.f.activeFailedSeams).toContain('summary'));
-  spy.mockResolvedValue({ kind: 'auth' });
-  result.current.s.regenerate(); // triggers a fresh fetch path
-  await waitFor(() => expect(result.current.f.activeFailedSeams).not.toContain('summary'));
+});
+
+it('does NOT report on kind:auth; clears', async () => {
+  vi.spyOn(api, 'getAiSummaryResult').mockResolvedValue({ kind: 'auth' });
+  const { result } = renderHook(
+    () => ({ s: useAiSummary(FAIL_PR, true, true, false), f: useAiFailure() }),
+    { wrapper: failWrapper },
+  );
+  await waitFor(() => {});
+  expect(result.current.f.activeFailedSeams).not.toContain('summary');
+});
+
+it('regenerate failure reports; regenerate success clears', async () => {
+  vi.spyOn(api, 'getAiSummaryResult').mockResolvedValue({ kind: 'error' }); // initial fetch fails → reports
+  const regen = vi.spyOn(api, 'regenerateAiSummary').mockResolvedValue({ kind: 'ok', summary: { /* PrSummary fields */ } as never });
+  const { result } = renderHook(
+    () => ({ s: useAiSummary(FAIL_PR, true, true, false), f: useAiFailure() }),
+    { wrapper: failWrapper },
+  );
+  await waitFor(() => expect(result.current.f.activeFailedSeams).toContain('summary'));
+  await act(async () => { await result.current.s.regenerate(); }); // POST path → clears
+  expect(result.current.f.activeFailedSeams).not.toContain('summary');
+  expect(regen).toHaveBeenCalled();
 });
 ```
 
-- [ ] **Step 2: Run to verify it fails**
+- [ ] **Step 2: Run to verify they fail**
 
 Run: `cd frontend && node ./node_modules/vitest/vitest.mjs run src/hooks/useAiSummary.test.tsx`
-Expected: FAIL — `kind: 'auth'` is not assignable; no report wiring.
+Expected: FAIL — `kind: 'auth'` not assignable; no report wiring.
 
 - [ ] **Step 3a: Extend the result type** (`frontend/src/api/types.ts` line 243):
 
@@ -861,7 +908,7 @@ export type AiSummaryResult =
   | { kind: 'error' };
 ```
 
-- [ ] **Step 3b: Map 401 in `frontend/src/api/aiSummary.ts`** — update `resolveSummary`'s catch:
+- [ ] **Step 3b: Map 401 in `frontend/src/api/aiSummary.ts`** — the current `resolveSummary` has a single uniform `catch { return { kind: 'error' } }`; split it:
 
 ```ts
 import { apiClient, ApiError } from './client';
@@ -875,16 +922,25 @@ import { apiClient, ApiError } from './client';
   }
 ```
 
-- [ ] **Step 3c: Wire `frontend/src/hooks/useAiSummary.ts`** — add the failure context and report/clear at the result branches. Add near the top of the hook:
+- [ ] **Step 3c: Wire `frontend/src/hooks/useAiSummary.ts`.** Add the context, and to avoid any forward-reference ambiguity, **declare `regenerate` (the existing `useCallback`) ABOVE the initial-fetch `useEffect`** so the effect can name it as the retry closure. Then:
 
+Near the top of the hook body:
 ```ts
 import { useAiFailure } from '../components/Ai/aiFailure';
-// ...inside the hook body:
+// ...
 const { report, clear } = useAiFailure();
 ```
 
-In the initial-fetch `.then((r) => …)` (the `useEffect`), update the branches:
+In the `!enabled || !subscribed` early-return block (currently lines 39–44), add a clear:
+```ts
+if (!enabled || !subscribed) {
+  setSummary(null); setLoading(false); setError(false);
+  clear(prRef, 'summary');   // AI off / not-subscribed must not leave a stale failure
+  return;
+}
+```
 
+In the initial-fetch `.then((r) => …)` branches:
 ```ts
 if (r.kind === 'ok') {
   setSummary(r.summary); setLoading(false); setError(false);
@@ -900,7 +956,6 @@ if (r.kind === 'ok') {
 ```
 
 In `regenerate()`'s result handling:
-
 ```ts
 if (r.kind === 'ok') {
   setSummary(r.summary); setStaleCleared(true); clear(prRef, 'summary');
@@ -911,20 +966,46 @@ if (r.kind === 'ok') {
 }
 ```
 
-> `regenerate` is the retry closure for summary (a force re-fetch). It is already a stable `useCallback`. Reference it in `report(...)`; since `regenerate` is defined after the effect, hoist the `report`/`clear` calls to use the already-declared `regenerate` (it is a `useCallback` assigned in the same render — capture is fine because the effect runs after render). If lint flags ordering, declare `regenerate` above the effect.
+> `regenerate` is summary's retry closure (a stable `useCallback`). It already guards `if (!enabled || !subscribed || inFlight.current) return`, so a Retry-all while a regenerate is mid-flight no-ops for summary; the in-flight regenerate's own completion then reports/clears and settles the provider's pending set. That is acceptable (the seam still settles).
 
-- [ ] **Step 4: Run to verify they pass**
+- [ ] **Step 4: Run to verify they pass + no regression**
 
-Run: `cd frontend && node ./node_modules/vitest/vitest.mjs run src/hooks/useAiSummary.test.tsx`
-Expected: PASS. Then run the existing summary suite to confirm no regression:
-`cd frontend && node ./node_modules/vitest/vitest.mjs run src/hooks/useAiSummary.test.tsx src/components/PrDetail/OverviewTab`
+Run: `cd frontend && node ./node_modules/vitest/vitest.mjs run src/hooks/useAiSummary.test.tsx src/components/PrDetail/OverviewTab`
+Expected: PASS (existing 6 + new 3; OverviewTab unaffected).
 
-- [ ] **Step 5: Typecheck + commit**
+- [ ] **Step 5: Add the coexistence component test** (spec Testing requires it). Create `frontend/src/components/PrDetail/OverviewTab/AiSummaryCoexistence.test.tsx`:
+
+```tsx
+import { render, screen } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
+import { AiFailureProvider, AiFailureContainer } from '../../Ai';
+import { AiSummaryCard } from './AiSummaryCard';
+
+it('summary inline error block AND the global toast coexist', () => {
+  render(
+    <MemoryRouter initialEntries={['/pr/o/r/1']}>
+      <AiFailureProvider>
+        <AiSummaryCard summary={null} loading={false} error /* error branch renders aiSummaryError */ />
+        <AiFailureContainer />
+      </AiFailureProvider>
+    </MemoryRouter>,
+  );
+  // Inline block present (assert the existing aiSummaryError test id / copy used by AiSummaryCard):
+  expect(screen.getByTestId('ai-summary-regenerate')).toBeInTheDocument();
+  // Toast does NOT appear from rendering the card alone (the card doesn't call report) — this test
+  // pins that the inline block is independent. To assert true coexistence, also report via a Grab:
+  // (kept minimal — full report+inline coexistence is exercised by the e2e in Task 9).
+});
+```
+
+> If `AiSummaryCard`'s prop names differ, read the component and adjust; the assertion under test is "the inline error block renders independently of the toast". Full failure+inline+toast coexistence is also covered end-to-end in Task 9.
+
+- [ ] **Step 6: Typecheck + commit**
 
 ```bash
 cd frontend && npx tsc -b
-git add frontend/src/api/types.ts frontend/src/api/aiSummary.ts frontend/src/hooks/useAiSummary.ts frontend/src/hooks/useAiSummary.test.tsx
-git commit -m "feat(ai): #484 wire summary failure reporting (+401 skip)"
+git add frontend/src/api/types.ts frontend/src/api/aiSummary.ts frontend/src/hooks/useAiSummary.ts frontend/src/hooks/useAiSummary.test.tsx frontend/src/components/PrDetail/OverviewTab/AiSummaryCoexistence.test.tsx
+git commit -m "feat(ai): #484 wire summary failure reporting (+401 skip, off-clear)"
 ```
 
 ---
@@ -932,37 +1013,31 @@ git commit -m "feat(ai): #484 wire summary failure reporting (+401 skip)"
 ## Task 7: Thread `401` into file-focus api + wire `useFileFocusResult`
 
 **Files:**
-- Modify: `frontend/src/api/types.ts` (extend `AiFileFocusOutcome` if defined there) or `frontend/src/api/aiFileFocus.ts` (where the union lives), `frontend/src/hooks/useFileFocusResult.ts`
-- Test: extend `frontend/src/hooks/useFileFocusResult.test.tsx` (or create)
+- Modify: `frontend/src/api/aiFileFocus.ts` (the `AiFileFocusOutcome` union lives HERE, not in `types.ts`), `frontend/src/hooks/useFileFocusResult.ts`
+- Test: `frontend/src/hooks/useFileFocusResult.test.tsx` (the existing file already declares `import * as api` + `vi.mock('../api/aiFileFocus')` — merge into those, don't duplicate)
 
-> The `AiFileFocusOutcome` union is declared in `frontend/src/api/aiFileFocus.ts` (not `types.ts`). Add `| { kind: 'auth' }` there.
-
-- [ ] **Step 1: Write the failing tests**
+- [ ] **Step 1: Write the failing tests** (append to the existing file)
 
 ```tsx
-// frontend/src/hooks/useFileFocusResult.test.tsx (add)
-import { renderHook, waitFor } from '@testing-library/react';
+// append to frontend/src/hooks/useFileFocusResult.test.tsx
 import { MemoryRouter } from 'react-router-dom';
 import type { ReactNode } from 'react';
-import { useFileFocusResult } from './useFileFocusResult';
 import { AiFailureProvider, useAiFailure } from '../components/Ai/aiFailure';
-import * as api from '../api/aiFileFocus';
-import type { PrReference } from '../api/types';
 
-const PR: PrReference = { owner: 'o', repo: 'r', number: 1 };
-const wrapper = ({ children }: { children: ReactNode }) => (
+const FF_PR = { owner: 'o', repo: 'r', number: 1 } as const;
+const ffWrapper = ({ children }: { children: ReactNode }) => (
   <MemoryRouter initialEntries={['/pr/o/r/1']}><AiFailureProvider>{children}</AiFailureProvider></MemoryRouter>
 );
 
 it('reports file-focus on kind:error', async () => {
   vi.spyOn(api, 'getAiFileFocusResult').mockResolvedValue({ kind: 'error' });
-  const { result } = renderHook(() => ({ s: useFileFocusResult(PR, true, true), f: useAiFailure() }), { wrapper });
+  const { result } = renderHook(() => ({ s: useFileFocusResult(FF_PR, true, true), f: useAiFailure() }), { wrapper: ffWrapper });
   await waitFor(() => expect(result.current.f.activeFailedSeams).toContain('file-focus'));
 });
 
 it('does NOT report on kind:auth', async () => {
   vi.spyOn(api, 'getAiFileFocusResult').mockResolvedValue({ kind: 'auth' });
-  const { result } = renderHook(() => ({ s: useFileFocusResult(PR, true, true), f: useAiFailure() }), { wrapper });
+  const { result } = renderHook(() => ({ s: useFileFocusResult(FF_PR, true, true), f: useAiFailure() }), { wrapper: ffWrapper });
   await waitFor(() => {});
   expect(result.current.f.activeFailedSeams).not.toContain('file-focus');
 });
@@ -998,22 +1073,20 @@ export async function getAiFileFocusResult(prRef: PrReference): Promise<AiFileFo
 }
 ```
 
-- [ ] **Step 3b: Wire `frontend/src/hooks/useFileFocusResult.ts`** — add the context and report/clear at outcome branches:
+- [ ] **Step 3b: Wire `frontend/src/hooks/useFileFocusResult.ts`.** Add the context; report/clear at outcome branches. Because Step 3a's `getAiFileFocusResult` now catches all throws internally (returning `'error'`/`'auth'`), the hook's own `.catch` is only a defensive backstop — make it `report` (not just `setState`), and do NOT also report in the mapped branches (avoid double-report). Add `clear` to the `!enabled` / `!subscribed` early returns.
 
 ```ts
 import { useAiFailure } from '../components/Ai/aiFailure';
 // ...inside the hook:
 const { report, clear } = useAiFailure();
-// ...inside the .then((outcome) => { ... }):
+// !enabled / !subscribed early returns: add clear(prRef, 'file-focus');
+// inside .then((outcome) => { ... }):
 if (outcome.kind === 'no-content') {
-  setState({ status: 'no-changes', entries: [] });
-  clear(prRef, 'file-focus');
+  setState({ status: 'no-changes', entries: [] }); clear(prRef, 'file-focus');
 } else if (outcome.kind === 'auth') {
-  setState({ status: 'error', entries: [] }); // inline state unchanged; just don't report
-  clear(prRef, 'file-focus');
+  setState({ status: 'error', entries: [] }); clear(prRef, 'file-focus'); // inline unchanged; no report
 } else if (outcome.kind === 'error') {
-  setState({ status: 'error', entries: [] });
-  report(prRef, 'file-focus', { retry });
+  setState({ status: 'error', entries: [] }); report(prRef, 'file-focus', { retry });
 } else {
   const { entries, fallback } = outcome.result;
   if (fallback) setState({ status: 'fallback', entries });
@@ -1023,11 +1096,13 @@ if (outcome.kind === 'no-content') {
   }
   clear(prRef, 'file-focus');
 }
+// defensive .catch (rarely reached — api maps throws to outcomes): report, not just setState
+.catch(() => {
+  if (!cancelled) { setState({ status: 'error', entries: [] }); report(prRef, 'file-focus', { retry }); }
+});
 ```
 
-Also call `clear(prRef, 'file-focus')` in the `!enabled` / `!subscribed` early-return branches, and `report` is unnecessary in the `.catch` (the api already maps throws to `kind:'error'`/`'auth'`); leave the existing `.catch(() => setState({status:'error'}))` but add `report(prRef, 'file-focus', { retry })` there too for network throws that bypass the api mapping.
-
-> `retry` already exists in this hook (`const retry = useCallback(() => setRetryNonce((n) => n + 1), [])`) — reuse it as the report retry closure.
+> `retry` already exists in this hook (`const retry = useCallback(() => setRetryNonce((n) => n + 1), [])`); reuse it as the report retry closure.
 
 - [ ] **Step 4: Run to verify they pass + no regression**
 
@@ -1050,9 +1125,9 @@ git commit -m "feat(ai): #484 wire file-focus failure reporting (+401 skip)"
 - Modify: `frontend/src/components/PrDetail/PrDetailView.tsx`
 - Test: `frontend/src/components/PrDetail/PrDetailView.clearPr.test.tsx`
 
-- [ ] **Step 1: Write the failing test**
+This injects a stub `AiFailureApi` (with a `clearPr` spy) via the exported `AiFailureContext` seam and asserts the real `PrDetailView` fires `clearPr(prRef)` on unmount. `PrDetailView` fires many data hooks on mount, so they must be mocked (mirror the `vi.mock` set in the existing `PrDetailView.test.tsx`).
 
-This injects a stub `AiFailureApi` (with a `clearPr` spy) via the exported `AiFailureContext` seam and asserts the real `PrDetailView` fires `clearPr(prRef)` when it unmounts — without standing up the whole provider/route stack. Supply whatever required props `PrDetailView` takes (read its prop type when implementing; the only behavior under test is the unmount cleanup).
+- [ ] **Step 1: Write the failing test**
 
 ```tsx
 // frontend/src/components/PrDetail/PrDetailView.clearPr.test.tsx
@@ -1061,6 +1136,15 @@ import { MemoryRouter } from 'react-router-dom';
 import { AiFailureContext, type AiFailureApi } from '../Ai/aiFailure';
 import { PrDetailView } from './PrDetailView';
 import type { PrReference } from '../../api/types';
+
+// Mock the heavy data hooks PrDetailView fires on mount so a bare render does not hit the network.
+// Mirror the vi.mock set in PrDetailView.test.tsx (at minimum the hooks that fetch/subscribe):
+vi.mock('../../hooks/usePrDetail');
+vi.mock('../../hooks/useFileFocusResult');
+vi.mock('../../hooks/useActivePrUpdates');
+vi.mock('../../hooks/useCapabilities');
+// ...add the remaining mocks PrDetailView.test.tsx declares (useDraftSession, subscribers, etc.).
+// Provide minimal return values for any mock whose result PrDetailView destructures on first render.
 
 const PR: PrReference = { owner: 'o', repo: 'r', number: 1 };
 
@@ -1073,11 +1157,9 @@ function stubApi(over: Partial<AiFailureApi> = {}): AiFailureApi {
 
 it('fires clearPr(prRef) when PrDetailView unmounts', () => {
   const clearPr = vi.fn();
-  const api = stubApi({ clearPr });
   const { unmount } = render(
     <MemoryRouter initialEntries={['/pr/o/r/1']}>
-      <AiFailureContext.Provider value={api}>
-        {/* Fill in PrDetailView's required props (prRef + whatever else it needs). */}
+      <AiFailureContext.Provider value={stubApi({ clearPr })}>
         <PrDetailView prRef={PR} active />
       </AiFailureContext.Provider>
     </MemoryRouter>,
@@ -1088,14 +1170,14 @@ it('fires clearPr(prRef) when PrDetailView unmounts', () => {
 });
 ```
 
-> If `PrDetailView`'s required props or child data-fetches make a bare mount impractical, mock its heavy children/hooks at the top of the file (sibling tests already mock `useEventSource`/data hooks) — the assertion is solely "unmount → `clearPr(prRef)` once with the PR ref".
+> Copy the exact `vi.mock` list + minimal return stubs from `PrDetailView.test.tsx` (it already mocks `usePrDetail`, `useDraftSession`, `useActivePrUpdates`, `useCapabilities`, `useFileFocusResult`, and the SSE subscriber hooks). The assertion under test is solely "unmount → `clearPr(prRef)` once".
 
 - [ ] **Step 2: Run to verify it fails**
 
 Run: `cd frontend && node ./node_modules/vitest/vitest.mjs run src/components/PrDetail/PrDetailView.clearPr.test.tsx`
-Expected: FAIL once the placeholder is replaced with the real unmount assertion.
+Expected: FAIL — `clearPr` not called (no unmount effect yet).
 
-- [ ] **Step 3: Implement** — in `frontend/src/components/PrDetail/PrDetailView.tsx`, add:
+- [ ] **Step 3: Implement** — in `frontend/src/components/PrDetail/PrDetailView.tsx`:
 
 ```ts
 import { useAiFailure } from '../Ai/aiFailure';
@@ -1103,7 +1185,7 @@ import { useAiFailure } from '../Ai/aiFailure';
 const { clearPr } = useAiFailure();
 useEffect(() => {
   return () => clearPr(prRef);
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- stable primitive prRef fields; clearPr is stable (#331)
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- stable primitive prRef fields; clearPr stable (#331)
 }, [prRef.owner, prRef.repo, prRef.number]);
 ```
 
@@ -1127,49 +1209,60 @@ git commit -m "feat(ai): #484 clear AI failures on PrDetailView unmount"
 **Files:**
 - Create: `frontend/e2e/ai-failure-surfacing.spec.ts`
 
-Model the route-stub setup on `frontend/e2e/ai-live-consent.spec.ts` (it already `page.route`s all four `**/api/pr/.../ai/*` endpoints). The harness is frontend-only — forcing `503` needs no backend change.
+Model the setup on `frontend/e2e/ai-live-consent.spec.ts` (it `page.route`s all four `**/api/pr/.../ai/*` endpoints with AI Live enabled) and the two-page pattern in `frontend/e2e/density-cross-tab.spec.ts`. Forcing `503` is frontend-only (`route.fulfill({status:503})`).
 
-- [ ] **Step 1: Write the e2e spec**
+- [ ] **Step 1: Write both e2e tests (full bodies)**
 
 ```ts
 // frontend/e2e/ai-failure-surfacing.spec.ts
 import { test, expect, type Route } from '@playwright/test';
-// Reuse the project's base-mocks + AI-Live consent setup helpers (see ai-live-consent.spec.ts).
-// import { setupBaseRoutes } from './helpers/base-mocks';
+// import { setupBaseRoutes, enableAiLive } from './helpers/...';  // mirror ai-live-consent.spec.ts
 
-const OWNER = 'o', REPO = 'r', PR_NUMBER = 1;
+const OWNER = 'o', REPO = 'r', PR1 = 1, PR2 = 2;
 
 test('AI seam 503 surfaces a persistent toast with Retry that recovers', async ({ page }) => {
-  // 1. Base routes + AI Live enabled (mirror ai-live-consent.spec.ts setup).
-  // 2. Force 503 on the file-focus seam:
+  // Mirror ai-live-consent.spec.ts: base routes + AI Live enabled + healthy mocks for the other seams.
   let failNext = true;
-  await page.route(`**/api/pr/${OWNER}/${REPO}/${PR_NUMBER}/ai/file-focus`, (route: Route) =>
+  await page.route(`**/api/pr/${OWNER}/${REPO}/${PR1}/ai/file-focus`, (route: Route) =>
     failNext
       ? route.fulfill({ status: 503 })
       : route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ entries: [], fallback: false }) }),
   );
-  // 3. Navigate to the PR; assert the persistent toast appears naming hotspots.
-  await page.goto(`/pr/${OWNER}/${REPO}/${PR_NUMBER}`);
+  await page.goto(`/pr/${OWNER}/${REPO}/${PR1}`);
+
   const toast = page.getByRole('group', { name: 'AI generation failure' });
   await expect(toast).toBeVisible();
   await expect(toast).toContainText('hotspots');
-  // 4. Click Retry → success on retry → toast disappears.
+
   failNext = false;
   await toast.getByRole('button', { name: 'Retry' }).click();
   await expect(toast).toBeHidden();
 });
 
-test('a backgrounded PR tab’s failure does not show while another PR is active', async ({ page }) => {
-  // Open PR 1 (failing), then navigate to PR 2 (healthy); assert the toast is hidden on PR 2,
-  // and reappears when navigating back to PR 1. (Mirror multi-tab setup from density-cross-tab.spec.ts.)
+test("a backgrounded PR tab's failure does not show while another PR is active", async ({ page }) => {
+  // PR1 file-focus always 503; PR2 healthy. Mirror density-cross-tab.spec.ts navigation.
+  await page.route(`**/api/pr/${OWNER}/${REPO}/${PR1}/ai/file-focus`, (route: Route) => route.fulfill({ status: 503 }));
+  await page.route(`**/api/pr/${OWNER}/${REPO}/${PR2}/ai/file-focus`, (route: Route) =>
+    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ entries: [], fallback: false }) }),
+  );
+  const toast = page.getByRole('group', { name: 'AI generation failure' });
+
+  await page.goto(`/pr/${OWNER}/${REPO}/${PR1}`);
+  await expect(toast).toBeVisible(); // failure on the active PR
+
+  await page.goto(`/pr/${OWNER}/${REPO}/${PR2}`); // switch to healthy PR (PR1 stays mounted, backgrounded)
+  await expect(toast).toBeHidden();  // PR1's recorded failure is NOT shown while PR2 is active
+
+  await page.goto(`/pr/${OWNER}/${REPO}/${PR1}`); // back to PR1
+  await expect(toast).toBeVisible(); // reappears for the active PR
 });
 ```
 
-> Flesh out the helper imports and the second test's tab setup using the existing e2e helpers (`helpers/base-mocks.ts`, the AI-Live consent steps in `ai-live-consent.spec.ts`, and the multi-tab pattern in `density-cross-tab.spec.ts`). Do not hand-roll new infrastructure.
+> Fill in the `setupBaseRoutes` / AI-Live-enable helper imports exactly as `ai-live-consent.spec.ts` does, and confirm the route URL shapes match the app's requests. The assertions are complete; only the shared-helper setup is environment-specific.
 
-- [ ] **Step 2: Run the e2e (Linux/CI parity)**
+- [ ] **Step 2: Run the e2e (Linux/CI parity) + generate the visual baseline**
 
-Run (from `frontend/`): the project's e2e command (see `.ai/docs/development-process.md`); generate the new visual baseline from the CI artifact per repo convention (do NOT hand-author baselines on win32).
+Run from `frontend/` using the project's e2e command (see `.ai/docs/development-process.md`). Regenerate the new visual baseline from the CI artifact per repo convention — do NOT hand-author baselines on win32.
 
 - [ ] **Step 3: Commit**
 
@@ -1180,20 +1273,18 @@ git commit -m "test(ai): #484 e2e AI failure toast + retry + backgrounded-tab"
 
 ---
 
+## Deferred / Open Questions (carried from review)
+
+- **Toast placement is a working default, not a final design.** This plan positions the toast bottom-center (Snackbar pattern) so it is visible and testable. Final placement/visual polish is a design pass; flag for owner if a different position is wanted.
+- **Focus target selector.** `AiFailureContainer` focuses `[data-pr-main]` (fallback `<main>`) on toast-hide-while-focus-lost. Confirm/add `data-pr-main tabIndex={-1}` on PrDetailView's content wrapper during Task 3/8; the fallback keeps it safe if absent.
+- **`activeKey` goes null under a full-screen modal/route.** If a Settings/Help modal route makes `useEffectiveLocation` report a non-PR path, the toast hides until the modal closes. Acceptable for this slice; revisit if it surprises users.
+
+---
+
 ## Self-Review
 
-**1. Spec coverage:**
-- Shared mechanism / report-clear opt-in → Task 1 (provider), Tasks 4–7 (all four hooks). ✓
-- Coalesced persistent notification + Retry-all + dismiss → Tasks 1–3. ✓
-- Retry in-flight "Retrying…" + partial recovery + full-recovery removal → Tasks 1 (retrying state) + 2 (button). ✓
-- Stale pre-Retry resolution guard → Tasks 4–5 nonce guard (and inherent in summary/file-focus regenerate/retry). ✓
-- Inline blocks coexist (summary/file-focus untouched) → Tasks 6–7 leave inline state, only add report/clear. ✓
-- No notification for 204/off/not-subscribed/401 → Tasks 4–7 clear-not-report branches + 401 skip. ✓
-- Active-PR-only render; backgrounded recorded-not-shown; non-PR route nothing → Task 1 (activeKey) + Task 3 test. ✓
-- Close PR clears failures/retries → Task 8. ✓
-- Live region announces appear/disappear only → Task 2 (stable sr-only phrase). ✓
-- Tests + visual baseline → every task + Task 9. ✓
+**1. Spec coverage:** shared mechanism (T1 + T4–T7); coalesced persistent toast + Retry-all + dismiss (T1–T3); retry in-flight "Retrying…" + partial recovery + full-recovery removal (T1 retrying + T2 button + T3 visibility); stale-resolution guard via `cancelled`/nonce-rerun (T4–T7, corrected from the spec's illustrative `myNonce` line); inline coexistence (T6 leaves inline state + coexistence test); no notification for 204/off/not-subscribed/401 (T4–T7 clear branches incl. the summary `!enabled` clear); active-PR-only render + backgrounded recorded-not-shown + non-PR nothing (T1 + T3 + T9); close-PR clears (T8); live region announces appearance/disappearance only (T3 always-mounted empty→text); placement/focus (T2 CSS + T3 focus); tests + visual baseline (every task + T9). ✓
 
-**2. Placeholder scan:** Task 8's test and Task 9's second test carry explicit "replace this with the real assertion / flesh out via existing helpers" notes rather than fabricated brittle code — these are deliberate, bounded instructions tied to existing patterns, not silent TODOs. All code steps that create production code show complete code.
+**2. Placeholder scan:** The remaining "fill in" notes (T6 coexistence prop names, T8 vi.mock list, T9 helper imports) are bounded references to concrete existing files/patterns (`PrDetailView.test.tsx`, `ai-live-consent.spec.ts`, `density-cross-tab.spec.ts`), not undefined work — every assertion body is written out. No `expect(true).toBe(true)` or empty test bodies remain.
 
-**3. Type consistency:** `AiSeam`, `report`/`clear`/`clearPr`/`retryAll`/`dismiss`, `activeFailedSeams`/`retrying`/`dismissed`, and the `{ kind: 'auth' }` extensions are used consistently across Tasks 1–7. The retry closure is `regenerate` for summary, the existing `retry` for file-focus, and the new `retry` nonce for hunk/draft — all `() => void`, matching `FailureEntry.retry`.
+**3. Type consistency:** `AiSeam`, `AiFailureApi` (`report`/`clear`/`clearPr`/`retryAll`/`dismiss`/`activeFailedSeams`/`retrying`/`dismissed`), `AiFailureContext`, and the `{kind:'auth'}` extensions are used consistently across T1–T8. Retry closures: `regenerate` (summary), existing `retry` (file-focus), new `retry` nonce (hunk/draft) — all `() => void` matching `FailureEntry.retry`.
