@@ -309,8 +309,8 @@ already the largest component in the codebase).
    `ResizeObserver`s (content `<table>` + scroll container, both jsdom-guarded), and the rAF
    scroll listener + the scroll-suppression flag with `scrollend`/interrupt/400ms-cap
    clearing. Returns `{ currentIdx, total, canPrev, canNext, goToPrev, goToNext,
-   goToChange(i), scrollToRatio(r), ticks: {top,height,kind,startLineNum,addCount,delCount}[],
-   viewport: {top,height}, hasOverflow }`. *Tested:* with a fake container exposing offsets +
+   goToChange(i), scrollToRatio(r), ticks: {topPct,heightPct,kind,startLineNum,addCount,delCount}[],
+   viewport: {topPct,heightPct}, hasOverflow }`. *Tested:* with a fake container exposing offsets +
    a deps-array re-measure path for jsdom.
 3. **`ChangeMinimap` component** — presentational; given `ticks`, `viewport`, hover state,
    and `goToChange`/`scrollToRatio`. Renders rail (rest/expand), ticks, viewport box,

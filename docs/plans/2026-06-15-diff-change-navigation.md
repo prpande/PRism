@@ -22,15 +22,14 @@
 | `frontend/src/hooks/useFilesTabShortcuts.ts` | Modified: import the shared guard | 2 |
 | `frontend/src/components/PrDetail/FilesTab/DiffChangeNav/useChangeNavigation.ts` | Hook: measure offsets, currentIdx, prev/next, ticks, viewport, observers, scroll-suppress | 3 |
 | `frontend/src/components/PrDetail/FilesTab/DiffChangeNav/useChangeNavigation.test.tsx` | Hook tests (injected offsets + jsdom path) | 3 |
-| `frontend/src/components/PrDetail/FilesTab/DiffChangeNav/ChangeNavIcon.tsx` | git-compare lead icon | 4 |
-| `frontend/src/components/PrDetail/FilesTab/DiffChangeNav/ChangeNavControls.tsx` | Header cluster (icon + chevrons + counter + live region) | 4 |
+| `frontend/src/components/PrDetail/FilesTab/DiffChangeNav/ChangeNavControls.tsx` | Header cluster (git-compare icon + chevrons + counter + live region; icons are module-private fns, matching `ReviewActionButton`'s inline `Chevron`) | 4 |
 | `frontend/src/components/PrDetail/FilesTab/DiffChangeNav/ChangeNavControls.module.css` | Cluster styles | 4 |
 | `frontend/src/components/PrDetail/FilesTab/DiffChangeNav/ChangeNavControls.test.tsx` | Controls tests | 4 |
 | `frontend/src/components/PrDetail/FilesTab/DiffChangeNav/ChangeMinimap.tsx` | Rail: ticks, viewport box, hover-expand, tooltip, click handlers | 5 |
 | `frontend/src/components/PrDetail/FilesTab/DiffChangeNav/ChangeMinimap.module.css` | Rail styles (rest/hover, pointer:coarse, both themes) | 5 |
 | `frontend/src/components/PrDetail/FilesTab/DiffChangeNav/ChangeMinimap.test.tsx` | Rail tests | 5 |
 | `frontend/src/components/PrDetail/FilesTab/DiffPane/DiffPane.tsx` | Wire wrapper + table ref + tagging + hook + render + n/p listener | 6 |
-| `frontend/src/components/PrDetail/FilesTab/DiffPane/DiffLineRow.tsx` / `SplitDiffLineRow.tsx` | Forward `data-change-start` | 6 |
+| `frontend/src/components/PrDetail/FilesTab/DiffPane/DiffPane.tsx` (inline `DiffLineRow` ~:713 / `SplitDiffLineRow` ~:853 components) | Forward `data-change-start` + `data-change-end` onto their `<tr>` | 6 |
 | `frontend/src/components/PrDetail/FilesTab/DiffPane/DiffPane.module.css` | `.diffBodyWrap` + `scrollbar-gutter` | 6 |
 | `frontend/src/components/Cheatsheet/shortcuts.ts` | Add `n`/`p` to "Diff" group | 7 |
 | `frontend/src/components/PrDetail/OverviewTab/ReviewFilesCta.tsx` | Add `n`/`p` to the hint | 7 |
@@ -357,13 +356,17 @@ function fakeContainer(scrollTop = 0): HTMLDivElement {
   Object.defineProperty(el, 'scrollHeight', { value: 1000, configurable: true });
   Object.defineProperty(el, 'clientHeight', { value: 200, configurable: true });
   Object.defineProperty(el, 'scrollTop', { value: scrollTop, writable: true, configurable: true });
-  el.getBoundingClientRect = () => ({ top: 0, left: 0, height: 200, width: 50 }) as DOMRect;
+  el.getBoundingClientRect = () =>
+    ({ top: 0, bottom: 200, left: 0, right: 50, height: 200, width: 50 }) as DOMRect;
   const tops = [100, 300, 500];
   CHANGES.forEach((c, i) => {
     const row = document.createElement('div');
+    // Single-row fixtures tag start and end on the same element.
     row.setAttribute('data-change-start', String(i));
+    row.setAttribute('data-change-end', String(i));
     const top = tops[i];
-    row.getBoundingClientRect = () => ({ top, left: 0, height: 16, width: 50 }) as DOMRect;
+    row.getBoundingClientRect = () =>
+      ({ top, bottom: top + 16, left: 0, right: 50, height: 16, width: 50 }) as DOMRect;
     el.appendChild(row);
   });
   el.scrollTo = vi.fn();
@@ -459,18 +462,24 @@ function measure(container: HTMLElement, changes: DiffChange[]): Measured {
   const startTops: number[] = [];
   const measured: { top: number; heightPx: number }[] = [];
   for (let i = 0; i < changes.length; i++) {
-    const el = container.querySelector<HTMLElement>(`[data-change-start="${i}"]`);
-    if (!el) {
+    const startEl = container.querySelector<HTMLElement>(`[data-change-start="${i}"]`);
+    if (!startEl) {
       startTops.push(0);
       measured.push({ top: 0, heightPx: 0 });
       continue;
     }
-    const r = el.getBoundingClientRect();
+    const startRect = startEl.getBoundingClientRect();
     // Reference-frame-agnostic: viewport delta + current scrollTop.
-    const top = r.top - cRect.top + container.scrollTop;
-    const rowCount = changes[i].endRowIdx - changes[i].startRowIdx + 1;
+    const top = startRect.top - cRect.top + container.scrollTop;
+    // Measure the run's ACTUAL rendered pixel span (start row top → end row bottom).
+    // This handles split-mode pairing (del+ins collapse into one <tr>, so rendered
+    // rows != allLines count) and wrapped/variable-height rows — both of which make
+    // `rowCount * firstRowHeight` wrong. Fall back to the start row's own height when
+    // no end row is tagged.
+    const endEl = container.querySelector<HTMLElement>(`[data-change-end="${i}"]`);
+    const endRect = (endEl ?? startEl).getBoundingClientRect();
     startTops.push(top);
-    measured.push({ top, heightPx: rowCount * r.height });
+    measured.push({ top, heightPx: Math.max(0, endRect.bottom - startRect.top) });
   }
   return {
     startTops,
@@ -635,8 +644,7 @@ git commit -m "feat(diff): useChangeNavigation hook (measure, currentIdx, prev/n
 ## Task 4: `ChangeNavControls` (header cluster) + icon
 
 **Files:**
-- Create: `frontend/src/components/PrDetail/FilesTab/DiffChangeNav/ChangeNavIcon.tsx`
-- Create: `frontend/src/components/PrDetail/FilesTab/DiffChangeNav/ChangeNavControls.tsx`
+- Create: `frontend/src/components/PrDetail/FilesTab/DiffChangeNav/ChangeNavControls.tsx` (the git-compare lead icon is a module-private function here — single consumer, mirrors the inline `ChevronUp`/`ChevronDown` in the same file and `ReviewActionButton`'s inline `Chevron`; promote to `diffIcons.tsx` only if #493 needs it)
 - Create: `frontend/src/components/PrDetail/FilesTab/DiffChangeNav/ChangeNavControls.module.css`
 - Test: `frontend/src/components/PrDetail/FilesTab/DiffChangeNav/ChangeNavControls.test.tsx`
 
@@ -685,6 +693,11 @@ describe('ChangeNavControls', () => {
     const { getByRole } = render(<ChangeNavControls {...base} />);
     expect(getByRole('status')).toHaveTextContent('change 3 of 7');
   });
+
+  it('announces the at-top state when above the first change', () => {
+    const { getByRole } = render(<ChangeNavControls {...base} currentIdx={-1} canPrev={false} />);
+    expect(getByRole('status')).toHaveTextContent('at top, 7 changes');
+  });
 });
 ```
 
@@ -693,11 +706,11 @@ describe('ChangeNavControls', () => {
 Run: `cd frontend && node_modules/.bin/vitest run src/components/PrDetail/FilesTab/DiffChangeNav/ChangeNavControls.test.tsx`
 Expected: FAIL — component not found.
 
-- [ ] **Step 3: Write the icon**
+- [ ] **Step 3: Write the icon (a module-private function — it lives at the top of `ChangeNavControls.tsx`, see Step 4; no separate file)**
 
 ```tsx
-// ChangeNavIcon.tsx — git-compare glyph in the diffIcons house style (16x16, currentColor)
-export function ChangeNavIcon() {
+// git-compare glyph in the diffIcons house style (16x16, currentColor) — private to ChangeNavControls.tsx
+function ChangeNavIcon() {
   return (
     <svg width={16} height={16} viewBox="0 0 16 16" aria-hidden focusable="false">
       <circle cx="4" cy="4" r="1.7" fill="none" stroke="currentColor" strokeWidth="1.2" />
@@ -728,7 +741,7 @@ export function ChangeNavIcon() {
 ```tsx
 // ChangeNavControls.tsx
 import styles from './ChangeNavControls.module.css';
-import { ChangeNavIcon } from './ChangeNavIcon';
+// ChangeNavIcon (from Step 3), ChevronUp, ChevronDown are all module-private functions in this file.
 
 export interface ChangeNavControlsProps {
   total: number;
@@ -837,7 +850,7 @@ Expected: PASS.
 - [ ] **Step 7: Commit**
 
 ```bash
-git add frontend/src/components/PrDetail/FilesTab/DiffChangeNav/ChangeNavIcon.tsx frontend/src/components/PrDetail/FilesTab/DiffChangeNav/ChangeNavControls.tsx frontend/src/components/PrDetail/FilesTab/DiffChangeNav/ChangeNavControls.module.css frontend/src/components/PrDetail/FilesTab/DiffChangeNav/ChangeNavControls.test.tsx
+git add frontend/src/components/PrDetail/FilesTab/DiffChangeNav/ChangeNavControls.tsx frontend/src/components/PrDetail/FilesTab/DiffChangeNav/ChangeNavControls.module.css frontend/src/components/PrDetail/FilesTab/DiffChangeNav/ChangeNavControls.test.tsx
 git commit -m "feat(diff): ChangeNavControls header cluster (#486)"
 ```
 
@@ -1095,49 +1108,108 @@ git commit -m "feat(diff): ChangeMinimap rail (#486)"
 - Modify: `frontend/src/components/PrDetail/FilesTab/DiffPane/DiffPane.module.css`
 - Test: `frontend/src/components/PrDetail/FilesTab/DiffPane/DiffPane.changeNav.test.tsx` (new)
 
-- [ ] **Step 1: Forward `data-change-start` from the row components**
+- [ ] **Step 1: Forward change-boundary attributes from the (inline) row components**
 
-In `DiffLineRow.tsx` and `SplitDiffLineRow.tsx`, add an optional prop and apply it to the rendered `<tr>`:
+`DiffLineRow` (~`DiffPane.tsx:713`, props interface ~`:700`) and `SplitDiffLineRow` (~`:853`, props ~`:839`) are **module-private components inside `DiffPane.tsx`** — not separate files — and their `<tr>` lists explicit attributes (they do NOT spread arbitrary props). Add two optional props to each Props interface and render them on each component's outer `<tr>`:
 
 ```tsx
-// add to each row component's Props interface:
+// add to DiffLineRowProps and SplitDiffLineRowProps:
 dataChangeStart?: number;
+dataChangeEnd?: number;
 
-// and on the rendered <tr>:
-<tr ... data-change-start={dataChangeStart}>
+// and on each component's rendered <tr>:
+<tr ... data-change-start={dataChangeStart} data-change-end={dataChangeEnd}>
 ```
 
-(When `dataChangeStart` is `undefined`, React omits the attribute — no behavior change for non-start rows.)
+(When a prop is `undefined`, React omits the attribute — no behavior change for non-boundary rows.)
 
 - [ ] **Step 2: Write the failing integration test**
 
 ```tsx
-// DiffPane.changeNav.test.tsx — focused on the new wiring
-import { describe, it, expect } from 'vitest';
+// DiffPane.changeNav.test.tsx
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { render } from '@testing-library/react';
 import { DiffPane } from './DiffPane';
-// Reuse the file's existing test harness/fixtures for building a DiffPane with a
-// modified file that has 2 separate change runs in whole-file mode. (Mirror the
-// setup already used by DiffPane.test.tsx in this folder.)
+import type { FileChange, PrReference } from '../../../../api/types';
+import { useAiGate } from '../../../../hooks/useAiGate';
+import { useAiHunkAnnotations } from '../../../../hooks/useAiHunkAnnotations';
+import { useWholeFileContent } from '../../../../hooks/useWholeFileContent';
+
+vi.mock('../../../../hooks/useAiGate');
+vi.mock('../../../../hooks/useAiHunkAnnotations');
+vi.mock('../../../../hooks/useWholeFileContent');
+
+const prRef: PrReference = { owner: 'octocat', repo: 'hello', number: 42 };
+
+// Two separate change runs (two modify blocks split by context lines).
+const twoRunFile: FileChange = {
+  path: 'src/main.ts',
+  status: 'modified',
+  hunks: [
+    {
+      oldStart: 1,
+      oldLines: 6,
+      newStart: 1,
+      newLines: 6,
+      body: `@@ -1,6 +1,6 @@
+ line one
+-line two
++line two mod
+ line three
+ line four
+-line five
++line five mod
+ line six
+`,
+    },
+  ],
+};
+
+function renderPane() {
+  return render(
+    <DiffPane
+      prRef={prRef}
+      selectedPath="src/main.ts"
+      file={twoRunFile}
+      diffMode="unified"
+      truncated={false}
+      reviewThreads={[]}
+      prUrl=""
+    />,
+  );
+}
 
 describe('DiffPane change navigation', () => {
-  it('renders the prev/next controls in the header', () => {
-    const { getByRole } = render(/* <DiffPane ...fixture with hunks /> */ <></>);
+  beforeEach(() => {
+    vi.mocked(useAiGate).mockReturnValue(false);
+    vi.mocked(useAiHunkAnnotations).mockReturnValue(null);
+    vi.mocked(useWholeFileContent).mockReturnValue({
+      fetchStatus: 'idle',
+      headContent: null,
+      baseContent: null,
+      failureReason: null,
+    });
+  });
+
+  it('renders the prev/next controls group in the header', () => {
+    const { getByRole } = renderPane();
     expect(getByRole('group', { name: /change navigation/i })).toBeInTheDocument();
   });
 
-  it('tags each change run first row with data-change-start', () => {
-    const { container } = render(/* whole-file fixture with 2 runs */ <></>);
-    expect(container.querySelectorAll('[data-change-start]').length).toBeGreaterThanOrEqual(2);
+  it('tags both boundary rows of each run (2 runs → 2 start + 2 end tags)', () => {
+    const { container } = renderPane();
+    expect(container.querySelectorAll('[data-change-start]')).toHaveLength(2);
+    expect(container.querySelectorAll('[data-change-end]')).toHaveLength(2);
   });
 
-  it('renders the rail only in whole-file mode', () => {
-    // hunks-only: no rail; whole-file: rail present (when overflowing)
+  it('does not render the rail (ticks) in hunks-only mode', () => {
+    const { queryAllByTestId } = renderPane();
+    expect(queryAllByTestId('change-tick')).toHaveLength(0);
   });
 });
 ```
 
-> Build the fixtures by copying the existing `DiffPane.test.tsx` setup in the same folder (same props, `wholeFileEnabled`, a `FileChange` with two hunks). Fill the `render(...)` calls with the real fixture before running.
+> The rail's *presence* in whole-file mode (and its rest/expanded visuals) needs real layout + scroll overflow, which jsdom does not compute — that is covered by the Playwright B1 gate (Task 8). These unit tests assert the mode-independent wiring: controls render, both boundary attributes are tagged once per run, and the rail is absent in hunks-only mode. (`wholeFileEnabled` is omitted, so DiffPane defaults to hunks mode; `allLines` = parsed hunk bodies → the same two runs.)
 
 - [ ] **Step 3: Run the test to verify it fails**
 
@@ -1158,26 +1230,46 @@ import { isInputTarget } from '../../../../hooks/isInputTarget';
 const tableRef = useRef<HTMLTableElement>(null);
 const changes = useMemo(() => computeChanges(allLines), [allLines]);
 const nav = useChangeNavigation(diffBodyRef, tableRef, changes);
-const changeStartMap = useMemo(() => {
-  const m = new Map<number, number>();
-  changes.forEach((c, i) => m.set(c.startRowIdx, i));
-  return m;
+
+// Boundary maps: allLines index -> change index, for the run's first and last rows.
+const { changeStartMap, changeEndMap } = useMemo(() => {
+  const start = new Map<number, number>();
+  const end = new Map<number, number>();
+  changes.forEach((c, i) => {
+    start.set(c.startRowIdx, i);
+    end.set(c.endRowIdx, i);
+  });
+  return { changeStartMap: start, changeEndMap: end };
 }, [changes]);
 
-// n/p keyboard: scoped to this single mounted DiffPane, reuse the shared guard.
+// n/p keyboard: register ONCE per mount; read the latest handlers through a ref
+// (mirrors useFilesTabShortcuts — avoids re-subscribing the document listener on
+// every scroll-driven render). Visibility guard: keep-alive keeps other PR tabs and
+// the non-Files subtab mounted but display:none (PrDetailView `hidden={subTab!=='files'}`,
+// PrTabHost inactive views), so a hidden pane's diffBodyRef has offsetParent === null —
+// skip it so hidden diffs never scroll or SR-announce.
+const navRef = useRef(nav);
+navRef.current = nav;
 useEffect(() => {
   const onKey = (e: KeyboardEvent) => {
-    if (isInputTarget(e.target)) return;
     if (e.metaKey || e.ctrlKey || e.altKey) return;
-    if (e.key === 'n') nav.goToNext();
-    else if (e.key === 'p') nav.goToPrev();
+    if (e.key !== 'n' && e.key !== 'p') return;
+    if (isInputTarget(e.target)) return;
+    if (!diffBodyRef.current || diffBodyRef.current.offsetParent === null) return;
+    if (e.key === 'n') navRef.current.goToNext();
+    else navRef.current.goToPrev();
   };
   document.addEventListener('keydown', onKey);
   return () => document.removeEventListener('keydown', onKey);
-}, [nav]);
+}, []);
 ```
 
-In the two row renderers, pass the tag. In `renderUnifiedRows` / `renderSplitRows`, where a row at `idx` is pushed, add `dataChangeStart={changeStartMap.get(idx)}` to the row element (for split paired rows, the `idx` is the delete row's index — which is the run's `startRowIdx` — so the tag lands on the paired row correctly).
+In both renderers, attach the boundary attributes to each emitted row:
+
+- **Unified** row at `idx` (one allLines entry): `dataChangeStart={changeStartMap.get(idx)} dataChangeEnd={changeEndMap.get(idx)}`.
+- **Split paired** row (emitted at `idx`, consuming `idx + 1` — covers both indices): resolve each from either index — `dataChangeStart={changeStartMap.get(idx) ?? changeStartMap.get(idx + 1)} dataChangeEnd={changeEndMap.get(idx) ?? changeEndMap.get(idx + 1)}`. Split **solo** rows use the single-`idx` form.
+
+A run's `startRowIdx` is its first changed row and `endRowIdx` its last; both resolve to a rendered `<tr>` in either layout, so the rail measures the run's true pixel span (Task 3 `measure()`).
 
 Render the controls in the header (after the path span):
 
@@ -1243,7 +1335,7 @@ In `DiffPane.module.css`:
 
 (`.diffPaneBody` already had `flex/min-height/overflow` — keep those and add `scrollbar-gutter`.)
 
-- [ ] **Step 6: Fill in the test fixtures and run**
+- [ ] **Step 6: Run the integration test**
 
 Run: `cd frontend && node_modules/.bin/vitest run src/components/PrDetail/FilesTab/DiffPane/DiffPane.changeNav.test.tsx`
 Expected: PASS.
