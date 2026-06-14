@@ -244,6 +244,11 @@ Record **which of three outcomes** holds (full-context resume / session-id-only 
 - [ ] Child issues filed for Slice 2 and Slice 3, linked under #404, with the § 5 / § 6 detail.
 - [ ] 2× `ce-doc-review` dispositions recorded in the PR `## Proof`; owner spec gate cleared.
 
+## 11a. Resolved decisions
+
+- **(2026-06-14) `ResumeSessionId` deferral has no consumer exposure.** The owner confirmed #412 (PR chat) is implemented only **after streaming chat and all P0-1b slices are complete**. Since Slice 3 lands `ResumeSessionId` before #412 starts, there is no window in which a consumer must target resume against an interface that lacks it — the product-lens "resume un-targetable until Slice 3" observation is absorbed by sequencing, not a contract change.
+- **(2026-06-14) Slice ordering is 1 → 2 → 3** (contract → Claude Code impl → C4 `--resume` probe). The C4 probe is **not** pulled ahead of Slice 2; resume is the one genuinely empirically-blocked piece and its consumer (#412) is gated behind all slices anyway.
+
 ## 11. Child issues to file (after spec sign-off)
 
 - **Slice 2 — "[AI] P0-1b — Claude Code streaming provider (stream-json subprocess)"** — `area:ai`, `ai:foundation`; body = § 5 + acceptance from backlog P0-1; depends on this PR; blocks #412.
