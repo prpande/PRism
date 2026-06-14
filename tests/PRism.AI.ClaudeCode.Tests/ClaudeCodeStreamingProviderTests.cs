@@ -22,11 +22,22 @@ public sealed class ClaudeCodeStreamingProviderTests
         provider.StartSession(new StreamingSessionOptions(Model: "m"));
 
         var args = factory.CapturedSpec!.Arguments;
+        args.Should().Contain("-p");                         // mandatory: without -p the CLI goes interactive and never streams (hangs)
         args.Should().ContainInOrder("--output-format", "stream-json");
         args.Should().Contain("--verbose");
         args.Should().Contain("--input-format").And.Contain("stream-json");
+        args.Should().Contain("--include-partial-messages"); // mandatory: enables the streaming text_delta + full tool_use blocks
         args.Should().NotContain("--bare");
         args.Should().ContainInOrder("--model", "m");
+    }
+
+    [Fact]
+    public void Append_system_prompt_is_passed_through_when_set()
+    {
+        var baseDir = Directory.CreateTempSubdirectory().FullName;
+        var (provider, factory) = Build(baseDir);
+        provider.StartSession(new StreamingSessionOptions(AppendSystemPrompt: "be terse"));
+        factory.CapturedSpec!.Arguments.Should().ContainInOrder("--append-system-prompt", "be terse");
     }
 
     [Fact]

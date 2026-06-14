@@ -122,7 +122,7 @@ public static class ClaudeStreamJson
             else if (root.TryGetProperty("api_error_status", out var aes) && aes.ValueKind == JsonValueKind.Number)
                 code = aes.GetInt32().ToString(System.Globalization.CultureInfo.InvariantCulture);
             else
-                code = subtype;                                 // last resort: null or "success" (caller sees it as-is)
+                code = null;                                    // subtype is null or "success" here — neither is a real error code
         }
         return new ResultLine(isError, code, fullText, inTok, outTok, cacheTok, cost);
     }

@@ -265,6 +265,25 @@ public sealed class ClaudeCodeStreamingSessionTests
     }
 
     [Fact]
+    public async Task Dispose_unblocks_a_full_channel_error_path_write(/* preflight: error-path None-write releases on dispose */)
+    {
+        // cap=1: the Delta fills the channel, so when the ERROR result arrives the LlmTurnError WriteAsync
+        // (issued on CancellationToken.None) blocks with no consumer draining. DisposeAsync's TryComplete is
+        // the ONLY thing that can release it (surfaces as ChannelClosedException, caught in the reader) — so
+        // dispose must finish promptly, not hang. (The success-path equivalent is pinned by the cap=1
+        // stalled-consumer EndCleanly test; this pins the two-write error path.)
+        var proc = new FakeStreamingCliProcess();
+        var session = new ClaudeCodeStreamingSession(
+            proc, NullLogger<ClaudeCodeStreamingSession>.Instance, channelCapacity: 1);
+        await session.SendUserTurnAsync("hi", CancellationToken.None);
+        proc.EmitLines(Init, Delta("x"), ErrResult("error_max_turns"));   // Delta fills cap=1; LlmTurnError write blocks
+
+        var dispose = async () => await session.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+        await dispose.Should().NotThrowAsync();   // fails (TimeoutException) if the None-write is never released
+        proc.Disposed.Should().BeTrue();
+    }
+
+    [Fact]
     public async Task Malformed_result_logs_warn_and_throws_unrecoverable()
     {
         var proc = new FakeStreamingCliProcess();
