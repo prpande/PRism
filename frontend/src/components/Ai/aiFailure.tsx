@@ -44,6 +44,11 @@ export function AiFailureProvider({ children }: { children: ReactNode }) {
   const pendingRef = useRef<Set<AiSeam>>(new Set());
   const retryingKeyRef = useRef<string | null>(null);
   retryingKeyRef.current = retryingKey;
+  // Mirrors `failures` so `clear` can read the latest snapshot without closing over the state
+  // variable — keeping `clear`'s deps at [settle] (stable) and avoiding stale-closure bugs where
+  // effects capture an old `clear` that closed over an outdated `failures` snapshot.
+  const failuresRef = useRef<FailureMap>(failures);
+  failuresRef.current = failures;
 
   const { pathname } = useEffectiveLocation();
   const route = parsePrRoute(pathname);
@@ -65,24 +70,25 @@ export function AiFailureProvider({ children }: { children: ReactNode }) {
 
   const clear = useCallback((prRef: PrReference, seam: AiSeam) => {
     const key = prRefKey(prRef);
-    // Compute full-recovery decision from current snapshot BEFORE the updater runs so the
-    // updater stays pure (StrictMode double-invokes updaters; side-effects inside them are unsafe).
-    const forPr = failures[key];
-    const fullRecovery = !!forPr && seam in forPr && Object.keys(forPr).length === 1;
+    // Read the latest snapshot from the ref (not closed-over state) so this callback is stable
+    // across failure mutations. Effects that capture `clear` once (on mount) always call the
+    // current version of the recovery logic rather than one that closed over a stale snapshot.
+    const forPr = failuresRef.current[key];
+    const willEmpty = !!forPr && seam in forPr && Object.keys(forPr).length === 1;
     setFailures((prev) => {
-      const entry = prev[key];
-      if (!entry || !(seam in entry)) return prev;
-      const next = { ...entry };
+      const cur = prev[key];
+      if (!cur || !(seam in cur)) return prev;
+      const next = { ...cur };
       delete next[seam];
       const out = { ...prev };
-      if (Object.keys(next).length === 0) { delete out[key]; }
+      if (Object.keys(next).length === 0) delete out[key];
       else out[key] = next;
       return out;
     });
     // Real recovery for this PR: reset any dismissal so a later identical failure re-shows.
-    if (fullRecovery) setDismissedFingerprint((d) => (d && d.startsWith(`${key}:`) ? null : d));
+    if (willEmpty) setDismissedFingerprint((d) => (d && d.startsWith(`${key}:`) ? null : d));
     settle(key, seam);
-  }, [failures, settle]);
+  }, [settle]);
 
   const clearPr = useCallback((prRef: PrReference) => {
     const key = prRefKey(prRef);

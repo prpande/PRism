@@ -55,8 +55,13 @@ export function useAiSummary(
       } else if (r.kind === 'error') {
         setRegenerateError(true); // retain the present body (§9)
         report(prRef, 'summary', { retry: regenerate });
+      } else if (r.kind === 'auth') {
+        // Auth failure on regenerate: show the inline regenerate-error block, but do NOT report
+        // to the toast (matches file-focus: inline error, no global toast on auth).
+        setRegenerateError(true);
+        clear(prRef, 'summary');
       } else {
-        // 'absent' | 'auth' — not a surface-worthy failure
+        // 'absent' — not a surface-worthy failure
         clear(prRef, 'summary');
       }
     } finally {
@@ -99,8 +104,15 @@ export function useAiSummary(
         setLoading(false);
         setError(true);
         report(prRef, 'summary', { retry: regenerate });
+      } else if (r.kind === 'auth') {
+        // Auth failure on initial fetch: show the inline error block (matches pre-#484 behaviour
+        // and file-focus parity — inline error, no global toast on auth).
+        setSummary(null);
+        setLoading(false);
+        setError(true);
+        clear(prRef, 'summary');
       } else {
-        // 'absent' | 'auth' — not a surface-worthy failure
+        // 'absent' — not a surface-worthy failure
         setSummary(null);
         setLoading(false);
         setError(false);

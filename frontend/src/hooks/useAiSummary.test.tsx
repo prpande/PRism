@@ -151,14 +151,18 @@ it('reports summary on initial-fetch kind:error', async () => {
   await waitFor(() => expect(result.current.f.activeFailedSeams).toContain('summary'));
 });
 
-it('does NOT report on kind:auth; clears', async () => {
+it('does NOT report on kind:auth; shows inline error instead', async () => {
   vi.spyOn(api, 'getAiSummaryResult').mockResolvedValue({ kind: 'auth' });
   const { result } = renderHook(
     () => ({ s: useAiSummary(FAIL_PR, true, true, false), f: useAiFailure() }),
     { wrapper: failWrapper },
   );
-  await waitFor(() => {});
+  // Wait for the fetch to resolve and loading to complete.
+  await waitFor(() => expect(result.current.s.loading).toBe(false));
+  // Auth must NOT surface a toast failure (no global report).
   expect(result.current.f.activeFailedSeams).not.toContain('summary');
+  // But auth DOES show the inline error block (pre-#484 parity; file-focus parity).
+  expect(result.current.s.error).toBe(true);
 });
 
 it('regenerate failure reports; regenerate success clears', async () => {

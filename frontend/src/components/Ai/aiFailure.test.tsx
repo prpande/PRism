@@ -86,3 +86,23 @@ it('useAiFailure outside a provider is a no-op (NOOP default)', () => {
   function Grab() { const a = useAiFailure(); a.report(PR_A, 'summary', { retry: retryNoop }); return <div>ok</div>; }
   expect(() => render(<MemoryRouter><Grab /></MemoryRouter>)).not.toThrow();
 });
+
+it('stale-clear regression: clear captured before failures are added still empties the set', () => {
+  // Reproduces the stale-closure bug: capture `clear` BEFORE any failure exists (so a stale
+  // `clear` would have closed over an empty `failures` snapshot), then report, dismiss, call the
+  // captured `clear` to recover, and verify a subsequent re-report shows the toast again.
+  // With the failuresRef fix, `clear` is stable and always sees the live snapshot — this passes.
+  // Without the fix (deps=[failures,settle]), the captured stale `clear` sees failures={} so
+  // `willEmpty` is false, the dismissal fingerprint is NOT reset, and the re-report stays hidden.
+  const api = grab('/pr/o/r/1');
+  // Capture `clear` BEFORE any failures exist (simulates an effect that captured clear on mount).
+  const staleClear = api().clear;
+  act(() => { api().report(PR_A, 'summary', { retry: retryNoop }); }); // failures change
+  act(() => { api().dismiss(); });
+  expect(screen.getByTestId('active').textContent).toContain('dismissed=true');
+  // Call the CAPTURED (potentially stale) clear — must still perform full recovery.
+  act(() => { staleClear(PR_A, 'summary'); });
+  // Re-report the same seam; toast must re-show (fingerprint was reset by the clear).
+  act(() => { api().report(PR_A, 'summary', { retry: retryNoop }); });
+  expect(screen.getByTestId('active').textContent).toBe('summary|retrying=false|dismissed=false');
+});

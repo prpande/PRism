@@ -378,7 +378,7 @@ export function PrDetailView({
   }, [draftSession.refetch]);
 
   return (
-    <div className={pageClassName} data-prref={refKey} hidden={!active}>
+    <div className={pageClassName} data-prref={refKey} hidden={!active} data-pr-main tabIndex={-1}>
       {/* Per-tab loading bar pinned to THIS tab's content boundary (not a global
           screen-top bar) — each open PR tab owns its own. Shows on cold load and
           background reload; self-contained, so no layout shift. */}
