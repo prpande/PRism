@@ -199,7 +199,15 @@ Pure-contract slice, so tests pin behavior + wiring, not subprocess I/O:
 
 ## 6. Slice 3 — C4 `--resume` empirical probe (child issue / spike)
 
-Not built in this PR. The **load-bearing empirical gate** for cross-restart chat resume (P2-2 / #412). Per verification-notes § C4, run the clean-end resume probe against the real CLI:
+**RESOLVED (#479, 2026-06-14).** The clean-end probe ran against `claude` v2.1.177, including a
+production-faithful re-run (confined cwd + stripped config). **Outcome #1 — full-context resume** holds:
+`claude --resume <id>` restores the prior session's full conversation context. The re-run also pinned two
+operational invariants: resume is **working-directory-scoped** (same cwd required; PRism's stable per-user
+base satisfies it) and **fails hard** on a cwd/id miss (degrades to fresh-with-injection). P2-2 keeps the
+full-context promise *as of v2.1.177*; CLI-update survival stays tracked/unrun. Full design + evidence:
+`docs/specs/2026-06-14-claude-resume-probe-design.md`.
+
+The original probe procedure, retained for reference: per verification-notes § C4, run the clean-end resume probe against the real CLI:
 
 1. Start a stream-json session; send a turn; capture `LlmTurnComplete`.
 2. Close stdin; await exit; capture `ProviderSessionId`.
