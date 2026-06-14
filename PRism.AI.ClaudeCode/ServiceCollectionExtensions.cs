@@ -19,6 +19,10 @@ public static class ServiceCollectionExtensions
         services.AddSingleton(options);
         services.AddSingleton<ICliProcessRunner, SystemCliProcessRunner>();
         services.AddSingleton<ILlmProvider, ClaudeCodeLlmProvider>();
+        services.AddSingleton<IStreamingCliProcessFactory, SystemStreamingCliProcessFactory>();
+        services.AddSingleton<IStreamingLlmProvider>(sp => new ClaudeCodeStreamingProvider(
+            sp.GetRequiredService<IStreamingCliProcessFactory>(),
+            sp.GetRequiredService<ClaudeCodeProviderOptions>()));
         services.AddSingleton<ITokenUsageTracker>(_ => new JsonlTokenUsageTracker(usageDir));
         // Register the concrete type so Web's AddPrismAi can resolve it directly when
         // wrapping it with CachedLlmAvailabilityProbe. The interface forwarding below keeps
