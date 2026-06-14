@@ -246,8 +246,21 @@ public sealed class HunkAnnotationParserTests
 
         ok.Should().BeTrue();
         entries.Should().ContainSingle();
+        entries[0].Body.Should().Be("safetext"); // RLO stripped (asserting the clean result, no literal-char compare)
+    }
+
+    [Fact]
+    public void Strips_arabic_letter_mark_u061c_from_body()
+    {
+        // U+061C (ARABIC LETTER MARK) is category Cf and a bidi control char the spec's original strip set
+        // missed (ce-doc-review, security-lens). It must be stripped like the other directional-formatting chars.
+        var ok = HunkAnnotationParser.TryParse(
+            "[{\"path\":\"a.cs\",\"hunkIndex\":0,\"body\":\"safe\\u061Ctext\",\"tone\":\"calm\"}]",
+            Flagged(File("a.cs", 1)), cap: 10, out var entries);
+
+        ok.Should().BeTrue();
+        entries.Should().ContainSingle();
         entries[0].Body.Should().Be("safetext");
-        entries[0].Body.Should().NotContain("‮");
     }
 
     [Fact]
@@ -446,9 +459,11 @@ internal static class HunkAnnotationParser
     }
 
     /// <summary>Strip category-Cc control characters AND the Unicode bidi / directional-formatting
-    /// characters that are category Cf (so <c>char.IsControl</c> misses them): U+200E/U+200F (LRM/RLM),
-    /// U+202A–U+202E (LRE…RLO/PDF), U+2066–U+2069 (LRI…PDI). Bounds what an injected payload can render
-    /// in a card (spec §5/§12). All targets are BMP single UTF-16 units, so a per-char scan is exact.</summary>
+    /// characters that are category Cf (so <c>char.IsControl</c> misses them): U+061C (ALM),
+    /// U+200E/U+200F (LRM/RLM), U+202A–U+202E (LRE…RLO/PDF), U+2066–U+2069 (LRI…PDI). Written as explicit
+    /// <c>\u</c> escapes (not literal invisible chars) so an editor that strips zero-width characters can't
+    /// silently disarm the filter — mirrors PromptSanitizer's discipline. Bounds what an injected payload can
+    /// render in a card (spec §5/§12). All targets are BMP single UTF-16 units, so a per-char scan is exact.</summary>
     private static string StripDangerous(string? raw)
     {
         if (string.IsNullOrEmpty(raw)) return string.Empty;
@@ -456,9 +471,10 @@ internal static class HunkAnnotationParser
         foreach (var ch in raw)
         {
             if (char.IsControl(ch)) continue;                         // Cc
-            if (ch is '‎' or '‏') continue;                 // LRM / RLM
-            if (ch >= '‪' && ch <= '‮') continue;           // LRE..RLO/PDF
-            if (ch >= '⁦' && ch <= '⁩') continue;           // LRI..PDI
+            if (ch == '\u061C') continue;                             // ALM (Arabic Letter Mark)
+            if (ch is '\u200E' or '\u200F') continue;                 // LRM / RLM
+            if (ch >= '\u202A' && ch <= '\u202E') continue;           // LRE..RLO/PDF
+            if (ch >= '\u2066' && ch <= '\u2069') continue;           // LRI..PDI
             sb.Append(ch);
         }
         return sb.ToString();
@@ -618,6 +634,19 @@ public sealed class ClaudeCodeHunkAnnotatorTests
         public ActivePrSnapshot? GetCurrent(PrReference prRef) => Snapshot;
         public void Update(PrReference prRef, ActivePrSnapshot snapshot) => Snapshot = snapshot;
         public void Clear() => Snapshot = null;
+    }
+
+    // Returns queued snapshots in order, then null. Lets a test distinguish the A2 read (1st GetCurrent in a
+    // call) from the R7 read (2nd) within a single AnnotateAsync, so the R7 write-skip branch can be exercised
+    // — A2 sees a MATCHING snapshot (proceed), R7 sees a MOVED snapshot (skip the cache write).
+    private sealed class QueuedActivePrCache : IActivePrCache
+    {
+        private readonly Queue<ActivePrSnapshot?> _snapshots;
+        public QueuedActivePrCache(params ActivePrSnapshot?[] snapshots) => _snapshots = new Queue<ActivePrSnapshot?>(snapshots);
+        public bool IsSubscribed(PrReference prRef) => true;
+        public ActivePrSnapshot? GetCurrent(PrReference prRef) => _snapshots.Count > 0 ? _snapshots.Dequeue() : null;
+        public void Update(PrReference prRef, ActivePrSnapshot snapshot) { }
+        public void Clear() { }
     }
 
     // Mutable fake so a test can change the cap mid-life (proves the fresh per-fetch read).
@@ -843,23 +872,59 @@ public sealed class ClaudeCodeHunkAnnotatorTests
     }
 
     [Fact]
-    public async Task R7_skips_the_write_when_the_snapshot_moved()
+    public async Task A2_recheck_returns_empty_uncached_when_snapshot_moved()
     {
+        // A2 fires after RankAsync but BEFORE the annotation provider call: if the active snapshot's head no
+        // longer matches the resolver's head, return [] without egress. (This is the A2 guard — distinct from
+        // the post-compute R7 write-skip exercised below.)
         var diff = Diff(F("a.cs", "@@ x @@"));
         var provider = new FakeLlmProvider("""[{"path":"a.cs","hunkIndex":0,"body":"n","tone":"calm"}]""");
         var cache = new StubActivePrCache
         {
-            // snapshot already reflects a DIFFERENT head than the annotator's resolver (base/head)
+            // active snapshot reflects a DIFFERENT head than the annotator's resolver (base/head)
             Snapshot = new ActivePrSnapshot("OTHER_HEAD", null, DateTimeOffset.UtcNow, BaseSha: "base"),
         };
         var annotator = Build(provider, diff, OneHigh, cache: cache);
 
-        // A2 re-check fires after RankAsync: the snapshot's head != resolver's head → return [] uncached.
         var result = await annotator.AnnotateAsync(Pr, string.Empty, 0, default);
-        result.Should().BeEmpty("A2 re-check returns [] uncached when the active snapshot moved");
 
-        var again = await annotator.AnnotateAsync(Pr, string.Empty, 0, default);
-        again.Should().NotBeSameAs(result.Count == 0 ? again : result); // not served from cache (nothing cached)
+        result.Should().BeEmpty("A2 re-check returns [] when the active snapshot moved");
+        provider.CallCount.Should().Be(0, "A2 short-circuits before CompleteAndParseAsync → no annotation egress");
+    }
+
+    [Fact]
+    public async Task R7_skips_the_cache_write_when_the_snapshot_moves_during_the_provider_call()
+    {
+        // R7 is the post-compute compare-and-set: A2 passes (snapshot matches at re-check), the provider
+        // succeeds, THEN the snapshot moves before the write → the result is returned but NOT cached, so the
+        // next fetch recomputes. Give the ranker its OWN null cache so only the annotator's A2/R7 reads come
+        // from the queued cache. (Without this test, a regression dropping the R7 head/base equality check —
+        // caching a stale-head result — would pass the whole suite; the A2 test above can't catch it.)
+        var diff = Diff(F("a.cs", "@@ x @@"));
+        var provider = new FakeLlmProvider("""[{"path":"a.cs","hunkIndex":0,"body":"n","tone":"calm"}]""");
+        var bus = new ReviewEventBus();
+        var rankerCache = new StubActivePrCache(); // null snapshot → ranker R7 always stores; ranker not under test
+        var ranker = BuildRanker(diff, OneHigh, "base", "head", rankerCache, bus);
+
+        // Annotator's cache: the A2 read (1st GetCurrent) sees a MATCHING snapshot → proceed; the R7 read
+        // (2nd GetCurrent, after the provider call) sees a MOVED snapshot → skip the write.
+        var annotatorCache = new QueuedActivePrCache(
+            new ActivePrSnapshot("head", null, DateTimeOffset.UtcNow, BaseSha: "base"),    // A2 → match → proceed
+            new ActivePrSnapshot("MOVED", null, DateTimeOffset.UtcNow, BaseSha: "base"));  // R7 → moved → skip write
+        ClaudeCodeHunkAnnotator.DiffResolver resolve = (_, _) => Task.FromResult((diff, "base", "head"));
+        var annotator = new ClaudeCodeHunkAnnotator(
+            provider, new FakeTokenUsageTracker(), resolve,
+            NullLogger<ClaudeCodeHunkAnnotator>.Instance, new FakeAiInteractionLog(), bus, annotatorCache, ranker,
+            new FakeConfigStore());
+
+        var first = await annotator.AnnotateAsync(Pr, string.Empty, 0, default);
+        first.Should().ContainSingle("the computed result is still returned to the caller");
+
+        // queue exhausted → GetCurrent returns null → A2 proceeds, R7 stores. If the first result HAD been
+        // cached (R7 write not skipped), this would be a cache hit and CallCount would stay at 1.
+        var second = await annotator.AnnotateAsync(Pr, string.Empty, 0, default);
+        second.Should().ContainSingle();
+        provider.CallCount.Should().Be(2, "R7 skipped the write on the moved snapshot, so the second fetch recomputes");
     }
 
     [Fact]
@@ -1226,7 +1291,7 @@ internal sealed partial class ClaudeCodeHunkAnnotator : IHunkAnnotator, IDisposa
 Run: `dotnet test tests/PRism.Web.Tests/PRism.Web.Tests.csproj --filter "FullyQualifiedName~ClaudeCodeHunkAnnotatorTests"`
 Expected: PASS (all annotator tests).
 
-> If `R7_skips_the_write_when_the_snapshot_moved` is awkward to assert via `BeSameAs`, simplify the second assertion to: call `AnnotateAsync` twice and assert `provider.CallCount` increases (nothing cached → the gate path is re-entered). The behavioral contract under test is "A2 mismatch → uncached".
+> Snapshot-move coverage is split into two tests by design: `A2_recheck_returns_empty_uncached_when_snapshot_moved` covers the pre-compute A2 guard (mismatch → `[]`, no egress), and `R7_skips_the_cache_write_when_the_snapshot_moves_during_the_provider_call` covers the post-compute R7 write-skip (result returned but not cached → next fetch recomputes). Both assert behavior via `provider.CallCount`, not reference identity.
 
 - [ ] **Step 5: Commit**
 
@@ -1246,6 +1311,8 @@ git commit -m "feat(ai): #414 ClaudeCodeHunkAnnotator (cost gate, cap-as-contrac
 - [ ] **Step 1: Write the failing tests + fix the existing Preview test**
 
 In `tests/PRism.Web.Tests/Endpoints/AiHunkAnnotationsEndpointTests.cs`:
+
+The two existing tests that do NOT need changes survive the gate unchanged: `Get_ai_hunk_annotations_returns_204_when_aiPreview_is_off` (mode Off + not-subscribed → 204, same status for both reasons) and `Get_ai_hunk_annotations_returns_401_without_session_token` (401 is enforced by `SessionTokenMiddleware` before the endpoint runs, ahead of the gate). Only the Preview test below needs the subscriber edit.
 
 (a) The existing `Get_ai_hunk_annotations_returns_200_with_placeholder_entries_when_aiPreview_is_on` will start returning 204 once the gate runs in every mode — register a subscriber so the Placeholder path is reached. Replace its body's factory/client setup with (mirroring `AiFileFocusEndpointTests`):
 
@@ -1383,6 +1450,12 @@ Add the test context at the bottom of the file (after the `AiHunkAnnotationsEndp
 /// is flagged) AND the concrete <see cref="ClaudeCodeHunkAnnotator"/> (its own provider returns the
 /// annotation JSON / throws) so the IAiSeamSelector factory lights up the real annotator as the Live seam.
 /// A 204 on the not-subscribed path can then ONLY come from the endpoint gate. Mirrors AiFileFocusTestContext.
+///
+/// REUSES the file-scoped fakes already in this test assembly/namespace (PRism.Web.Tests.Endpoints):
+/// NullTokenTracker / NullAiAuditLog / NullInnerActivePrCache (AiSummaryTestContext.cs) and
+/// ConfigurableActivePrCache (PrRootCommentEndpointTests.cs) — do NOT re-declare them. Only CountingProvider
+/// (a counting ILlmProvider, per the per-file fake idiom AiFileFocusEndpointTests uses) and FixedConfigStore
+/// (no shared IConfigStore stub exists in this namespace) are local.
 /// </summary>
 internal sealed class AiHunkAnnotationTestContext : IDisposable
 {
@@ -1759,3 +1832,4 @@ Per spec §9 + Exit criteria, with the backend running in Live + consent + provi
 2. **Cap hot-reload takes effect on the next cache-MISS, not literally the next fetch.** The result is cached per `(prRef, baseSha, headSha)`; a `config.json` cap edit does not evict the cache, so an already-cached PR keeps serving the old result until its head/base moves (or the process restarts). The cap *is* read fresh on each cache-miss computation (proven by `Cap_is_read_fresh_each_cache_miss`). This is a minor refinement of the spec's "next fetch" / exit-criteria wording — worth confirming the owner is fine with it (a config edit reflects on the next *uncached* fetch). No behavior change proposed; just precision.
 3. **The oversized-prompt 503 can originate in the ranker's `BuildPrompt`, not the annotator's** — the ranker runs first inside `AnnotateAsync`, so an oversized hunk body throws `ArgumentException` there. Either origin propagates to the endpoint → 503, so the contract holds; the endpoint test asserts 503 without caring which `BuildPrompt` threw.
 4. **`/simplify` will run before the PR** (edits the tree → before the verify gate), then `pr-autopilot` with **base = `V2`** and the **B2 gate** (owner merges; no auto-merge).
+5. **`StripDangerous` adds U+061C (ALM) beyond the spec's enumerated set** (ce-doc-review / security-lens, anchor 50). The spec §5/§13 list U+200E/F, U+202A–E, U+2066–9; U+061C (ARABIC LETTER MARK) is also a category-Cf bidi control char and was missed. The plan strips it too and uses explicit `\u` escape text (not literal invisible chars). **Spec drift:** the spec's enumerated set should be synced to add U+061C — flag for owner (a strict, consistent extension of the stated "strip bidi Cf chars" intent, not a behavior reversal). A broader alternative — switch the hand-enumerated set to `CharUnicodeInfo.GetUnicodeCategory(ch) == UnicodeCategory.Format` (covers all Cf, future-proof) — was considered but NOT taken, to stay close to the owner-reviewed explicit set; owner can opt into it.
