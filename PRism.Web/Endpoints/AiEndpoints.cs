@@ -36,28 +36,16 @@ internal static class AiEndpoints
             (string owner, string repo, int number, IAiSeamSelector ai, IActivePrCache activePrCache, CancellationToken ct) =>
                 ResolveFileFocusAsync(new PrReference(owner, repo, number), ai, activePrCache, ct));
 
-        // PR9b-ai-gating § 3.2. The seam interface takes (prRef, filePath, hunkIndex)
-        // for v2 per-hunk queries; v1's placeholder ignores filePath/hunkIndex and
-        // returns the canned set wholesale. The endpoint surfaces all annotations
-        // for the PR in one fetch so DiffPane can index locally. D109 documents the
-        // seam-vs-endpoint divergence rationale; D111 comment below anchors the
-        // IsSubscribed-gating reopener.
+        // PR9b-ai-gating § 3.2 + #414. The seam interface takes (prRef, filePath, hunkIndex) for v2
+        // per-hunk queries (#477); the one-shot endpoint passes (string.Empty, 0) sentinels and surfaces
+        // ALL annotations for the PR in one fetch so DiffPane indexes locally (D109).
         //
-        // D111: No per-PR IsSubscribed check while seam is canned-data only. When
-        // the binding swaps to a real AI implementation (real generation, not Noop/
-        // Placeholder), add an IsSubscribed gate before the seam call — DO NOT
-        // merge the seam swap without this gate.
+        // D111 (spec §6): the real ClaudeCodeHunkAnnotator is now wired (#414), so the IsSubscribed gate
+        // runs FIRST — a non-subscribed view never spends tokens on the real annotator. Provider failure /
+        // oversized prompt → 503 (never 500), matching /ai/summary + /ai/file-focus.
         app.MapGet("/api/pr/{owner}/{repo}/{number:int}/ai/hunk-annotations",
-            async (string owner, string repo, int number,
-                   IAiSeamSelector ai, CancellationToken ct) =>
-            {
-                var annotator = ai.Resolve<IHunkAnnotator>();
-                var annotations = await annotator
-                    .AnnotateAsync(new PrReference(owner, repo, number),
-                                   filePath: string.Empty, hunkIndex: 0, ct)
-                    .ConfigureAwait(false);
-                return annotations.Count == 0 ? Results.NoContent() : Results.Ok(annotations);
-            });
+            (string owner, string repo, int number, IAiSeamSelector ai, IActivePrCache activePrCache, CancellationToken ct) =>
+                ResolveHunkAnnotationsAsync(new PrReference(owner, repo, number), ai, activePrCache, ct));
 
         // PR9b-ai-gating § 3.2. Third new AI endpoint. IDraftSuggester.SuggestAsync
         // takes (prRef, ct) — clean per-PR shape, no sentinel args needed.
@@ -139,6 +127,36 @@ internal static class AiEndpoints
             // ArgumentException when a single file's concatenated hunk bodies exceed the 2 MB cap.
             // The content is diff-derived (attacker-influenceable), so this must map to 503 — not 500 —
             // matching the "provider failure → 503 (never 500)" contract documented above.
+            return Results.StatusCode(StatusCodes.Status503ServiceUnavailable);
+        }
+    }
+
+    // #414. The hunk-annotations gate chain, mirroring ResolveFileFocusAsync: D111 IsSubscribed → seam
+    // resolve (tri-state gating lives in Resolve) → AnnotateAsync. The IsSubscribed check runs BEFORE the
+    // seam is resolved/invoked so a non-subscribed view never spends tokens on the real annotator. 204 when
+    // not subscribed or when the annotation list is empty (AI off, no High/Medium files, parse failure).
+    // Provider failure / oversized prompt → 503 (never 500).
+    internal static async Task<IResult> ResolveHunkAnnotationsAsync(
+        PrReference prRef, IAiSeamSelector ai, IActivePrCache activePrCache, CancellationToken ct)
+    {
+        if (!activePrCache.IsSubscribed(prRef))
+            return Results.NoContent();   // 204 — D111
+
+        var annotator = ai.Resolve<IHunkAnnotator>();
+        try
+        {
+            var annotations = await annotator.AnnotateAsync(prRef, string.Empty, 0, ct).ConfigureAwait(false);
+            return annotations.Count == 0 ? Results.NoContent() : Results.Ok(annotations);
+        }
+        catch (LlmProviderException)
+        {
+            return Results.StatusCode(StatusCodes.Status503ServiceUnavailable);
+        }
+        catch (ArgumentException)
+        {
+            // PromptSanitizer.WrapAsData throws ArgumentException when a single file's hunk bodies exceed
+            // the 2 MB cap (in either the ranker's or the annotator's BuildPrompt). Diff-derived content is
+            // attacker-influenceable, so map to 503 — not 500 — per the "provider failure → 503" contract.
             return Results.StatusCode(StatusCodes.Status503ServiceUnavailable);
         }
     }

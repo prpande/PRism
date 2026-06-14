@@ -30,4 +30,11 @@ describe('AiHunkAnnotation sample badge', () => {
     render(<AiHunkAnnotation annotation={annotation} />);
     expect(screen.queryByTestId('sample-badge')).toBeNull();
   });
+  it('omits the badge in live', () => {
+    // #414: real annotations render in Live with NO sample marker — guards the "Sample marker only in
+    // Preview" contract against a future SampleBadge/useIsSampleMode refactor.
+    mock.aiMode = 'live';
+    render(<AiHunkAnnotation annotation={annotation} />);
+    expect(screen.queryByTestId('sample-badge')).toBeNull();
+  });
 });

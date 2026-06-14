@@ -46,17 +46,17 @@ describe('useCapabilities tri-state derivation', () => {
     });
   });
 
-  it('Live → summary + fileFocus (P1-2 live seams); not-yet-live seams stay off', () => {
+  it('Live → summary + fileFocus + hunkAnnotations (live seams); not-yet-live seams stay off', () => {
     mock.aiMode = 'live';
     const { result } = renderHook(() => useCapabilities());
     // The regression: a two-state `aiMode === 'preview' ? AllOn : AllOff` derivation
     // returned AllOff for Live, gating the live summary card off entirely.
     expect(result.current.capabilities?.summary).toBe(true);
     expect(result.current.capabilities?.fileFocus).toBe(true);
+    expect(result.current.capabilities?.hunkAnnotations).toBe(true); // #414 P2-4 — real annotator is live
     expect(result.current.capabilities).toMatchObject({
       composerAssist: false,
       preSubmitValidators: false,
-      hunkAnnotations: false,
       draftSuggestions: false,
       inboxEnrichment: false,
     });

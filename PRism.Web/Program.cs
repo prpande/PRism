@@ -76,7 +76,13 @@ Directory.CreateDirectory(llmCwd);                  // probe needs a stable cwd 
 // but the tracker is a singleton factory that nothing resolves in P0 (no seam calls RecordAsync), so the ctor
 // never runs and the dir is never materialized. Eager-creating it here would litter an empty owner-scoped dir.
 builder.Services.AddPrismClaudeCode(
-    new ClaudeCodeProviderOptions { WorkingDirectory = llmCwd },
+    // Hard wall-clock ceiling per provider call. The 60s default was too tight for the hunk-annotation
+    // seam (owner live-validation 2026-06-14: it consistently timed out at 60s → 503, dark in Live, while
+    // summary/file-focus finished well under). Annotation is the slowest seam (reason over every hunk +
+    // write prose), so the shared ceiling is raised to a generous interim value; the synchronous one-shot
+    // model is the real constraint and is tracked for the lazy/streamed load (#477). Tuned from the measured
+    // p100 latency — see docs/specs/2026-06-14-ai-hunk-annotator-keystone-design.md.
+    new ClaudeCodeProviderOptions { WorkingDirectory = llmCwd, Timeout = TimeSpan.FromSeconds(240) },
     llmUsageDir);
 builder.Services.AddPrismAi();
 builder.Services.AddPrismWeb();

@@ -9,7 +9,12 @@ namespace PRism.Web.Ai;
 /// the rationale. Backfill + all-medium fallback are exposed for the ranker to compose. No I/O.</summary>
 internal static class FileFocusParser
 {
-    internal const int RationaleCap = 160;
+    // Runaway-output backstop, NOT the expected length. Raised 160 → 600 (owner live-validation 2026-06-14):
+    // the Hotspots tab now shows the full multi-sentence narrative, and 160 clipped real rationales mid-word.
+    // 600 ≈ 3-4 sentences — comfortably above the prompt's "one to three sentences" budget, so a compliant
+    // rationale is never truncated, while a pathological response is still bounded. Mirrors the hunk
+    // annotator's BodyCap (HunkAnnotationParser.BodyCap = 600).
+    internal const int RationaleCap = 600;
     internal const string BackfillRationale = "Not individually ranked.";
     internal const string FallbackRationale = "Automatic fallback — ranking unavailable.";
 

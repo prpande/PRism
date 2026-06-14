@@ -78,8 +78,12 @@ public sealed record IterationsConfig(int ClusterGapSeconds, bool ClusteringDisa
 public sealed record LoggingConfig(string Level, bool StateEvents, int StateEventsRetentionFiles);
 public sealed record UiConfig(string Theme, string Accent, AiConfig Ai, string Density = "comfortable", string ContentScale = "m");
 
-/// <summary>AI mode config (spec §4). Persisted at <c>ui.ai.mode</c>.</summary>
-public sealed record AiConfig(AiMode Mode, AiConsentConfig Consent, AiFeaturesConfig Features);
+/// <summary>AI mode config (spec §4). Persisted at <c>ui.ai.mode</c>. <paramref name="HunkAnnotationCap"/>
+/// (#414) bounds the per-PR hunk-annotation count; a trailing-defaulted param so existing positional
+/// <c>new AiConfig(Mode, Consent, Features)</c> call sites (AppConfig.Default + test fixtures) keep
+/// compiling. Config-file + hot-reload only this slice (not API-patchable — see #481). The annotator
+/// clamps a non-positive value to 10 on read.</summary>
+public sealed record AiConfig(AiMode Mode, AiConsentConfig Consent, AiFeaturesConfig Features, int HunkAnnotationCap = 10);
 
 public sealed record GithubConfig(IReadOnlyList<GithubAccountConfig> Accounts)
 {
