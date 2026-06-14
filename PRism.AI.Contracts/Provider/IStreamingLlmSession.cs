@@ -42,7 +42,10 @@ public interface IStreamingLlmSession : IAsyncDisposable
     /// as an additional <em>informational</em> <see cref="LlmEvent"/> subtype defined empirically in
     /// Slice 2 that PRECEDES the turn's terminal <see cref="LlmTurnComplete"/> — it NEVER replaces it.
     /// So a consumer that ignores unrecognized subtypes (which it MUST, for forward-compat) still
-    /// terminates the turn on <see cref="LlmTurnComplete"/> rather than hanging.</summary>
+    /// terminates the turn on <see cref="LlmTurnComplete"/> rather than hanging.
+    /// CONSUMPTION: exactly one active consumer is assumed and the stream is single-pass —
+    /// re-enumerating (starting a second <c>await foreach</c> over this property) is undefined; the
+    /// real impl backs it with a single-reader channel, so a second consumer would steal events.</summary>
     IAsyncEnumerable<LlmEvent> Events { get; }
 
     /// <summary>End the session at a turn boundary: wait for the current turn's

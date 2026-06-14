@@ -34,13 +34,15 @@ public sealed class NoopStreamingLlmSessionTests
     }
 
     [Fact]
-    public async Task ProviderSessionId_is_a_stable_nonempty_value()
+    public async Task ProviderSessionId_is_nonempty_and_stable_within_a_session()
     {
+        // Contract property: the id is non-empty and does not change mid-session. (The real provider
+        // returns a UNIQUE id per session — cross-session sameness is a Noop-only detail, not asserted.)
         await using var session = StartSession();
-        await using var another = StartSession();
 
-        session.ProviderSessionId.Should().NotBeNullOrEmpty();
-        another.ProviderSessionId.Should().Be(session.ProviderSessionId);
+        var id = session.ProviderSessionId;
+        id.Should().NotBeNullOrEmpty();
+        session.ProviderSessionId.Should().Be(id);
     }
 
     [Fact]

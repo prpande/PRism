@@ -14,7 +14,10 @@ public abstract record LlmEvent;
 public sealed record LlmTextDelta(string Text) : LlmEvent;
 
 /// <summary>The model invoked a tool. <paramref name="Input"/> is the raw tool input as reported by
-/// the provider; the host does not interpret it for non-MCP tools.</summary>
+/// the provider; the host does not interpret it for non-MCP tools. The element must remain valid for
+/// this event's lifetime — the provider impl clones it (<see cref="JsonElement.Clone"/>) or owns the
+/// backing <see cref="JsonDocument"/> and disposes it only after the consumer has processed the event,
+/// since a <see cref="JsonElement"/> over a disposed document throws on access.</summary>
 public sealed record LlmToolUse(string ToolName, JsonElement Input) : LlmEvent;
 
 /// <summary>Terminal event for one turn: the assembled whole-turn text plus usage. Exactly one is
