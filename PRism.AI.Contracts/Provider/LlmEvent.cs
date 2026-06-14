@@ -31,3 +31,11 @@ public sealed record LlmTurnComplete(
     int OutputTokens,
     int CacheReadInputTokens,
     decimal EstimatedCostUsd) : LlmEvent;
+
+/// <summary>An INFORMATIONAL recoverable error for the current turn (the turn still terminates with
+/// exactly one <see cref="LlmTurnComplete"/> immediately after — this never replaces it). Defined
+/// empirically in P0-1b Slice 2. <paramref name="Code"/> is the provider's error code:
+/// the CLI <c>result.subtype</c> when it is not the literal <c>"success"</c> (e.g. <c>error_max_turns</c>),
+/// else the <c>api_error_status</c> rendered as a string (e.g. <c>"404"</c>) — because the CLI emits
+/// <c>subtype:"success"</c> even on an API-error turn, so subtype alone is not a reliable code.</summary>
+public sealed record LlmTurnError(string Message, string? Code) : LlmEvent;
