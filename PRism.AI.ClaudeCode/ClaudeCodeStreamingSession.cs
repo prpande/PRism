@@ -95,16 +95,21 @@ public sealed class ClaudeCodeStreamingSession : IStreamingLlmSession
 #pragma warning restore CA1031
     }
 
-    // Slice 4a: SUCCESS PATH ONLY. The is_error branch is added in 4c (red-first); the malformed/drift
-    // branch in Task 8. The terminal LlmTurnComplete is written with CancellationToken.None — NEVER the
-    // reader CT — so a forced EndCleanly/Dispose that cancels the reader cannot drop the turn's terminal
-    // event out from under a consumer still draining it. (A truly stalled consumer is released instead by
+    // The terminal LlmTurnComplete is written with CancellationToken.None — NEVER the reader CT — so a
+    // forced EndCleanly/Dispose that cancels the reader cannot drop the turn's terminal event out from
+    // under a consumer still draining it. (A truly stalled consumer is released instead by
     // EndCleanly/Dispose completing the writer, which surfaces as ChannelClosedException, caught above.)
     private async Task CompleteTurnAsync(ResultLine r, CancellationToken ct)
     {
         // TRIP BEFORE the (potentially blocking) channel write — else a stalled consumer hangs EndCleanly.
         lock (_turnGate) { _turnInFlight = false; _turnTcs?.TrySetResult(); }
 
+        if (r.IsError)
+        {
+            await _channel.Writer.WriteAsync(
+                new LlmTurnError(string.IsNullOrEmpty(r.FullText) ? (r.Code ?? "error") : r.FullText, r.Code),
+                CancellationToken.None).ConfigureAwait(false);
+        }
         await _channel.Writer.WriteAsync(new LlmTurnComplete(
             r.FullText, r.InputTokens, r.OutputTokens, r.CacheReadInputTokens, r.EstimatedCostUsd),
             CancellationToken.None).ConfigureAwait(false);

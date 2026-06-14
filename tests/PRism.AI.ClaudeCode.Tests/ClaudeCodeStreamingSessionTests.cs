@@ -86,4 +86,61 @@ public sealed class ClaudeCodeStreamingSessionTests
         await act.Should().ThrowAsync<InvalidOperationException>();
         proc.StdinWrites.Should().HaveCount(1);     // second NOT written
     }
+
+    private static string ErrResult(string subtype) =>
+        $"{{\"type\":\"result\",\"subtype\":\"{subtype}\",\"is_error\":true,\"total_cost_usd\":0,\"usage\":{{\"input_tokens\":0,\"output_tokens\":0,\"cache_read_input_tokens\":0}}}}";
+
+    [Fact]
+    public async Task Error_turn_emits_turn_error_then_turn_complete()
+    {
+        var proc = new FakeStreamingCliProcess();
+        await using var session = new ClaudeCodeStreamingSession(proc);
+        proc.EmitLines(Init, ErrResult("error_max_turns")); proc.EndStdout();
+
+        var events = new List<LlmEvent>();
+        await foreach (var e in session.Events) events.Add(e);
+
+        events.Should().HaveCount(2);
+        events[0].Should().BeOfType<LlmTurnError>().Which.Code.Should().Be("error_max_turns");
+        events[1].Should().BeOfType<LlmTurnComplete>().Which.FullText.Should().Be("");
+    }
+
+    [Fact]
+    public async Task Turn_in_flight_clears_on_error_so_next_send_succeeds()
+    {
+        var proc = new FakeStreamingCliProcess();
+        await using var session = new ClaudeCodeStreamingSession(proc);
+        await session.SendUserTurnAsync("first", CancellationToken.None);
+        proc.EmitLines(Init, ErrResult("error_max_turns"));
+
+        // Drain until the turn completes, then a second send must not throw.
+        await WaitForTurnComplete(session);
+        var act = () => session.SendUserTurnAsync("second", CancellationToken.None);
+        await act.Should().NotThrowAsync();
+    }
+
+    [Fact]
+    public async Task Multi_turn_keeps_tokens_per_turn_and_one_session_id()
+    {
+        var proc = new FakeStreamingCliProcess();
+        await using var session = new ClaudeCodeStreamingSession(proc);
+        proc.EmitLines(Init,
+            """{"type":"result","subtype":"success","is_error":false,"result":"one","total_cost_usd":0.01,"usage":{"input_tokens":1,"output_tokens":1,"cache_read_input_tokens":0}}""",
+            """{"type":"result","subtype":"success","is_error":false,"result":"two","total_cost_usd":0.02,"usage":{"input_tokens":2,"output_tokens":2,"cache_read_input_tokens":0}}""");
+        proc.EndStdout();
+
+        var completes = new List<LlmTurnComplete>();
+        await foreach (var e in session.Events) if (e is LlmTurnComplete c) completes.Add(c);
+
+        completes.Should().HaveCount(2);
+        completes[0].FullText.Should().Be("one"); completes[0].InputTokens.Should().Be(1);
+        completes[1].FullText.Should().Be("two"); completes[1].InputTokens.Should().Be(2);
+        session.ProviderSessionId.Should().Be("sess-1");
+    }
+
+    // Helper: drain Events on a background task until the first LlmTurnComplete.
+    private static async Task WaitForTurnComplete(IStreamingLlmSession s)
+    {
+        await foreach (var e in s.Events) if (e is LlmTurnComplete) return;
+    }
 }
