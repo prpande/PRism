@@ -10,6 +10,7 @@ using PRism.AI.Contracts.Provider;
 using PRism.AI.Contracts.Seams;
 using PRism.AI.Placeholder;
 using PRism.Core.Ai;
+using PRism.Core.Config;
 using PRism.Core.Contracts;
 using PRism.Core.Events;
 using PRism.Core.Json;
@@ -139,6 +140,36 @@ internal static class ServiceCollectionExtensions
                 sp.GetRequiredService<IActivePrCache>());
         });
 
+        // #414 — the real IHunkAnnotator. Mirrors the ranker block's cold-path guard (TryGetCachedSnapshot
+        // ?? LoadAsync so GetOrFetchDiffAsync is never called with empty SHAs). Injects the CONCRETE
+        // ClaudeCodeFileFocusRanker (the cost-gate input — cached, so no double spend; D414-3) and the
+        // already-registered IConfigStore (the cap accessor — D414-7; no AiTuningState holder).
+        services.AddSingleton<ClaudeCodeHunkAnnotator>(sp =>
+        {
+            var loader = sp.GetRequiredService<PrDetailLoader>();
+            ClaudeCodeHunkAnnotator.DiffResolver resolve = async (pr, ct) =>
+            {
+                var snapshot = loader.TryGetCachedSnapshot(pr)
+                    ?? await loader.LoadAsync(pr, ct).ConfigureAwait(false)
+                    ?? throw new InvalidOperationException($"PR detail unavailable for {pr}");
+                var baseSha = snapshot.Detail.Pr.BaseSha;
+                var headSha = snapshot.Detail.Pr.HeadSha;
+                var diffDto = await loader.GetOrFetchDiffAsync(pr, new DiffRangeRequest(baseSha, headSha), ct)
+                                          .ConfigureAwait(false);
+                return (diffDto, baseSha, headSha);
+            };
+            return new ClaudeCodeHunkAnnotator(
+                sp.GetRequiredService<ILlmProvider>(),
+                sp.GetRequiredService<ITokenUsageTracker>(),
+                resolve,
+                sp.GetRequiredService<ILogger<ClaudeCodeHunkAnnotator>>(),
+                sp.GetRequiredService<IAiInteractionLog>(),
+                sp.GetRequiredService<IReviewEventBus>(),
+                sp.GetRequiredService<IActivePrCache>(),
+                sp.GetRequiredService<ClaudeCodeFileFocusRanker>(),
+                sp.GetRequiredService<IConfigStore>());
+        });
+
         var realSeams = new Dictionary<Type, object>();   // P1: populated below with the first real impl
         // Pass the live dictionary BY REFERENCE (not a .Keys snapshot) — the resolver and the selector
         // (real: realSeams below) must read the same instance so P1's first real impl lights up both
@@ -150,6 +181,7 @@ internal static class ServiceCollectionExtensions
             // resolver and the seam selector see the same live entry.
             realSeams[typeof(IPrSummarizer)] = sp.GetRequiredService<ClaudeCodeSummarizer>();
             realSeams[typeof(IFileFocusRanker)] = sp.GetRequiredService<ClaudeCodeFileFocusRanker>();
+            realSeams[typeof(IHunkAnnotator)] = sp.GetRequiredService<ClaudeCodeHunkAnnotator>();
             return new AiSeamSelector(
             sp.GetRequiredService<AiModeState>(),
             noop: new Dictionary<Type, object>
