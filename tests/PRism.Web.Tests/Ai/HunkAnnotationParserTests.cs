@@ -143,6 +143,24 @@ public sealed class HunkAnnotationParserTests
     }
 
     [Fact]
+    public void Different_bodies_for_same_hunk_both_survive()
+    {
+        // Documents the dedup-key-includes-body contract (claude[bot] PR #482 #4): two DIFFERENT bodies for
+        // the same (path, hunkIndex) are NOT deduped — both survive, bounded only by the cap backstop.
+        var ok = HunkAnnotationParser.TryParse(
+            """
+            [{"path":"a.cs","hunkIndex":0,"body":"first take","tone":"calm"},
+             {"path":"a.cs","hunkIndex":0,"body":"second take","tone":"concern"}]
+            """,
+            Flagged(File("a.cs", 1)), cap: 10, out var entries);
+
+        ok.Should().BeTrue();
+        entries.Should().HaveCount(2);
+        entries.Should().Contain(e => e.Body == "first take");
+        entries.Should().Contain(e => e.Body == "second take");
+    }
+
+    [Fact]
     public void Caps_to_first_n_in_emitted_order()
     {
         // model misbehaves and emits 3 valid entries with cap = 2 → keep the FIRST 2 in emitted order.

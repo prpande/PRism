@@ -73,6 +73,9 @@ internal static class HunkAnnotationParser
             var body = StripDangerous(rawBody).Trim();
             if (body.Length == 0 || body.Length > BodyCap) continue;                  // empty / over-length → drop
 
+            // Dedup key INCLUDES body: only an exact (path, hunkIndex, body) repeat is a duplicate
+            // (last-wins on tone). Two DIFFERENT bodies for the same hunk index both survive by design —
+            // that is rare model behavior, and the cap backstop bounds the total either way.
             var key = (path, hunkIndex, body);
             var ann = new HunkAnnotation(path, hunkIndex, body, tone);
             if (slotByKey.TryGetValue(key, out var slot))

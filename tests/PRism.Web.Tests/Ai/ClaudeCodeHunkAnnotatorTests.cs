@@ -442,4 +442,24 @@ public sealed class ClaudeCodeHunkAnnotatorTests
         ClaudeCodeHunkAnnotator.PromptFieldAllowlist
             .Should().BeEquivalentTo(new[] { "path", "status", "hunkBodies" });
     }
+
+    [Fact]
+    public async Task Prompt_emits_only_allowlisted_field_labels()
+    {
+        // Egress ENFORCEMENT (claude[bot] PR #482 #1): the allowlist constant declares intent, but the real
+        // guard is that BuildPrompt emits ONLY the path/status/hunks field labels. A future edit adding a new
+        // PR-derived category (e.g. "commitMessages:") would surface here, not just in the constant's own test.
+        var diff = Diff(F("a.cs", "@@ logic line @@"));
+        var provider = new FakeLlmProvider("""[{"path":"a.cs","hunkIndex":0,"body":"n","tone":"calm"}]""");
+        var annotator = Build(provider, diff, OneHigh);
+
+        await annotator.AnnotateAsync(Pr, string.Empty, 0, default);
+
+        var labels = System.Text.RegularExpressions.Regex
+            .Matches(provider.LastUserContent!, @"(?m)^([a-z][a-zA-Z]*):")
+            .Select(m => m.Groups[1].Value)
+            .Distinct();
+        labels.Should().BeSubsetOf(new[] { "path", "status", "hunks" },
+            "BuildPrompt must egress only the allowlisted field categories (path / status / hunkBodies)");
+    }
 }
