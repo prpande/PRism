@@ -263,4 +263,30 @@ public sealed class ClaudeCodeStreamingSessionTests
         await dispose.Should().NotThrowAsync();
         proc.Disposed.Should().BeTrue();
     }
+
+    [Fact]
+    public async Task Back_pressure_small_cap_preserves_all_events_in_order()
+    {
+        // cap=4 with 50 deltas guarantees the reader BLOCKS on WriteAsync (load >> cap) until the consumer
+        // pulls — genuinely exercising the Wait policy (unlike a cap-1024 test the consumer never fills).
+        // Asserts no drop / no reorder under sustained back-pressure, and the terminal event still arrives.
+        var proc = new FakeStreamingCliProcess();
+        await using var session = new ClaudeCodeStreamingSession(
+            proc, NullLogger<ClaudeCodeStreamingSession>.Instance, channelCapacity: 4);
+        proc.EmitLine(Init);
+        for (var i = 0; i < 50; i++) proc.EmitLine(Delta(i.ToString(System.Globalization.CultureInfo.InvariantCulture)));
+        proc.EmitLine(Result("done")); proc.EndStdout();
+
+        var deltas = new List<string>();
+        var sawComplete = false;
+        await foreach (var e in session.Events)
+        {
+            if (e is LlmTextDelta d) deltas.Add(d.Text);
+            if (e is LlmTurnComplete) sawComplete = true;
+        }
+
+        deltas.Should().HaveCount(50);
+        deltas[0].Should().Be("0"); deltas[^1].Should().Be("49");   // order preserved, none dropped
+        sawComplete.Should().BeTrue();
+    }
 }
