@@ -46,6 +46,11 @@ internal static class ServiceCollectionExtensions
         services.AddNoopSeams();
         services.AddPlaceholderSeams();
 
+        // Dark default for the streaming LLM provider (P0-1b Slice 1). TryAdd, so P0-1b Slice 2's real
+        // Claude Code streaming provider — registered earlier in AddPrismClaudeCode (Program.cs runs it
+        // before AddPrismAi) — wins and this no-ops. No consumer resolves IStreamingLlmProvider yet.
+        services.AddStreamingProviderDefault();
+
         // AI audit log (metadata only): one JSONL line per AI seam invocation, tagged with the
         // triggering component, written to a dedicated ai-interactions.log in the logs dir. TryAdd so
         // a test can substitute a fake. LogsPathInfo is registered in Program.cs before AddPrismAi, so
