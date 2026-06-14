@@ -22,6 +22,7 @@ import { apiClient } from './api/client';
 import { OpenTabsProvider } from './contexts/OpenTabsContext';
 import { PreferencesProvider } from './contexts/PreferencesContext';
 import { AskAiDrawerProvider } from './contexts/AskAiDrawerContext';
+import { AiFailureProvider, AiFailureContainer } from './components/Ai';
 import { AskAiDrawer } from './components/AskAiDrawer/AskAiDrawer';
 import { AskAiPullTab } from './components/AskAiDrawer/AskAiPullTab';
 import { DrawerEffects } from './components/AskAiDrawer/DrawerEffects';
@@ -186,6 +187,8 @@ function AppShell() {
       <DrawerEffects />
       <TabSignals />
       <ToastContainer />
+      {/* sibling of ToastContainer, not a child — both are independent live regions */}
+      <AiFailureContainer />
       <StreamHealthSnackbar />
       <GitHubAuthBanner />
       <ReauthRouteGuard credentialInvalid={credentialInvalid} />
@@ -207,7 +210,9 @@ function AppShell() {
                   future SSE-driven invalidation would use a window-event bridge,
                   cf. OpenTabsContext. */}
               <PreferencesProvider>
-                {isAuthed ? <EventStreamProvider>{tree}</EventStreamProvider> : tree}
+                <AiFailureProvider>
+                  {isAuthed ? <EventStreamProvider>{tree}</EventStreamProvider> : tree}
+                </AiFailureProvider>
               </PreferencesProvider>
             </AskAiDrawerProvider>
           </OpenTabsProvider>
