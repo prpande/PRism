@@ -1121,7 +1121,7 @@ dataChangeEnd?: number;
 <tr ... data-change-start={dataChangeStart} data-change-end={dataChangeEnd}>
 ```
 
-(When a prop is `undefined`, React omits the attribute — no behavior change for non-boundary rows.)
+(When a prop is `undefined`, React omits the attribute — no behavior change for non-boundary rows. Note: `SplitDiffLineRow` returns several `<tr>` variants by `kind` — `header` / `context` / `solo-delete` / `solo-insert` / `paired`. Only changed rows are ever tagged, so add the two attributes to the **`paired`, `solo-delete`, and `solo-insert`** branches' `<tr>` — not `header`/`context`.)
 
 - [ ] **Step 2: Write the failing integration test**
 
@@ -1210,6 +1210,8 @@ describe('DiffPane change navigation', () => {
 ```
 
 > The rail's *presence* in whole-file mode (and its rest/expanded visuals) needs real layout + scroll overflow, which jsdom does not compute — that is covered by the Playwright B1 gate (Task 8). These unit tests assert the mode-independent wiring: controls render, both boundary attributes are tagged once per run, and the rail is absent in hunks-only mode. (`wholeFileEnabled` is omitted, so DiffPane defaults to hunks mode; `allLines` = parsed hunk bodies → the same two runs.)
+>
+> **Keyboard coverage split:** do NOT write a jsdom test that dispatches `n`/`p` against DiffPane — jsdom has no layout, so `diffBodyRef.current.offsetParent` is always `null` (the visibility guard always early-returns) and measured offsets are all 0, making such a test either a false-green or impossible to assert. The `n`/`p` behavior is covered by two real layers instead: the **navigation math** (`goToNext`/`goToPrev`/`currentIdx`/clamp) is unit-tested in Task 3's hook test, and the **live key dispatch + visibility guard** is exercised in the Playwright B1 pass (Task 8: focus the diff, press `n`/`p`, assert the viewport moves and the counter advances; press `p` at change 1 and `n` at the last to confirm the clamp).
 
 - [ ] **Step 3: Run the test to verify it fails**
 
@@ -1423,7 +1425,7 @@ git commit -m "feat(diff): surface n/p change-nav keys in cheatsheet + CTA (#486
 **Files:**
 - Modify/add: the Files-tab Playwright spec that captures the diff pane (mirror the existing diff/PR-detail visual specs under `frontend/e2e/`).
 
-- [ ] **Step 1: Add visual coverage** for: (a) the rail at rest and expanded, (b) the header controls, (c) a **modify-heavy** diff (color mix), (d) a **dense** diff (tick legibility) — in both themes. Follow the existing e2e baseline pattern in the repo (the same harness used by prior diff/header visual specs).
+- [ ] **Step 1: Add visual + interaction coverage** for: (a) the rail at rest and expanded, (b) the header controls, (c) a **modify-heavy** diff (color mix), (d) a **dense** diff (tick legibility) — in both themes; plus (e) a **keyboard behavior** check: focus the diff in whole-file mode, press `n`/`p` and assert the viewport scrolls and the counter advances, and that `p` at change 1 / `n` at the last change are no-ops (clamp). Follow the existing e2e baseline pattern in the repo (the same harness used by prior diff/header visual specs).
 
 - [ ] **Step 2: Generate baselines from CI** (Linux baselines are authoritative in this repo — regen from the CI artifact, do not commit local win32 captures).
 
