@@ -73,18 +73,8 @@ function Group({
       <h3 className={styles.groupHeading}>{label}</h3>
       <ul className={styles.rows} role="list">
         {rows.map((r) => (
-          <li key={r.path} role="listitem">
-            <button
-              type="button"
-              className={styles.row}
-              onClick={() => onOpen(r.path)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' || e.key === ' ') {
-                  e.preventDefault();
-                  onOpen(r.path);
-                }
-              }}
-            >
+          <li key={r.path}>
+            <button type="button" className={styles.row} onClick={() => onOpen(r.path)}>
               <span className={styles.rowPath} title={r.path}>
                 {r.path}
               </span>

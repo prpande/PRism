@@ -1,9 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook, waitFor, act } from '@testing-library/react';
-import { useFileFocusResult } from '../src/hooks/useFileFocusResult';
-import * as api from '../src/api/aiFileFocus';
+import { useFileFocusResult } from './useFileFocusResult';
+import * as api from '../api/aiFileFocus';
 
-vi.mock('../src/api/aiFileFocus');
+vi.mock('../api/aiFileFocus');
 const PR = { owner: 'octo', repo: 'repo', number: 1 };
 
 describe('useFileFocusResult', () => {

@@ -66,13 +66,16 @@ describe('HotspotsTab', () => {
     expect(req).toHaveBeenCalledWith('a.cs');
   });
 
-  it('row activates on Enter and Space', () => {
+  it('row is a native button (keyboard activation is a browser guarantee)', () => {
+    // The row is a native <button>, so Enter/Space activation is handled by the
+    // browser via onClick — no custom onKeyDown to unit-test. We assert the
+    // element is a button and that activating it calls requestFileView.
     const req = vi.fn();
     renderTab({ status: 'ok', entries: [{ path: 'a.cs', level: 'high', rationale: 'x' }] }, req);
     const row = screen.getByRole('button', { name: /a\.cs/ });
-    fireEvent.keyDown(row, { key: 'Enter' });
-    fireEvent.keyDown(row, { key: ' ' });
-    expect(req).toHaveBeenCalledTimes(2);
+    expect(row.tagName).toBe('BUTTON');
+    fireEvent.click(row);
+    expect(req).toHaveBeenCalledWith('a.cs');
   });
 
   it('loading shows skeleton', () => {

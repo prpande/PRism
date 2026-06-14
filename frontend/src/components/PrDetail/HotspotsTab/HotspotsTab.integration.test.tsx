@@ -1,13 +1,10 @@
 import { render, screen, fireEvent } from '@testing-library/react';
 import { describe, it, expect, vi } from 'vitest';
 import { useState, useCallback } from 'react';
-import { HotspotsTab } from '../src/components/PrDetail/HotspotsTab/HotspotsTab';
-import {
-  PrDetailContextProvider,
-  type PrDetailContextValue,
-} from '../src/components/PrDetail/prDetailContext';
-import type { PrTabId } from '../src/components/PrDetail/PrSubTabStrip';
-import type { FileFocus } from '../src/api/types';
+import { HotspotsTab } from './HotspotsTab';
+import { PrDetailContextProvider, type PrDetailContextValue } from '../prDetailContext';
+import type { PrTabId } from '../PrSubTabStrip';
+import type { FileFocus } from '../../../api/types';
 
 // Integration through context: HotspotsTab's row click must drive the SAME
 // navigation intent PrDetailView owns (requestFileView → switch to Files +
