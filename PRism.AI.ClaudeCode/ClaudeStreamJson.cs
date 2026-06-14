@@ -117,11 +117,12 @@ public static class ClaudeStreamJson
         if (isError)
         {
             var subtype = root.TryGetProperty("subtype", out var s) ? s.GetString() : null;
-            code = subtype is not null && subtype != "success"
-                ? subtype
-                : root.TryGetProperty("api_error_status", out var aes) && aes.ValueKind == JsonValueKind.Number
-                    ? aes.GetInt32().ToString(System.Globalization.CultureInfo.InvariantCulture)
-                    : subtype; // last resort: whatever subtype was (may be null)
+            if (subtype is not null && subtype != "success")
+                code = subtype;                                 // specific error kind wins (e.g. error_max_turns)
+            else if (root.TryGetProperty("api_error_status", out var aes) && aes.ValueKind == JsonValueKind.Number)
+                code = aes.GetInt32().ToString(System.Globalization.CultureInfo.InvariantCulture);
+            else
+                code = subtype;                                 // last resort: null or "success" (caller sees it as-is)
         }
         return new ResultLine(isError, code, fullText, inTok, outTok, cacheTok, cost);
     }
