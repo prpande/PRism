@@ -15,7 +15,7 @@ Truth labels: **CONFIRMED** (claim survives), **FALSIFIED** (claim is wrong as s
 | C1  | Atomic submit (verdict + new comments + replies) via a single GitHub API call                       | **PARTIAL**   | Switch submit path from REST to GraphQL pending-review pattern; revise "single API call" wording. |
 | C2  | GraphQL `synchronize` events drive iteration reconstruction                                         | **FALSIFIED** | Re-spec iteration reconstruction against `PullRequestCommit` + `HeadRefForcePushedEvent`; pick clustering policy. |
 | C3  | `request_repo_access` synthetic tool registered with Claude Code via host                           | **PARTIAL → RESOLVED BY REDESIGN** | Filesystem access uses Claude Code's built-in `Read`/`Grep`/`Glob` scoped via `--add-dir` (not MCP-resident `repo_read`/`repo_grep`/`repo_glob` — those were dropped in W29). The `request_repo_access` MCP tool was dropped in W29 then **reinstated in W31** as a takes-no-arguments consent-bridge tool the model calls when broader repo access is needed; the upgrade uses W30's fresh-session-with-injection (clean kill, new flags, conversation injected). Modal copy is host-authored — the tool taking no arguments is the structural defense against attacker-controllable `reason` text. |
-| C4  | `--resume` after a *clean* session end (no dangling `tool_use`) resumes cleanly with full model state | **UNDOCUMENTED → GATING for cross-restart chat resume** | The dangling-tool_use failure mode is sidestepped (we end cleanly via `EndCleanlyAsync`), but the *clean-end* resume path is now load-bearing for the cross-restart UX and must be empirically verified before P2-2 ships. Plus a sub-question: does `--resume` survive Claude Code CLI updates between session-end and resume? |
+| C4  | `--resume` after a *clean* session end (no dangling `tool_use`) resumes cleanly with full model state | **RESOLVED (#479, 2026-06-14)** | Probed on `claude` v2.1.177 (clean-end + production-faithful re-run): **Outcome #1 — full-context resume** holds, so P2-2 cross-restart chat resume is viable. Two operational invariants pinned: resume is **working-directory-scoped** (same cwd; PRism's stable per-user base satisfies it) and **fails hard** on a cwd/id miss (degrade to fresh-with-injection). Version-conditional — CLI-update survival still unrun (non-gating). See `docs/specs/2026-06-14-claude-resume-probe-design.md`. |
 | M19 | Shiki bundle is small enough to ship every grammar                                                  | **FALSIFIED** | Commit to a language subset and document it; full bundle is ~1.2 MB gz. |
 | M20 | Self-contained .NET 10 + React assets fit in ~70 MB binary                                          | **UNDOCUMENTED** | Empirical measurement during initial scaffolding; ~70 MB likely requires AOT or aggressive trimming. |
 | M21 | Mermaid v11 lazy bundle is ~600 KB                                                                  | **FALSIFIED** | Mermaid v10 minified is ~2.7 MB; v11 has a "tiny" subset. Restate budget after picking the bundle variant. |
@@ -129,6 +129,17 @@ C3's finding (MCP is the only documented mechanism for custom tools) is still lo
 ---
 
 ## C4 — `--resume` semantics with a dangling `tool_use`
+
+> **RESOLVED (#479, 2026-06-14).** The clean-end empirical test below ran against `claude` v2.1.177, including
+> a production-faithful re-run (confined cwd + stripped config). Of the "three possible outcomes" enumerated in
+> § "Clean-end, then `--resume`", the **first** holds: resume succeeds and the model retains full context, so
+> P2-2 cross-restart chat resume lands with the resume path. The re-run additionally pinned two operational
+> invariants not anticipated below: resume is **working-directory-scoped** (the resume spawn MUST use the same
+> cwd as the original; PRism's stable per-user base satisfies this) and **fails hard** on a cwd/id miss (exit
+> non-zero, no init/result — the caller MUST degrade to fresh-with-injection, never assume a usable session).
+> The result is **version-conditional**: the CLI-update-survival sub-question (point 3) is still unrun and
+> non-gating. Full design + transcripts: `docs/specs/2026-06-14-claude-resume-probe-design.md`. The detail
+> below is retained as the original probe record.
 
 ### Claim under test
 
