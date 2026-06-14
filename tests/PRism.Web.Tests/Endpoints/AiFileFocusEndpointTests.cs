@@ -130,6 +130,32 @@ public class AiFileFocusEndpointTests
     }
 
     [Fact]
+    public async Task Live_consented_subscribed_oversized_hunk_returns_503()
+    {
+        // PromptSanitizer.WrapAsData throws ArgumentException when a single file's hunk bodies exceed
+        // the 2 MB cap. Verify the endpoint maps that to 503, not 500.
+        var oversizedBody = new string('x', PromptSanitizer.DefaultMaxChars + 1);
+        var oversizedDiff = new DiffDto(
+            "base..head",
+            new[] { new FileChange("a.cs", FileChangeStatus.Modified, new[] { new DiffHunk(1, 1, 1, 1, oversizedBody) }) },
+            Truncated: false);
+        var provider = new FakeOkFileFocusProvider(); // won't be reached
+        using var ctx = new AiFileFocusTestContext(
+            provider,
+            diff: oversizedDiff,
+            subscribeAll: true);
+        ctx.ModeState.Mode = AiMode.Live;
+        ctx.SeedConsent();
+        using var client = ctx.CreateClient();
+
+        var resp = await client.GetAsync(new Uri("/api/pr/octo/repo/1/ai/file-focus", UriKind.Relative));
+
+        resp.StatusCode.Should().Be(HttpStatusCode.ServiceUnavailable,
+            "ArgumentException from PromptSanitizer.WrapAsData on oversized hunk bodies must map to 503 (not 500)");
+        provider.Calls.Should().Be(0, "ArgumentException is thrown before the provider is called");
+    }
+
+    [Fact]
     public async Task Live_consented_subscribed_empty_diff_returns_204()
     {
         var provider = new FakeOkFileFocusProvider();

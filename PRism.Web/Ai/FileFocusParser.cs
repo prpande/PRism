@@ -91,6 +91,16 @@ internal static class FileFocusParser
         return s[..(RationaleCap - 1)] + "…";
     }
 
+    // Maximum characters scanned by ExtractFirstArray. Real model output for a ranking JSON array is
+    // a few KB to low tens of KB; 64 KB is generous enough to never clip a real response while
+    // bounding the O(n²) retry-loop blowup on pathological model output (e.g. a long run of
+    // unmatched '[' each restarted to end-of-string, then a JsonDocument.Parse probe per candidate).
+    internal const int MaxScanChars = 64 * 1024; // 64 KB
+
+    // Maximum '['-restart attempts before giving up. Bounds the JsonDocument.Parse probe count on
+    // inputs that have many non-JSON bracket groups ahead of the real array.
+    internal const int MaxRestarts = 32;
+
     /// <summary>Extract the first top-level JSON array via a depth-balanced, string-literal-aware scan.
     /// A naive first-'[' to last-']' span breaks when the reply has brackets in surrounding prose
     /// ("Files [a, b] ranked"), a trailing "see line [42]", or a ']' inside a rationale string value —
@@ -98,20 +108,27 @@ internal static class FileFocusParser
     /// each '[', tracking depth and skipping bracket chars inside JSON string literals (honoring escapes),
     /// and cuts at the matching close. When the extracted span is not valid JSON, it advances past that
     /// '[' and retries (handles prose brackets like "[a.cs, b.cs]" that precede the real JSON array).
-    /// Returns null when no balanced JSON array is found.</summary>
+    /// Scans only the first <see cref="MaxScanChars"/> characters and caps restart attempts at
+    /// <see cref="MaxRestarts"/> to prevent O(n²) blowup on pathological (e.g. all-unmatched-brackets)
+    /// model output. Returns null when no balanced JSON array is found.</summary>
     private static string? ExtractFirstArray(string text)
     {
         if (string.IsNullOrEmpty(text)) return null;
+        // Clamp the scanned window. If the real JSON array starts beyond MaxScanChars it is
+        // pathological output (multi-MB preamble) that we treat as unrecoverable rather than
+        // spending O(n) * O(n) scanning it.
+        var scanLimit = Math.Min(text.Length, MaxScanChars);
         var searchFrom = 0;
-        while (true)
+        var restarts = 0;
+        while (restarts <= MaxRestarts)
         {
-            var start = text.IndexOf('[', searchFrom);
+            var start = text.IndexOf('[', searchFrom, scanLimit - searchFrom);
             if (start < 0) return null;
             var depth = 0;
             var inString = false;
             var escaped = false;
             var end = -1;
-            for (var i = start; i < text.Length; i++)
+            for (var i = start; i < scanLimit; i++)
             {
                 var c = text[i];
                 if (inString)
@@ -145,6 +162,7 @@ internal static class FileFocusParser
             catch (JsonException) { }
             // This bracket group was not a JSON array — skip past it and try the next '['.
             searchFrom = start + 1;
+            restarts++;
         }
         return null;
     }

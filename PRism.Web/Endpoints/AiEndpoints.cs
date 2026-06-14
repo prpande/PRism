@@ -99,13 +99,22 @@ internal static class AiEndpoints
         {
             return Results.StatusCode(StatusCodes.Status503ServiceUnavailable);
         }
+        catch (ArgumentException)
+        {
+            // PromptSanitizer.WrapAsData throws ArgumentException when a single diff field exceeds the
+            // 2 MB default cap. The content is diff-derived (attacker-influenceable), so this must map
+            // to 503 — not 500 — to preserve the "provider failure → 503 (never 500)" contract.
+            return Results.StatusCode(StatusCodes.Status503ServiceUnavailable);
+        }
     }
 
     // Spec § P1-2. The file-focus gate chain, mirroring ResolveSummaryAsync: D111 IsSubscribed → seam
     // resolve (tri-state gating lives in Resolve) → RankAsync. The IsSubscribed check runs BEFORE the
-    // seam is resolved/invoked so a non-subscribed view never spends tokens on the real ranker. An empty
-    // Entries list (empty diff, or all files low-by-rule with nothing to rank) → 204. Provider failure
-    // → 503 (never 500).
+    // seam is resolved/invoked so a non-subscribed view never spends tokens on the real ranker.
+    // 204 only when the diff has zero changed files (ClaudeCodeFileFocusRanker.RankAsync returns early
+    // with an empty Entries list). An all-low-by-rule PR (every file has an empty hunk body) still
+    // returns 200 with one Low entry per file — RankAsync's toRank.Count==0 branch produces a non-empty
+    // list, not an empty one. Provider failure → 503 (never 500).
     internal static async Task<IResult> ResolveFileFocusAsync(
         PrReference prRef, IAiSeamSelector ai, IActivePrCache activePrCache, CancellationToken ct)
     {
@@ -120,6 +129,14 @@ internal static class AiEndpoints
         }
         catch (LlmProviderException)
         {
+            return Results.StatusCode(StatusCodes.Status503ServiceUnavailable);
+        }
+        catch (ArgumentException)
+        {
+            // PromptSanitizer.WrapAsData (called from ClaudeCodeFileFocusRanker.BuildPrompt) throws
+            // ArgumentException when a single file's concatenated hunk bodies exceed the 2 MB cap.
+            // The content is diff-derived (attacker-influenceable), so this must map to 503 — not 500 —
+            // matching the "provider failure → 503 (never 500)" contract documented above.
             return Results.StatusCode(StatusCodes.Status503ServiceUnavailable);
         }
     }

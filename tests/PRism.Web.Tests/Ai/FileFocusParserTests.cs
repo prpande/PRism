@@ -104,6 +104,22 @@ public sealed class FileFocusParserTests
     }
 
     [Fact]
+    public void Pathological_all_unmatched_brackets_returns_false_quickly()
+    {
+        // A long run of unmatched '[' is the worst-case O(n²) input for the old unbounded scan:
+        // each '[' triggers a depth-walk to end-of-string with no matching ']', then the scan
+        // restarts one character further. With MaxRestarts=32 and MaxScanChars=64 KB the method
+        // must bail out well before scanning a multi-MB string.
+        var junk = new string('[', FileFocusParser.MaxScanChars + 10_000);
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        var result = FileFocusParser.TryParse(junk, Changed, out _);
+        sw.Stop();
+        result.Should().BeFalse("no balanced JSON array exists in the pathological input");
+        sw.ElapsedMilliseconds.Should().BeLessThan(500,
+            "the bounded scan must return quickly on pathological input (MaxScanChars + MaxRestarts guard)");
+    }
+
+    [Fact]
     public void Backfill_adds_medium_for_absent_paths_only_never_overwrites()
     {
         var parsed = new List<FileFocus> { new("a.cs", FocusLevel.High, "core") };
