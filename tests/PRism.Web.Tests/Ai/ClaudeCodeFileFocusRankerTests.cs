@@ -43,15 +43,38 @@ public sealed class ClaudeCodeFileFocusRankerTests
 
         public int CallCount { get; private set; }
         public string? LastUserContent { get; private set; }
+        public string? LastSystemPrompt { get; private set; }
 
         public Task<LlmResult> CompleteAsync(LlmRequest request, CancellationToken ct)
         {
             CallCount++;
             LastUserContent = request.UserContent;
+            LastSystemPrompt = request.SystemPrompt;
             if (_throw is not null)
                 throw _throw;
             var idx = Math.Min(CallCount - 1, _responses.Length - 1);
             return Task.FromResult(new LlmResult(_responses[idx], 100, 20, 0, 0.01m));
+        }
+    }
+
+    // Blocks inside CompleteAsync until Release() so two concurrent RankAsync calls overlap on one provider
+    // call — lets the single-flight test prove de-dup (the multi-response FakeLlmProvider returns instantly,
+    // so calls never overlap and could not distinguish coalesced from sequential).
+    private sealed class GatedLlmProvider : ILlmProvider
+    {
+        private readonly string _response;
+        private readonly TaskCompletionSource _gate = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private int _callCount;
+
+        public GatedLlmProvider(string response) => _response = response;
+        public int CallCount => Volatile.Read(ref _callCount);
+        public void Release() => _gate.TrySetResult();
+
+        public async Task<LlmResult> CompleteAsync(LlmRequest request, CancellationToken ct)
+        {
+            Interlocked.Increment(ref _callCount);
+            await _gate.Task.ConfigureAwait(false);
+            return new LlmResult(_response, 100, 20, 0, 0.01m);
         }
     }
 
@@ -76,7 +99,7 @@ public sealed class ClaudeCodeFileFocusRankerTests
     }
 
     private static ClaudeCodeFileFocusRanker Build(
-        FakeLlmProvider provider,
+        ILlmProvider provider,
         DiffDto diff,
         string baseSha = "base", string headSha = "head",
         ReviewEventBus? bus = null,            // REAL bus — FakeReviewEventBus.Subscribe is a no-op (won't deliver evictions)
@@ -268,6 +291,50 @@ public sealed class ClaudeCodeFileFocusRankerTests
         // visible edit to this constant + a disclosure review (spec §11). This is the constant guard.
         ClaudeCodeFileFocusRanker.PromptFieldAllowlist
             .Should().BeEquivalentTo(new[] { "path", "status", "hunkBodies" });
+    }
+
+    [Fact]
+    public async Task Prompt_instructs_selectivity_caps_flags_and_asks_for_full_rationale()
+    {
+        // Owner live-validation 2026-06-14: the ranker over-flagged (8/12 files high/medium, incl. routine
+        // tests) and the rationale was one clipped sentence. The prompt must (a) default most files to LOW,
+        // (b) bound how many files it flags, and (c) ask for a multi-sentence rationale so the Hotspots tab
+        // can show the reviewer real context.
+        var diff = Diff(F("src/Calc.cs", FileChangeStatus.Modified, "@@ -1 +1 @@\n+changed"));
+        var provider = new FakeLlmProvider("""[{"path":"src/Calc.cs","score":"high","rationale":"x"}]""");
+        var ranker = Build(provider, diff);
+        await ranker.RankAsync(Pr, default);
+
+        provider.LastSystemPrompt.Should().MatchRegex("(?i)most files .*low",
+            "selectivity: LOW is the default; high/medium is reserved for files that genuinely need a human");
+        provider.LastSystemPrompt.Should().Contain("AT MOST 10",
+            "the ranker must bound how many files it flags high/medium (owner feedback)");
+        provider.LastSystemPrompt.Should().MatchRegex("(?i)one to three sentences",
+            "the rationale must carry enough narrative for the reviewer to understand WHY (owner feedback)");
+    }
+
+    [Fact]
+    public async Task Concurrent_rank_calls_for_the_same_key_coalesce_into_one_provider_call()
+    {
+        // Owner live-validation 2026-06-14: the FE's /ai/file-focus fetch and the annotator's internal
+        // RankAsync raced on a cold cache and BOTH called the LLM — double cost + a second ~minute-long rank
+        // on the annotation path. RankAsync now single-flights per (prRef, base, head).
+        var diff = Diff(F("a.cs", FileChangeStatus.Modified, "@@ logic @@"));
+        var provider = new GatedLlmProvider("""[{"path":"a.cs","score":"high","rationale":"x"}]""");
+        var ranker = Build(provider, diff);
+
+        var t1 = ranker.RankAsync(Pr, default);
+        var t2 = ranker.RankAsync(Pr, default);
+        await Task.Delay(50); // let both reach the gate; single-flight means only one provider call entered
+        provider.Release();
+        var r1 = await t1;
+        var r2 = await t2;
+
+        provider.CallCount.Should().Be(1, "concurrent identical rank requests must share ONE provider call");
+        r1.Entries.Should().ContainSingle();
+        r1.Entries[0].Path.Should().Be("a.cs");
+        r1.Entries[0].Level.Should().Be(FocusLevel.High);
+        r2.Entries.Should().BeEquivalentTo(r1.Entries);
     }
 
     [Fact]

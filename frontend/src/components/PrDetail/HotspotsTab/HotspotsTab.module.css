@@ -51,10 +51,12 @@
 .rowRationale {
   font-size: var(--text-xs);
   color: var(--text-2);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  max-width: 100%;
+  /* Show the FULL LLM narrative (owner live-validation 2026-06-14): the prior single-line
+     ellipsis clamp hid the reviewer's why-it-matters context. Wrap across lines; break only
+     overlong unbreakable tokens (paths/identifiers) so a long word can't force horizontal scroll. */
+  white-space: normal;
+  overflow-wrap: anywhere;
+  line-height: 1.4;
 }
 .message,
 .messagePositive,

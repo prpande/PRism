@@ -434,6 +434,10 @@ public sealed class ClaudeCodeHunkAnnotatorTests
         await annotator.AnnotateAsync(Pr, string.Empty, 0, default);
 
         provider.LastSystemPrompt.Should().Contain("7", "the live cap N is stated in the prompt (D414-5)");
+        provider.LastSystemPrompt.Should().Contain("AT MOST 7",
+            "the cap is an UPPER bound — the model may return fewer and must not pad to N (owner live-validation 2026-06-14)");
+        provider.LastSystemPrompt.Should().NotContain("exactly these",
+            "forcing 'exactly N' padded low-value hunks; the model must omit hunks that don't genuinely need review");
     }
 
     [Fact]

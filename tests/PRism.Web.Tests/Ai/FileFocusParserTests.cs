@@ -76,14 +76,31 @@ public sealed class FileFocusParserTests
     }
 
     [Fact]
-    public void Caps_rationale_at_160_chars_with_ellipsis()
+    public void Caps_rationale_at_the_cap_with_ellipsis()
     {
-        var longText = new string('x', 300);
+        // The cap is a runaway-output backstop, not the expected case: owner live-validation (2026-06-14)
+        // raised it from 160 → a multi-sentence budget so the Hotspots tab can show the full narrative.
+        // The test asserts against the constant so it stays correct as the cap is tuned.
+        var longText = new string('x', FileFocusParser.RationaleCap + 200);
         var text = $$"""[{"path":"a.cs","score":"high","rationale":"{{longText}}"}]""";
         FileFocusParser.TryParse(text, Changed, out var entries).Should().BeTrue();
         var r = entries.Single(e => e.Path == "a.cs").Rationale;
-        r.Length.Should().BeLessThanOrEqualTo(160);
+        r.Length.Should().BeLessThanOrEqualTo(FileFocusParser.RationaleCap);
         r.Should().EndWith("…");
+    }
+
+    [Fact]
+    public void Keeps_a_multi_sentence_rationale_intact()
+    {
+        // Regression for the owner-reported truncation: a normal 1-3 sentence rationale (well under the cap)
+        // must survive verbatim — no clipping, no trailing ellipsis — so the reviewer sees the whole narrative.
+        var narrative =
+            "Public API wire shape: adds nine new fields to a paginated response. "
+            + "A naming, nullability, or default-value mistake here is a breaking change for every consumer. "
+            + "Confirm the IsAddon filter and IncludeAddOns enrichment are not conflated.";
+        var text = $$"""[{"path":"a.cs","score":"high","rationale":"{{narrative}}"}]""";
+        FileFocusParser.TryParse(text, Changed, out var entries).Should().BeTrue();
+        entries.Single(e => e.Path == "a.cs").Rationale.Should().Be(narrative);
     }
 
     [Fact]
