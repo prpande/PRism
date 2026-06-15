@@ -9,6 +9,17 @@ import * as api from '../api/aiSummary';
 vi.mock('../api/aiSummary');
 const pr = { owner: 'o', repo: 'r', number: 1 };
 
+type OkResult = { kind: 'ok'; summary: { body: string; category: string } };
+// A promise whose resolver is exposed, so a test can hold a fetch in-flight and
+// resolve it on cue. Used by the mid-fetch and clear-then-fetch cases below.
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((res) => {
+    resolve = res;
+  });
+  return { promise, resolve };
+}
+
 describe('useAiSummary', () => {
   beforeEach(() => vi.clearAllMocks());
 
@@ -66,12 +77,7 @@ describe('useAiSummary', () => {
     // The base change lands WHILE the initial GET is in-flight. When the fetch resolves, the
     // .then() must see baseShaChangedRef.current === true and skip setStaleCleared(true), so the
     // freshly-fetched summary is still flagged stale (it was already superseded on the server).
-    let resolveFetch!: (r: { kind: 'ok'; summary: { body: string; category: string } }) => void;
-    const pending = new Promise<{ kind: 'ok'; summary: { body: string; category: string } }>(
-      (res) => {
-        resolveFetch = res;
-      },
-    );
+    const { promise: pending, resolve: resolveFetch } = deferred<OkResult>();
     vi.spyOn(api, 'getAiSummaryResult').mockReturnValue(pending);
     const { result, rerender } = renderHook(
       ({ baseChanged }) => useAiSummary(pr, true, true, baseChanged),
@@ -99,6 +105,70 @@ describe('useAiSummary', () => {
     rerender({ baseChanged: true });
     await Promise.resolve();
     expect(spy).toHaveBeenCalledTimes(1); // no extra GET on a base-change event
+  });
+
+  // #464 — toggling AI on for an ALREADY-MOUNTED PR refreshes the summary in place (AC1). The hook
+  // is keyed on `enabled`, so flipping it false→true (the Settings AI-mode toggle, propagated via the
+  // shared prefs store → useAiGate) re-runs the fetch effect without a remount/reopen.
+  it('#464: flipping enabled false→true on a mounted PR fetches in place (no reopen)', async () => {
+    const spy = vi
+      .spyOn(api, 'getAiSummaryResult')
+      .mockResolvedValue({ kind: 'ok', summary: { body: 'b', category: 'fix' } });
+    const { result, rerender } = renderHook(
+      ({ enabled }) => useAiSummary(pr, enabled, true, false),
+      { initialProps: { enabled: false } },
+    );
+    // AI off: no fetch, nothing rendered.
+    expect(spy).not.toHaveBeenCalled();
+    expect(result.current.summary).toBeNull();
+    // Toggle AI on — must fetch in place.
+    rerender({ enabled: true });
+    await waitFor(() => expect(result.current.summary).toEqual({ body: 'b', category: 'fix' }));
+    expect(spy).toHaveBeenCalledTimes(1);
+  });
+
+  // #464 — turning AI off clears the summary immediately, so a stale body can never linger while off.
+  it('#464: turning AI off clears the summary (no stale content while off)', async () => {
+    vi.spyOn(api, 'getAiSummaryResult').mockResolvedValue({
+      kind: 'ok',
+      summary: { body: 'b', category: 'fix' },
+    });
+    const { result, rerender } = renderHook(
+      ({ enabled }) => useAiSummary(pr, enabled, true, false),
+      { initialProps: { enabled: true } },
+    );
+    await waitFor(() => expect(result.current.summary).not.toBeNull());
+    rerender({ enabled: false });
+    expect(result.current.summary).toBeNull();
+  });
+
+  // #464 — clear-then-fetch (AC2): when the PR ref changes, the prior PR's summary is cleared BEFORE
+  // the new PR's fetch resolves — so another PR's content is never shown, even transiently. (In the app
+  // each PR has its own keep-alive hook instance keyed by prRefKey; this pins the hook's own keying as
+  // a defense-in-depth guard against any cross-PR bleed.)
+  it('#464: changing prRef clears the prior summary before the new one resolves', async () => {
+    const { promise: pendingB, resolve: resolveB } = deferred<OkResult>();
+    vi.spyOn(api, 'getAiSummaryResult').mockImplementation((ref) =>
+      ref.number === 1
+        ? Promise.resolve({ kind: 'ok' as const, summary: { body: 'A-summary', category: 'fix' } })
+        : pendingB,
+    );
+    const { result, rerender } = renderHook(({ p }) => useAiSummary(p, true, true, false), {
+      initialProps: { p: { owner: 'o', repo: 'r', number: 1 } },
+    });
+    await waitFor(() =>
+      expect(result.current.summary).toEqual({ body: 'A-summary', category: 'fix' }),
+    );
+    // Navigate to PR #2 — while #2's fetch is in flight, #1's summary MUST be cleared, never shown under #2.
+    rerender({ p: { owner: 'o', repo: 'r', number: 2 } });
+    expect(result.current.summary).toBeNull();
+    expect(result.current.loading).toBe(true);
+    // #2 then resolves with its OWN content.
+    await act(async () => {
+      resolveB({ kind: 'ok', summary: { body: 'B-summary', category: 'feat' } });
+      await pendingB;
+    });
+    expect(result.current.summary).toEqual({ body: 'B-summary', category: 'feat' });
   });
 
   it('regenerate() POSTs, replaces the summary on 200, and clears staleness', async () => {
