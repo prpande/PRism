@@ -57,6 +57,55 @@ describe('useChangeNavigation', () => {
     expect(container.scrollTo).toHaveBeenCalledWith(expect.objectContaining({ top: 92 }));
   });
 
+  it('advances currentIdx to the jumped change deterministically', () => {
+    // Regression (#486 review): the jump lands on the activation-margin boundary,
+    // where re-deriving currentIdx from the settled scrollTop is fragile to
+    // sub-pixel rounding. The pinned explicit index must reflect the target.
+    const container = fakeContainer(0);
+    const ref = { current: container };
+    const { result } = renderHook(() => useChangeNavigation(ref, ref, CHANGES));
+    act(() => result.current.remeasure());
+    expect(result.current.currentIdx).toBe(-1);
+    act(() => result.current.goToChange(1));
+    expect(result.current.currentIdx).toBe(1);
+    expect(result.current.canPrev).toBe(true);
+    expect(result.current.canNext).toBe(true);
+    act(() => result.current.goToNext());
+    expect(result.current.currentIdx).toBe(2);
+    expect(result.current.canNext).toBe(false);
+  });
+
+  it('attaches the scroll listener when the body mounts late (viewport tracks scroll)', () => {
+    // Regression (#486 review): on DiffPane's first render the early-return
+    // branches (no file / loading / empty) render no scroll container, so the
+    // listener effect bails with a null ref. It must re-attach once the body
+    // appears (a later render with a fresh `changes` ref), or the minimap
+    // viewport indicator never moves on scroll. Simulate the late mount: start
+    // with a null ref, then supply the container on a subsequent render.
+    const rafSpy = vi.spyOn(window, 'requestAnimationFrame').mockImplementation((cb) => {
+      cb(0);
+      return 0;
+    });
+    const ref: { current: HTMLDivElement | null } = { current: null };
+    const tableRef: { current: HTMLElement | null } = { current: null };
+    let changes = CHANGES.slice();
+    const { result, rerender } = renderHook(() => useChangeNavigation(ref, tableRef, changes));
+    // Body mounts now; a new `changes` array ref drives the effect re-run.
+    const container = fakeContainer(0);
+    ref.current = container;
+    tableRef.current = container;
+    changes = CHANGES.slice();
+    rerender();
+    act(() => result.current.remeasure());
+    expect(result.current.viewport.topPct).toBe(0);
+    act(() => {
+      container.scrollTop = 500; // half of the 1000px content
+      container.dispatchEvent(new Event('scroll'));
+    });
+    expect(result.current.viewport.topPct).toBeGreaterThan(0);
+    rafSpy.mockRestore();
+  });
+
   it('produces ticks with kind + percentages', () => {
     const container = fakeContainer(0);
     const ref = { current: container };

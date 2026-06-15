@@ -4,7 +4,9 @@ import type { DiffChange, ChangeTick } from './diffChanges';
 import { computeCurrentIdx, computeTicks } from './diffChanges';
 
 const SCROLL_MARGIN = 8;
-const SETTLE_CAP_MS = 400;
+// Safety net only: clears the programmatic-scroll flag if neither arrival-at-target
+// nor a user gesture has done so (generous, so it never fires mid-animation).
+const ANIM_CAP_MS = 1200;
 
 export interface ChangeNavState {
   total: number;
@@ -14,6 +16,10 @@ export interface ChangeNavState {
   hasOverflow: boolean;
   ticks: ChangeTick[];
   viewport: { topPct: number; heightPct: number };
+  // Vertical scrollbar width of the scroll container (offsetWidth − clientWidth);
+  // 0 with overlay scrollbars. The minimap rail offsets its right edge by this so
+  // an expanded rail never sits on top of (and blocks) the scrollbar.
+  scrollbarW: number;
   goToPrev: () => void;
   goToNext: () => void;
   goToChange: (i: number) => void;
@@ -26,6 +32,7 @@ interface Measured {
   measured: { top: number; heightPx: number }[];
   scrollHeight: number;
   clientHeight: number;
+  scrollbarW: number;
 }
 
 function measure(container: HTMLElement, changes: DiffChange[]): Measured {
@@ -57,6 +64,7 @@ function measure(container: HTMLElement, changes: DiffChange[]): Measured {
     measured,
     scrollHeight: container.scrollHeight,
     clientHeight: container.clientHeight,
+    scrollbarW: Math.max(0, container.offsetWidth - container.clientWidth),
   };
 }
 
@@ -70,16 +78,36 @@ export function useChangeNavigation(
     measured: [],
     scrollHeight: 0,
     clientHeight: 0,
+    scrollbarW: 0,
   });
   const [scrollTop, setScrollTop] = useState(0);
-  const suppressRef = useRef(false);
+  // currentIdx is authoritative STATE, not re-derived from scrollTop each render.
+  // A jump sets it directly (deterministic — independent of where the settled
+  // scrollTop rounds relative to the activation margin); a genuine MANUAL scroll
+  // recomputes it from position. The two are kept apart by `animatingRef`.
+  const [currentIdx, setCurrentIdx] = useState(-1);
+  // True while a programmatic scroll-to is in flight. Cleared on arrival at the
+  // target, on a user scroll gesture (wheel/touch/pointer), or by the safety cap
+  // — so trailing animation-frame scroll events never overwrite currentIdx.
+  const animatingRef = useRef(false);
+  const targetTopRef = useRef(0);
+  const animCapRef = useRef(0);
   const rafRef = useRef(0);
+  // Latest measurement, read by the long-lived scroll/jump handlers without
+  // re-subscribing them every time the snapshot changes.
+  const snapRef = useRef(snap);
+  snapRef.current = snap;
 
   const remeasure = useCallback(() => {
     const c = containerRef.current;
     if (!c) return;
-    setSnap(measure(c, changes));
+    const m = measure(c, changes);
+    setSnap(m);
     setScrollTop(c.scrollTop);
+    // Keep currentIdx consistent with the new geometry while parked (not mid-jump).
+    if (!animatingRef.current) {
+      setCurrentIdx(computeCurrentIdx(m.startTops, c.scrollTop, SCROLL_MARGIN));
+    }
   }, [containerRef, changes]);
 
   // Measure after paint + whenever the change list changes.
@@ -97,64 +125,72 @@ export function useChangeNavigation(
     return () => ro.disconnect();
   }, [remeasure, tableRef, containerRef]);
 
-  // Scroll tracking (rAF-throttled), suppressed during programmatic scroll-to.
+  // Scroll + gesture tracking (rAF-throttled). A programmatic jump's animation
+  // frames are ignored for index tracking (they only advance scrollTop for the
+  // viewport box); a real user gesture takes over immediately.
   useEffect(() => {
     const c = containerRef.current;
     if (!c) return;
     const onScroll = () => {
-      if (suppressRef.current) return;
       cancelAnimationFrame(rafRef.current);
-      rafRef.current = requestAnimationFrame(() => setScrollTop(c.scrollTop));
+      rafRef.current = requestAnimationFrame(() => {
+        const st = c.scrollTop;
+        setScrollTop(st); // viewport indicator follows even during the animation
+        if (animatingRef.current) {
+          // End the jump once we've arrived at the target; until then leave
+          // currentIdx pinned to the jump target (set in goToChange).
+          if (Math.abs(st - targetTopRef.current) <= 2) animatingRef.current = false;
+          return;
+        }
+        setCurrentIdx(computeCurrentIdx(snapRef.current.startTops, st, SCROLL_MARGIN));
+      });
+    };
+    // A user scroll gesture cancels the browser's smooth scroll, so stop treating
+    // subsequent frames as programmatic and resume position-derived tracking.
+    const onGesture = () => {
+      animatingRef.current = false;
     };
     c.addEventListener('scroll', onScroll, { passive: true });
+    c.addEventListener('wheel', onGesture, { passive: true });
+    c.addEventListener('touchstart', onGesture, { passive: true });
+    c.addEventListener('pointerdown', onGesture);
     return () => {
       c.removeEventListener('scroll', onScroll);
+      c.removeEventListener('wheel', onGesture);
+      c.removeEventListener('touchstart', onGesture);
+      c.removeEventListener('pointerdown', onGesture);
       cancelAnimationFrame(rafRef.current);
     };
-  }, [containerRef]);
+    // Depends on `changes` so the listener (re)attaches once the scroll body
+    // actually exists: on the first render the early-return branches (no file /
+    // loading / empty file) render no `.diff-pane-body`, so containerRef.current
+    // is null and the effect bails. When the file loads, `changes` changes and
+    // this re-runs against the now-mounted body. Without this the viewport
+    // indicator never tracks live scrolling (the remeasure path re-runs on
+    // `changes` and so sizes ticks correctly, masking the missing listener).
+  }, [containerRef, changes]);
 
-  const currentIdx = computeCurrentIdx(snap.startTops, scrollTop, SCROLL_MARGIN);
   const total = changes.length;
   const hasOverflow = snap.scrollHeight > snap.clientHeight;
 
-  const scrollToTop = useCallback(
-    (top: number) => {
+  const goToChange = useCallback(
+    (i: number) => {
       const c = containerRef.current;
-      if (!c) return;
-      // Set state immediately + suppress scroll-driven recompute until settle.
-      suppressRef.current = true;
-      setScrollTop(top);
-      const clear = () => {
-        suppressRef.current = false;
-        setScrollTop(c.scrollTop);
-        cleanup();
-      };
-      const onInterrupt = () => clear();
-      const cap = window.setTimeout(clear, SETTLE_CAP_MS);
-      const cleanup = () => {
-        window.clearTimeout(cap);
-        c.removeEventListener('scrollend', clear);
-        window.removeEventListener('wheel', onInterrupt, true);
-        window.removeEventListener('keydown', onInterrupt, true);
-        window.removeEventListener('pointerdown', onInterrupt, true);
-      };
-      c.addEventListener('scrollend', clear, { once: true });
-      window.addEventListener('wheel', onInterrupt, { capture: true, once: true });
-      window.addEventListener('keydown', onInterrupt, { capture: true, once: true });
-      window.addEventListener('pointerdown', onInterrupt, { capture: true, once: true });
+      if (!c || i < 0 || i >= total) return;
+      // Set the index up front so the counter advances deterministically.
+      setCurrentIdx(i);
+      const maxTop = Math.max(0, c.scrollHeight - c.clientHeight);
+      const top = Math.min(maxTop, Math.max(0, snapRef.current.startTops[i] - SCROLL_MARGIN));
+      targetTopRef.current = top;
+      animatingRef.current = true;
+      window.clearTimeout(animCapRef.current);
+      animCapRef.current = window.setTimeout(() => {
+        animatingRef.current = false;
+      }, ANIM_CAP_MS);
       const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
       c.scrollTo({ top, behavior: reduce ? 'auto' : 'smooth' });
     },
-    [containerRef],
-  );
-
-  const goToChange = useCallback(
-    (i: number) => {
-      if (i < 0 || i >= total) return;
-      const top = Math.max(0, snap.startTops[i] - SCROLL_MARGIN);
-      scrollToTop(top);
-    },
-    [total, snap.startTops, scrollToTop],
+    [total, containerRef],
   );
 
   const goToNext = useCallback(() => goToChange(currentIdx + 1), [goToChange, currentIdx]);
@@ -164,6 +200,8 @@ export function useChangeNavigation(
     (r: number) => {
       const c = containerRef.current;
       if (!c) return;
+      // Rail scrub is a manual position change — let scroll-derived tracking run.
+      animatingRef.current = false;
       c.scrollTo({ top: r * c.scrollHeight, behavior: 'auto' });
     },
     [containerRef],
@@ -175,10 +213,15 @@ export function useChangeNavigation(
     heightPct: snap.scrollHeight > 0 ? (snap.clientHeight / snap.scrollHeight) * 100 : 100,
   };
 
-  // Clear suppression if the change list swaps (file switch / whole-file toggle).
+  // Reset to the top when the change list swaps (file switch / whole-file toggle).
+  // -1 and 0 both display as "1", so this never flickers the counter.
   useEffect(() => {
-    suppressRef.current = false;
+    animatingRef.current = false;
+    setCurrentIdx(-1);
   }, [changes]);
+
+  // Clear the safety-cap timer on unmount.
+  useEffect(() => () => window.clearTimeout(animCapRef.current), []);
 
   return {
     total,
@@ -188,6 +231,7 @@ export function useChangeNavigation(
     hasOverflow,
     ticks,
     viewport,
+    scrollbarW: snap.scrollbarW,
     goToPrev,
     goToNext,
     goToChange,
