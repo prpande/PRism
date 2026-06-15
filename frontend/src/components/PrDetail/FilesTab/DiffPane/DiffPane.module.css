@@ -57,20 +57,17 @@
   flex: 1;
   min-height: 0;
   overflow: auto;
-  scrollbar-gutter: stable;
 }
 
 /* Whole-file mode with the minimap present: the rail IS the vertical scroll
    affordance (click-to-jump + drag-to-scrub), so the native vertical scrollbar
-   is redundant — hide it and reclaim its gutter (#486 review). Only the vertical
-   bar is removed; the horizontal bar stays for wide unified lines. Chromium
-   (Electron + the web target) honors the axis-specific `::-webkit-scrollbar`
-   selector; Firefox keeps its vertical bar (it can't scope `scrollbar-width` to
-   one axis), which is an acceptable graceful fallback. Wheel/trackpad/keyboard
-   scrolling are unaffected. */
-.diffPaneBodyNoScrollbar {
-  scrollbar-gutter: auto;
-}
+   is redundant — hide it (#486 review). Only the vertical bar is removed; the
+   horizontal bar stays for wide unified lines. Chromium (Electron + the web
+   target) honors the axis-specific `::-webkit-scrollbar` selector; Firefox keeps
+   its vertical bar (it can't scope `scrollbar-width` to one axis), which is an
+   acceptable graceful fallback. Hiding the bar reflows the body to full width
+   (clientWidth == offsetWidth → scrollbarW 0), so the rail sits flush right.
+   Wheel/trackpad/keyboard scrolling are unaffected. */
 .diffPaneBodyNoScrollbar::-webkit-scrollbar:vertical {
   display: none;
 }
