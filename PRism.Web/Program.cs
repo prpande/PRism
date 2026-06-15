@@ -2,6 +2,7 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using PRism.AI.ClaudeCode;
 using PRism.Core;
+using PRism.Core.Config;
 using PRism.Core.Hosting;
 using PRism.GitHub;
 using PRism.Web.Composition;
@@ -82,7 +83,16 @@ builder.Services.AddPrismClaudeCode(
     // write prose), so the shared ceiling is raised to a generous interim value; the synchronous one-shot
     // model is the real constraint and is tracked for the lazy/streamed load (#477). Tuned from the measured
     // p100 latency — see docs/specs/2026-06-14-ai-hunk-annotator-keystone-design.md.
-    new ClaudeCodeProviderOptions { WorkingDirectory = llmCwd, Timeout = TimeSpan.FromSeconds(240) },
+    // #496: factory so the per-call timeout is read HOT from IConfigStore (no restart). The static
+    // Timeout below is the default-construction fallback only; TimeoutProvider is the live source.
+    sp => new ClaudeCodeProviderOptions
+    {
+        WorkingDirectory = llmCwd,
+        Timeout = TimeSpan.FromSeconds(240),
+        TimeoutProvider = () => TimeSpan.FromSeconds(
+            AiConfigBounds.ClampTimeout(
+                sp.GetRequiredService<IConfigStore>().Current.Ui.Ai.ProviderTimeoutSeconds)),
+    },
     llmUsageDir);
 builder.Services.AddPrismAi();
 builder.Services.AddPrismWeb();
