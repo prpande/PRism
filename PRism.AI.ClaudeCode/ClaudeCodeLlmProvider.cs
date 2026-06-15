@@ -29,6 +29,9 @@ public sealed class ClaudeCodeLlmProvider(ICliProcessRunner runner, ClaudeCodePr
     {
         ArgumentNullException.ThrowIfNull(request);
 
+        // #496: evaluate the hot timeout ONCE per call, before building the spec.
+        var timeout = options.TimeoutProvider();
+
         var args = new List<string>
         {
             "-p",
@@ -50,7 +53,7 @@ public sealed class ClaudeCodeLlmProvider(ICliProcessRunner runner, ClaudeCodePr
             Environment: ClaudeCliEnvironment.BuildAllowlisted(),
             WorkingDirectory: options.WorkingDirectory,
             StdinText: request.UserContent,
-            Timeout: options.Timeout);
+            Timeout: timeout);
 
         ProcessResult result;
         try
