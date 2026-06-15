@@ -18,6 +18,8 @@ function prefs(overrides: Partial<PreferencesResponse['ui']> = {}): PreferencesR
       aiMode: 'off',
       density: 'comfortable',
       contentScale: 'm',
+      providerTimeoutSeconds: 240,
+      hunkAnnotationCap: 10,
       ...overrides,
     },
     inbox: {

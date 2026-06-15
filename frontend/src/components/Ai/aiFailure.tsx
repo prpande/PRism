@@ -8,7 +8,7 @@ import {
   useState,
   type ReactNode,
 } from 'react';
-import type { PrReference } from '../../api/types';
+import type { PrReference, AiFailureReason } from '../../api/types';
 import { prRefKey } from '../../api/types';
 import { useEffectiveLocation } from '../../hooks/useEffectiveLocation';
 import { parsePrRoute } from '../PrDetail/PrTabHost';
@@ -17,6 +17,8 @@ export type AiSeam = 'summary' | 'file-focus' | 'hunk-annotations' | 'draft-sugg
 
 interface FailureEntry {
   retry: () => void;
+  // #496: why the seam failed; drives the timeout-aware toast. Optional so older callers/tests compile.
+  reason?: AiFailureReason;
 }
 type FailureMap = Record<string, Partial<Record<AiSeam, FailureEntry>>>;
 

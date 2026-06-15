@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { getAiHunkAnnotations } from '../api/aiHunkAnnotations';
-import { ApiError } from '../api/client';
+import { ApiError, readFailureReason } from '../api/client';
 import { useAiFailure } from '../components/Ai/aiFailure';
 import type { PrReference, HunkAnnotation } from '../api/types';
 
@@ -30,7 +30,11 @@ export function useAiHunkAnnotations(
         if (cancelled) return;
         setEntries(null);
         if (err instanceof ApiError && err.status === 401) clear(prRef, 'hunk-annotations');
-        else report(prRef, 'hunk-annotations', { retry });
+        else
+          report(prRef, 'hunk-annotations', {
+            retry,
+            reason: err instanceof ApiError ? readFailureReason(err.body) : 'provider-error',
+          });
       });
     return () => {
       cancelled = true;

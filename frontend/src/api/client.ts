@@ -1,4 +1,5 @@
 import { getTabId } from './tabId';
+import type { AiFailureReason } from './types';
 
 export class ApiError extends Error {
   readonly status: number;
@@ -11,6 +12,16 @@ export class ApiError extends Error {
     this.requestId = requestId;
     this.body = body;
   }
+}
+
+// #496: extract the AI-failure reason from a 503 body ({ reason }). Defaults to 'provider-error' for
+// a missing/unknown reason or a non-ApiError throw (network failure), so callers never branch on null.
+export function readFailureReason(body: unknown): AiFailureReason {
+  if (body && typeof body === 'object' && 'reason' in body) {
+    const r = (body as { reason?: unknown }).reason;
+    if (r === 'timeout' || r === 'provider-error') return r;
+  }
+  return 'provider-error';
 }
 
 function readSessionCookie(): string | null {

@@ -25,6 +25,8 @@ function prefs(contentScale: PreferencesResponse['ui']['contentScale']): Prefere
       aiMode: 'off',
       density: 'comfortable',
       contentScale,
+      providerTimeoutSeconds: 240,
+      hunkAnnotationCap: 10,
     },
     inbox: {
       sections: {

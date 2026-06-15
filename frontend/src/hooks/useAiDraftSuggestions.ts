@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { getAiDraftSuggestions } from '../api/aiDraftSuggestions';
-import { ApiError } from '../api/client';
+import { ApiError, readFailureReason } from '../api/client';
 import { useAiFailure } from '../components/Ai/aiFailure';
 import type { PrReference, DraftSuggestion } from '../api/types';
 
@@ -30,7 +30,11 @@ export function useAiDraftSuggestions(
         if (cancelled) return;
         setEntries(null);
         if (err instanceof ApiError && err.status === 401) clear(prRef, 'draft-suggestions');
-        else report(prRef, 'draft-suggestions', { retry });
+        else
+          report(prRef, 'draft-suggestions', {
+            retry,
+            reason: err instanceof ApiError ? readFailureReason(err.body) : 'provider-error',
+          });
       });
     return () => {
       cancelled = true;

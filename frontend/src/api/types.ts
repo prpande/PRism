@@ -4,6 +4,10 @@ export type Density = 'comfortable' | 'compact';
 export type AiMode = 'off' | 'preview' | 'live';
 export type ContentScale = 'xs' | 's' | 'm' | 'l' | 'xl';
 
+// #496: why an AI seam failed, surfaced via the 503 body { reason }. Drives the timeout-specific
+// toast copy + "Adjust timeout" deep-link. A missing/unknown reason defaults to 'provider-error'.
+export type AiFailureReason = 'timeout' | 'provider-error';
+
 // S6 PR1 widened GET /api/preferences from the flat { theme, accent, aiPreview }
 // shape to a nested { ui, inbox, github } shape (spec § 2.4). UiPreferences is now
 // the inner `ui` block; PreferencesResponse wraps all three. PR3 will introduce
@@ -17,6 +21,9 @@ export interface UiPreferences {
   aiMode: AiMode;
   density: Density;
   contentScale: ContentScale;
+  // #496 AI Settings tab — clamped, hot-reloaded knobs. The GET DTO already clamps these for display.
+  providerTimeoutSeconds: number;
+  hunkAnnotationCap: number;
 }
 
 export interface InboxSectionsPreferences {
@@ -244,7 +251,7 @@ export type AiSummaryResult =
   | { kind: 'ok'; summary: PrSummary }
   | { kind: 'absent' }
   | { kind: 'auth' }
-  | { kind: 'error' };
+  | { kind: 'error'; reason: AiFailureReason };
 
 // PR9b-ai-gating § 3.3. The backend `FocusLevel` enum carries 3 values;
 // today's PlaceholderFileFocusRanker emits High + Medium. Wire-shape:
