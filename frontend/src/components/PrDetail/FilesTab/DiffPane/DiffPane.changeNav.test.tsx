@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { render } from '@testing-library/react';
 import { DiffPane } from './DiffPane';
+import type { DiffMode } from './DiffPane';
 import type { FileChange, PrReference } from '../../../../api/types';
 import { useAiGate } from '../../../../hooks/useAiGate';
 import { useAiHunkAnnotations } from '../../../../hooks/useAiHunkAnnotations';
@@ -36,13 +37,13 @@ const twoRunFile: FileChange = {
   ],
 };
 
-function renderPane() {
+function renderPane(diffMode: DiffMode = 'unified') {
   return render(
     <DiffPane
       prRef={prRef}
       selectedPath="src/main.ts"
       file={twoRunFile}
-      diffMode="unified"
+      diffMode={diffMode}
       truncated={false}
       reviewThreads={[]}
       prUrl=""
@@ -69,6 +70,16 @@ describe('DiffPane change navigation', () => {
 
   it('tags both boundary rows of each run (2 runs → 2 start + 2 end tags)', () => {
     const { container } = renderPane();
+    expect(container.querySelectorAll('[data-change-start]')).toHaveLength(2);
+    expect(container.querySelectorAll('[data-change-end]')).toHaveLength(2);
+  });
+
+  it('tags boundaries in split mode where each -x/+y collapses to one paired row', () => {
+    // Split rendering pairs the delete+insert of each block into a single <tr>,
+    // so that row must carry BOTH the run's start (via get(idx)) and end (via the
+    // `?? idx+1` fallback). Still 2 start + 2 end tags, but exercising the
+    // collapse path unified mode never hits.
+    const { container } = renderPane('side-by-side');
     expect(container.querySelectorAll('[data-change-start]')).toHaveLength(2);
     expect(container.querySelectorAll('[data-change-end]')).toHaveLength(2);
   });
