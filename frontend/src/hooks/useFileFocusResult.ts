@@ -65,6 +65,7 @@ export function useFileFocusResult(
           clear(prRef, 'file-focus');
         }
       })
+      // Defensive: getAiFileFocusResult maps all throws to discriminated outcomes (never rejects today); this guards a future change where it might.
       .catch(() => {
         if (!cancelled) {
           setState({ status: 'error', entries: [] });

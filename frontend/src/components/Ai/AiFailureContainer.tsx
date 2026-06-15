@@ -16,7 +16,7 @@ export function AiFailureContainer() {
       if (focusLost) {
         // Confirm this selector against PrDetailView's DOM during impl; falls back to <main>.
         const target =
-          document.querySelector<HTMLElement>('[data-pr-main]') ??
+          document.querySelector<HTMLElement>('[data-pr-main]:not([hidden])') ??
           document.querySelector<HTMLElement>('main');
         target?.focus();
       }

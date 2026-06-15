@@ -10,18 +10,25 @@ import type { PrReference } from '../api/types';
 
 const PR: PrReference = { owner: 'o', repo: 'r', number: 1 };
 const wrapper = ({ children }: { children: ReactNode }) => (
-  <MemoryRouter initialEntries={['/pr/o/r/1']}><AiFailureProvider>{children}</AiFailureProvider></MemoryRouter>
+  <MemoryRouter initialEntries={['/pr/o/r/1']}>
+    <AiFailureProvider>{children}</AiFailureProvider>
+  </MemoryRouter>
 );
 
 it('reports on any non-401 throw (the seam has no backend 503 path today — see spec)', async () => {
   vi.spyOn(api, 'getAiDraftSuggestions').mockRejectedValue(new ApiError(500, null, ''));
-  const { result } = renderHook(() => ({ e: useAiDraftSuggestions(PR, true), f: useAiFailure() }), { wrapper });
+  const { result } = renderHook(() => ({ e: useAiDraftSuggestions(PR, true), f: useAiFailure() }), {
+    wrapper,
+  });
   await waitFor(() => expect(result.current.f.activeFailedSeams).toContain('draft-suggestions'));
 });
 
 it('does NOT report on 401', async () => {
   vi.spyOn(api, 'getAiDraftSuggestions').mockRejectedValue(new ApiError(401, null, ''));
-  const { result } = renderHook(() => ({ e: useAiDraftSuggestions(PR, true), f: useAiFailure() }), { wrapper });
-  await waitFor(() => {});
-  expect(result.current.f.activeFailedSeams).not.toContain('draft-suggestions');
+  const { result } = renderHook(() => ({ e: useAiDraftSuggestions(PR, true), f: useAiFailure() }), {
+    wrapper,
+  });
+  await waitFor(() =>
+    expect(result.current.f.activeFailedSeams).not.toContain('draft-suggestions'),
+  );
 });

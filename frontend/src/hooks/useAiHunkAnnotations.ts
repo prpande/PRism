@@ -4,7 +4,10 @@ import { ApiError } from '../api/client';
 import { useAiFailure } from '../components/Ai/aiFailure';
 import type { PrReference, HunkAnnotation } from '../api/types';
 
-export function useAiHunkAnnotations(prRef: PrReference, enabled: boolean): HunkAnnotation[] | null {
+export function useAiHunkAnnotations(
+  prRef: PrReference,
+  enabled: boolean,
+): HunkAnnotation[] | null {
   const [entries, setEntries] = useState<HunkAnnotation[] | null>(null);
   const [retryNonce, setRetryNonce] = useState(0);
   const retry = useCallback(() => setRetryNonce((n) => n + 1), []);
@@ -29,7 +32,9 @@ export function useAiHunkAnnotations(prRef: PrReference, enabled: boolean): Hunk
         if (err instanceof ApiError && err.status === 401) clear(prRef, 'hunk-annotations');
         else report(prRef, 'hunk-annotations', { retry });
       });
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- stable primitive prRef fields; retryNonce re-runs the fetch (cleanup cancels the prior); report/clear/retry are stable (#331)
   }, [prRef.owner, prRef.repo, prRef.number, enabled, retryNonce]);
 

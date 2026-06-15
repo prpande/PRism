@@ -1,6 +1,11 @@
 // frontend/src/components/Ai/aiFailure.tsx
 import {
-  createContext, useCallback, useContext, useMemo, useRef, useState,
+  createContext,
+  useCallback,
+  useContext,
+  useMemo,
+  useRef,
+  useState,
   type ReactNode,
 } from 'react';
 import type { PrReference } from '../../api/types';
@@ -10,7 +15,9 @@ import { parsePrRoute } from '../PrDetail/PrTabHost';
 
 export type AiSeam = 'summary' | 'file-focus' | 'hunk-annotations' | 'draft-suggestions';
 
-interface FailureEntry { retry: () => void }
+interface FailureEntry {
+  retry: () => void;
+}
 type FailureMap = Record<string, Partial<Record<AiSeam, FailureEntry>>>;
 
 export interface AiFailureApi {
@@ -21,13 +28,19 @@ export interface AiFailureApi {
   dismiss: () => void;
   // Read-only DERIVED views for the active PR (computed each render — not setters):
   activeFailedSeams: AiSeam[]; // failed seams for the active PR, in stable SEAM_ORDER
-  retrying: boolean;           // a Retry-all is in flight for the active PR
-  dismissed: boolean;          // user dismissed the current failure-set fingerprint
+  retrying: boolean; // a Retry-all is in flight for the active PR
+  dismissed: boolean; // user dismissed the current failure-set fingerprint
 }
 
 const NOOP: AiFailureApi = {
-  report: () => {}, clear: () => {}, clearPr: () => {}, retryAll: () => {}, dismiss: () => {},
-  activeFailedSeams: [], retrying: false, dismissed: false,
+  report: () => {},
+  clear: () => {},
+  clearPr: () => {},
+  retryAll: () => {},
+  dismiss: () => {},
+  activeFailedSeams: [],
+  retrying: false,
+  dismissed: false,
 };
 
 // Exported as a test seam (mirrors OpenTabsContext) so a unit test can inject a stub value with
@@ -64,39 +77,47 @@ export function AiFailureProvider({ children }: { children: ReactNode }) {
     setRetryingKey((cur) => (cur === key && empty ? null : cur));
   }, []);
 
-  const report = useCallback((prRef: PrReference, seam: AiSeam, opts: FailureEntry) => {
-    const key = prRefKey(prRef);
-    setFailures((prev) => ({ ...prev, [key]: { ...prev[key], [seam]: opts } }));
-    settle(key, seam);
-  }, [settle]);
+  const report = useCallback(
+    (prRef: PrReference, seam: AiSeam, opts: FailureEntry) => {
+      const key = prRefKey(prRef);
+      setFailures((prev) => ({ ...prev, [key]: { ...prev[key], [seam]: opts } }));
+      settle(key, seam);
+    },
+    [settle],
+  );
 
-  const clear = useCallback((prRef: PrReference, seam: AiSeam) => {
-    const key = prRefKey(prRef);
-    // Read the latest snapshot from the ref (not closed-over state) so this callback is stable
-    // across failure mutations. Effects that capture `clear` once (on mount) always call the
-    // current version of the recovery logic rather than one that closed over a stale snapshot.
-    const forPr = failuresRef.current[key];
-    const willEmpty = !!forPr && seam in forPr && Object.keys(forPr).length === 1;
-    setFailures((prev) => {
-      const cur = prev[key];
-      if (!cur || !(seam in cur)) return prev;
-      const next = { ...cur };
-      delete next[seam];
-      const out = { ...prev };
-      if (Object.keys(next).length === 0) delete out[key];
-      else out[key] = next;
-      return out;
-    });
-    // Real recovery for this PR: reset any dismissal so a later identical failure re-shows.
-    if (willEmpty) setDismissedFingerprint((d) => (d && d.startsWith(`${key}:`) ? null : d));
-    settle(key, seam);
-  }, [settle]);
+  const clear = useCallback(
+    (prRef: PrReference, seam: AiSeam) => {
+      const key = prRefKey(prRef);
+      // Read the latest snapshot from the ref (not closed-over state) so this callback is stable
+      // across failure mutations. Effects that capture `clear` once (on mount) always call the
+      // current version of the recovery logic rather than one that closed over a stale snapshot.
+      const forPr = failuresRef.current[key];
+      const willEmpty = !!forPr && seam in forPr && Object.keys(forPr).length === 1;
+      setFailures((prev) => {
+        const cur = prev[key];
+        if (!cur || !(seam in cur)) return prev;
+        const next = { ...cur };
+        delete next[seam];
+        const out = { ...prev };
+        if (Object.keys(next).length === 0) delete out[key];
+        else out[key] = next;
+        return out;
+      });
+      // Real recovery for this PR: reset any dismissal so a later identical failure re-shows.
+      if (willEmpty) setDismissedFingerprint((d) => (d && d.startsWith(`${key}:`) ? null : d));
+      settle(key, seam);
+    },
+    [settle],
+  );
 
   const clearPr = useCallback((prRef: PrReference) => {
     const key = prRefKey(prRef);
     setFailures((prev) => {
       if (!(key in prev)) return prev;
-      const out = { ...prev }; delete out[key]; return out;
+      const out = { ...prev };
+      delete out[key];
+      return out;
     });
     setRetryingKey((cur) => (cur === key ? null : cur));
     setDismissedFingerprint((d) => (d && d.startsWith(`${key}:`) ? null : d));
@@ -128,12 +149,29 @@ export function AiFailureProvider({ children }: { children: ReactNode }) {
 
   const dismiss = useCallback(() => setDismissedFingerprint(fingerprintRef.current), []);
 
-  const value = useMemo<AiFailureApi>(() => ({
-    report, clear, clearPr, retryAll, dismiss,
-    activeFailedSeams,
-    retrying: retryingKey !== null && retryingKey === activeKey,
-    dismissed,
-  }), [report, clear, clearPr, retryAll, dismiss, activeFailedSeams, retryingKey, activeKey, dismissed]);
+  const value = useMemo<AiFailureApi>(
+    () => ({
+      report,
+      clear,
+      clearPr,
+      retryAll,
+      dismiss,
+      activeFailedSeams,
+      retrying: retryingKey !== null && retryingKey === activeKey,
+      dismissed,
+    }),
+    [
+      report,
+      clear,
+      clearPr,
+      retryAll,
+      dismiss,
+      activeFailedSeams,
+      retryingKey,
+      activeKey,
+      dismissed,
+    ],
+  );
 
   return <AiFailureContext.Provider value={value}>{children}</AiFailureContext.Provider>;
 }

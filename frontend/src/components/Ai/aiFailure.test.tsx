@@ -10,14 +10,22 @@ const retryNoop = () => {};
 
 function Probe() {
   const { activeFailedSeams, retrying, dismissed } = useAiFailure();
-  return <div data-testid="active">{`${activeFailedSeams.join(',')}|retrying=${retrying}|dismissed=${dismissed}`}</div>;
+  return (
+    <div data-testid="active">{`${activeFailedSeams.join(',')}|retrying=${retrying}|dismissed=${dismissed}`}</div>
+  );
 }
 function grab(path: string) {
   let api!: ReturnType<typeof useAiFailure>;
-  function Grab() { api = useAiFailure(); return null; }
+  function Grab() {
+    api = useAiFailure();
+    return null;
+  }
   render(
     <MemoryRouter initialEntries={[path]}>
-      <AiFailureProvider><Grab /><Probe /></AiFailureProvider>
+      <AiFailureProvider>
+        <Grab />
+        <Probe />
+      </AiFailureProvider>
     </MemoryRouter>,
   );
   return () => api;
@@ -30,21 +38,32 @@ it('renders only the active PR failed set; coalesces multiple seams in stable or
     api().report(PR_A, 'summary', { retry: retryNoop });
     api().report(PR_B, 'file-focus', { retry: retryNoop }); // backgrounded — recorded, not shown
   });
-  expect(screen.getByTestId('active').textContent).toBe('summary,hunk-annotations|retrying=false|dismissed=false');
+  expect(screen.getByTestId('active').textContent).toBe(
+    'summary,hunk-annotations|retrying=false|dismissed=false',
+  );
 });
 
 it('clear removes a seam; clearPr removes a whole PR', () => {
   const api = grab('/pr/o/r/1');
-  act(() => { api().report(PR_A, 'summary', { retry: retryNoop }); api().report(PR_A, 'file-focus', { retry: retryNoop }); });
-  act(() => { api().clear(PR_A, 'summary'); });
+  act(() => {
+    api().report(PR_A, 'summary', { retry: retryNoop });
+    api().report(PR_A, 'file-focus', { retry: retryNoop });
+  });
+  act(() => {
+    api().clear(PR_A, 'summary');
+  });
   expect(screen.getByTestId('active').textContent).toContain('file-focus|');
-  act(() => { api().clearPr(PR_A); });
+  act(() => {
+    api().clearPr(PR_A);
+  });
   expect(screen.getByTestId('active').textContent).toBe('|retrying=false|dismissed=false');
 });
 
 it('renders nothing on a non-PR route (activeKey null)', () => {
   const api = grab('/');
-  act(() => { api().report(PR_A, 'summary', { retry: retryNoop }); });
+  act(() => {
+    api().report(PR_A, 'summary', { retry: retryNoop });
+  });
   expect(screen.getByTestId('active').textContent).toBe('|retrying=false|dismissed=false');
 });
 
@@ -55,36 +74,66 @@ it('retryAll calls every active-PR retry; retrying clears only after all settle'
     api().report(PR_A, 'summary', { retry: () => calls.push('summary') });
     api().report(PR_A, 'file-focus', { retry: () => calls.push('file-focus') });
   });
-  act(() => { api().retryAll(); });
+  act(() => {
+    api().retryAll();
+  });
   expect(calls.sort()).toEqual(['file-focus', 'summary']);
   expect(screen.getByTestId('active').textContent).toContain('retrying=true');
-  act(() => { api().clear(PR_A, 'summary'); });               // one recovers
+  act(() => {
+    api().clear(PR_A, 'summary');
+  }); // one recovers
   expect(screen.getByTestId('active').textContent).toContain('retrying=true'); // file-focus still pending
-  act(() => { api().report(PR_A, 'file-focus', { retry: () => {} }); }); // other re-fails → settles
+  act(() => {
+    api().report(PR_A, 'file-focus', { retry: () => {} });
+  }); // other re-fails → settles
   expect(screen.getByTestId('active').textContent).toContain('retrying=false');
 });
 
 it('dismiss hides; re-shows on a NEW (different) failure set', () => {
   const api = grab('/pr/o/r/1');
-  act(() => { api().report(PR_A, 'summary', { retry: retryNoop }); });
-  act(() => { api().dismiss(); });
+  act(() => {
+    api().report(PR_A, 'summary', { retry: retryNoop });
+  });
+  act(() => {
+    api().dismiss();
+  });
   expect(screen.getByTestId('active').textContent).toContain('dismissed=true');
-  act(() => { api().report(PR_A, 'file-focus', { retry: retryNoop }); });
+  act(() => {
+    api().report(PR_A, 'file-focus', { retry: retryNoop });
+  });
   expect(screen.getByTestId('active').textContent).toContain('dismissed=false');
 });
 
 it('dismiss → recover → same-seam re-fail shows a fresh toast (fingerprint reset on empty)', () => {
   const api = grab('/pr/o/r/1');
-  act(() => { api().report(PR_A, 'summary', { retry: retryNoop }); });
-  act(() => { api().dismiss(); });
-  act(() => { api().clear(PR_A, 'summary'); });   // recover → set empties → fingerprint resets
-  act(() => { api().report(PR_A, 'summary', { retry: retryNoop }); }); // same seam fails again
+  act(() => {
+    api().report(PR_A, 'summary', { retry: retryNoop });
+  });
+  act(() => {
+    api().dismiss();
+  });
+  act(() => {
+    api().clear(PR_A, 'summary');
+  }); // recover → set empties → fingerprint resets
+  act(() => {
+    api().report(PR_A, 'summary', { retry: retryNoop });
+  }); // same seam fails again
   expect(screen.getByTestId('active').textContent).toBe('summary|retrying=false|dismissed=false');
 });
 
 it('useAiFailure outside a provider is a no-op (NOOP default)', () => {
-  function Grab() { const a = useAiFailure(); a.report(PR_A, 'summary', { retry: retryNoop }); return <div>ok</div>; }
-  expect(() => render(<MemoryRouter><Grab /></MemoryRouter>)).not.toThrow();
+  function Grab() {
+    const a = useAiFailure();
+    a.report(PR_A, 'summary', { retry: retryNoop });
+    return <div>ok</div>;
+  }
+  expect(() =>
+    render(
+      <MemoryRouter>
+        <Grab />
+      </MemoryRouter>,
+    ),
+  ).not.toThrow();
 });
 
 it('stale-clear regression: clear captured before failures are added still empties the set', () => {
@@ -97,12 +146,20 @@ it('stale-clear regression: clear captured before failures are added still empti
   const api = grab('/pr/o/r/1');
   // Capture `clear` BEFORE any failures exist (simulates an effect that captured clear on mount).
   const staleClear = api().clear;
-  act(() => { api().report(PR_A, 'summary', { retry: retryNoop }); }); // failures change
-  act(() => { api().dismiss(); });
+  act(() => {
+    api().report(PR_A, 'summary', { retry: retryNoop });
+  }); // failures change
+  act(() => {
+    api().dismiss();
+  });
   expect(screen.getByTestId('active').textContent).toContain('dismissed=true');
   // Call the CAPTURED (potentially stale) clear — must still perform full recovery.
-  act(() => { staleClear(PR_A, 'summary'); });
+  act(() => {
+    staleClear(PR_A, 'summary');
+  });
   // Re-report the same seam; toast must re-show (fingerprint was reset by the clear).
-  act(() => { api().report(PR_A, 'summary', { retry: retryNoop }); });
+  act(() => {
+    api().report(PR_A, 'summary', { retry: retryNoop });
+  });
   expect(screen.getByTestId('active').textContent).toBe('summary|retrying=false|dismissed=false');
 });

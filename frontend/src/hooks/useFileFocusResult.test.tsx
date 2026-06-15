@@ -81,18 +81,25 @@ describe('useFileFocusResult', () => {
 
 const FF_PR = { owner: 'o', repo: 'r', number: 1 } as const;
 const ffWrapper = ({ children }: { children: ReactNode }) => (
-  <MemoryRouter initialEntries={['/pr/o/r/1']}><AiFailureProvider>{children}</AiFailureProvider></MemoryRouter>
+  <MemoryRouter initialEntries={['/pr/o/r/1']}>
+    <AiFailureProvider>{children}</AiFailureProvider>
+  </MemoryRouter>
 );
 
 it('reports file-focus on kind:error', async () => {
   vi.spyOn(api, 'getAiFileFocusResult').mockResolvedValue({ kind: 'error' });
-  const { result } = renderHook(() => ({ s: useFileFocusResult(FF_PR, true, true), f: useAiFailure() }), { wrapper: ffWrapper });
+  const { result } = renderHook(
+    () => ({ s: useFileFocusResult(FF_PR, true, true), f: useAiFailure() }),
+    { wrapper: ffWrapper },
+  );
   await waitFor(() => expect(result.current.f.activeFailedSeams).toContain('file-focus'));
 });
 
 it('does NOT report on kind:auth', async () => {
   vi.spyOn(api, 'getAiFileFocusResult').mockResolvedValue({ kind: 'auth' });
-  const { result } = renderHook(() => ({ s: useFileFocusResult(FF_PR, true, true), f: useAiFailure() }), { wrapper: ffWrapper });
-  await waitFor(() => {});
-  expect(result.current.f.activeFailedSeams).not.toContain('file-focus');
+  const { result } = renderHook(
+    () => ({ s: useFileFocusResult(FF_PR, true, true), f: useAiFailure() }),
+    { wrapper: ffWrapper },
+  );
+  await waitFor(() => expect(result.current.f.activeFailedSeams).not.toContain('file-focus'));
 });

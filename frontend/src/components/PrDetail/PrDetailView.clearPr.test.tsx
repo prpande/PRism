@@ -100,7 +100,7 @@ vi.mock('../../hooks/useCapabilities', () => ({
 }));
 
 vi.mock('../../hooks/useFileFocusResult', () => ({
-  useFileFocusResult: () => ({ status: 'idle', entries: [] }),
+  useFileFocusResult: () => ({ status: 'no-changes', entries: [] }),
 }));
 
 vi.mock('../../hooks/useFileDiff', () => ({

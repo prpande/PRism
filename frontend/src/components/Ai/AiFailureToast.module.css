@@ -16,8 +16,11 @@
   border: 1px solid var(--danger, var(--border-1));
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
 }
-.message { flex: 1 1 auto; }
-.retry, .dismiss {
+.message {
+  flex: 1 1 auto;
+}
+.retry,
+.dismiss {
   flex: none;
   background: none;
   border: 1px solid var(--border-1);
@@ -26,4 +29,7 @@
   cursor: pointer;
   color: var(--text-1);
 }
-.retry:disabled { cursor: default; opacity: 0.6; }
+.retry:disabled {
+  cursor: default;
+  opacity: 0.6;
+}

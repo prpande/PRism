@@ -103,6 +103,7 @@ export function useAiSummary(
         setSummary(null);
         setLoading(false);
         setError(true);
+        // Retry for a failed initial GET is regenerate (POST) — a deliberate spec choice; it re-generates (token cost), not a plain re-fetch. Do not "fix" to getAiSummaryResult.
         report(prRef, 'summary', { retry: regenerate });
       } else if (r.kind === 'auth') {
         // Auth failure on initial fetch: show the inline error block (matches pre-#484 behaviour

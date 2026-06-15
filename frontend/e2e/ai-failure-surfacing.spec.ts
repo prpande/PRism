@@ -312,7 +312,7 @@ test('ai-failure-503: file-focus 503 surfaces toast; Retry+recovery hides it', a
   await expect(toast).toBeHidden({ timeout: 20_000 });
 });
 
-test("ai-failure-active-pr-only: PR1 failure invisible while PR2 is active", async ({ page }) => {
+test('ai-failure-active-pr-only: PR1 failure invisible while PR2 is active', async ({ page }) => {
   test.setTimeout(120_000);
 
   // PR1 file-focus always 503 (permanently failing for this test).

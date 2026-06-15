@@ -32,7 +32,9 @@ export function useAiDraftSuggestions(
         if (err instanceof ApiError && err.status === 401) clear(prRef, 'draft-suggestions');
         else report(prRef, 'draft-suggestions', { retry });
       });
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- stable primitive prRef fields; retryNonce re-runs the fetch (cleanup cancels the prior); report/clear/retry are stable (#331)
   }, [prRef.owner, prRef.repo, prRef.number, enabled, retryNonce]);
 
