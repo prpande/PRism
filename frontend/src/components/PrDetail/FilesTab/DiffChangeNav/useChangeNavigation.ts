@@ -118,7 +118,7 @@ export function useChangeNavigation(
   const hasOverflow = snap.scrollHeight > snap.clientHeight;
 
   const scrollToTop = useCallback(
-    (top: number, targetIdx: number) => {
+    (top: number) => {
       const c = containerRef.current;
       if (!c) return;
       // Set state immediately + suppress scroll-driven recompute until settle.
@@ -142,7 +142,6 @@ export function useChangeNavigation(
       window.addEventListener('wheel', onInterrupt, { capture: true, once: true });
       window.addEventListener('keydown', onInterrupt, { capture: true, once: true });
       window.addEventListener('pointerdown', onInterrupt, { capture: true, once: true });
-      void targetIdx;
       const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
       c.scrollTo({ top, behavior: reduce ? 'auto' : 'smooth' });
     },
@@ -153,7 +152,7 @@ export function useChangeNavigation(
     (i: number) => {
       if (i < 0 || i >= total) return;
       const top = Math.max(0, snap.startTops[i] - SCROLL_MARGIN);
-      scrollToTop(top, i);
+      scrollToTop(top);
     },
     [total, snap.startTops, scrollToTop],
   );
