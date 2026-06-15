@@ -243,6 +243,7 @@ export interface PrSummary {
 export type AiSummaryResult =
   | { kind: 'ok'; summary: PrSummary }
   | { kind: 'absent' }
+  | { kind: 'auth' }
   | { kind: 'error' };
 
 // PR9b-ai-gating § 3.3. The backend `FocusLevel` enum carries 3 values;

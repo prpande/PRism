@@ -1,6 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook, waitFor, act } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
+import type { ReactNode } from 'react';
 import { useAiSummary } from './useAiSummary';
+import { AiFailureProvider, useAiFailure } from '../components/Ai/aiFailure';
 import * as api from '../api/aiSummary';
 
 vi.mock('../api/aiSummary');
@@ -128,4 +131,53 @@ describe('useAiSummary', () => {
     expect(result.current.summary).toEqual({ body: 'old', category: 'fix' }); // body retained
     expect(result.current.regenerateError).toBe(true);
   });
+});
+
+// --- Failure reporting tests (use AiFailureProvider + MemoryRouter) ---
+
+const FAIL_PR = { owner: 'o', repo: 'r', number: 1 } as const;
+const failWrapper = ({ children }: { children: ReactNode }) => (
+  <MemoryRouter initialEntries={['/pr/o/r/1']}>
+    <AiFailureProvider>{children}</AiFailureProvider>
+  </MemoryRouter>
+);
+
+it('reports summary on initial-fetch kind:error', async () => {
+  vi.spyOn(api, 'getAiSummaryResult').mockResolvedValue({ kind: 'error' });
+  const { result } = renderHook(
+    () => ({ s: useAiSummary(FAIL_PR, true, true, false), f: useAiFailure() }),
+    { wrapper: failWrapper },
+  );
+  await waitFor(() => expect(result.current.f.activeFailedSeams).toContain('summary'));
+});
+
+it('does NOT report on kind:auth; shows inline error instead', async () => {
+  vi.spyOn(api, 'getAiSummaryResult').mockResolvedValue({ kind: 'auth' });
+  const { result } = renderHook(
+    () => ({ s: useAiSummary(FAIL_PR, true, true, false), f: useAiFailure() }),
+    { wrapper: failWrapper },
+  );
+  // Wait for the fetch to resolve and loading to complete.
+  await waitFor(() => expect(result.current.s.loading).toBe(false));
+  // Auth must NOT surface a toast failure (no global report).
+  expect(result.current.f.activeFailedSeams).not.toContain('summary');
+  // But auth DOES show the inline error block (pre-#484 parity; file-focus parity).
+  expect(result.current.s.error).toBe(true);
+});
+
+it('regenerate failure reports; regenerate success clears', async () => {
+  vi.spyOn(api, 'getAiSummaryResult').mockResolvedValue({ kind: 'error' }); // initial fetch fails → reports
+  const regen = vi
+    .spyOn(api, 'regenerateAiSummary')
+    .mockResolvedValue({ kind: 'ok', summary: { body: 'new', category: 'fix' } });
+  const { result } = renderHook(
+    () => ({ s: useAiSummary(FAIL_PR, true, true, false), f: useAiFailure() }),
+    { wrapper: failWrapper },
+  );
+  await waitFor(() => expect(result.current.f.activeFailedSeams).toContain('summary'));
+  await act(async () => {
+    await result.current.s.regenerate();
+  }); // POST path → clears
+  expect(result.current.f.activeFailedSeams).not.toContain('summary');
+  expect(regen).toHaveBeenCalled();
 });

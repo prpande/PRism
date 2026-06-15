@@ -1,0 +1,35 @@
+/* Fixed-position, reusing Toast tokens + the Snackbar/StreamHealthSnackbar placement pattern
+   (position:fixed, centered, z-index in the existing ladder: Snackbar=200 < modal=1000). */
+.toast {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 200;
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  max-width: min(680px, calc(100vw - 32px));
+  padding: 12px 16px;
+  border-radius: 8px;
+  background: var(--surface-1);
+  border: 1px solid var(--danger, var(--border-1));
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
+}
+.message {
+  flex: 1 1 auto;
+}
+.retry,
+.dismiss {
+  flex: none;
+  background: none;
+  border: 1px solid var(--border-1);
+  border-radius: 6px;
+  padding: 4px 10px;
+  cursor: pointer;
+  color: var(--text-1);
+}
+.retry:disabled {
+  cursor: default;
+  opacity: 0.6;
+}

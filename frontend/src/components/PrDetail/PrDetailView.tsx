@@ -33,6 +33,7 @@ import { useOpenTabs } from '../../contexts/OpenTabsContext';
 import { useTabScrollMemory } from '../../hooks/useTabScrollMemory';
 import { LoadingBar } from '../LoadingBar';
 import { useActivationTransition } from '../../hooks/useActivationTransition';
+import { useAiFailure } from '../Ai/aiFailure';
 import { ErrorModal } from '../ErrorModal';
 import bannerReconcileStyles from './BannerReconcile.module.css';
 
@@ -61,6 +62,15 @@ export function PrDetailView({
   const { owner, repo, number } = prRef;
   const refKey = prRefKey(prRef);
   const navigate = useNavigate();
+
+  const { clearPr } = useAiFailure();
+  // Clear AI failures for this PR when the view unmounts (e.g. tab closed under PrTabHost
+  // keep-alive) so a stale Retry can't fire against a PR the user has left. clearPr is a
+  // stable useCallback from AiFailureProvider; prRef's primitive fields are the real deps.
+  useEffect(() => {
+    return () => clearPr(prRef);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- stable primitive prRef fields; clearPr stable (#331)
+  }, [owner, repo, number]);
 
   const { data, isLoading, error, reload } = usePrDetail(prRef);
   const updates = useActivePrUpdates(prRef);
@@ -368,7 +378,7 @@ export function PrDetailView({
   }, [draftSession.refetch]);
 
   return (
-    <div className={pageClassName} data-prref={refKey} hidden={!active}>
+    <div className={pageClassName} data-prref={refKey} hidden={!active} data-pr-main tabIndex={-1}>
       {/* Per-tab loading bar pinned to THIS tab's content boundary (not a global
           screen-top bar) — each open PR tab owns its own. Shows on cold load and
           background reload; self-contained, so no layout shift. */}
