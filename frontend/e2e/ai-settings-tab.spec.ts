@@ -292,7 +292,11 @@ async function setupPrViewMocks(page: import('@playwright/test').Page) {
   );
 
   await page.route(`**/api/pr/${OWNER}/${REPO}/${PR1}/diff**`, (route: Route) =>
-    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(sampleDiff) }),
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify(sampleDiff),
+    }),
   );
 
   await page.route(`**/api/pr/${OWNER}/${REPO}/${PR1}/ai/summary`, (route: Route) =>
@@ -357,7 +361,9 @@ test('ai-tab: AI pane renders; Provider timeout step persists across reload', as
   await expect(timeoutAfter).toHaveAttribute('aria-valuenow', '270', { timeout: 10_000 });
 });
 
-test('ai-tab: timeout 503 toast deep-links to /settings/ai over the mounted PR', async ({ page }) => {
+test('ai-tab: timeout 503 toast deep-links to /settings/ai over the mounted PR', async ({
+  page,
+}) => {
   test.setTimeout(120_000);
 
   // file-focus returns a 503 carrying { reason: "timeout" } so readFailureReason
