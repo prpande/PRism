@@ -85,6 +85,11 @@ async function openWholeFileWithRail(page: Page, theme?: 'light' | 'dark'): Prom
 
 test.describe('#486 change-navigation rail — interaction (hermetic)', () => {
   test.beforeEach(async () => {
+    // This spec runs early in the suite, so it eats the backend cold-start (first
+    // .NET request + fake-mode swap init). The full flow (auth + advance-head +
+    // reload + goto + whole-file toggle + fetch) exceeded the 30s default on a
+    // cold CI runner; mirror the parity inbox test's cold-start headroom.
+    test.setTimeout(60_000);
     const ctx = await request.newContext();
     await resetBackendState(ctx);
     await ctx.dispose();
