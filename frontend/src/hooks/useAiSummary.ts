@@ -54,7 +54,7 @@ export function useAiSummary(
         clear(prRef, 'summary');
       } else if (r.kind === 'error') {
         setRegenerateError(true); // retain the present body (§9)
-        report(prRef, 'summary', { retry: regenerate });
+        report(prRef, 'summary', { retry: regenerate, reason: r.reason });
       } else if (r.kind === 'auth') {
         // Auth failure on regenerate: show the inline regenerate-error block, but do NOT report
         // to the toast (matches file-focus: inline error, no global toast on auth).
@@ -104,7 +104,7 @@ export function useAiSummary(
         setLoading(false);
         setError(true);
         // Retry for a failed initial GET is regenerate (POST) — a deliberate spec choice; it re-generates (token cost), not a plain re-fetch. Do not "fix" to getAiSummaryResult.
-        report(prRef, 'summary', { retry: regenerate });
+        report(prRef, 'summary', { retry: regenerate, reason: r.reason });
       } else if (r.kind === 'auth') {
         // Auth failure on initial fetch: show the inline error block (matches pre-#484 behaviour
         // and file-focus parity — inline error, no global toast on auth).

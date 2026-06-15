@@ -141,6 +141,7 @@ function stubApi(over: Partial<AiFailureApi> = {}): AiFailureApi {
     activeFailedSeams: [],
     retrying: false,
     dismissed: false,
+    anyTimedOut: false,
     ...over,
   };
 }

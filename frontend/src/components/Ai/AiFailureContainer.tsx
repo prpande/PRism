@@ -4,7 +4,7 @@ import { useAiFailure } from './aiFailure';
 import { AiFailureToast } from './AiFailureToast';
 
 export function AiFailureContainer() {
-  const { activeFailedSeams, retrying, dismissed, retryAll, dismiss } = useAiFailure();
+  const { activeFailedSeams, retrying, dismissed, anyTimedOut, retryAll, dismiss } = useAiFailure();
   const visible = activeFailedSeams.length > 0 && !dismissed;
   const wasVisible = useRef(false);
 
@@ -36,6 +36,7 @@ export function AiFailureContainer() {
         <AiFailureToast
           seams={activeFailedSeams}
           retrying={retrying}
+          anyTimedOut={anyTimedOut}
           onRetry={retryAll}
           onDismiss={dismiss}
         />

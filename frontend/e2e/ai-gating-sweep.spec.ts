@@ -379,12 +379,12 @@ test('ai-gating-sweep: off → on → off shows/hides AI surfaces', async ({ pag
   // ─── STEP 2: Toggle ON ────────────────────────────────────────────────────
 
   // The navbar quick-toggle was removed; the AI mode control now lives only on
-  // the Settings modal's appearance pane (#134: AppearancePane's Off | Preview
-  // SegmentedControl of radios). Click the Preview radio there, then re-navigate
-  // to the PR detail. A fresh navigation remounts the page so
+  // the Settings modal's AI pane (#496: relocated from AppearancePane into AiPane —
+  // the Off | Preview | Live SegmentedControl of radios). Click the Preview radio
+  // there, then re-navigate to the PR detail. A fresh navigation remounts the page so
   // useCapabilities/usePreferences refetch the now-updated mock state — which
   // replaces the old window.dispatchEvent(new Event('focus')) trick.
-  await page.goto('/settings/appearance');
+  await page.goto('/settings/ai');
   const previewRadio = page.getByRole('radio', { name: 'Preview' });
   await previewRadio.waitFor({ timeout: 30_000 });
   const toggleResponse = page.waitForResponse(
@@ -459,8 +459,8 @@ test('ai-gating-sweep: off → on → off shows/hides AI surfaces', async ({ pag
 
   // ─── STEP 4: Toggle OFF ───────────────────────────────────────────────────
 
-  // Flip AI mode back off via the Settings modal's appearance-pane Off radio.
-  await page.goto('/settings/appearance');
+  // Flip AI mode back off via the Settings modal's AI-pane Off radio.
+  await page.goto('/settings/ai');
   const offRadio = page.getByRole('radio', { name: 'Off' });
   await offRadio.waitFor({ timeout: 30_000 });
   const offResponse = page.waitForResponse(

@@ -322,8 +322,8 @@ test('ai-live-consent: happy path — Accept enables Live and shows summary card
 
   const { getConsentPostCount, getModePostValues } = await setupMocks(page);
 
-  // Navigate to appearance settings
-  await page.goto('/settings/appearance');
+  // Navigate to the AI settings pane (#496: AI-mode control relocated here from Appearance)
+  await page.goto('/settings/ai');
   const liveRadio = page.getByRole('radio', { name: 'Live' });
   await liveRadio.waitFor({ timeout: 30_000 });
 
@@ -389,8 +389,8 @@ test('ai-live-consent: decline — modal closes, Live not committed, summary car
 
   const { getAiMode, getConsentPostCount, getModePostValues } = await setupMocks(page);
 
-  // Navigate to appearance settings
-  await page.goto('/settings/appearance');
+  // Navigate to the AI settings pane (#496: AI-mode control relocated here from Appearance)
+  await page.goto('/settings/ai');
   const liveRadio = page.getByRole('radio', { name: 'Live' });
   await liveRadio.waitFor({ timeout: 30_000 });
 

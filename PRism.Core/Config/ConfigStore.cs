@@ -28,7 +28,7 @@ public sealed class ConfigStore : IConfigStore, IDisposable
     // clean ConfigPatchException → 400 from the endpoint, NOT an InvalidCastException → 500
     // (the old `(string)value!` path) or a silent `Convert.ToBoolean(null) == false` flip
     // (the old `Convert.ToBoolean` path). Caught by Copilot review on PR #69.
-    private enum ConfigFieldType { String, Bool }
+    private enum ConfigFieldType { String, Bool, Int }
 
     private static readonly Dictionary<string, ConfigFieldType> _allowedFields =
         new(StringComparer.Ordinal)
@@ -55,6 +55,10 @@ public sealed class ConfigStore : IConfigStore, IDisposable
             ["inbox.showActivityRail"]           = ConfigFieldType.Bool,
             // #219 toggle: group the Inbox by repo (default) vs flat. Apply-switch arm below.
             ["inbox.groupByRepo"]                = ConfigFieldType.Bool,
+            // #496 AI Settings tab — user-configurable numeric knobs. Clamped on write
+            // (AiConfigBounds) in the apply switch below; surfaced + read-clamped in PRism.Web.
+            ["ui.ai.providerTimeoutSeconds"]     = ConfigFieldType.Int,
+            ["ui.ai.hunkAnnotationCap"]          = ConfigFieldType.Int,
         };
 
     // #262 PR3: inbox.defaultSort is a string-typed key with a CLOSED value set (unlike
@@ -178,6 +182,9 @@ public sealed class ConfigStore : IConfigStore, IDisposable
             case ConfigFieldType.Bool when value is not bool:
                 throw new ConfigPatchException(
                     $"field '{key}' expects a bool value (got {DescribeValue(value)})");
+            case ConfigFieldType.Int when value is not int:
+                throw new ConfigPatchException(
+                    $"field '{key}' expects an integer value (got {DescribeValue(value)})");
         }
 
         // Closed-set value validation BEFORE the gate (mirrors the per-key type check above).
@@ -238,6 +245,10 @@ public sealed class ConfigStore : IConfigStore, IDisposable
                     _current with { Inbox = _current.Inbox with { ShowActivityRail = (bool)value! } },
                 "inbox.groupByRepo" =>
                     _current with { Inbox = _current.Inbox with { GroupByRepo = (bool)value! } },
+                "ui.ai.providerTimeoutSeconds" =>
+                    _current with { Ui = ui with { Ai = ui.Ai with { ProviderTimeoutSeconds = AiConfigBounds.ClampTimeout((int)value!) } } },
+                "ui.ai.hunkAnnotationCap" =>
+                    _current with { Ui = ui with { Ai = ui.Ai with { HunkAnnotationCap = AiConfigBounds.ClampCap((int)value!) } } },
                 _ => throw new ConfigPatchException($"unknown field: {key}")
             };
             await WriteToDiskAsync(ct).ConfigureAwait(false);

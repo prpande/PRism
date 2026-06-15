@@ -53,7 +53,10 @@ describe('useAiSummary', () => {
   });
 
   it('sets error=true when result is kind:error', async () => {
-    vi.spyOn(api, 'getAiSummaryResult').mockResolvedValue({ kind: 'error' });
+    vi.spyOn(api, 'getAiSummaryResult').mockResolvedValue({
+      kind: 'error',
+      reason: 'provider-error',
+    });
     const { result } = renderHook(() => useAiSummary(ref, true, true, false));
     await waitFor(() => expect(result.current.error).toBe(true));
     expect(result.current.summary).toBeNull();
@@ -168,7 +171,10 @@ describe('useAiSummary', () => {
       kind: 'ok',
       summary: { body: 'old', category: 'fix' },
     });
-    vi.spyOn(api, 'regenerateAiSummary').mockResolvedValue({ kind: 'error' });
+    vi.spyOn(api, 'regenerateAiSummary').mockResolvedValue({
+      kind: 'error',
+      reason: 'provider-error',
+    });
     const { result } = renderHook(() => useAiSummary(ref, true, true, true));
     await waitFor(() => expect(result.current.summary).not.toBeNull());
     await act(async () => {

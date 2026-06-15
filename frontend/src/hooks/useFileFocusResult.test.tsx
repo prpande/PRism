@@ -59,14 +59,17 @@ describe('useFileFocusResult', () => {
   });
 
   it('error on failure', async () => {
-    vi.mocked(api.getAiFileFocusResult).mockResolvedValue({ kind: 'error' });
+    vi.mocked(api.getAiFileFocusResult).mockResolvedValue({
+      kind: 'error',
+      reason: 'provider-error',
+    });
     const { result } = renderHook(() => useFileFocusResult(PR, true, true));
     await waitFor(() => expect(result.current.status).toBe('error'));
   });
 
   it('retry() re-issues the GET', async () => {
     vi.mocked(api.getAiFileFocusResult)
-      .mockResolvedValueOnce({ kind: 'error' })
+      .mockResolvedValueOnce({ kind: 'error', reason: 'provider-error' })
       .mockResolvedValueOnce({
         kind: 'ok',
         result: { entries: [{ path: 'a', level: 'high', rationale: 'x' }], fallback: false },
@@ -87,7 +90,10 @@ const ffWrapper = ({ children }: { children: ReactNode }) => (
 );
 
 it('reports file-focus on kind:error', async () => {
-  vi.spyOn(api, 'getAiFileFocusResult').mockResolvedValue({ kind: 'error' });
+  vi.spyOn(api, 'getAiFileFocusResult').mockResolvedValue({
+    kind: 'error',
+    reason: 'provider-error',
+  });
   const { result } = renderHook(
     () => ({ s: useFileFocusResult(FF_PR, true, true), f: useAiFailure() }),
     { wrapper: ffWrapper },

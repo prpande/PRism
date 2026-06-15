@@ -52,7 +52,7 @@ export function useFileFocusResult(
           clear(prRef, 'file-focus'); // inline unchanged; no report
         } else if (outcome.kind === 'error') {
           setState({ status: 'error', entries: [] });
-          report(prRef, 'file-focus', { retry });
+          report(prRef, 'file-focus', { retry, reason: outcome.reason });
         } else {
           const { entries, fallback } = outcome.result;
           // fallback checked BEFORE entries — a fallback is never rendered as rows (spec §8).
@@ -69,7 +69,7 @@ export function useFileFocusResult(
       .catch(() => {
         if (!cancelled) {
           setState({ status: 'error', entries: [] });
-          report(prRef, 'file-focus', { retry });
+          report(prRef, 'file-focus', { retry, reason: 'provider-error' });
         }
       });
     return () => {

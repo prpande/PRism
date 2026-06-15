@@ -8,6 +8,10 @@ interface NavItem {
 }
 const PRIMARY: NavItem[] = [
   { section: 'appearance', label: 'Appearance' },
+  // #496: AI sits after Appearance (display-preference-adjacent). The alternative ordering
+  // (feature-config-at-end) is the owner's call during the gated visual pass — spec §Open Questions
+  // tracks it. The placement here is intentional pending that sign-off, not an open code TODO.
+  { section: 'ai', label: 'AI' },
   { section: 'inbox', label: 'Inbox' },
   { section: 'github-connection', label: 'GitHub Connection' },
 ];

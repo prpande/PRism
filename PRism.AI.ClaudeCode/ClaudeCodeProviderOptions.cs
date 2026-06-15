@@ -21,4 +21,13 @@ public sealed class ClaudeCodeProviderOptions
     /// <summary>Wall-clock ceiling for the `claude --version` availability probe (separate from
     /// <see cref="Timeout"/>, which bounds full completions).</summary>
     public TimeSpan ProbeTimeout { get; init; } = TimeSpan.FromSeconds(10);
+
+    /// <summary>Hot source of the per-call timeout (#496). Defaults to the static <see cref="Timeout"/>
+    /// so direct-constructor call sites and tests are unaffected. The Web composition root supplies a
+    /// factory that reads (and clamps) the user-configured value from IConfigStore on each call, giving
+    /// hot-reload with no restart. Evaluated once at the top of each <see cref="ClaudeCodeLlmProvider"/>
+    /// completion.</summary>
+    public Func<TimeSpan> TimeoutProvider { get; init; }
+
+    public ClaudeCodeProviderOptions() => TimeoutProvider = () => Timeout;
 }

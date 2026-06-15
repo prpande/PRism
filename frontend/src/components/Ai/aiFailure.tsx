@@ -8,7 +8,7 @@ import {
   useState,
   type ReactNode,
 } from 'react';
-import type { PrReference } from '../../api/types';
+import type { PrReference, AiFailureReason } from '../../api/types';
 import { prRefKey } from '../../api/types';
 import { useEffectiveLocation } from '../../hooks/useEffectiveLocation';
 import { parsePrRoute } from '../PrDetail/PrTabHost';
@@ -17,6 +17,8 @@ export type AiSeam = 'summary' | 'file-focus' | 'hunk-annotations' | 'draft-sugg
 
 interface FailureEntry {
   retry: () => void;
+  // #496: why the seam failed; drives the timeout-aware toast. Optional so older callers/tests compile.
+  reason?: AiFailureReason;
 }
 type FailureMap = Record<string, Partial<Record<AiSeam, FailureEntry>>>;
 
@@ -30,6 +32,9 @@ export interface AiFailureApi {
   activeFailedSeams: AiSeam[]; // failed seams for the active PR, in stable SEAM_ORDER
   retrying: boolean; // a Retry-all is in flight for the active PR
   dismissed: boolean; // user dismissed the current failure-set fingerprint
+  // #496: true when any ACTIVE failed seam's reason is 'timeout' — drives the timeout-aware toast copy
+  // + "Adjust timeout" deep-link. Derived, not a setter. NOT part of the dismissal fingerprint.
+  anyTimedOut: boolean;
 }
 
 const NOOP: AiFailureApi = {
@@ -41,6 +46,7 @@ const NOOP: AiFailureApi = {
   activeFailedSeams: [],
   retrying: false,
   dismissed: false,
+  anyTimedOut: false,
 };
 
 // Exported as a test seam (mirrors OpenTabsContext) so a unit test can inject a stub value with
@@ -129,6 +135,13 @@ export function AiFailureProvider({ children }: { children: ReactNode }) {
     return forPr ? SEAM_ORDER.filter((s) => s in forPr) : [];
   }, [activeKey, failures]);
 
+  const anyTimedOut = useMemo<boolean>(() => {
+    if (!activeKey) return false;
+    const forPr = failures[activeKey];
+    if (!forPr) return false;
+    return SEAM_ORDER.some((s) => forPr[s]?.reason === 'timeout');
+  }, [activeKey, failures]);
+
   const fingerprint = activeKey ? `${activeKey}:${activeFailedSeams.join(',')}` : '';
   const dismissed = dismissedFingerprint !== null && dismissedFingerprint === fingerprint;
 
@@ -159,6 +172,7 @@ export function AiFailureProvider({ children }: { children: ReactNode }) {
       activeFailedSeams,
       retrying: retryingKey !== null && retryingKey === activeKey,
       dismissed,
+      anyTimedOut,
     }),
     [
       report,
@@ -170,6 +184,7 @@ export function AiFailureProvider({ children }: { children: ReactNode }) {
       retryingKey,
       activeKey,
       dismissed,
+      anyTimedOut,
     ],
   );
 

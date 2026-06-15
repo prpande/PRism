@@ -20,7 +20,8 @@
   flex: 1 1 auto;
 }
 .retry,
-.dismiss {
+.dismiss,
+.adjust {
   flex: none;
   background: none;
   border: 1px solid var(--border-1);

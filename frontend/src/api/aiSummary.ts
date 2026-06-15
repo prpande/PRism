@@ -1,4 +1,4 @@
-import { apiClient, ApiError } from './client';
+import { apiClient, ApiError, readFailureReason } from './client';
 import type { AiSummaryResult, PrReference, PrSummary } from './types';
 
 // Shared mapping for both the summary GET and the regenerate POST: a parsed body → 'ok',
@@ -13,7 +13,7 @@ async function resolveSummary(
     return result ? { kind: 'ok', summary: result } : { kind: 'absent' };
   } catch (err) {
     if (err instanceof ApiError && err.status === 401) return { kind: 'auth' };
-    return { kind: 'error' };
+    return { kind: 'error', reason: readFailureReason(err) };
   }
 }
 

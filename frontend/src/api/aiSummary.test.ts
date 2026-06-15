@@ -34,12 +34,12 @@ describe('getAiSummaryResult', () => {
 
   it('maps 503 to error', async () => {
     getMock.mockRejectedValue(new ApiError(503, null, null));
-    expect(await getAiSummaryResult(pr)).toEqual({ kind: 'error' });
+    expect(await getAiSummaryResult(pr)).toEqual({ kind: 'error', reason: 'provider-error' });
   });
 
   it('maps network error to error', async () => {
     getMock.mockRejectedValue(new Error('network'));
-    expect(await getAiSummaryResult(pr)).toEqual({ kind: 'error' });
+    expect(await getAiSummaryResult(pr)).toEqual({ kind: 'error', reason: 'provider-error' });
   });
 });
 
@@ -60,6 +60,6 @@ describe('regenerateAiSummary', () => {
 
   it('maps 503 to error', async () => {
     postMock.mockRejectedValue(new ApiError(503, null, null));
-    expect(await regenerateAiSummary(pr)).toEqual({ kind: 'error' });
+    expect(await regenerateAiSummary(pr)).toEqual({ kind: 'error', reason: 'provider-error' });
   });
 });

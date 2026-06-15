@@ -15,9 +15,23 @@ public static class ServiceCollectionExtensions
     {
         ArgumentNullException.ThrowIfNull(services);
         ArgumentNullException.ThrowIfNull(options);
+        // Delegate to the factory overload so there is ONE registration code path. The instance
+        // overload protects the existing instance-overload test call sites, which do NOT register IConfigStore.
+        return services.AddPrismClaudeCode(_ => options, usageDir);
+    }
+
+    // #496: factory overload. The composition root (PRism.Web/Program.cs) supplies a factory that
+    // closes over IServiceProvider so ClaudeCodeProviderOptions.TimeoutProvider can resolve IConfigStore
+    // (PRism.Core) and clamp via AiConfigBounds (PRism.Core) on each call — those symbols are NOT visible
+    // here, which is why the closure lives in Program.cs.
+    public static IServiceCollection AddPrismClaudeCode(
+        this IServiceCollection services, Func<IServiceProvider, ClaudeCodeProviderOptions> optionsFactory, string usageDir)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+        ArgumentNullException.ThrowIfNull(optionsFactory);
         ArgumentException.ThrowIfNullOrEmpty(usageDir);
 
-        services.AddSingleton(options);
+        services.AddSingleton(optionsFactory);
         services.AddSingleton<ICliProcessRunner, SystemCliProcessRunner>();
         services.AddSingleton<ILlmProvider, ClaudeCodeLlmProvider>();
         services.AddSingleton<IStreamingCliProcessFactory, SystemStreamingCliProcessFactory>();

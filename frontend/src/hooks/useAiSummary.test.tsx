@@ -38,7 +38,10 @@ describe('useAiSummary', () => {
   });
 
   it('sets error on kind:error', async () => {
-    vi.spyOn(api, 'getAiSummaryResult').mockResolvedValue({ kind: 'error' });
+    vi.spyOn(api, 'getAiSummaryResult').mockResolvedValue({
+      kind: 'error',
+      reason: 'provider-error',
+    });
     const { result } = renderHook(() => useAiSummary(pr, true, true, false));
     await waitFor(() => expect(result.current.error).toBe(true));
     expect(result.current.summary).toBeNull();
@@ -122,7 +125,10 @@ describe('useAiSummary', () => {
       kind: 'ok',
       summary: { body: 'old', category: 'fix' },
     });
-    vi.spyOn(api, 'regenerateAiSummary').mockResolvedValue({ kind: 'error' });
+    vi.spyOn(api, 'regenerateAiSummary').mockResolvedValue({
+      kind: 'error',
+      reason: 'provider-error',
+    });
     const { result } = renderHook(() => useAiSummary(pr, true, true, true));
     await waitFor(() => expect(result.current.summary).not.toBeNull());
     await act(async () => {
@@ -143,7 +149,10 @@ const failWrapper = ({ children }: { children: ReactNode }) => (
 );
 
 it('reports summary on initial-fetch kind:error', async () => {
-  vi.spyOn(api, 'getAiSummaryResult').mockResolvedValue({ kind: 'error' });
+  vi.spyOn(api, 'getAiSummaryResult').mockResolvedValue({
+    kind: 'error',
+    reason: 'provider-error',
+  });
   const { result } = renderHook(
     () => ({ s: useAiSummary(FAIL_PR, true, true, false), f: useAiFailure() }),
     { wrapper: failWrapper },
@@ -166,7 +175,10 @@ it('does NOT report on kind:auth; shows inline error instead', async () => {
 });
 
 it('regenerate failure reports; regenerate success clears', async () => {
-  vi.spyOn(api, 'getAiSummaryResult').mockResolvedValue({ kind: 'error' }); // initial fetch fails → reports
+  vi.spyOn(api, 'getAiSummaryResult').mockResolvedValue({
+    kind: 'error',
+    reason: 'provider-error',
+  }); // initial fetch fails → reports
   const regen = vi
     .spyOn(api, 'regenerateAiSummary')
     .mockResolvedValue({ kind: 'ok', summary: { body: 'new', category: 'fix' } });
