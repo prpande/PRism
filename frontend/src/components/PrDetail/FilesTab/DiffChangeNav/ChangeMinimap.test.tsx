@@ -98,6 +98,33 @@ describe('ChangeMinimap', () => {
     expect(onGo).not.toHaveBeenCalled();
   });
 
+  it('does not swallow the next gap click after a drag that ends outside the rail', () => {
+    // Regression (#486 review): when a drag ends OFF the rail, the trailing click
+    // fires on the element under the pointer, not the rail — so onRailClick never
+    // runs to clear suppressClick. If it stayed latched, the next legitimate
+    // in-rail gap click would be silently swallowed.
+    const onScroll = vi.fn();
+    const { container } = render(
+      <ChangeMinimap
+        ticks={ticks}
+        viewport={viewport}
+        onGoToChange={() => {}}
+        onScrollToRatio={onScroll}
+      />,
+    );
+    const rail = container.firstElementChild as HTMLElement;
+    rail.getBoundingClientRect = () =>
+      ({ top: 0, left: 0, right: 16, bottom: 100, height: 100, width: 16 }) as DOMRect;
+    // Press on the rail, drag, then release OUTSIDE the rail bounds (clientX > 16).
+    fireEvent.pointerDown(rail, { pointerId: 1, button: 0, clientX: 8, clientY: 50 });
+    fireEvent.pointerMove(rail, { pointerId: 1, clientX: 8, clientY: 80 });
+    fireEvent.pointerUp(rail, { pointerId: 1, clientX: 200, clientY: 80 });
+    onScroll.mockClear();
+    // A subsequent in-rail gap click must scrub (ratio 0.3), not be swallowed.
+    fireEvent.click(rail, { clientX: 8, clientY: 30 });
+    expect(onScroll).toHaveBeenCalledWith(0.3);
+  });
+
   it('keeps the bar expanded briefly after the pointer leaves, then collapses', () => {
     // Regression (#486 review): expansion must linger after the pointer strays so
     // it does not feel twitchy and the widened bar stays a stable target. A

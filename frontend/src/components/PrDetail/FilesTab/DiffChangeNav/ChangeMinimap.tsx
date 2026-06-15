@@ -112,7 +112,13 @@ export function ChangeMinimap({
       const r = rail.getBoundingClientRect();
       const inside =
         e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom;
-      if (!inside) closeRailSoon();
+      if (!inside) {
+        // The trailing click fires on the element under the pointer (outside the
+        // rail), so onRailClick won't run to consume suppressClick. Clear it here
+        // or the next legitimate in-rail gap click would be swallowed.
+        suppressClick.current = false;
+        closeRailSoon();
+      }
     }
   };
 

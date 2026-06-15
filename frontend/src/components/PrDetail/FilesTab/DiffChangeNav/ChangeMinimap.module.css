@@ -75,10 +75,4 @@
   box-shadow: var(--shadow-3);
   padding: 4px 9px;
   pointer-events: none;
-  transition-delay: 100ms; /* show-delay; unmount clears it, no JS timer to leak */
-}
-@media (prefers-reduced-motion: reduce) {
-  .tooltip {
-    transition-delay: 0ms;
-  }
 }

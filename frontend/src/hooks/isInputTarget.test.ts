@@ -17,4 +17,18 @@ describe('isInputTarget', () => {
     group.appendChild(radio);
     expect(isInputTarget(radio)).toBe(false);
   });
+  it('suppresses a radio NOT inside .diff-view-toggle', () => {
+    // Only the diff-view tiles are whitelisted; a radio elsewhere is a plain INPUT.
+    const radio = document.createElement('input');
+    radio.type = 'radio';
+    expect(isInputTarget(radio)).toBe(true);
+  });
+  it('suppresses inside a contenteditable region', () => {
+    // The composer is contenteditable; naked-key shortcuts must not fire while typing.
+    const editable = document.createElement('div');
+    editable.setAttribute('contenteditable', 'true');
+    const child = document.createElement('span');
+    editable.appendChild(child);
+    expect(isInputTarget(child)).toBe(true);
+  });
 });
