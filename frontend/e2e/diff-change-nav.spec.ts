@@ -77,8 +77,10 @@ async function openWholeFileWithRail(page: Page, theme?: 'light' | 'dark'): Prom
   await showFullFile.click();
   await expect(showFullFile).toBeChecked();
   await page.keyboard.press('Escape'); // close the gear popover so it isn't over the rail
-  // Whole-file engaged once the hunk-header rows are gone.
-  await expect(page.locator('.diff-line--hunk-header')).toHaveCount(0);
+  // Whole-file engaged once the hunk-header rows are gone. Generous timeout: this
+  // spec runs early in the suite, so the whole-file fetch + interleave + re-render
+  // can exceed the 5s default on a cold backend (observed flaky on CI otherwise).
+  await expect(page.locator('.diff-line--hunk-header')).toHaveCount(0, { timeout: 15_000 });
 }
 
 test.describe('#486 change-navigation rail — interaction (hermetic)', () => {
