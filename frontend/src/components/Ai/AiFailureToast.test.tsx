@@ -85,8 +85,9 @@ describe('AiFailureToast timeout copy', () => {
   it('shows timeout copy + Adjust-timeout deep-link when timed out', async () => {
     renderToast(true);
     // Exact string, not /timed out/i — the generic copy ("…the provider failed or timed out.")
-    // also contains "timed out", so a loose regex would not distinguish the two branches.
-    expect(screen.getByText('AI generation timed out.')).toBeInTheDocument();
+    // also contains "timed out", so a loose regex would not distinguish the two branches. The timeout
+    // copy now also lists the failed seams (claude[bot] #1); renderToast uses seams=['summary'].
+    expect(screen.getByText('AI generation timed out: summary.')).toBeInTheDocument();
     const adjust = screen.getByRole('button', { name: /adjust timeout/i });
     await userEvent.click(adjust);
     // Navigated to /settings/ai with backgroundLocation state (so the PR is not torn down).

@@ -22,6 +22,9 @@ interface Props {
 export function AiFailureToast({ seams, retrying, anyTimedOut, onRetry, onDismiss }: Props) {
   const navigate = useNavigate();
   const location = useLocation();
+  // Both message branches list the failed seams now (claude[bot] #1: the timeout copy used to drop
+  // them), so compute once.
+  const names = seams.map((s) => DISPLAY_NAME[s]).join(', ');
 
   const adjustTimeout = () => {
     // backgroundLocation is REQUIRED: it makes the settings modal open OVER the current PR. Without
@@ -35,8 +38,8 @@ export function AiFailureToast({ seams, retrying, anyTimedOut, onRetry, onDismis
     <div className={styles.toast} role="group" aria-label="AI generation failure">
       <span className={styles.message}>
         {anyTimedOut
-          ? 'AI generation timed out.'
-          : `AI couldn't generate: ${seams.map((s) => DISPLAY_NAME[s]).join(', ')} — the provider failed or timed out.`}
+          ? `AI generation timed out: ${names}.`
+          : `AI couldn't generate: ${names} — the provider failed or timed out.`}
       </span>
       {/* Retry is the primary recovery path → first in DOM/tab order. "Adjust timeout" is the
           supplementary escape hatch, then Dismiss. (design-lens: primary action first.) */}
