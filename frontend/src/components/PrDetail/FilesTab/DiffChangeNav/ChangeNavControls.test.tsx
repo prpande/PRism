@@ -3,7 +3,14 @@ import { render } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { ChangeNavControls } from './ChangeNavControls';
 
-const base = { total: 7, currentIdx: 2, canPrev: true, canNext: true, onPrev: () => {}, onNext: () => {} };
+const base = {
+  total: 7,
+  currentIdx: 2,
+  canPrev: true,
+  canNext: true,
+  onPrev: () => {},
+  onNext: () => {},
+};
 
 describe('ChangeNavControls', () => {
   it('shows the 1-based counter N / M', () => {
@@ -20,9 +27,13 @@ describe('ChangeNavControls', () => {
     const { getByRole, rerender } = render(
       <ChangeNavControls {...base} currentIdx={0} canPrev={false} />,
     );
-    expect((getByRole('button', { name: /previous change/i }) as HTMLButtonElement).disabled).toBe(true);
+    expect((getByRole('button', { name: /previous change/i }) as HTMLButtonElement).disabled).toBe(
+      true,
+    );
     rerender(<ChangeNavControls {...base} currentIdx={6} canNext={false} />);
-    expect((getByRole('button', { name: /next change/i }) as HTMLButtonElement).disabled).toBe(true);
+    expect((getByRole('button', { name: /next change/i }) as HTMLButtonElement).disabled).toBe(
+      true,
+    );
   });
 
   it('calls onNext / onPrev', async () => {

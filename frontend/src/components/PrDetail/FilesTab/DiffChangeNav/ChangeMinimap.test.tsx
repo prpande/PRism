@@ -14,7 +14,12 @@ const viewport = { topPct: 0, heightPct: 30 };
 describe('ChangeMinimap', () => {
   it('renders one tick per change with a kind data-attr', () => {
     const { getAllByTestId } = render(
-      <ChangeMinimap ticks={ticks} viewport={viewport} onGoToChange={() => {}} onScrollToRatio={() => {}} />,
+      <ChangeMinimap
+        ticks={ticks}
+        viewport={viewport}
+        onGoToChange={() => {}}
+        onScrollToRatio={() => {}}
+      />,
     );
     const els = getAllByTestId('change-tick');
     expect(els).toHaveLength(3);
@@ -25,7 +30,12 @@ describe('ChangeMinimap', () => {
   it('jumps to a change when a tick is clicked', async () => {
     const onGo = vi.fn();
     const { getAllByTestId } = render(
-      <ChangeMinimap ticks={ticks} viewport={viewport} onGoToChange={onGo} onScrollToRatio={() => {}} />,
+      <ChangeMinimap
+        ticks={ticks}
+        viewport={viewport}
+        onGoToChange={onGo}
+        onScrollToRatio={() => {}}
+      />,
     );
     await userEvent.click(getAllByTestId('change-tick')[1]);
     expect(onGo).toHaveBeenCalledWith(1);
@@ -33,7 +43,12 @@ describe('ChangeMinimap', () => {
 
   it('is hidden from the accessibility tree', () => {
     const { container } = render(
-      <ChangeMinimap ticks={ticks} viewport={viewport} onGoToChange={() => {}} onScrollToRatio={() => {}} />,
+      <ChangeMinimap
+        ticks={ticks}
+        viewport={viewport}
+        onGoToChange={() => {}}
+        onScrollToRatio={() => {}}
+      />,
     );
     expect(container.firstElementChild).toHaveAttribute('aria-hidden', 'true');
   });

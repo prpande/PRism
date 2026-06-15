@@ -18,7 +18,7 @@ function fakeContainer(scrollTop = 0): HTMLDivElement {
   el.getBoundingClientRect = () =>
     ({ top: 0, bottom: 200, left: 0, right: 50, height: 200, width: 50 }) as DOMRect;
   const tops = [100, 300, 500];
-  CHANGES.forEach((c, i) => {
+  CHANGES.forEach((_change, i) => {
     const row = document.createElement('div');
     // Single-row fixtures tag start and end on the same element.
     row.setAttribute('data-change-start', String(i));

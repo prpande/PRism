@@ -9,7 +9,12 @@ export interface ChangeMinimapProps {
   onScrollToRatio: (r: number) => void;
 }
 
-export function ChangeMinimap({ ticks, viewport, onGoToChange, onScrollToRatio }: ChangeMinimapProps) {
+export function ChangeMinimap({
+  ticks,
+  viewport,
+  onGoToChange,
+  onScrollToRatio,
+}: ChangeMinimapProps) {
   const railRef = useRef<HTMLDivElement>(null);
   const [hovered, setHovered] = useState<number | null>(null);
 
@@ -24,7 +29,10 @@ export function ChangeMinimap({ ticks, viewport, onGoToChange, onScrollToRatio }
 
   return (
     <div ref={railRef} className={styles.rail} aria-hidden="true" onClick={onRailClick}>
-      <div className={styles.viewport} style={{ top: `${viewport.topPct}%`, height: `${viewport.heightPct}%` }} />
+      <div
+        className={styles.viewport}
+        style={{ top: `${viewport.topPct}%`, height: `${viewport.heightPct}%` }}
+      />
       {ticks.map((t, i) => (
         <button
           key={i}
@@ -44,7 +52,8 @@ export function ChangeMinimap({ ticks, viewport, onGoToChange, onScrollToRatio }
       ))}
       {hovered !== null && (
         <div className={styles.tooltip} style={{ top: `${ticks[hovered].topPct}%` }}>
-          change {hovered + 1} of {ticks.length} · L{ticks[hovered].startLineNum} · +{ticks[hovered].addCount} −{ticks[hovered].delCount}
+          change {hovered + 1} of {ticks.length} · L{ticks[hovered].startLineNum} · +
+          {ticks[hovered].addCount} −{ticks[hovered].delCount}
         </div>
       )}
     </div>

@@ -44,7 +44,13 @@ describe('computeChanges', () => {
   });
 
   it('splits runs on context, hunk-header, and filled rows', () => {
-    const filled: DiffLine = { type: 'context', content: 'x', oldLineNum: 9, newLineNum: 9, isFilled: true };
+    const filled: DiffLine = {
+      type: 'context',
+      content: 'x',
+      oldLineNum: 9,
+      newLineNum: 9,
+      isFilled: true,
+    };
     const out = computeChanges([ins(1), ctx(2), del(3), hdr, ins(4), filled, del(5)]);
     expect(out.map((c) => c.kind)).toEqual(['add', 'delete', 'add', 'delete']);
   });

@@ -38,33 +38,67 @@ function ChangeNavIcon() {
 function ChevronUp() {
   return (
     <svg width={15} height={15} viewBox="0 0 24 24" aria-hidden focusable="false">
-      <path d="M18 15l-6-6-6 6" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
+      <path
+        d="M18 15l-6-6-6 6"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2.2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
     </svg>
   );
 }
 function ChevronDown() {
   return (
     <svg width={15} height={15} viewBox="0 0 24 24" aria-hidden focusable="false">
-      <path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
+      <path
+        d="M6 9l6 6 6-6"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2.2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
     </svg>
   );
 }
 
-export function ChangeNavControls({ total, currentIdx, canPrev, canNext, onPrev, onNext }: ChangeNavControlsProps) {
+export function ChangeNavControls({
+  total,
+  currentIdx,
+  canPrev,
+  canNext,
+  onPrev,
+  onNext,
+}: ChangeNavControlsProps) {
   const display = currentIdx < 0 ? '—' : String(currentIdx + 1);
-  const announce = currentIdx < 0 ? `at top, ${total} changes` : `change ${currentIdx + 1} of ${total}`;
+  const announce =
+    currentIdx < 0 ? `at top, ${total} changes` : `change ${currentIdx + 1} of ${total}`;
   return (
     <div className={styles.cluster} role="group" aria-label="Change navigation">
       <span className={styles.lead} aria-hidden>
         <ChangeNavIcon />
       </span>
-      <button type="button" className={styles.chev} aria-label="Previous change" disabled={!canPrev} onClick={onPrev}>
+      <button
+        type="button"
+        className={styles.chev}
+        aria-label="Previous change"
+        disabled={!canPrev}
+        onClick={onPrev}
+      >
         <ChevronUp />
       </button>
       <span className={styles.count}>
         {display} / {total}
       </span>
-      <button type="button" className={styles.chev} aria-label="Next change" disabled={!canNext} onClick={onNext}>
+      <button
+        type="button"
+        className={styles.chev}
+        aria-label="Next change"
+        disabled={!canNext}
+        onClick={onNext}
+      >
         <ChevronDown />
       </button>
       <span className="sr-only" role="status" aria-live="polite">

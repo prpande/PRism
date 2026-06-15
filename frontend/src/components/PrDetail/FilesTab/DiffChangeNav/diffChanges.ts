@@ -31,7 +31,7 @@ export function computeChanges(lines: DiffLine[]): DiffChange[] {
       const l = lines[i];
       if (l.type === 'insert') addCount += 1;
       else delCount += 1;
-      if (startLineNum === 0) startLineNum = (l.newLineNum ?? l.oldLineNum) ?? 0;
+      if (startLineNum === 0) startLineNum = l.newLineNum ?? l.oldLineNum ?? 0;
       i += 1;
     }
     const endRowIdx = i - 1;

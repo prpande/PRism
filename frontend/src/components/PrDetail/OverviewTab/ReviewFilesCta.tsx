@@ -25,7 +25,8 @@ export function ReviewFilesCta({ hasFiles, onReviewFiles }: ReviewFilesCtaProps)
         </p>
       )}
       <p className={`${styles.overviewCtaFooter} muted`}>
-        <kbd>j</kbd> next file · <kbd>k</kbd> previous · <kbd>v</kbd> mark viewed · <kbd>n</kbd>/<kbd>p</kbd> next/prev change
+        <kbd>j</kbd> next file · <kbd>k</kbd> previous · <kbd>v</kbd> mark viewed · <kbd>n</kbd>/
+        <kbd>p</kbd> next/prev change
       </p>
     </div>
   );

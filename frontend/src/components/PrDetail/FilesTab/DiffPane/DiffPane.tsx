@@ -724,7 +724,9 @@ export function DiffPane({
         <div
           ref={diffBodyRef}
           className={`diff-pane-body ${styles.diffPaneBody} ${
-            wholeFileEnabled && wholeFile.fetchStatus === 'loading' ? styles.diffPaneBodyLoading : ''
+            wholeFileEnabled && wholeFile.fetchStatus === 'loading'
+              ? styles.diffPaneBodyLoading
+              : ''
           }`}
         >
           {wholeFileEnabled && wholeFile.fetchStatus === 'loading' && (
@@ -864,7 +866,12 @@ function DiffLineRow({
 
   return (
     <>
-      <tr className={rowClass} {...(isFilled ? { 'data-fill': 'true' } : {})} data-change-start={dataChangeStart} data-change-end={dataChangeEnd}>
+      <tr
+        className={rowClass}
+        {...(isFilled ? { 'data-fill': 'true' } : {})}
+        data-change-start={dataChangeStart}
+        data-change-end={dataChangeEnd}
+      >
         <td className={`diff-gutter diff-gutter--old ${styles.diffGutter} ${styles.diffGutterOld}`}>
           {line.oldLineNum ?? ''}
         </td>
@@ -1017,7 +1024,12 @@ function SplitDiffLineRow({
 
   if (kind === 'solo-delete') {
     return (
-      <tr className="diff-line diff-line--delete" aria-label={`Removed line ${oldLineNum ?? '?'}`} data-change-start={dataChangeStart} data-change-end={dataChangeEnd}>
+      <tr
+        className="diff-line diff-line--delete"
+        aria-label={`Removed line ${oldLineNum ?? '?'}`}
+        data-change-start={dataChangeStart}
+        data-change-end={dataChangeEnd}
+      >
         <td className={`diff-gutter diff-gutter--old ${styles.diffGutter} ${styles.diffGutterOld}`}>
           {oldLineNum ?? ''}
         </td>
@@ -1056,7 +1068,12 @@ function SplitDiffLineRow({
       });
     };
     return (
-      <tr className="diff-line diff-line--insert" aria-label={`Added line ${newLineNum ?? '?'}`} data-change-start={dataChangeStart} data-change-end={dataChangeEnd}>
+      <tr
+        className="diff-line diff-line--insert"
+        aria-label={`Added line ${newLineNum ?? '?'}`}
+        data-change-start={dataChangeStart}
+        data-change-end={dataChangeEnd}
+      >
         <td
           aria-hidden="true"
           className={`diff-gutter diff-gutter--old ${styles.diffGutter} ${styles.diffGutterOld} ${styles.diffCellEmpty}`}
@@ -1107,7 +1124,11 @@ function SplitDiffLineRow({
       });
     };
     return (
-      <tr className="diff-line diff-line--paired" data-change-start={dataChangeStart} data-change-end={dataChangeEnd}>
+      <tr
+        className="diff-line diff-line--paired"
+        data-change-start={dataChangeStart}
+        data-change-end={dataChangeEnd}
+      >
         <td className={`diff-gutter diff-gutter--old ${styles.diffGutter} ${styles.diffGutterOld}`}>
           {oldLineNum ?? ''}
         </td>
