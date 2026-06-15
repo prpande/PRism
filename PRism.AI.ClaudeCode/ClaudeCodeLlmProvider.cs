@@ -70,7 +70,7 @@ public sealed class ClaudeCodeLlmProvider(ICliProcessRunner runner, ClaudeCodePr
         }
 
         if (result.TimedOut)
-            throw new LlmProviderException("claude -p timed out.", result.Stderr, -1);
+            throw new LlmProviderException("claude -p timed out.", result.Stderr, -1, timedOut: true);
         if (result.ExitCode != 0)
             throw new LlmProviderException($"claude -p failed (exit {result.ExitCode}).", result.Stderr, result.ExitCode);
 

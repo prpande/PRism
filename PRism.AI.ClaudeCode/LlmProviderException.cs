@@ -17,11 +17,18 @@ public sealed partial class LlmProviderException : Exception
     /// <summary>Process exit code (-1 for timeout / spawn failure).</summary>
     public int ExitCode { get; }
 
-    public LlmProviderException(string message, string stderr, int exitCode, Exception? innerException = null)
+    /// <summary>True ONLY when the CLI call exceeded its wall-clock timeout (#496). False on
+    /// exit-code, spawn (Win32Exception), and JSON-parse failures. Used by AiEndpoints to pick the
+    /// 503 reason. ExitCode is -1 for BOTH timeout and spawn-not-found, so it is not a reliable
+    /// discriminator — this flag is.</summary>
+    public bool TimedOut { get; }
+
+    public LlmProviderException(string message, string stderr, int exitCode, Exception? innerException = null, bool timedOut = false)
         : base(message, innerException)
     {
         Stderr = Redact(stderr);
         ExitCode = exitCode;
+        TimedOut = timedOut;
     }
 
     // Standard exception constructors (CA1032). The CLI-failure path always uses the 3-arg
