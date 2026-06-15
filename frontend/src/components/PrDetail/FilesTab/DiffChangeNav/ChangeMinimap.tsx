@@ -67,19 +67,26 @@ export function ChangeMinimap({
     onScrollToRatio(Math.min(1, Math.max(0, r)));
   };
 
+  // Pointer-capture (set/release) is feature-checked and try-guarded because
+  // jsdom and unsupported environments throw on these calls; either way the
+  // scrub still works, so the failure is swallowed.
+  const capturePointer = (capture: boolean, pointerId: number) => {
+    const rail = railRef.current;
+    const fn = capture ? rail?.setPointerCapture : rail?.releasePointerCapture;
+    if (!fn) return;
+    try {
+      fn.call(rail, pointerId);
+    } catch {
+      /* jsdom / unsupported */
+    }
+  };
+
   const onPointerDown = (e: React.PointerEvent) => {
     if (e.button !== 0) return;
     const isTick = (e.target as HTMLElement).dataset.tick !== undefined;
     dragRef.current = { id: e.pointerId, moved: false };
     openRail();
-    const rail = railRef.current;
-    if (rail?.setPointerCapture) {
-      try {
-        rail.setPointerCapture(e.pointerId);
-      } catch {
-        /* jsdom / unsupported */
-      }
-    }
+    capturePointer(true, e.pointerId);
     // Press on the empty rail jumps there immediately; a press on a tick waits to
     // see whether it becomes a drag (so a plain tick click still jumps).
     if (!isTick) scrubTo(e.clientY);
@@ -97,14 +104,8 @@ export function ChangeMinimap({
     if (!d || e.pointerId !== d.id) return;
     if (d.moved) suppressClick.current = true;
     dragRef.current = null;
+    capturePointer(false, e.pointerId);
     const rail = railRef.current;
-    if (rail?.releasePointerCapture) {
-      try {
-        rail.releasePointerCapture(e.pointerId);
-      } catch {
-        /* jsdom / unsupported */
-      }
-    }
     // Pointer capture suppresses the mouseleave that normally starts the collapse,
     // so if the drag ended off the rail, begin the grace timer here.
     if (rail) {
