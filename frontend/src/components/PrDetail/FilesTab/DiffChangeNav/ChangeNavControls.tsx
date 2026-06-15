@@ -72,9 +72,13 @@ export function ChangeNavControls({
   onPrev,
   onNext,
 }: ChangeNavControlsProps) {
-  const display = currentIdx < 0 ? '—' : String(currentIdx + 1);
-  const announce =
-    currentIdx < 0 ? `at top, ${total} changes` : `change ${currentIdx + 1} of ${total}`;
+  // Show a 1-based position, clamping the "above the first change" state
+  // (currentIdx === -1, scrolled above change 1) to "1" rather than an em dash:
+  // a "—" reads as broken (#486 review). prev stays disabled at the top via
+  // canPrev, and pressing next from the top still scrolls to change 1.
+  const position = Math.max(currentIdx, 0) + 1;
+  const display = String(position);
+  const announce = `change ${position} of ${total}`;
   return (
     <div className={styles.cluster} role="group" aria-label="Change navigation">
       <span className={styles.lead} aria-hidden>

@@ -18,9 +18,12 @@ describe('ChangeNavControls', () => {
     expect(getByText('3 / 7')).toBeInTheDocument();
   });
 
-  it('shows — / M above the first change', () => {
-    const { getByText } = render(<ChangeNavControls {...base} currentIdx={-1} canPrev={false} />);
-    expect(getByText('— / 7')).toBeInTheDocument();
+  it('clamps the counter to 1 / M above the first change (no em-dash)', () => {
+    const { getByText, queryByText } = render(
+      <ChangeNavControls {...base} currentIdx={-1} canPrev={false} />,
+    );
+    expect(getByText('1 / 7')).toBeInTheDocument();
+    expect(queryByText('— / 7')).not.toBeInTheDocument();
   });
 
   it('disables prev at the first change and next at the last', () => {
@@ -51,8 +54,8 @@ describe('ChangeNavControls', () => {
     expect(getByRole('status')).toHaveTextContent('change 3 of 7');
   });
 
-  it('announces the at-top state when above the first change', () => {
+  it('announces change 1 of M above the first change', () => {
     const { getByRole } = render(<ChangeNavControls {...base} currentIdx={-1} canPrev={false} />);
-    expect(getByRole('status')).toHaveTextContent('at top, 7 changes');
+    expect(getByRole('status')).toHaveTextContent('change 1 of 7');
   });
 });
