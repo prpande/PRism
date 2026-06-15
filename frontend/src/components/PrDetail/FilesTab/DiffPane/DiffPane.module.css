@@ -35,10 +35,18 @@
   font-size: var(--text-xs);
   color: var(--text-1);
 }
+.diffBodyWrap {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
 .diffPaneBody {
   flex: 1;
   min-height: 0;
   overflow: auto;
+  scrollbar-gutter: stable;
 }
 
 /* Diff table — handoff `.diff-body` / `.diff-line` treatment on production <table> scaffold */
