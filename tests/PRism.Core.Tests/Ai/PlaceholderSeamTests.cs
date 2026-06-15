@@ -39,6 +39,19 @@ public class PlaceholderSeamTests
             because: "Preview samples must read as THIS PR's sample, not identical across PRs (#464)");
     }
 
+    // Pins the CA1062 null guard added in #464: both public entry points reject a null PR.
+    [Fact]
+    public async Task Summarizer_throws_on_null_pr()
+    {
+        IPrSummarizer s = new PlaceholderPrSummarizer();
+
+        Func<Task> summarize = () => s.SummarizeAsync(null!, CancellationToken.None);
+        Func<Task> regenerate = () => s.RegenerateAsync(null!, CancellationToken.None);
+
+        await summarize.Should().ThrowAsync<ArgumentNullException>();
+        await regenerate.Should().ThrowAsync<ArgumentNullException>();
+    }
+
     [Fact]
     public async Task FileFocusRanker_returns_at_least_one_file()
     {
