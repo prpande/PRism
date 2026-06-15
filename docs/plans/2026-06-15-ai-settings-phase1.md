@@ -1000,54 +1000,41 @@ git commit -m "feat(ai-settings): upper-clamp hunk-annotation cap on read (#496)
 
 - [ ] **Step 1: Write the failing test**
 
-Create `tests/PRism.Web.Tests/Endpoints/AiEndpointsFailureReasonTests.cs`. **The seam must actually be reached and must actually throw — this is the part the test most easily gets wrong.** `AiEndpointsTests.cs` proves a seam-reaching response needs ALL of: (1) `WithWebHostBuilder` + an `AllSubscribedActivePrCache` (so the D111 `IsSubscribed` gate passes — otherwise 204 before the seam), and (2) `AiModeState.Mode = AiMode.Preview` (so `IAiSeamSelector.Resolve<IPrSummarizer>()` returns a real summarizer, not the Noop). But the default Preview summarizer is `PlaceholderPrSummarizer`, which **returns a body and never throws** — so a 503 also requires (3) **overriding the resolved summarizer with a throwing stub.** Without all three, the test returns 200 or 204, never 503, and cannot go FAIL→PASS.
+Create `tests/PRism.Web.Tests/Endpoints/AiEndpointsFailureReasonTests.cs`. **Reaching a throwing seam is the part the test most easily gets wrong, so use the existing proven harness rather than hand-rolling DI overrides.** `AiSeamSelector` in Preview returns a `_placeholder` dict built ONCE at construction from the *concrete* `sealed PlaceholderPrSummarizer` — it never reads the `IPrSummarizer` interface registration, and the sealed placeholder cannot be subclassed to throw. So a `RemoveAll<IPrSummarizer>()` swap is inert (→ 200, never 503). The reliable route is the **Live seam over a throwing `ILlmProvider`**, which is exactly what `AiSummaryTestContext` already wires: it constructs the real `ClaudeCodeSummarizer` over a provider you supply, and exposes `ModeState`, `SeedConsent()`, `subscribeAll`, and an authenticated `CreateClient()`. Pass a provider whose `CompleteAsync` throws, set `Mode = Live`, seed consent, subscribe — the summarizer propagates the `LlmProviderException` to `ResolveSummaryAsync`'s catch → 503 `{ reason }`.
 
 ```csharp
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using FluentAssertions;
-using Microsoft.Extensions.DependencyInjection;
-using PRism.AI.ClaudeCode;
-using PRism.AI.Contracts.Seams;       // IPrSummarizer (confirm the exact namespace)
-using PRism.Core.Ai;                   // AiModeState, AiMode
-using PRism.Core.Contracts;            // PrReference, PrSummary (confirm)
-using PRism.Web.Tests.TestHelpers;     // CreateAuthenticatedClient / session-header helper
+using PRism.AI.ClaudeCode;             // LlmProviderException
+using PRism.AI.Contracts.Provider;     // ILlmProvider, LlmRequest, LlmResult
+using PRism.Core.Ai;                   // AiMode
 using Xunit;
 
 namespace PRism.Web.Tests.Endpoints;
 
-public class AiEndpointsFailureReasonTests : IClassFixture<PRismWebApplicationFactory>
+public class AiEndpointsFailureReasonTests
 {
-    private readonly PRismWebApplicationFactory _base;
-    public AiEndpointsFailureReasonTests(PRismWebApplicationFactory factory) => _base = factory;
-
-    // Stands in for a provider timeout (timedOut:true) or a generic provider failure (timedOut:false).
-    private sealed class ThrowingSummarizer(bool timedOut) : IPrSummarizer
+    // A provider that always throws — stands in for a timeout (timedOut:true) or a generic failure
+    // (timedOut:false). The real ClaudeCodeSummarizer calls CompleteAsync and lets this propagate; the
+    // endpoint's catch maps it to 503 { reason }. (Mirror the real ILlmProvider signature exactly.)
+    private sealed class ThrowingLlmProvider(bool timedOut) : ILlmProvider
     {
-        public Task<PrSummary?> SummarizeAsync(PrReference prRef, CancellationToken ct) =>
-            throw new LlmProviderException("boom", stderr: "", exitCode: -1, timedOut: timedOut);
-        public Task<PrSummary?> RegenerateAsync(PrReference prRef, CancellationToken ct) =>
+        public Task<LlmResult> CompleteAsync(LlmRequest request, CancellationToken ct) =>
             throw new LlmProviderException("boom", stderr: "", exitCode: -1, timedOut: timedOut);
     }
 
-    private async Task<JsonElement> SummaryFailureBody(bool timedOut)
+    private static async Task<JsonElement> SummaryFailureBody(bool timedOut)
     {
-        using var factory = _base.WithWebHostBuilder(b => b.ConfigureServices(s =>
-        {
-            s.RemoveAll<IActivePrCache>();
-            s.AddSingleton<IActivePrCache>(new AllSubscribedActivePrCache());  // D111 gate passes
-            s.RemoveAll<IPrSummarizer>();
-            s.AddSingleton<IPrSummarizer>(new ThrowingSummarizer(timedOut));   // make the Preview seam throw
-        }));
-        factory.Services.GetRequiredService<AiModeState>().Mode = AiMode.Preview;
+        // AiSummaryTestContext lights up the REAL ClaudeCodeSummarizer over our throwing provider (the
+        // proven pattern from AiSummaryGateTests). Live + consent + subscribed = the seam is reached.
+        using var ctx = new AiSummaryTestContext(new ThrowingLlmProvider(timedOut), subscribeAll: true);
+        ctx.ModeState.Mode = AiMode.Live;
+        ctx.SeedConsent();
+        using var client = ctx.CreateClient();
 
-        // WithWebHostBuilder returns a vanilla factory; CreateClient() is unauthenticated — add the
-        // session header the way AiEndpointsTests.cs does (match its exact helper name).
-        var client = factory.CreateClient();
-        client.AddPrismSessionHeaders();   // <- use the SAME session-header helper as the sibling tests
-
-        var resp = await client.GetAsync("/api/pr/o/r/1/ai/summary");
+        var resp = await client.GetAsync(new Uri("/api/pr/octo/repo/1/ai/summary", UriKind.Relative));
         resp.StatusCode.Should().Be(HttpStatusCode.ServiceUnavailable);
         return await resp.Content.ReadFromJsonAsync<JsonElement>();
     }
@@ -1062,7 +1049,7 @@ public class AiEndpointsFailureReasonTests : IClassFixture<PRismWebApplicationFa
 }
 ```
 
-> **Before writing this, read `AiEndpointsTests.cs` + `PRism.Web/Composition/ServiceCollectionExtensions.cs` (the `IAiSeamSelector.Resolve<IPrSummarizer>()` registration) to confirm two things:** (a) that overriding the `IPrSummarizer` registration is what the selector honors in Preview — if the selector instead resolves a concrete `PlaceholderPrSummarizer` type directly, override THAT type (or set `Mode = AiMode.Live` and swap the `ILlmProvider` the real summarizer calls, which then throws through it); (b) the exact session-header helper name (`AddPrismSessionHeaders` / `WithPrismSession` / `CreateAuthenticatedClient` on the base factory). The contract the test pins is: seam throws `LlmProviderException` → endpoint returns **503** with body `{ "reason": "timeout" | "provider-error" }`.
+> **Why this harness, confirmed against source:** `AiSummaryTestContext` (`tests/PRism.Web.Tests/Endpoints/AiSummaryTestContext.cs`) takes `(ILlmProvider provider, bool subscribeAll)`, builds the real `ClaudeCodeSummarizer` over `provider`, and its `CreateClient()` already injects the session token + Origin (no `AddPrismSessionHeaders` needed — that helper requires a `token` arg and would not compile zero-arg). `SeedConsent()` sets `AiConsentState` for `AiProviderIds.Claude`/`AiDisclosure.CurrentVersion`, which the `AiSeamSelector` Live branch REQUIRES (without it Live falls back to Noop → 204). Confirm `ClaudeCodeSummarizer.SummarizeAsync` propagates `LlmProviderException` (does not swallow it) before relying on the 503 — the `FakeOk…Provider` gate tests prove the provider is actually reached. This route also exercises the real HTTP pipeline, so it verifies the camelCase `reason` wire shape, not just the value.
 
 - [ ] **Step 2: Run it to verify it fails**
 
@@ -2062,7 +2049,7 @@ git commit -m "feat(ai-settings): add accessible NumberStepper control (#496)"
 
 - [ ] **Step 1: Write the failing test**
 
-Create `frontend/src/contexts/PreferencesContext.aiNumeric.test.tsx`:
+Create `frontend/src/contexts/PreferencesContext.aiNumeric.test.tsx` — a NEW file for the numeric readKey/writeKey behavior. This is distinct from the pre-existing `PreferencesContext.aimode.test.tsx` (which Task 11 Step 6b only patches to add the two new required fields); the two coexist and are committed by their respective tasks.
 
 ```typescript
 import { describe, it, expect } from 'vitest';
