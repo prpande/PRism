@@ -100,6 +100,40 @@ public sealed class ClaudeCodeStreamingProviderTests
     }
 
     [Fact]
+    public void Resume_session_id_is_passed_as_resume_flag()
+    {
+        var baseDir = Directory.CreateTempSubdirectory().FullName;
+        var (provider, factory) = Build(baseDir);
+        provider.StartSession(new StreamingSessionOptions(
+            ResumeSessionId: "11111111-2222-3333-4444-555555555555"));
+        factory.CapturedSpec!.Arguments
+            .Should().ContainInOrder("--resume", "11111111-2222-3333-4444-555555555555");
+    }
+
+    [Fact]
+    public void Resume_flag_is_omitted_when_resume_session_id_is_null()
+    {
+        var baseDir = Directory.CreateTempSubdirectory().FullName;
+        var (provider, factory) = Build(baseDir);
+        provider.StartSession(new StreamingSessionOptions());        // ResumeSessionId defaults null
+        factory.CapturedSpec!.Arguments.Should().NotContain("--resume");
+    }
+
+    [Theory]
+    [InlineData("has space")]   // whitespace is not a session-id shape and would muddle the argv intent
+    [InlineData("--inject")]    // leading "--" would be misread as a flag
+    [InlineData("")]            // empty is malformed (non-null but no id)
+    [InlineData("a,b")]         // comma rejected as conservative shape validation
+    [InlineData("a\0b")]        // embedded NUL/control char rejected (char.IsWhiteSpace('\0') is FALSE)
+    public void Malformed_resume_session_id_is_rejected(string evil)
+    {
+        var baseDir = Directory.CreateTempSubdirectory().FullName;
+        var (provider, _) = Build(baseDir);
+        var act = () => provider.StartSession(new StreamingSessionOptions(ResumeSessionId: evil));
+        act.Should().Throw<ArgumentException>();
+    }
+
+    [Fact]
     public void Env_is_the_shared_allowlist()
     {
         var baseDir = Directory.CreateTempSubdirectory().FullName;

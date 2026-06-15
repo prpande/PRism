@@ -1,0 +1,419 @@
+# `claude --resume` Slice 3 (#479) Implementation Plan
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+
+**Goal:** Land the deferred `ResumeSessionId` field on `StreamingSessionOptions`, wire it to a `claude --resume <id>` spawn arg behind a single-token injection guard, ship a mechanical tripwire (in the same commit as the spawnable field) that keeps the field uncalled until #412 adds ownership enforcement, and propagate the now-resolved C4 probe outcome into the docs.
+
+**Architecture:** The empirical probe is already done (spec § 2 — full-context resume, Outcome #1, production-confirmed; transcripts in `.scratch/`). This plan is the small code + docs that the probe gates: one optional record param, ~6 lines of provider wiring + a `ValidateCliToken` guard, **five tests** (three arg-wiring, one clean-end characterization, one tripwire), three doc edits, and one manual live-validation step. No probe re-run.
+
+**Tech Stack:** .NET 10 / C#, xUnit + FluentAssertions, base branch `V2`. All work in worktree `D:/src/PRism/.claude/worktrees/479-claude-resume-probe` on branch `feature/479-claude-resume-probe`.
+
+**Authoritative source:** `docs/specs/2026-06-14-claude-resume-probe-design.md` (§ 3 in-scope list, § 8 exit criteria).
+
+**Conventions:**
+- TDD: failing test first, minimal impl, green, commit.
+- One `dotnet build`/`dotnet test` at a time, foreground, timeout ≥ 300000 ms.
+- Commit messages use a **word scope** (`feat(streaming): …(#479)`), bare `#479` — NOT `fix(#479)` (that auto-closes on a default-branch merge; this targets V2 and #404/#479 stay open until the slice lands).
+- B2-gated: do not push or open the PR as part of these tasks — the PR is opened in the wrap-up after the owner's plan gate, and the **owner merges** (no auto-merge).
+
+---
+
+## File Structure
+
+| File | Change | Responsibility |
+|------|--------|----------------|
+| `PRism.AI.Contracts/Provider/StreamingSessionOptions.cs` | Modify | Add `ResumeSessionId` appended optional param + XML doc; drop it from the deferred-fields note. |
+| `PRism.AI.ClaudeCode/ClaudeCodeStreamingProvider.cs` | Modify | Append `--resume <id>` when set; add `ValidateCliToken` guard. |
+| `tests/PRism.AI.ClaudeCode.Tests/ClaudeCodeStreamingProviderTests.cs` | Modify | Happy-path, null-omit, malformed-id tests. |
+| `tests/PRism.AI.ClaudeCode.Tests/ResumeFieldTripwireTests.cs` | Create | Tripwire: no production caller sets `ResumeSessionId` until #412 (ships in Task 1's commit). |
+| `tests/PRism.AI.ClaudeCode.Tests/ClaudeCodeStreamingSessionTests.cs` | Modify | Clean-end captures the resume key (eligibility contract). |
+| `docs/specs/2026-06-14-streaming-llm-provider-design.md` | Modify | § 6 — mark the probe resolved. |
+| `docs/spec/00-verification-notes.md` | Modify | § C4 — flip the `[ ]` gate checkbox to `[x]` with the result. |
+| `.ai/docs/v2-ai-effort.md` | Modify | Replace the stale "don't rely on `--resume` / undocumented" guidance. |
+
+---
+
+### Task 1: `ResumeSessionId` field + `--resume` wiring + `ValidateCliToken` guard + tripwire (one commit)
+
+The spawnable capability (`--resume <id>`) and its two guards — the transport `ValidateCliToken` AND the ownership tripwire — ship **together in one commit**. On a B2 subprocess+egress surface, the field must never exist in a commit without its tripwire (so an individual cherry-pick can't strand a spawnable-but-unguarded field).
+
+**Files:**
+- Modify: `PRism.AI.Contracts/Provider/StreamingSessionOptions.cs`
+- Modify: `PRism.AI.ClaudeCode/ClaudeCodeStreamingProvider.cs`
+- Test: `tests/PRism.AI.ClaudeCode.Tests/ClaudeCodeStreamingProviderTests.cs`
+- Create: `tests/PRism.AI.ClaudeCode.Tests/ResumeFieldTripwireTests.cs`
+
+- [ ] **Step 1: Write the failing provider tests (happy-path, null-omit, malformed)**
+
+Add to `ClaudeCodeStreamingProviderTests.cs` (the `Build(baseDir)` helper and `ArgValue` already exist in this file):
+
+```csharp
+    [Fact]
+    public void Resume_session_id_is_passed_as_resume_flag()
+    {
+        var baseDir = Directory.CreateTempSubdirectory().FullName;
+        var (provider, factory) = Build(baseDir);
+        provider.StartSession(new StreamingSessionOptions(
+            ResumeSessionId: "11111111-2222-3333-4444-555555555555"));
+        factory.CapturedSpec!.Arguments
+            .Should().ContainInOrder("--resume", "11111111-2222-3333-4444-555555555555");
+    }
+
+    [Fact]
+    public void Resume_flag_is_omitted_when_resume_session_id_is_null()
+    {
+        var baseDir = Directory.CreateTempSubdirectory().FullName;
+        var (provider, factory) = Build(baseDir);
+        provider.StartSession(new StreamingSessionOptions());        // ResumeSessionId defaults null
+        factory.CapturedSpec!.Arguments.Should().NotContain("--resume");
+    }
+
+    [Theory]
+    [InlineData("has space")]   // whitespace is not a session-id shape and would muddle the argv intent
+    [InlineData("--inject")]    // leading "--" would be misread as a flag
+    [InlineData("")]            // empty is malformed (non-null but no id)
+    [InlineData("a,b")]         // comma rejected as conservative shape validation
+    [InlineData("a\0b")]    // embedded NUL/control char rejected (char.IsWhiteSpace('\0') is FALSE)
+    public void Malformed_resume_session_id_is_rejected(string evil)
+    {
+        var baseDir = Directory.CreateTempSubdirectory().FullName;
+        var (provider, _) = Build(baseDir);
+        var act = () => provider.StartSession(new StreamingSessionOptions(ResumeSessionId: evil));
+        act.Should().Throw<ArgumentException>();
+    }
+```
+
+- [ ] **Step 2: Run the tests — verify they FAIL to compile**
+
+Run: `dotnet test tests/PRism.AI.ClaudeCode.Tests/PRism.AI.ClaudeCode.Tests.csproj --filter "FullyQualifiedName~Resume_session_id|FullyQualifiedName~Resume_flag_is_omitted|FullyQualifiedName~Malformed_resume_session_id"`
+Expected: BUILD FAILURE — `StreamingSessionOptions` has no `ResumeSessionId` parameter.
+
+- [ ] **Step 3: Add the `ResumeSessionId` field to the record**
+
+In `StreamingSessionOptions.cs`, append the param (keep it LAST so the change is source-non-breaking) and add its XML `<param>` doc after the `DisallowedTools` param doc:
+
+```csharp
+/// <param name="ResumeSessionId"><c>--resume</c>. When set, resumes the prior <c>claude</c> session with
+/// that id, restoring its full conversation context (empirically confirmed on v2.1.177, P0-1b Slice 3 / #479).
+/// SEMANTICS the caller MUST honor:
+/// (1) WORKING-DIRECTORY-SCOPED — <c>claude</c> keys transcripts per cwd, so the resume MUST use the SAME
+///     <see cref="WorkingDirectory"/> as the original session (PRism's stable per-user base satisfies this).
+/// (2) FAILS HARD — a resume that cannot find its transcript (cwd mismatch / unknown id) makes <c>claude</c>
+///     exit non-zero with no init/result; the caller MUST fall back to fresh-with-injection, never assume a
+///     resume yields a usable session. Passing this is therefore an OPTIMIZATION, not a guarantee.
+/// (3) RE-PERSIST THE NEW KEY — do not assume the post-resume <see cref="IStreamingLlmSession.ProviderSessionId"/>
+///     equals this value (observed equal on v2.1.177, but the CLI is undocumented); persist the post-resume id.
+/// OWNERSHIP of the id is verified at the application-service layer BEFORE this is set (#412) — NOT here.</param>
+public sealed record StreamingSessionOptions(
+    string? Model = null,
+    string? AppendSystemPrompt = null,
+    string? WorkingDirectory = null,
+    IReadOnlyList<string>? AllowedTools = null,
+    IReadOnlyList<string>? DisallowedTools = null,
+    string? ResumeSessionId = null);
+```
+
+Also update the `<para>` deferred-fields note near the top of the same file: remove `ResumeSessionId` from the deferred list (it is now a real param), leaving `AddDirs` and `McpConfigPath`. Change the sentence:
+
+```
+/// consumer is a later slice are DEFERRED — added (as nullable optional params, appended at the end so
+/// the change is source-non-breaking for existing callers) by the slice that introduces their first
+/// consumer: <c>AddDirs</c> (<c>--add-dir</c>; repo-access "state 2") and <c>McpConfigPath</c>
+/// (<c>--mcp-config</c>; added with the P0-7 MCP server). (<c>ResumeSessionId</c> landed in Slice 3 / #479.)</para>
+```
+
+- [ ] **Step 4: Wire `--resume` + add the `ValidateCliToken` guard in the provider**
+
+In `ClaudeCodeStreamingProvider.cs`, in `StartSession`, add the resume wiring immediately after the `AppendSystemPrompt` line (currently line 47):
+
+```csharp
+        if (options.Model is not null) { args.Add("--model"); args.Add(options.Model); }
+        if (options.AppendSystemPrompt is not null) { args.Add("--append-system-prompt"); args.Add(options.AppendSystemPrompt); }
+        if (options.ResumeSessionId is not null)
+        {
+            ValidateCliToken(options.ResumeSessionId, nameof(options.ResumeSessionId));
+            args.Add("--resume"); args.Add(options.ResumeSessionId);
+        }
+```
+
+Add this private method next to `ValidateToolNames` (DO NOT reuse `ValidateToolNames` — its comma rule is documented for list-injection, which does not apply to a standalone argv value):
+
+```csharp
+    // A single CLI argv VALUE (not a comma-joined list element). Reject empty/whitespace and any control
+    // char (incl. NUL — char.IsWhiteSpace('\0') is FALSE, so the IsWhiteSpace clause alone would let it
+    // through), and a leading "--" (would be misread as a flag). A comma cannot split a standalone argv
+    // slot into a second argument under the pre-split ArgumentList + UseShellExecute=false spawn, so the
+    // comma check is conservative shape validation only — NOT the list-injection reason ValidateToolNames
+    // documents. Authorization of the id is a separate concern enforced upstream (#412), not here.
+    private static void ValidateCliToken(string value, string argName)
+    {
+        if (string.IsNullOrWhiteSpace(value) || value.StartsWith("--", StringComparison.Ordinal)
+            || value.Any(char.IsWhiteSpace) || value.Any(char.IsControl)
+            || value.Contains(',', StringComparison.Ordinal))
+            throw new ArgumentException(
+                $"Invalid {argName} '{value}': must be a single token with no whitespace, control char, leading '--', or comma.");
+    }
+```
+
+- [ ] **Step 5: Run the provider tests — verify they PASS**
+
+Run: `dotnet test tests/PRism.AI.ClaudeCode.Tests/PRism.AI.ClaudeCode.Tests.csproj --filter "FullyQualifiedName~Resume_session_id|FullyQualifiedName~Resume_flag_is_omitted|FullyQualifiedName~Malformed_resume_session_id"`
+Expected: PASS (2 facts + 5 theory rows = 7 passing).
+
+- [ ] **Step 6: Write the tripwire test (GREEN now; future-RED is its purpose)**
+
+Create `tests/PRism.AI.ClaudeCode.Tests/ResumeFieldTripwireTests.cs`:
+
+```csharp
+using System.Text.RegularExpressions;
+using FluentAssertions;
+
+namespace PRism.AI.ClaudeCode.Tests;
+
+public sealed class ResumeFieldTripwireTests
+{
+    // TRIPWIRE (spec §5 / #479): ResumeSessionId reaches a real `claude --resume` spawn, but ownership of
+    // the id is verified ONLY at the application-service layer that #412 introduces — sequenced AFTER all
+    // P0-1b slices. Until #412 lands, NO production code may SET the field. When #412 adds a normal caller
+    // (named-arg, object-initializer, or `with`-expression) this turns RED; the implementer MUST then add
+    // the ownership check AND allowlist the caller's file below.
+    //
+    // KNOWN, ACCEPTED EVASIONS (this catches the realistic accidental caller, not a determined evader; the
+    // real authorization control is #412's ownership check, not this test):
+    //   - positional construction `new StreamingSessionOptions(null,null,null,null,null,id)` (6 positional
+    //     args — conspicuous and caught in code review),
+    //   - reflection / options-binding by the string key "ResumeSessionId" (config),
+    //   are NOT matched by the assignment regex below.
+    [Fact]
+    public void No_production_code_sets_ResumeSessionId_until_412()
+    {
+        var root = FindRepoRoot();
+        // Path-relative allowlist (NOT filename-only): only THIS declaration file may mention the field as
+        // a `= null` default. A same-named file elsewhere must not be auto-allowlisted.
+        var allow = new[] { Path.Combine("PRism.AI.Contracts", "Provider", "StreamingSessionOptions.cs") };
+        var setter = new Regex(@"ResumeSessionId\s*[:=]");    // named-arg, object-initializer, or `with` assignment
+        var offenders = ProductionCsFiles(root)
+            .Where(f => !allow.Any(a => Path.GetRelativePath(root, f)
+                .Replace('/', Path.DirectorySeparatorChar).EndsWith(a, StringComparison.OrdinalIgnoreCase)))
+            .Where(f => setter.IsMatch(File.ReadAllText(f)))
+            .Select(f => Path.GetRelativePath(root, f))
+            .ToArray();
+
+        offenders.Should().BeEmpty(
+            "ResumeSessionId must not be set by any production caller until #412 adds the ownership check; "
+            + "if #412 is landing, add the caller's ownership-verifying file to the allowlist");
+    }
+
+    // Walks up to the NEAREST PRism.sln. A git worktree carries its OWN PRism.sln, so this scans only this
+    // worktree's tree — sibling worktrees (which nest under the primary checkout, not under this root) are
+    // not enumerated.
+    private static string FindRepoRoot()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "PRism.sln"))) dir = dir.Parent;
+        dir.Should().NotBeNull("the test must run inside the PRism repo (PRism.sln not found walking up)");
+        return dir!.FullName;
+    }
+
+    private static IEnumerable<string> ProductionCsFiles(string root)
+    {
+        var sep = Path.DirectorySeparatorChar;
+        return Directory.EnumerateFiles(root, "*.cs", SearchOption.AllDirectories)
+            .Where(f => !f.Contains($"{sep}tests{sep}", StringComparison.OrdinalIgnoreCase))
+            .Where(f => !f.Contains($"{sep}bin{sep}", StringComparison.OrdinalIgnoreCase))
+            .Where(f => !f.Contains($"{sep}obj{sep}", StringComparison.OrdinalIgnoreCase));
+    }
+}
+```
+
+- [ ] **Step 7: Run the tripwire — verify it PASSES, then prove it BITES**
+
+Run: `dotnet test tests/PRism.AI.ClaudeCode.Tests/PRism.AI.ClaudeCode.Tests.csproj --filter "FullyQualifiedName~No_production_code_sets_ResumeSessionId"`
+Expected: PASS (the provider's `.ResumeSessionId` READ and the allowlisted record default do not match the assignment regex).
+
+Then prove non-vacuity: temporarily add `var _probe = new PRism.AI.Contracts.Provider.StreamingSessionOptions(ResumeSessionId: "x");` to the top of `StartSession` in `ClaudeCodeStreamingProvider.cs`, re-run the filter, and confirm it now FAILS naming `ClaudeCodeStreamingProvider.cs`. REMOVE the probe line and confirm GREEN again.
+
+- [ ] **Step 8: Commit (field + wiring + transport guard + tripwire together)**
+
+```bash
+git add PRism.AI.Contracts/Provider/StreamingSessionOptions.cs PRism.AI.ClaudeCode/ClaudeCodeStreamingProvider.cs tests/PRism.AI.ClaudeCode.Tests/ClaudeCodeStreamingProviderTests.cs tests/PRism.AI.ClaudeCode.Tests/ResumeFieldTripwireTests.cs
+git commit -m "feat(streaming): wire ResumeSessionId to --resume with token guard + ownership tripwire (#479)"
+```
+
+---
+
+### Task 2: Clean-end captures the resume key (eligibility contract)
+
+**Files:**
+- Test: `tests/PRism.AI.ClaudeCode.Tests/ClaudeCodeStreamingSessionTests.cs`
+
+This is a **documentary characterization test**, co-locating the resume-eligibility contract with the resume narrative: a cleanly-ended turn surfaces BOTH the eligibility signal (`LastTurnEndedCleanly`) AND the resume key (`ProviderSessionId`). It is expected to PASS on first run. Note its incremental regression value is modest — the *value* path (`ProviderSessionId == "sess-1"` at clean end) is already pinned by the existing `EndCleanly_zero_turns_awaits_init_returns_true_with_session_id`; this test's worth is documentation, tying clean-end to the resume key under a resume-named test. The live "an `EndCleanlyAsync`-ended session actually resumes through the real CLI" half is covered by the manual validation in Task 4 (a fake cannot prove the real CLI resumes), with durable re-verification handed to #412.
+
+- [ ] **Step 1: Write the test**
+
+Add to `ClaudeCodeStreamingSessionTests.cs` (the `Init` line carries `"session_id":"sess-1"`; `Result(...)` exists; `EndStdout()` lets the reader reach EOF so the drain wait returns immediately instead of burning the 5s timeout):
+
+```csharp
+    [Fact]
+    public async Task EndCleanly_after_completed_turn_captures_resume_key()
+    {
+        // Resume-eligibility contract (spec §2.4): a cleanly-ended turn must surface BOTH the eligibility
+        // signal AND the resume key, so a caller can later pass ProviderSessionId as ResumeSessionId.
+        var proc = new FakeStreamingCliProcess { ExitCodeToReturn = 0 };
+        await using var session = new ClaudeCodeStreamingSession(proc);
+        await session.SendUserTurnAsync("hi", CancellationToken.None);
+        proc.EmitLines(Init, Result("hi"));
+        proc.EndStdout();                                    // reader reaches EOF → no 5s drain-timeout
+
+        var end = await session.EndCleanlyAsync(TimeSpan.FromSeconds(5), CancellationToken.None);
+        end.LastTurnEndedCleanly.Should().BeTrue();
+        end.ProviderSessionId.Should().Be("sess-1");         // the resume key, captured at clean end
+    }
+```
+
+- [ ] **Step 2: Run the test — verify it PASSES**
+
+Run: `dotnet test tests/PRism.AI.ClaudeCode.Tests/PRism.AI.ClaudeCode.Tests.csproj --filter "FullyQualifiedName~EndCleanly_after_completed_turn_captures_resume_key"`
+Expected: PASS (fast — under a second). If it FAILS, stop — the clean-end path is not capturing the session id and the resume contract is broken; investigate before proceeding.
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add tests/PRism.AI.ClaudeCode.Tests/ClaudeCodeStreamingSessionTests.cs
+git commit -m "test(streaming): pin clean-end captures the resume key (#479)"
+```
+
+---
+
+### Task 3: Propagate the resolved C4 outcome into the docs
+
+**Files:**
+- Modify: `docs/specs/2026-06-14-streaming-llm-provider-design.md` (§ 6)
+- Modify: `docs/spec/00-verification-notes.md` (§ C4 gate checkbox)
+- Modify: `.ai/docs/v2-ai-effort.md` (stale `--resume` guidance)
+
+No tests (docs only). After the edits, build to confirm nothing references a moved anchor.
+
+- [ ] **Step 1: Mark the parent-design § 6 probe resolved**
+
+In `docs/specs/2026-06-14-streaming-llm-provider-design.md`, replace the first paragraph of `## 6. Slice 3 — C4 \`--resume\` empirical probe` (the "Not built in this PR…" sentence) with:
+
+```markdown
+**RESOLVED (#479, 2026-06-14).** The clean-end probe ran against `claude` v2.1.177, including a
+production-faithful re-run (confined cwd + stripped config). **Outcome #1 — full-context resume** holds:
+`claude --resume <id>` restores the prior session's full conversation context. The re-run also pinned two
+operational invariants: resume is **working-directory-scoped** (same cwd required; PRism's stable per-user
+base satisfies it) and **fails hard** on a cwd/id miss (degrades to fresh-with-injection). P2-2 keeps the
+full-context promise *as of v2.1.177*; CLI-update survival stays tracked/unrun. Full design + evidence:
+`docs/specs/2026-06-14-claude-resume-probe-design.md`.
+```
+
+- [ ] **Step 2: Flip the C4 gate checkbox in verification-notes**
+
+In `docs/spec/00-verification-notes.md`, find the line:
+
+```markdown
+- [ ] **C4 (clean-end resume)** — verify that `claude --resume <session-id>` after a *clean* session end restores the model's full conversation context. Run as part of P0-1's acceptance gate, before P2-2 chat ships. The result determines whether the spec's cross-restart "Resumed your chat from <timestamp>" UX is achievable or degrades to fresh-with-injection. Also probe whether resume survives a CLI update between session-end and resume.
+```
+
+Replace with:
+
+```markdown
+- [x] **C4 (clean-end resume)** — verified 2026-06-14 (#479): full-context resume confirmed (Outcome #1) on `claude` v2.1.177; a production-faithful re-run (confined cwd + stripped config) showed resume is working-directory-scoped and fails hard on a cwd/id miss (degrades to fresh-with-injection). P2-2's "Resumed your chat" full-context UX is achievable, version-conditional. CLI-update survival still unrun (non-gating). See `docs/specs/2026-06-14-claude-resume-probe-design.md`.
+```
+
+- [ ] **Step 3: Update the stale `--resume` guidance in the AI-effort doc**
+
+In `.ai/docs/v2-ai-effort.md`, replace the bullet at lines 77–79:
+
+```markdown
+- **Don't rely on `--resume`** for cross-feature context forwarding (restoring full context after a
+  clean end is undocumented; resumed turns re-send the whole transcript). Use prompt caching on a
+  stable diff prefix instead.
+```
+
+with:
+
+```markdown
+- **`--resume` restores full context after a clean end** (probed v2.1.177, #479 / C4) — so cross-restart
+  chat resume (P2-2) is viable. BUT it is **working-directory-scoped** (resume MUST run from the same cwd;
+  PRism's stable per-user base satisfies this), **fails hard** on a cwd/id miss (must degrade to
+  fresh-with-injection), and the result is **version-conditional** (CLI-update survival untested). Do NOT
+  use `--resume` for cross-*feature* context forwarding (a separate session id); for that, use prompt
+  caching on a stable diff prefix.
+```
+
+- [ ] **Step 4: Build to confirm the tree still compiles and no anchor broke**
+
+Run: `dotnet build -c Debug PRism.sln`
+Expected: BUILD SUCCEEDED.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add docs/specs/2026-06-14-streaming-llm-provider-design.md docs/spec/00-verification-notes.md .ai/docs/v2-ai-effort.md
+git commit -m "docs(streaming): propagate resolved C4 resume outcome (#479)"
+```
+
+---
+
+### Task 4: Full-suite green + manual live validation + #479 issue ACs (wrap-up)
+
+**Files:** none (validation + issue housekeeping). This task is the pre-PR gate; it does NOT push.
+
+- [ ] **Step 1: Full backend build + test suite (the pre-push gate)**
+
+Run: `dotnet build -c Release PRism.sln` then `dotnet test --no-build -c Release --settings .runsettings`
+Expected: green. NOTE the documented local-only flake — `TestEndpoints_NotLiveInProduction` fails if a live `PRism.Web.exe` holds the default-dataDir lock; it is green in CI and unrelated to this change. Record any such skip explicitly.
+
+- [ ] **Step 2: Secrets scan**
+
+Run: `git diff V2...HEAD` and scan for tokens/keys/connection strings. Expected clean (only the literal "Token" inside `CancellationToken` / session-id GUIDs, which are non-secret opaque ids).
+
+- [ ] **Step 3: Manual live validation — `EndCleanlyAsync`-ended session resumes through the REAL provider**
+
+This closes the spec § 2.4 proxy gap (the probe used a raw stdin-close; the provider's clean-end is `EndCleanlyAsync`). Write a THROWAWAY console driver under `.scratch/` (gitignored) using the real `SystemStreamingCliProcessFactory` → `ClaudeCodeStreamingProvider`, configured with `WorkingDirectory` = the PROD base `%LOCALAPPDATA%\PRism\llm-cwd`:
+1. Session A: `StartSession(new StreamingSessionOptions())`; `SendUserTurnAsync("remember tag MANUAL-<rand>")`; drain to `LlmTurnComplete`; `EndCleanlyAsync(5s)`; capture `ProviderSessionId`.
+2. Session B: `StartSession(new StreamingSessionOptions(ResumeSessionId: <captured id>))`; ask "what tag did I ask you to remember? only the tag or UNKNOWN"; assert the tag is recalled.
+Run it once, record the transcript in the PR `## Proof`, then DELETE the driver. (Owner already authorized live probe runs; this is a few cents.) If recall FAILS, stop and report — it would mean the `EndCleanlyAsync` clean-end differs from the raw-close the probe used.
+
+**This closure is NON-DURABLE** (no committed CI test — live-CLI dependency). The durable re-verification is handed to #412 as a forward AC (Step 4).
+
+- [ ] **Step 4: Record forward-requirement ACs on the #479 issue body**
+
+Add these as unchecked checkboxes to the #479 issue body (concrete artifact per spec § 8), binding #412:
+
+```bash
+gh issue edit 479 --body "$(gh issue view 479 --json body -q .body)
+
+## Forward-requirements binding #412 (recorded by Slice 3, enforced in #412)
+- [ ] Ownership: reject a resume request from a non-originating principal BEFORE \`--resume\` is invoked (app-service layer).
+- [ ] Confidentiality: never emit \`ProviderSessionId\`/\`claudeCodeSessionId\` at Information-level logs; never return to a non-originating caller. VERIFY with a CapturingLogger assertion in the #412 resume integration test (the field is not testable as 'never logged' without it).
+- [ ] Resume-failure handling: on a hard resume failure (exit≠0 / 'No conversation found'), fall back to fresh-with-injection; re-persist the post-resume \`ProviderSessionId\` as the new key.
+- [ ] Same-cwd: resume from the same \`WorkingDirectory\` (stable per-user base) the session was created in.
+- [ ] AppendSystemPrompt-on-resume: document/ensure the system prompt at resume time matches the original session's (re-spawn re-evaluates it; a mutable source can diverge) — parent-Slice-2 no-mutable-source constraint applies to the resume spawn.
+- [ ] Durable resume re-verification: add a gated \`[Integration]\` live test (excluded from the default \`.runsettings\` run) asserting an \`EndCleanlyAsync\`-ended session resumes — replaces Slice 3's non-durable manual driver.
+- [ ] (Tracked, non-gating) dangling-tool_use resume; \`--resume\` survival across a CLI update."
+```
+
+- [ ] **Step 5: Open the PR — STOP for the owner (B2 gate)**
+
+Use the pr-autopilot skill (per project default) to open the PR to **base `V2`**, branch `feature/479-claude-resume-probe`, with a `## Proof` section recording: the probe + faithful re-run outcome, ce-doc-review dispositions (spec + plan rounds), the manual live validation transcript, and the test/secrets results. **Do NOT enable auto-merge.** The owner merges. `#404` and `#479` stay open until the owner merges; close `#479` manually after merge (the PR targets V2, not the default branch, so closing keywords do not auto-fire), and close `#404` once all three slices have landed.
+
+---
+
+## Self-Review
+
+**1. Spec coverage (spec § 8 exit criteria → task):**
+- Probe + faithful re-run recorded → done in spec (§ 2); propagated in **Task 3**. ✓
+- `ResumeSessionId` field + XML doc + deferred-note update → **Task 1**. ✓
+- Provider appends `--resume <id>` + single-token guard via correctly-named validator → **Task 1** (`ValidateCliToken`, incl. control-char rejection). ✓
+- Unit tests present→in-order / null→omitted / malformed→rejected → **Task 1**; clean-end ↔ resume-eligible → **Task 2** (+ live half in **Task 4 Step 3**, durable half → #412 AC). ✓
+- Mechanical tripwire (co-shipped with the field) → **Task 1**. ✓
+- Ownership/confidentiality/resume-failure/AppendSystemPrompt/durable-reverify as unchecked #479 ACs → **Task 4 Step 4**. ✓
+- Full build+test green; secrets clean → **Task 4 Steps 1–2**. ✓
+- ce-doc-review dispositions in PR `## Proof`; owner merges → **Task 4 Step 5**. ✓
+
+**2. Placeholder scan:** No "TBD"/"handle edge cases"/"similar to Task N". Every code step shows full code; every run step shows the command + expected result. ✓
+
+**3. Type consistency:** `ResumeSessionId` (record param) ↔ `options.ResumeSessionId` (provider read, member-access — deliberately NOT matched by the tripwire's `[:=]` regex) ↔ `ResumeSessionId:` (test named-args) ↔ tripwire regex `ResumeSessionId\s*[:=]`. `ValidateCliToken(string, string)` defined + called once, both in Task 1. `ProviderSessionId` / `LastTurnEndedCleanly` / `EndCleanlyAsync` match the existing session API; `Init`'s session id is `"sess-1"`, so Task 2's `.Be("sess-1")` holds. ✓

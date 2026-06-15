@@ -171,6 +171,22 @@ public sealed class ClaudeCodeStreamingSessionTests
     }
 
     [Fact]
+    public async Task EndCleanly_after_completed_turn_captures_resume_key()
+    {
+        // Resume-eligibility contract (spec §2.4): a cleanly-ended turn must surface BOTH the eligibility
+        // signal AND the resume key, so a caller can later pass ProviderSessionId as ResumeSessionId.
+        var proc = new FakeStreamingCliProcess { ExitCodeToReturn = 0 };
+        await using var session = new ClaudeCodeStreamingSession(proc);
+        await session.SendUserTurnAsync("hi", CancellationToken.None);
+        proc.EmitLines(Init, Result("hi"));
+        proc.EndStdout();                                    // reader reaches EOF → no 5s drain-timeout
+
+        var end = await session.EndCleanlyAsync(TimeSpan.FromSeconds(5), CancellationToken.None);
+        end.LastTurnEndedCleanly.Should().BeTrue();
+        end.ProviderSessionId.Should().Be("sess-1");         // the resume key, captured at clean end
+    }
+
+    [Fact]
     public async Task EndCleanly_stalled_consumer_trip_before_write_returns_clean()
     {
         // cap=1: the single Delta fills the channel, so when the terminal Result arrives the

@@ -45,6 +45,11 @@ public sealed class ClaudeCodeStreamingProvider(
         };
         if (options.Model is not null) { args.Add("--model"); args.Add(options.Model); }
         if (options.AppendSystemPrompt is not null) { args.Add("--append-system-prompt"); args.Add(options.AppendSystemPrompt); }
+        if (options.ResumeSessionId is not null)
+        {
+            ValidateCliToken(options.ResumeSessionId, nameof(options.ResumeSessionId));
+            args.Add("--resume"); args.Add(options.ResumeSessionId);
+        }
 
         var spec = new StreamingProcessSpec(
             FileName: providerOptions.ClaudeExecutable,
@@ -84,6 +89,21 @@ public sealed class ClaudeCodeStreamingProvider(
                 throw new ArgumentException(
                     $"Invalid tool name '{n}': must be a single token with no comma, leading '--', or whitespace.");
         }
+    }
+
+    // A single CLI argv VALUE (not a comma-joined list element). Reject empty/whitespace and any control
+    // char (incl. NUL — char.IsWhiteSpace('\0') is FALSE, so the IsWhiteSpace clause alone would let it
+    // through), and a leading "--" (would be misread as a flag). A comma cannot split a standalone argv
+    // slot into a second argument under the pre-split ArgumentList + UseShellExecute=false spawn, so the
+    // comma check is conservative shape validation only — NOT the list-injection reason ValidateToolNames
+    // documents. Authorization of the id is a separate concern enforced upstream (#412), not here.
+    private static void ValidateCliToken(string value, string argName)
+    {
+        if (string.IsNullOrWhiteSpace(value) || value.StartsWith("--", StringComparison.Ordinal)
+            || value.Any(char.IsWhiteSpace) || value.Any(char.IsControl)
+            || value.Contains(',', StringComparison.Ordinal))
+            throw new ArgumentException(
+                $"Invalid {argName} '{value}': must be a single token with no whitespace, control char, leading '--', or comma.");
     }
 
     private string ConfineWorkingDirectory(string? requested)
