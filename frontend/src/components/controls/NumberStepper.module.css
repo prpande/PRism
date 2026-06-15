@@ -1,0 +1,51 @@
+/* inline-flex (NOT width:100%) so the control sits inside a pane.spring (row mode, external label) AND
+   renders "label  [stepper]" inline in standalone mode without stretching the row. */
+.wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+}
+.label {
+  font-size: var(--text-sm);
+  color: var(--text-1);
+}
+.stepper {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  background: var(--surface-inset);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-2);
+  padding: 2px;
+}
+.stepper:focus-visible {
+  outline: 2px solid var(--accent-ring);
+  outline-offset: 2px;
+}
+.btn {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--text-1);
+  font: inherit;
+  width: 28px;
+  height: 26px;
+  border-radius: var(--radius-1);
+  cursor: pointer;
+}
+.btn:hover:not(:disabled) {
+  background: var(--surface-3);
+}
+.btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.value {
+  min-width: 84px;
+  text-align: center;
+  font-size: var(--text-sm);
+  color: var(--text-1);
+}
+.unit {
+  color: var(--text-3);
+}
