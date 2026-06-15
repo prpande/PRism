@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { render } from '@testing-library/react';
+import { render, fireEvent, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { ChangeMinimap } from './ChangeMinimap';
 import type { ChangeTick } from './diffChanges';
@@ -67,6 +67,69 @@ describe('ChangeMinimap', () => {
     ).not.toThrow();
     // The stale tooltip is gone (no out-of-range render).
     expect(queryByText(/change 3 of/)).not.toBeInTheDocument();
+  });
+
+  it('scrubs continuously while dragging the rail, and swallows the trailing click', () => {
+    // The rail doubles as a scroll slider (#486 review): a press on a gap scrolls
+    // there and the drag tracks the pointer; the click the browser fires after the
+    // drag must not also re-scrub or jump.
+    const onScroll = vi.fn();
+    const onGo = vi.fn();
+    const { container } = render(
+      <ChangeMinimap
+        ticks={ticks}
+        viewport={viewport}
+        onGoToChange={onGo}
+        onScrollToRatio={onScroll}
+      />,
+    );
+    const rail = container.firstElementChild as HTMLElement;
+    // jsdom getBoundingClientRect is all-zero; give the rail a real box.
+    rail.getBoundingClientRect = () =>
+      ({ top: 0, left: 0, right: 16, bottom: 100, height: 100, width: 16 }) as DOMRect;
+    fireEvent.pointerDown(rail, { pointerId: 1, button: 0, clientX: 8, clientY: 50 });
+    fireEvent.pointerMove(rail, { pointerId: 1, clientX: 8, clientY: 80 });
+    fireEvent.pointerUp(rail, { pointerId: 1, clientX: 8, clientY: 80 });
+    // Pressed at y=50 (ratio 0.5) then dragged to y=80 (ratio 0.8).
+    expect(onScroll.mock.calls.map((c) => c[0])).toEqual([0.5, 0.8]);
+    // The post-drag click is swallowed — no extra scrub, no jump.
+    fireEvent.click(rail, { clientX: 8, clientY: 80 });
+    expect(onScroll).toHaveBeenCalledTimes(2);
+    expect(onGo).not.toHaveBeenCalled();
+  });
+
+  it('keeps the bar expanded briefly after the pointer leaves, then collapses', () => {
+    // Regression (#486 review): expansion must linger after the pointer strays so
+    // it does not feel twitchy and the widened bar stays a stable target. A
+    // re-entry within the grace window cancels the pending collapse.
+    vi.useFakeTimers();
+    try {
+      const { container } = render(
+        <ChangeMinimap
+          ticks={ticks}
+          viewport={viewport}
+          onGoToChange={() => {}}
+          onScrollToRatio={() => {}}
+        />,
+      );
+      const rail = container.firstElementChild as HTMLElement;
+      fireEvent.mouseEnter(rail);
+      expect(rail).toHaveAttribute('data-expanded', 'true');
+      // Leaving does not collapse immediately.
+      fireEvent.mouseLeave(rail);
+      act(() => vi.advanceTimersByTime(200));
+      expect(rail).toHaveAttribute('data-expanded', 'true');
+      // Re-entering within the grace window cancels the pending collapse.
+      fireEvent.mouseEnter(rail);
+      act(() => vi.advanceTimersByTime(500));
+      expect(rail).toHaveAttribute('data-expanded', 'true');
+      // Finally leaving and waiting out the grace window collapses it.
+      fireEvent.mouseLeave(rail);
+      act(() => vi.advanceTimersByTime(500));
+      expect(rail).not.toHaveAttribute('data-expanded');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('is hidden from the accessibility tree', () => {

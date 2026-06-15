@@ -414,6 +414,12 @@ export function DiffPane({
   const modeClass = isSplit ? 'diff-pane--split' : 'diff-pane--unified';
   const wrapClass = lineWrap ? ' diff-pane--wrap' : '';
 
+  // The minimap renders only in whole-file mode when the content overflows and
+  // has changes. The native vertical scrollbar is hidden under exactly the same
+  // condition — never hide it without the rail there to replace it.
+  const showMinimap =
+    wholeFileEnabled && wholeFile.fetchStatus === 'ok' && nav.hasOverflow && changes.length > 0;
+
   // Large-file indicator: when the file is a highlightable language and has
   // hunks, but the syntax hook produced no tokens, highlighting was suppressed
   // (over the large-file budget). Gated on syntax.ready, which only flips true
@@ -727,7 +733,7 @@ export function DiffPane({
             wholeFileEnabled && wholeFile.fetchStatus === 'loading'
               ? styles.diffPaneBodyLoading
               : ''
-          }`}
+          } ${showMinimap ? styles.diffPaneBodyNoScrollbar : ''}`}
         >
           {wholeFileEnabled && wholeFile.fetchStatus === 'loading' && (
             <div className={styles.diffPaneLoadingOverlay}>
@@ -746,17 +752,15 @@ export function DiffPane({
             <tbody>{renderDiffRows()}</tbody>
           </table>
         </div>
-        {wholeFileEnabled &&
-          wholeFile.fetchStatus === 'ok' &&
-          nav.hasOverflow &&
-          changes.length > 0 && (
-            <ChangeMinimap
-              ticks={nav.ticks}
-              viewport={nav.viewport}
-              onGoToChange={nav.goToChange}
-              onScrollToRatio={nav.scrollToRatio}
-            />
-          )}
+        {showMinimap && (
+          <ChangeMinimap
+            ticks={nav.ticks}
+            viewport={nav.viewport}
+            scrollbarW={nav.scrollbarW}
+            onGoToChange={nav.goToChange}
+            onScrollToRatio={nav.scrollToRatio}
+          />
+        )}
       </div>
       {/* Outside the vertically-scrolling body, as a flex sibling — so the
           horizontal scrollbar is always pinned at the bottom of the diff pane

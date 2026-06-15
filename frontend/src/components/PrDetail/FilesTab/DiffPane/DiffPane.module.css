@@ -18,7 +18,12 @@
   display: flex;
   align-items: center;
   gap: var(--s-3);
-  padding: 6px var(--s-4);
+  /* Right padding reserves the toolbar's trailing gear + gap so the right-aligned
+     change-nav controls line up directly under the Unified/Split toggle above,
+     and clear the floating Ask-AI pull-tab (#291) that overlays the top-right
+     corner of the diff body (#486 review). Both the toggle and the pull-tab are
+     right-anchored, so this stays aligned across widths. */
+  padding: 6px calc(var(--s-4) + 52px) 6px var(--s-4);
   background: var(--surface-2);
   border-bottom: 1px solid var(--border-1);
   font-size: var(--text-xs);
@@ -27,13 +32,19 @@
 .diffPaneLoading {
   /* #125 — layout hook for the <Spinner> in the diff-pane header (formerly a
      JSX `<span>Loading…</span>`; the spinner keeps a real sr-only label, so the
-     WCAG 2.1 F87 concern about CSS-generated content still does not apply). */
-  margin-left: auto;
+     WCAG 2.1 F87 concern about CSS-generated content still does not apply).
+     Right-alignment now comes from `.diffPanePath { margin-right: auto }` below,
+     which pushes everything after the filename (controls + this span) to the
+     right edge as one group — a single auto margin avoids the split-gap two
+     autos would produce. */
 }
 .diffPanePath {
   font-family: var(--font-mono);
   font-size: var(--text-xs);
   color: var(--text-1);
+  /* Pin the filename left; the change-nav controls + spinner/large-file span
+     right-align as a group (#486 review: controls shouldn't abut the name). */
+  margin-right: auto;
 }
 .diffBodyWrap {
   position: relative;
@@ -47,6 +58,21 @@
   min-height: 0;
   overflow: auto;
   scrollbar-gutter: stable;
+}
+
+/* Whole-file mode with the minimap present: the rail IS the vertical scroll
+   affordance (click-to-jump + drag-to-scrub), so the native vertical scrollbar
+   is redundant — hide it and reclaim its gutter (#486 review). Only the vertical
+   bar is removed; the horizontal bar stays for wide unified lines. Chromium
+   (Electron + the web target) honors the axis-specific `::-webkit-scrollbar`
+   selector; Firefox keeps its vertical bar (it can't scope `scrollbar-width` to
+   one axis), which is an acceptable graceful fallback. Wheel/trackpad/keyboard
+   scrolling are unaffected. */
+.diffPaneBodyNoScrollbar {
+  scrollbar-gutter: auto;
+}
+.diffPaneBodyNoScrollbar::-webkit-scrollbar:vertical {
+  display: none;
 }
 
 /* Diff table — handoff `.diff-body` / `.diff-line` treatment on production <table> scaffold */

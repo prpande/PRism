@@ -1,21 +1,25 @@
 .rail {
   position: absolute;
   top: 0;
+  /* `right` is set inline (= the body's scrollbar width) so the rail sits just
+     left of the scrollbar; default to the edge when no inline value applies. */
   right: 0;
-  width: 5px;
+  width: 9px;
   height: 100%;
   background: var(--surface-2);
   cursor: pointer;
   transition: width var(--t-med) var(--ease-out);
   z-index: 2;
 }
-.rail:hover {
-  width: 48px;
+/* Expansion is driven by the JS `expanded` class (hover-intent with a close
+   delay), not `:hover`, so it lingers after the pointer strays. */
+.rail.expanded {
+  width: 16px;
   background: var(--surface-3);
 }
 @media (pointer: coarse) {
   .rail {
-    width: 48px;
+    width: 16px;
     background: var(--surface-3);
     transition: none;
   }
@@ -25,20 +29,19 @@
     transition: none;
   }
 }
+/* The kind markings span the FULL bar width in both states — at rest they fill
+   the 9px bar (so the colors read clearly), and on hover they widen with the bar
+   to fill the 16px (#486 review). The whole band is a click target: a tick jumps
+   to its change, the gaps between ticks scrub the rail. */
 .tick {
   position: absolute;
-  right: 1px;
-  width: 3px;
+  left: 0;
+  right: 0;
   min-height: 3px;
   border: 0;
   padding: 0;
   border-radius: 2px;
   cursor: pointer;
-}
-.rail:hover .tick {
-  right: 3px;
-  width: 6px;
-  border-radius: 3px;
 }
 .tick[data-kind='add'] {
   background: var(--success);
@@ -48,27 +51,6 @@
 }
 .tick[data-kind='modify'] {
   background: var(--info);
-}
-.lineNum {
-  position: absolute;
-  right: 11px;
-  top: 50%;
-  transform: translateY(-50%);
-  font-family: var(--font-mono);
-  font-size: var(--text-2xs);
-  color: var(--text-3);
-  font-variant-numeric: tabular-nums;
-  opacity: 0;
-  white-space: nowrap;
-  pointer-events: none;
-}
-.rail:hover .lineNum {
-  opacity: 1;
-}
-@media (pointer: coarse) {
-  .lineNum {
-    opacity: 1;
-  }
 }
 .viewport {
   position: absolute;
