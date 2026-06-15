@@ -21,7 +21,9 @@ internal sealed record PreferencesResponse(
     InboxPreferencesDto Inbox,
     GithubPreferencesDto Github);
 
-internal sealed record UiPreferencesDto(string Theme, string Accent, bool AiPreview, string AiMode, string Density, string ContentScale);
+internal sealed record UiPreferencesDto(
+    string Theme, string Accent, bool AiPreview, string AiMode, string Density, string ContentScale,
+    int ProviderTimeoutSeconds, int HunkAnnotationCap);
 
 // #283 ShowActivityRail serializes as `showActivityRail` natively under the camelCase
 // policy — no [JsonPropertyName] needed. Default false; gates the activity rail (#137

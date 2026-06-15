@@ -33,6 +33,12 @@ internal static class PreferencesEndpoints
                 JsonValueKind.String => props[0].Value.GetString(),
                 JsonValueKind.True => true,
                 JsonValueKind.False => false,
+                // #496: a FRACTIONAL JSON number (e.g. 3.5) OR one outside Int32 range (e.g. 99999999999)
+                // makes TryGetInt32 return false → null, which ConfigStore's Int guard rejects as 400
+                // (consistent with the existing null-on-unsupported-kind path). NOTE TryGetInt32 ACCEPTS
+                // an integer-valued decimal like 300.0 / 3e2 (returns 300) — harmless, since the value is
+                // then clamped and the bounded UI never emits decimals; do NOT add a test asserting 300.0→400.
+                JsonValueKind.Number => props[0].Value.TryGetInt32(out var n) ? n : (object?)null,
                 _ => null,
             };
 
@@ -71,7 +77,13 @@ internal static class PreferencesEndpoints
                     AiMode: ui.Ai.Mode.ToString().ToLowerInvariant(),
 #pragma warning restore CA1308
                     ui.Density,
-                    ui.ContentScale),
+                    ui.ContentScale,
+                    // #496: clamp for display so the shown value == the effective value even after a
+                    // hand-edited config.json that bypassed PatchAsync (ReadFromDiskAsync does not normalize).
+                    // The cap uses ClampCapForRead (NOT ClampCap) so the display matches the annotator's
+                    // read semantics exactly — including the legacy `<=0 → 10` corner.
+                    ProviderTimeoutSeconds: AiConfigBounds.ClampTimeout(ui.Ai.ProviderTimeoutSeconds),
+                    HunkAnnotationCap: AiConfigBounds.ClampCapForRead(ui.Ai.HunkAnnotationCap)),
             Inbox: new InboxPreferencesDto(
                 new InboxSectionsDto(
                     ReviewRequested: sections.ReviewRequested,
