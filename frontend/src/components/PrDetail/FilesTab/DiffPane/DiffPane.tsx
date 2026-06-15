@@ -32,6 +32,11 @@ import { mergeWordDiffWithTokens } from './mergeWordDiff';
 import { diffWordsWithSpace } from 'diff';
 import { WholeFileFailureBanner } from './WholeFileFailureBanner';
 import { Spinner } from '../../../Spinner';
+import { computeChanges } from '../DiffChangeNav/diffChanges';
+import { useChangeNavigation } from '../DiffChangeNav/useChangeNavigation';
+import { ChangeNavControls } from '../DiffChangeNav/ChangeNavControls';
+import { ChangeMinimap } from '../DiffChangeNav/ChangeMinimap';
+import { isInputTarget } from '../../../../hooks/isInputTarget';
 import styles from './DiffPane.module.css';
 
 export type DiffMode = 'side-by-side' | 'unified';
@@ -321,6 +326,42 @@ export function DiffPane({
     allLines.length,
   ]);
 
+  const tableRef = useRef<HTMLTableElement>(null);
+  const changes = useMemo(() => computeChanges(allLines), [allLines]);
+  const nav = useChangeNavigation(diffBodyRef, tableRef, changes);
+
+  // Boundary maps: allLines index -> change index, for the run's first and last rows.
+  const { changeStartMap, changeEndMap } = useMemo(() => {
+    const start = new Map<number, number>();
+    const end = new Map<number, number>();
+    changes.forEach((c, i) => {
+      start.set(c.startRowIdx, i);
+      end.set(c.endRowIdx, i);
+    });
+    return { changeStartMap: start, changeEndMap: end };
+  }, [changes]);
+
+  // n/p keyboard: register ONCE per mount; read the latest handlers through a ref
+  // (mirrors useFilesTabShortcuts — avoids re-subscribing the document listener on
+  // every scroll-driven render). Visibility guard: keep-alive keeps other PR tabs and
+  // the non-Files subtab mounted but display:none (PrDetailView hidden={subTab!=='files'},
+  // PrTabHost inactive views), so a hidden pane's diffBodyRef has offsetParent === null —
+  // skip it so hidden diffs never scroll or SR-announce.
+  const navRef = useRef(nav);
+  navRef.current = nav;
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      if (e.key !== 'n' && e.key !== 'p') return;
+      if (isInputTarget(e.target)) return;
+      if (!diffBodyRef.current || diffBodyRef.current.offsetParent === null) return;
+      if (e.key === 'n') navRef.current.goToNext();
+      else navRef.current.goToPrev();
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, []);
+
   // ---- Early-return guards (all hooks must be above here) ----
 
   if (!selectedPath) {
@@ -372,6 +413,12 @@ export function DiffPane({
   const colSpan = isSplit ? 4 : 3;
   const modeClass = isSplit ? 'diff-pane--split' : 'diff-pane--unified';
   const wrapClass = lineWrap ? ' diff-pane--wrap' : '';
+
+  // The minimap renders only in whole-file mode when the content overflows and
+  // has changes. The native vertical scrollbar is hidden under exactly the same
+  // condition — never hide it without the rail there to replace it.
+  const showMinimap =
+    wholeFileEnabled && wholeFile.fetchStatus === 'ok' && nav.hasOverflow && changes.length > 0;
 
   // Large-file indicator: when the file is a highlightable language and has
   // hunks, but the syntax hook produced no tokens, highlighting was suppressed
@@ -467,6 +514,8 @@ export function DiffPane({
           colSpan={colSpan}
           syntax={syntax}
           isFilled={line.isFilled}
+          dataChangeStart={changeStartMap.get(idx)}
+          dataChangeEnd={changeEndMap.get(idx)}
           onLineClick={onLineClick}
           renderComposerForLine={renderComposerForLine}
           replyContext={replyContext}
@@ -595,6 +644,8 @@ export function DiffPane({
               filePath={path}
               syntax={syntax}
               isAnchored={!!threadsByLine.get(next.newLineNum ?? -1)?.length}
+              dataChangeStart={changeStartMap.get(idx) ?? changeStartMap.get(idx + 1)}
+              dataChangeEnd={changeEndMap.get(idx) ?? changeEndMap.get(idx + 1)}
               onLineClick={onLineClick}
             />,
           );
@@ -610,6 +661,8 @@ export function DiffPane({
             content={line.content}
             filePath={path}
             syntax={syntax}
+            dataChangeStart={changeStartMap.get(idx)}
+            dataChangeEnd={changeEndMap.get(idx)}
           />,
         );
         continue;
@@ -625,6 +678,8 @@ export function DiffPane({
             filePath={path}
             syntax={syntax}
             isAnchored={!!threadsByLine.get(line.newLineNum ?? -1)?.length}
+            dataChangeStart={changeStartMap.get(idx)}
+            dataChangeEnd={changeEndMap.get(idx)}
             onLineClick={onLineClick}
           />,
         );
@@ -642,6 +697,21 @@ export function DiffPane({
     >
       <div className={`diff-pane-header ${styles.diffPaneHeader}`} data-testid="diff-pane-header">
         <span className={`diff-pane-path ${styles.diffPanePath}`}>{selectedPath}</span>
+        {/* Suppress the change-nav controls (which carry their own role=status
+            announce region) while the whole-file overlay spinner is loading, so
+            only one live region announces at a time — same single-live-region
+            invariant that gates the header spinner below (#450). Offsets aren't
+            measured mid-load anyway; the controls reappear once content is ok. */}
+        {changes.length > 0 && !(wholeFileEnabled && wholeFile.fetchStatus === 'loading') && (
+          <ChangeNavControls
+            total={nav.total}
+            currentIdx={nav.currentIdx}
+            canPrev={nav.canPrev}
+            canNext={nav.canNext}
+            onPrev={nav.goToPrev}
+            onNext={nav.goToNext}
+          />
+        )}
         {/* Suppress the header spinner while the whole-file overlay spinner is
             active so only one role=status live region announces at a time. */}
         {isLoading && !(wholeFileEnabled && wholeFile.fetchStatus === 'loading') && (
@@ -656,28 +726,41 @@ export function DiffPane({
       {localFailure !== null && (
         <WholeFileFailureBanner reason={localFailure} onDismiss={dismissBanner} />
       )}
-      <div
-        ref={diffBodyRef}
-        className={`diff-pane-body ${styles.diffPaneBody} ${
-          wholeFileEnabled && wholeFile.fetchStatus === 'loading' ? styles.diffPaneBodyLoading : ''
-        }`}
-      >
-        {wholeFileEnabled && wholeFile.fetchStatus === 'loading' && (
-          <div className={styles.diffPaneLoadingOverlay}>
-            <Spinner size="md" label="Loading whole file…" />
-          </div>
-        )}
-        <table className={`diff-table ${styles.diffTable}`}>
-          {isSplit && (
-            <colgroup>
-              <col style={{ width: '3em' }} />
-              <col />
-              <col style={{ width: '3em' }} />
-              <col />
-            </colgroup>
+      <div className={styles.diffBodyWrap}>
+        <div
+          ref={diffBodyRef}
+          className={`diff-pane-body ${styles.diffPaneBody} ${
+            wholeFileEnabled && wholeFile.fetchStatus === 'loading'
+              ? styles.diffPaneBodyLoading
+              : ''
+          } ${showMinimap ? styles.diffPaneBodyNoScrollbar : ''}`}
+        >
+          {wholeFileEnabled && wholeFile.fetchStatus === 'loading' && (
+            <div className={styles.diffPaneLoadingOverlay}>
+              <Spinner size="md" label="Loading whole file…" />
+            </div>
           )}
-          <tbody>{renderDiffRows()}</tbody>
-        </table>
+          <table ref={tableRef} className={`diff-table ${styles.diffTable}`}>
+            {isSplit && (
+              <colgroup>
+                <col style={{ width: '3em' }} />
+                <col />
+                <col style={{ width: '3em' }} />
+                <col />
+              </colgroup>
+            )}
+            <tbody>{renderDiffRows()}</tbody>
+          </table>
+        </div>
+        {showMinimap && (
+          <ChangeMinimap
+            ticks={nav.ticks}
+            viewport={nav.viewport}
+            scrollbarW={nav.scrollbarW}
+            onGoToChange={nav.goToChange}
+            onScrollToRatio={nav.scrollToRatio}
+          />
+        )}
       </div>
       {/* Outside the vertically-scrolling body, as a flex sibling — so the
           horizontal scrollbar is always pinned at the bottom of the diff pane
@@ -705,6 +788,8 @@ interface DiffLineRowProps {
   colSpan: number;
   syntax: SyntaxTokenMaps;
   isFilled?: boolean;
+  dataChangeStart?: number;
+  dataChangeEnd?: number;
   onLineClick?: (anchor: InlineAnchor) => void;
   renderComposerForLine?: (filePath: string, lineNumber: number) => React.ReactNode;
   replyContext?: ExistingCommentWidgetReplyContext;
@@ -718,6 +803,8 @@ function DiffLineRow({
   colSpan,
   syntax,
   isFilled,
+  dataChangeStart,
+  dataChangeEnd,
   onLineClick,
   renderComposerForLine,
   replyContext,
@@ -783,7 +870,12 @@ function DiffLineRow({
 
   return (
     <>
-      <tr className={rowClass} {...(isFilled ? { 'data-fill': 'true' } : {})}>
+      <tr
+        className={rowClass}
+        {...(isFilled ? { 'data-fill': 'true' } : {})}
+        data-change-start={dataChangeStart}
+        data-change-end={dataChangeEnd}
+      >
         <td className={`diff-gutter diff-gutter--old ${styles.diffGutter} ${styles.diffGutterOld}`}>
           {line.oldLineNum ?? ''}
         </td>
@@ -847,6 +939,8 @@ interface SplitDiffLineRowProps {
   syntax: SyntaxTokenMaps;
   isFilled?: boolean;
   isAnchored?: boolean;
+  dataChangeStart?: number;
+  dataChangeEnd?: number;
   onLineClick?: (anchor: InlineAnchor) => void;
 }
 
@@ -861,6 +955,8 @@ function SplitDiffLineRow({
   syntax,
   isFilled,
   isAnchored,
+  dataChangeStart,
+  dataChangeEnd,
   onLineClick,
 }: SplitDiffLineRowProps) {
   if (kind === 'header') {
@@ -932,7 +1028,12 @@ function SplitDiffLineRow({
 
   if (kind === 'solo-delete') {
     return (
-      <tr className="diff-line diff-line--delete" aria-label={`Removed line ${oldLineNum ?? '?'}`}>
+      <tr
+        className="diff-line diff-line--delete"
+        aria-label={`Removed line ${oldLineNum ?? '?'}`}
+        data-change-start={dataChangeStart}
+        data-change-end={dataChangeEnd}
+      >
         <td className={`diff-gutter diff-gutter--old ${styles.diffGutter} ${styles.diffGutterOld}`}>
           {oldLineNum ?? ''}
         </td>
@@ -971,7 +1072,12 @@ function SplitDiffLineRow({
       });
     };
     return (
-      <tr className="diff-line diff-line--insert" aria-label={`Added line ${newLineNum ?? '?'}`}>
+      <tr
+        className="diff-line diff-line--insert"
+        aria-label={`Added line ${newLineNum ?? '?'}`}
+        data-change-start={dataChangeStart}
+        data-change-end={dataChangeEnd}
+      >
         <td
           aria-hidden="true"
           className={`diff-gutter diff-gutter--old ${styles.diffGutter} ${styles.diffGutterOld} ${styles.diffCellEmpty}`}
@@ -1022,7 +1128,11 @@ function SplitDiffLineRow({
       });
     };
     return (
-      <tr className="diff-line diff-line--paired">
+      <tr
+        className="diff-line diff-line--paired"
+        data-change-start={dataChangeStart}
+        data-change-end={dataChangeEnd}
+      >
         <td className={`diff-gutter diff-gutter--old ${styles.diffGutter} ${styles.diffGutterOld}`}>
           {oldLineNum ?? ''}
         </td>

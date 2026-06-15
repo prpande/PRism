@@ -1,0 +1,42 @@
+.cluster {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.lead {
+  display: inline-flex;
+  color: var(--accent);
+  margin-right: 4px;
+}
+.count {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--text-1);
+  min-width: 3.5em; /* reserve width for the widest "M / M" so — / N doesn't jitter */
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.chev {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: 0;
+  border-radius: var(--radius-2);
+  background: transparent;
+  color: var(--text-2);
+  cursor: pointer;
+}
+.chev:hover:not(:disabled) {
+  background: var(--surface-3);
+  color: var(--accent);
+}
+.chev:focus-visible {
+  outline: 2px solid var(--accent-ring);
+  outline-offset: 1px;
+}
+.chev:disabled {
+  color: var(--text-disabled);
+  cursor: default;
+}

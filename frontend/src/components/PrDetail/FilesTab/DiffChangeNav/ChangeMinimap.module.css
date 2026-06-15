@@ -1,0 +1,78 @@
+.rail {
+  position: absolute;
+  top: 0;
+  /* `right` is set inline (= the body's scrollbar width) so the rail sits just
+     left of the scrollbar; default to the edge when no inline value applies. */
+  right: 0;
+  width: 9px;
+  height: 100%;
+  background: var(--surface-2);
+  cursor: pointer;
+  transition: width var(--t-med) var(--ease-out);
+  z-index: 2;
+}
+/* Expansion is driven by the JS `expanded` class (hover-intent with a close
+   delay), not `:hover`, so it lingers after the pointer strays. */
+.rail.expanded {
+  width: 16px;
+  background: var(--surface-3);
+}
+@media (pointer: coarse) {
+  .rail {
+    width: 16px;
+    background: var(--surface-3);
+    transition: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .rail {
+    transition: none;
+  }
+}
+/* The kind markings span the FULL bar width in both states — at rest they fill
+   the 9px bar (so the colors read clearly), and on hover they widen with the bar
+   to fill the 16px (#486 review). The whole band is a click target: a tick jumps
+   to its change, the gaps between ticks scrub the rail. */
+.tick {
+  position: absolute;
+  left: 0;
+  right: 0;
+  min-height: 3px;
+  border: 0;
+  padding: 0;
+  border-radius: 2px;
+  cursor: pointer;
+}
+.tick[data-kind='add'] {
+  background: var(--success);
+}
+.tick[data-kind='delete'] {
+  background: var(--danger);
+}
+.tick[data-kind='modify'] {
+  background: var(--info);
+}
+.viewport {
+  position: absolute;
+  left: 0;
+  right: 0;
+  border: 1px solid var(--border-strong);
+  background: color-mix(in oklch, var(--text-1) 7%, transparent);
+  border-radius: 3px;
+  pointer-events: none;
+}
+.tooltip {
+  position: absolute;
+  right: 52px;
+  transform: translateY(-50%);
+  white-space: nowrap;
+  font-family: var(--font-sans);
+  font-size: var(--text-2xs);
+  background: var(--surface-1);
+  color: var(--text-1);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-2);
+  box-shadow: var(--shadow-3);
+  padding: 4px 9px;
+  pointer-events: none;
+}

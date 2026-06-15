@@ -33,7 +33,11 @@ export const SHORTCUTS: ReadonlyArray<ShortcutGroup> = [
   },
   {
     group: 'Diff',
-    rows: [{ keys: 'd', context: 'Files tab', action: 'Toggle Unified / Split diff' }],
+    rows: [
+      { keys: 'd', context: 'Files tab', action: 'Toggle Unified / Split diff' },
+      { keys: 'n', context: 'Files tab', action: 'Jump to next change' },
+      { keys: 'p', context: 'Files tab', action: 'Jump to previous change' },
+    ],
   },
   {
     group: 'Composer',
