@@ -19,6 +19,8 @@ export type PreferenceKey =
   | 'theme'
   | 'accent'
   | 'ui.ai.mode'
+  | 'ui.ai.providerTimeoutSeconds'
+  | 'ui.ai.hunkAnnotationCap'
   | 'density'
   | 'contentScale'
   | 'inbox.defaultSort'
@@ -37,6 +39,8 @@ type InboxSectionKey = Exclude<
   | 'theme'
   | 'accent'
   | 'ui.ai.mode'
+  | 'ui.ai.providerTimeoutSeconds'
+  | 'ui.ai.hunkAnnotationCap'
   | 'density'
   | 'contentScale'
   | 'inbox.defaultSort'
@@ -49,6 +53,8 @@ export function readKey(prefs: PreferencesResponse, key: PreferenceKey): unknown
   if (key === 'theme') return prefs.ui.theme;
   if (key === 'accent') return prefs.ui.accent;
   if (key === 'ui.ai.mode') return prefs.ui.aiMode;
+  if (key === 'ui.ai.providerTimeoutSeconds') return prefs.ui.providerTimeoutSeconds;
+  if (key === 'ui.ai.hunkAnnotationCap') return prefs.ui.hunkAnnotationCap;
   if (key === 'density') return prefs.ui.density;
   if (key === 'contentScale') return prefs.ui.contentScale;
   if (key === 'inbox.defaultSort') return prefs.inbox.defaultSort;
@@ -69,6 +75,10 @@ export function writeKey(
   if (key === 'accent')
     return { ...prefs, ui: { ...prefs.ui, accent: value as PreferencesResponse['ui']['accent'] } };
   if (key === 'ui.ai.mode') return { ...prefs, ui: { ...prefs.ui, aiMode: value as AiMode } };
+  if (key === 'ui.ai.providerTimeoutSeconds')
+    return { ...prefs, ui: { ...prefs.ui, providerTimeoutSeconds: value as number } };
+  if (key === 'ui.ai.hunkAnnotationCap')
+    return { ...prefs, ui: { ...prefs.ui, hunkAnnotationCap: value as number } };
   if (key === 'density')
     return {
       ...prefs,
