@@ -44,3 +44,47 @@ describe('anyTimedOut', () => {
     expect(screen.getByTestId('any-timed-out').textContent).toBe('false');
   });
 });
+
+// Pins the spec's deliberate decision: the dismissal fingerprint is `${activeKey}:${seams}` —
+// reason-free. A reason change for the SAME seam set must NOT un-dismiss the toast (only a
+// seam-set change or a retry/clear does). A regression that folded reason into the fingerprint
+// would re-surface a dismissed toast on a same-seam escalation; this catches it.
+function DismissProbe() {
+  const api = useAiFailure();
+  return (
+    <div>
+      <span data-testid="dismissed">{String(api.dismissed)}</span>
+      <span data-testid="any-timed-out">{String(api.anyTimedOut)}</span>
+      <button
+        onClick={() => api.report(PR, 'summary', { retry: () => {}, reason: 'provider-error' })}
+      >
+        report-pe
+      </button>
+      <button onClick={() => api.report(PR, 'summary', { retry: () => {}, reason: 'timeout' })}>
+        escalate
+      </button>
+      <button onClick={() => api.dismiss()}>dismiss</button>
+    </div>
+  );
+}
+
+describe('dismissal fingerprint excludes reason', () => {
+  it('a same-seam reason escalation keeps the toast dismissed while anyTimedOut still flips true', async () => {
+    render(
+      <MemoryRouter initialEntries={['/pr/o/r/1']}>
+        <AiFailureProvider>
+          <DismissProbe />
+        </AiFailureProvider>
+      </MemoryRouter>,
+    );
+    await act(async () => screen.getByText('report-pe').click()); // summary: provider-error
+    await act(async () => screen.getByText('dismiss').click());
+    expect(screen.getByTestId('dismissed').textContent).toBe('true');
+    expect(screen.getByTestId('any-timed-out').textContent).toBe('false');
+    // SAME seam set ('summary'), reason escalates to timeout. Fingerprint is reason-free → still dismissed,
+    // but anyTimedOut reads the live failure map and flips true.
+    await act(async () => screen.getByText('escalate').click());
+    expect(screen.getByTestId('dismissed').textContent).toBe('true');
+    expect(screen.getByTestId('any-timed-out').textContent).toBe('true');
+  });
+});

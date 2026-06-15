@@ -35,6 +35,8 @@ describe('AppearancePane', () => {
     expect(screen.getByRole('radiogroup', { name: 'Density' })).toBeInTheDocument();
     expect(screen.getByRole('slider', { name: 'Content font size' })).toBeInTheDocument();
     expect(screen.queryByRole('radiogroup', { name: 'AI mode' })).toBeNull();
+    // The AI-mode relocation also dropped "AI mode" from the pane subtitle (now AiPane's concern).
+    expect(screen.queryByText(/AI mode/i)).toBeNull();
   });
 
   it('writes the contentScale preference on slider change', async () => {
