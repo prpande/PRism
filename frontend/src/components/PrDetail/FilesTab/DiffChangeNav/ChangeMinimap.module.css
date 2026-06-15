@@ -1,0 +1,102 @@
+.rail {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 5px;
+  height: 100%;
+  background: var(--surface-2);
+  cursor: pointer;
+  transition: width var(--t-med) var(--ease-out);
+  z-index: 2;
+}
+.rail:hover {
+  width: 48px;
+  background: var(--surface-3);
+}
+@media (pointer: coarse) {
+  .rail {
+    width: 48px;
+    background: var(--surface-3);
+    transition: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .rail {
+    transition: none;
+  }
+}
+.tick {
+  position: absolute;
+  right: 1px;
+  width: 3px;
+  min-height: 3px;
+  border: 0;
+  padding: 0;
+  border-radius: 2px;
+  cursor: pointer;
+}
+.rail:hover .tick {
+  right: 3px;
+  width: 6px;
+  border-radius: 3px;
+}
+.tick[data-kind='add'] {
+  background: var(--success);
+}
+.tick[data-kind='delete'] {
+  background: var(--danger);
+}
+.tick[data-kind='modify'] {
+  background: var(--info);
+}
+.lineNum {
+  position: absolute;
+  right: 11px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+  opacity: 0;
+  white-space: nowrap;
+  pointer-events: none;
+}
+.rail:hover .lineNum {
+  opacity: 1;
+}
+@media (pointer: coarse) {
+  .lineNum {
+    opacity: 1;
+  }
+}
+.viewport {
+  position: absolute;
+  left: 0;
+  right: 0;
+  border: 1px solid var(--border-strong);
+  background: color-mix(in oklch, var(--text-1) 7%, transparent);
+  border-radius: 3px;
+  pointer-events: none;
+}
+.tooltip {
+  position: absolute;
+  right: 52px;
+  transform: translateY(-50%);
+  white-space: nowrap;
+  font-family: var(--font-sans);
+  font-size: var(--text-2xs);
+  background: var(--surface-1);
+  color: var(--text-1);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-2);
+  box-shadow: var(--shadow-3);
+  padding: 4px 9px;
+  pointer-events: none;
+  transition-delay: 100ms; /* show-delay; unmount clears it, no JS timer to leak */
+}
+@media (prefers-reduced-motion: reduce) {
+  .tooltip {
+    transition-delay: 0ms;
+  }
+}
