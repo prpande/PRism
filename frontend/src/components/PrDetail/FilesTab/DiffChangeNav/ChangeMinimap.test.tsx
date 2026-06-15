@@ -41,6 +41,34 @@ describe('ChangeMinimap', () => {
     expect(onGo).toHaveBeenCalledWith(1);
   });
 
+  it('does not crash when ticks shrink below a stale hovered index', async () => {
+    // Hover the last tick, then re-render with fewer ticks (mimics navigating to
+    // a shorter file via j/k with no mouseleave). The stale hovered index must
+    // not dereference past the shrunk array.
+    const { getAllByTestId, rerender, queryByText } = render(
+      <ChangeMinimap
+        ticks={ticks}
+        viewport={viewport}
+        onGoToChange={() => {}}
+        onScrollToRatio={() => {}}
+      />,
+    );
+    await userEvent.hover(getAllByTestId('change-tick')[2]);
+    expect(queryByText(/change 3 of 3/)).toBeInTheDocument();
+    expect(() =>
+      rerender(
+        <ChangeMinimap
+          ticks={ticks.slice(0, 1)}
+          viewport={viewport}
+          onGoToChange={() => {}}
+          onScrollToRatio={() => {}}
+        />,
+      ),
+    ).not.toThrow();
+    // The stale tooltip is gone (no out-of-range render).
+    expect(queryByText(/change 3 of/)).not.toBeInTheDocument();
+  });
+
   it('is hidden from the accessibility tree', () => {
     const { container } = render(
       <ChangeMinimap

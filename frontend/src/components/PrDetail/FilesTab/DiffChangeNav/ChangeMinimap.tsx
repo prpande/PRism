@@ -17,6 +17,11 @@ export function ChangeMinimap({
 }: ChangeMinimapProps) {
   const railRef = useRef<HTMLDivElement>(null);
   const [hovered, setHovered] = useState<number | null>(null);
+  // The hovered index is local state, so it can outlive the tick it points at:
+  // navigating to a shorter file with j/k (no mouseleave) shrinks `ticks` while
+  // `hovered` stays put. Guard reads against the current length so a stale index
+  // never dereferences past the end; the next hover resets it.
+  const hoveredTick = hovered !== null ? (ticks[hovered] ?? null) : null;
 
   const onRailClick = (e: React.MouseEvent) => {
     // Only when the empty rail (not a tick) is clicked.
@@ -50,10 +55,10 @@ export function ChangeMinimap({
           <span className={styles.lineNum}>{t.startLineNum}</span>
         </button>
       ))}
-      {hovered !== null && (
-        <div className={styles.tooltip} style={{ top: `${ticks[hovered].topPct}%` }}>
-          change {hovered + 1} of {ticks.length} · L{ticks[hovered].startLineNum} · +
-          {ticks[hovered].addCount} −{ticks[hovered].delCount}
+      {hovered !== null && hoveredTick && (
+        <div className={styles.tooltip} style={{ top: `${hoveredTick.topPct}%` }}>
+          change {hovered + 1} of {ticks.length} · L{hoveredTick.startLineNum} · +
+          {hoveredTick.addCount} −{hoveredTick.delCount}
         </div>
       )}
     </div>
