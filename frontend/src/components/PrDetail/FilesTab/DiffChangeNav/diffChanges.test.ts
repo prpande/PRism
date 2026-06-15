@@ -30,6 +30,13 @@ describe('computeChanges', () => {
     expect(out[0]).toMatchObject({ kind: 'delete', startLineNum: 5, addCount: 0, delCount: 1 });
   });
 
+  it('reads startLineNum from a pure-delete run that starts at index 0', () => {
+    const out = computeChanges([del(7), del(8), ctx(9)]);
+    expect(out).toEqual([
+      { kind: 'delete', startRowIdx: 0, endRowIdx: 1, startLineNum: 7, addCount: 0, delCount: 2 },
+    ]);
+  });
+
   it('classifies a delete-then-insert block as a single modify', () => {
     const out = computeChanges([del(5), del(6), ins(5), ins(6)]);
     expect(out).toHaveLength(1);
@@ -62,5 +69,10 @@ describe('computeTicks', () => {
     const ticks = computeTicks(changes, [{ top: 50, heightPx: 1 }], 1000);
     expect(ticks[0]).toMatchObject({ kind: 'add', topPct: 5 });
     expect(ticks[0].heightPct).toBeCloseTo(0.3); // max(3,1)=3 -> 0.3%
+  });
+
+  it('returns empty when scrollHeight is not yet measured', () => {
+    const changes = computeChanges([ins(1)]);
+    expect(computeTicks(changes, [], 0)).toEqual([]);
   });
 });

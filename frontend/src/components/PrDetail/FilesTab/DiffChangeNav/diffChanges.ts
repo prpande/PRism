@@ -41,7 +41,16 @@ export function computeChanges(lines: DiffLine[]): DiffChange[] {
   return out;
 }
 
-/** Index of the last change whose start offset is at/below scrollTop+margin; -1 above the first. */
+/**
+ * Index of the last change whose start offset is at/below scrollTop+margin; -1 above the first.
+ *
+ * @param startTops Pixel offsets of each change's first row, REQUIRED sorted ascending (changes
+ *   are produced in document order, so their offsets increase monotonically). The early `break`
+ *   relies on this invariant.
+ * @param margin Activation slack (default 8px): a change counts as "current" once its top is
+ *   within this many px below the scroll position, so a change snapped to the top still reads as
+ *   reached. Matches the 8px offset goToChange uses for its scroll target.
+ */
 export function computeCurrentIdx(startTops: number[], scrollTop: number, margin = 8): number {
   let idx = -1;
   for (let i = 0; i < startTops.length; i++) {
