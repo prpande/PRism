@@ -20,7 +20,8 @@ Two AI knobs are baked into code today and cannot be changed without a rebuild:
   near the prior 60 s edge, forcing the 240 s bump; there is no way for a user on a slow box or a
   slow network to raise it further.
 - The hunk-annotation cap (`AiConfig.HunkAnnotationCap`, default 10) is config-file + hot-reload
-  only — not API-patchable and not surfaced in the UI (the deferral logged as #481).
+  only — its *read* key exists in `AiConfig` but it is **not** in the `ConfigStore.PatchAsync`
+  allowlist (not API-patchable) and not surfaced in the UI (the deferral logged as #481).
 
 Separately, #484 shipped the AI-failure toast but deferred timeout-specific copy: when a seam fails
 because the provider timed out, the user sees the generic "AI generation failed" line with no lever
@@ -43,6 +44,10 @@ ships the two configurable knobs plus the #484 timeout copy. Later phases fill t
 5. Give #484's failure toast **timeout-specific copy** plus an **"Adjust timeout"** deep-link to the
    AI tab, shown whenever at least one failed seam timed out.
 
+Goal 4 is included in Phase 1 (rather than deferred to Phase 2) to avoid a transient state where AI
+mode appears in two Settings panes simultaneously during development. If Phase 1 scope is ever
+trimmed, Goal 4 is the first candidate to defer — but it should land before the tab is announced.
+
 ## Non-goals (deferred to later #485 phases / other issues)
 
 - Per-feature AI toggles (`AiFeaturesConfig.Enabled` already has backend support — UI deferred).
@@ -61,15 +66,37 @@ seam (`ClaudeCodeHunkAnnotator`). The timeout is different: it is consumed deep 
 `PRism.AI.ClaudeCode.ClaudeCodeLlmProvider.CompleteAsync` (`Timeout: options.Timeout`), a low-level
 CLI wrapper that has no business knowing about `IConfigStore`.
 
-**Chosen approach (A): a `Func<TimeSpan>` on the provider options, wired at the composition root.**
+**Chosen approach (A): a `Func<TimeSpan>` on the provider options, supplied by a DI factory.**
 
 - `ClaudeCodeProviderOptions` gains `Func<TimeSpan> TimeoutProvider { get; init; }`, defaulting to
-  `() => Timeout` (backward-compatible — existing construction keeps working).
+  `() => Timeout` (backward-compatible — existing construction and the 4 test call sites keep working).
 - `ClaudeCodeLlmProvider` evaluates `options.TimeoutProvider()` **per call** instead of reading the
-  static `options.Timeout`.
-- `Program.cs` wires `TimeoutProvider = () => TimeSpan.FromSeconds(
-  ClampTimeout(configStore.Current.Ui.Ai.ProviderTimeoutSeconds))`, reading `Current` on every call so
-  a `PATCH` takes effect on the next AI request with no restart.
+  static `options.Timeout`. It is evaluated once at the top of `CompleteAsync`, before `RunAsync`, and
+  the resulting `TimeSpan` is used synchronously within that same call — no read-stale split.
+
+**Wiring (corrected — the options are *not* constructible with `configStore` in scope today).**
+At `Program.cs:85` the options are built by value (`new ClaudeCodeProviderOptions { … }`) and registered
+by `AddPrismClaudeCode` via `services.AddSingleton(options)` — a pre-built singleton *instance*, before
+`app.Build()`. There is no `IServiceProvider`/`configStore` local to close over at that site, and
+`ClaudeCodeProviderOptions` is a sealed class (so `with` does not apply). The fix, precedented by the
+`ClaudeCodeHunkAnnotator` registration in `PRism.Web/Composition/ServiceCollectionExtensions.cs` (which
+resolves `IConfigStore` inside an `sp =>` delegate), is to register the options through a **factory**:
+
+```csharp
+services.AddSingleton(sp => new ClaudeCodeProviderOptions
+{
+    WorkingDirectory = llmCwd,
+    Timeout          = TimeSpan.FromSeconds(240),               // static fallback
+    TimeoutProvider  = () => TimeSpan.FromSeconds(
+        AiConfigBounds.ClampTimeout(
+            sp.GetRequiredService<IConfigStore>().Current.Ui.Ai.ProviderTimeoutSeconds)),
+});
+```
+
+`AddPrismClaudeCode` changes from taking a pre-built `options` instance to registering it via this
+factory (the 4 test call sites that pass a literal options object keep compiling because
+`TimeoutProvider` defaults to `() => Timeout`). Reading `Current` inside the lambda gives hot-reload:
+a `PATCH` takes effect on the next AI request with no restart.
 
 Rejected alternatives:
 - **(B) Thread a per-call timeout through `ILlmProvider.CompleteAsync`** and every seam call site —
@@ -78,8 +105,8 @@ Rejected alternatives:
 - **(C) Inject `IConfigStore` into `ClaudeCodeLlmProvider`** — layering violation; the provider is a
   CLI wrapper in `PRism.AI.ClaudeCode` and must not depend on app config.
 
-(A) keeps config-reading in the composition root (which already has `configStore`), leaves the
-`ILlmProvider` interface untouched, and gets hot-reload for free.
+(A) keeps config-reading in the composition root (where `sp`/`IConfigStore` is reachable via the
+factory), leaves the `ILlmProvider` interface untouched, and gets hot-reload for free.
 
 ### Decision: distinguishing timeout from generic provider failure
 
@@ -87,17 +114,28 @@ Rejected alternatives:
 reliable discriminator, and message-string sniffing is fragile (a pattern we've been bitten by before).
 
 **Add a typed discriminator:** `LlmProviderException` gains `public bool TimedOut { get; }`, set `true`
-**only** at the timeout throw site (`ClaudeCodeLlmProvider` line: `if (result.TimedOut) throw …`). All
-other throw sites leave it `false`. `AiEndpoints` reads `ex.TimedOut` to pick the 503 reason.
+**only** at the timeout throw site (`ClaudeCodeLlmProvider`'s `if (result.TimedOut) throw …`). All
+other throw sites (exit-code, spawn `Win32Exception`, JSON-parse) leave it `false`. The three CA1032
+framework constructors do not set `TimedOut`; they inherit the CLR default `false`, which is correct.
+`AiEndpoints` reads `ex.TimedOut` to pick the 503 reason.
+
+This is reliable because the runner (`SystemCliProcessRunner`) enforces the user-facing timeout with a
+linked CTS (`timeoutCts.CancelAfter(spec.Timeout)`) and explicitly separates the two cancellation
+sources: a timeout returns `ProcessResult(TimedOut: true)`, whereas caller-`ct` cancellation rethrows
+`OperationCanceledException`. No seam wraps the provider call in its own CTS, so the provider's own
+timeout reliably surfaces as `TimedOut: true`. (Out of scope: a genuine client disconnect at ~timeout
+fires `ct` → `OperationCanceledException`, which propagates past the `catch (LlmProviderException)` arm
+as a generic abort with no reason. That is a client-abort, not a provider timeout, and pre-exists this
+spec; the reason mechanism deliberately does not cover it.)
 
 ### End-to-end flow for the timeout knob
 
 ```
-User drags the timeout stepper in the AI pane (e.g. 240 → 300)
+User adjusts the timeout stepper in the AI pane (e.g. 240 → 300)
   → POST /api/preferences { "ui.ai.providerTimeoutSeconds": 300 }
   → PreferencesEndpoints parses JsonValueKind.Number → int
   → ConfigStore.PatchAsync clamps to [30,600], persists, advances Current
-  → GET response echoes the clamped value; the pane reflects it
+  → the POST response (apply-on-success) echoes the clamped value; the pane reflects it
 Next AI request:
   → ClaudeCodeLlmProvider.CompleteAsync calls options.TimeoutProvider()
   → reads configStore.Current.Ui.Ai.ProviderTimeoutSeconds (= 300), clamps, uses it
@@ -112,7 +150,7 @@ Provider times out
   → frontend api client (e.g. aiSummary.ts) reads ApiError.body.reason
   → the seam hook reports { seam, reason: 'timeout' } to AiFailureProvider
   → AiFailureToast: if any failed seam reason === 'timeout', show timeout copy +
-    "Adjust timeout" action → navigate('/settings/ai')
+    "Adjust timeout" action → navigate('/settings/ai', { state: { backgroundLocation: location } })
 ```
 
 ---
@@ -122,7 +160,8 @@ Provider times out
 ### Backend
 
 **`PRism.Core/Config/AppConfig.cs` — `AiConfig`**
-Add a trailing-defaulted member:
+Add a trailing-defaulted member (STJ-net10 honors constructor defaults for missing keys — proven by the
+existing `ConfigStoreHunkAnnotationCapTests.Missing_cap_key_binds_to_the_constructor_default`):
 ```csharp
 public sealed record AiConfig(
     AiMode Mode,
@@ -131,68 +170,122 @@ public sealed record AiConfig(
     int HunkAnnotationCap = 10,
     int ProviderTimeoutSeconds = 240);
 ```
-Backed by config key `ui.ai.providerTimeoutSeconds`. The cap key `ui.ai.hunkAnnotationCap` already exists.
+Backed by config key `ui.ai.providerTimeoutSeconds`. The cap *read* key already exists; this slice adds
+both to the patch allowlist.
 
-**`PRism.Core/Config/ConfigStore.cs` — `PatchAsync` (dotted-path patch + validation)**
-- Accept the two numeric `ui.ai.*` keys.
-- Clamp on write: timeout → `[30, 600]`, cap → `[1, 50]`. Out-of-range values are clamped, not
-  rejected (matches the annotator's existing "clamp non-positive cap to 10 on read" leniency and keeps
-  the UI's bounded stepper authoritative without a 400 round-trip). A non-integer value for these keys
-  → `ConfigPatchException` → 400.
+**`PRism.Core/Config/AiConfigBounds.cs` (new) — the single-sourced clamp**
+A static helper in **PRism.Core** (referenced by both `ConfigStore` and the `Program.cs` factory, which
+`PRism.Web` can reach since it references `PRism.Core` — placing it in `PRism.Web` would be a layering
+violation for `ConfigStore`):
+```csharp
+public static class AiConfigBounds
+{
+    public static int ClampTimeout(int seconds) => Math.Clamp(seconds, 30, 600);
+    public static int ClampCap(int cap) => Math.Clamp(cap, 1, 50);
+}
+```
+Single-sourcing means the write-clamp (in `PatchAsync`) and the read-clamp (in the `TimeoutProvider`
+lambda) cannot drift.
+
+**`PRism.Core/Config/ConfigStore.cs` — `PatchAsync` (the patch path is String/Bool-only today)**
+The validator models only `ConfigFieldType { String, Bool }` and every apply-arm casts `(string)`/`(bool)`.
+Numeric keys cannot just be "accepted" — extend the type table:
+- Add `Int` to the `ConfigFieldType` enum.
+- Add `["ui.ai.providerTimeoutSeconds"] = ConfigFieldType.Int` and `["ui.ai.hunkAnnotationCap"] =
+  ConfigFieldType.Int` to `_allowedFields`.
+- Add a guard arm in the pre-gate type switch: `case ConfigFieldType.Int when value is not int: throw
+  new ConfigPatchException($"field '{key}' expects an integer value (got {DescribeValue(value)})");`
+- Add the two apply-switch arms, clamping on write via `AiConfigBounds`:
+  `"ui.ai.providerTimeoutSeconds" => _current with { Ui = ui with { Ai = ui.Ai with {
+  ProviderTimeoutSeconds = AiConfigBounds.ClampTimeout((int)value!) } } }` (and the cap arm with
+  `ClampCap`). Out-of-range values are **clamped, not rejected** (see Validation rationale below). A
+  non-integer value for these keys → `ConfigPatchException` → 400.
 
 **`PRism.Web/Endpoints/PreferencesEndpoints.cs`**
 - POST value parsing currently maps `String/True/False` and folds everything else (incl. numbers) to
-  `null`. Add `JsonValueKind.Number => props[0].Value.GetInt32()` (with `TryGetInt32` guard →
-  `ConfigPatchException`/400 on a non-integer number like `3.5`).
-- GET `BuildResponse` → `UiPreferencesDto`: add `HunkAnnotationCap` and `ProviderTimeoutSeconds` so the
-  pane can render current values. These read from `config.Current.Ui.Ai`.
+  `null`. Add `JsonValueKind.Number` handling: `props[0].Value.TryGetInt32(out var n) ? n : (object?)null`
+  — a non-integer JSON number (e.g. `3.5`) falls through to `null`, which the `ConfigFieldType.Int` guard
+  rejects as 400 (consistent with the existing null-on-unsupported-kind path).
+- GET `BuildResponse` → `UiPreferencesDto`: add `HunkAnnotationCap` and `ProviderTimeoutSeconds`
+  (from `config.Current.Ui.Ai`) so the pane can render current values.
 
 **`PRism.AI.ClaudeCode/ClaudeCodeProviderOptions.cs`**
 - Add `public Func<TimeSpan> TimeoutProvider { get; init; }` defaulting to `() => Timeout`.
 
 **`PRism.AI.ClaudeCode/ClaudeCodeLlmProvider.cs`**
-- `Timeout: options.Timeout` → `Timeout: options.TimeoutProvider()`.
+- `Timeout: options.Timeout` → `Timeout: options.TimeoutProvider()` (evaluated once at the top of
+  `CompleteAsync`).
 
 **`PRism.AI.ClaudeCode/LlmProviderException.cs`**
 - Add `public bool TimedOut { get; }`; thread an optional `bool timedOut = false` through the 3-arg
-  failure ctor; set `true` only at the timeout throw site in the provider.
+  failure ctor; set `true` only at the timeout throw site. The CA1032 ctors inherit `false`.
 
-**`PRism.Web/Program.cs`**
-- Replace the baked `Timeout = TimeSpan.FromSeconds(240)` construction with
-  `TimeoutProvider = () => TimeSpan.FromSeconds(ClampTimeout(configStore.Current.Ui.Ai.ProviderTimeoutSeconds))`.
-  Keep a sensible static `Timeout` default for the non-hot path. `ClampTimeout` is the shared clamp
-  helper (also used by `ConfigStore`), single-sourced so write-clamp and read-clamp agree.
+**`PRism.Web/Program.cs` + `PRism.AI.ClaudeCode/ServiceCollectionExtensions.cs`**
+- Register `ClaudeCodeProviderOptions` via the DI factory shown in the Architecture section so the
+  `TimeoutProvider` closure can defer-resolve `IConfigStore`. `AddPrismClaudeCode`'s signature changes
+  from "takes a pre-built options instance" to "registers via the factory"; the 4 test call sites keep
+  compiling via the `() => Timeout` default.
 
 **`PRism.Web/Endpoints/AiEndpoints.cs`**
 - The three `catch (LlmProviderException)` arms currently return `Results.StatusCode(503)` (no body).
   Change to `Results.Json(new AiFailureBody(ex.TimedOut ? "timeout" : "provider-error"), statusCode: 503)`.
 - The `catch (ArgumentException)` (oversized prompt) arms → `reason: "provider-error"`.
 - New tiny record `AiFailureBody(string Reason)` (camel-cased on the wire → `{ "reason": "timeout" }`).
-- The draft-suggestions endpoint has no try/catch (canned data only) — left unchanged; the frontend
-  treats a missing `reason` as `provider-error`.
+- **draft-suggestions asymmetry (explicit Phase-1 scope decision):** the draft-suggestions endpoint has
+  no try/catch (canned `PlaceholderDraftSuggester`, cannot throw), so it is intentionally **out of the
+  timeout-reason scope** for Phase 1. Add a guardrail comment mirroring the existing IsSubscribed
+  guardrail: *the PR that swaps in a real draft-suggestions seam MUST add the
+  `catch (LlmProviderException) → 503 { reason }` arm, or a provider timeout there will surface as a 500
+  and bypass the reason mechanism (the "Adjust timeout" deep-link will never fire for that seam).* The
+  frontend treats a missing `reason` as `provider-error`.
 
 ### Frontend
 
+**`frontend/src/components/controls/NumberStepper.tsx` (new) — the design-system numeric control**
+No numeric stepper exists in `controls/` today; it must be built. Spec:
+- **ARIA:** `role="spinbutton"` with `aria-valuemin`, `aria-valuemax`, `aria-valuenow`, and
+  **`aria-valuetext`** (so screen readers announce units, not a bare number): `"{n} seconds"` for the
+  timeout, `"{n} annotations"` for the cap. A visible unit label is rendered adjacent to the value
+  (sighted users need the unit too), matching the label/`describedById` pattern of `SegmentedControl`.
+- **Keyboard:** ArrowUp/Down = ±step, PageUp/Down = ±step, Home/End = min/max (standard spinbutton).
+- **Boundary:** at min the decrement button is `disabled`; at max the increment button is `disabled`
+  (no silent no-op clicks). Step arithmetic snaps to the step grid from the current value.
+- **Write model:** apply-on-success, matching `usePreferences().set` (`PreferencesContext` is
+  apply-on-success: the POST response's value lands directly, no GET round-trip). The displayed value
+  reflects the server-echoed (clamped) value, so a clamp self-corrects without a flicker — and because
+  the bounded stepper can't produce an out-of-range value via the UI, the clamp path is unreachable from
+  the control anyway.
+- Props: `{ label, value, min, max, step, unit, onChange }`.
+
 **`frontend/src/components/Settings/SettingsNav.tsx`**
-- Add `{ section: 'ai', label: 'AI' }` to `PRIMARY` (position: after Appearance, before Inbox — TBD by
-  visual review, default to after Appearance).
+- Add `{ section: 'ai', label: 'AI' }` to `PRIMARY`. Default position: after Appearance (see Open
+  questions for the IA criterion).
 
 **`frontend/src/components/Settings/SettingsModalRoutes.tsx`**
-- Add `<Route path="ai" element={<AiPane />} />`.
+- Add `<Route path="ai" element={<AiPane />} />`. The `RedirectToAppearance` default + catch-all stay
+  pointed at Appearance.
 
 **`frontend/src/components/Settings/panes/AiPane.tsx` (new)**
+- Subtitle (`.sub`): "AI mode, provider timeout, and annotation settings."
+- Row order (priority): **AI mode → provider timeout → hunk-annotation cap.**
 - **AI mode** control (Off / Preview / Live) + `EgressConsentModal` Live-gate wiring, moved verbatim
-  from `AppearancePane` (`set('ui.ai.mode', …)` etc.).
-- **Provider timeout** stepper (seconds; default 240; range 30–600; step 30). Writes
+  from `AppearancePane` — including the `AI_MODES`/`AI_MODE_LABELS` constants, the `pendingLive`/
+  `abortRef`/`focusTargetRef` two-phase consent state, the `modalOpen`-keyed focus-restoration effect,
+  and the `useEffect(() => () => abortRef.current?.abort(), [])` unmount cleanup. (See the double-Escape
+  note below.)
+- **Provider timeout** `NumberStepper` (unit "seconds"; default 240; min 30; max 600; step 30) →
   `set('ui.ai.providerTimeoutSeconds', n)`.
-- **Hunk-annotation cap** stepper (default 10; range 1–50; step 1). Writes
+- **Hunk-annotation cap** `NumberStepper` (unit "annotations"; default 10; min 1; max 50; step 1) →
   `set('ui.ai.hunkAnnotationCap', n)`.
-- Both steppers are **design-system numeric controls** (custom stepper, not native `<input type=number>`),
-  consistent with the repo's custom-controls-over-native-widgets convention. Each reflects the current
-  value from `usePreferences()` and the clamped value echoed by the POST response.
+- No Phase-2 placeholder row — ship the three rows; the tab is intentionally a shell for later phases.
+- **Double-Escape note:** the consent-modal interaction is transplanted verbatim. The implementer must
+  verify that pressing Escape on the outer `SettingsModal` while the inner `EgressConsentModal` is open
+  aborts the in-flight disclosure fetch and leaves no orphaned state — the `abortRef` cleanup on
+  `AiPane` unmount is the intended guard. This is a live-test verification, not a code change.
 
 **`frontend/src/components/Settings/panes/AppearancePane.tsx`**
-- Remove the AI-mode section (now in `AiPane`). Appearance keeps theme/accent/density/content-scale.
+- Remove the AI-mode section (now in `AiPane`), its constants, and update the subtitle (drop "…and AI
+  mode"). Appearance keeps theme/accent/density/content-scale.
 
 **`frontend/src/hooks/usePreferences` + preferences types**
 - Extend the preferences shape with `providerTimeoutSeconds: number` and `hunkAnnotationCap: number`
@@ -203,13 +296,22 @@ Backed by config key `ui.ai.providerTimeoutSeconds`. The cap key `ui.ai.hunkAnno
   on the returned failure shape so the hooks can pass it to `report`.
 
 **`frontend/src/components/Ai/aiFailure.tsx`**
-- `report(seam, …)` extended to carry an optional `reason: AiFailureReason`; the registry tracks it per
-  seam; a derived `anyTimedOut` boolean (true when any active failed seam's reason is `'timeout'`).
+- `report(prRef, seam, opts)` (opts already an object) extended to carry an optional
+  `reason: AiFailureReason`; the registry tracks it per seam; a derived `anyTimedOut` memo (parallel to
+  `activeFailedSeams`) is true when any active failed seam's reason is `'timeout'`.
+- **The dismissal fingerprint does NOT incorporate `reason`** — a reason change for the same set of
+  failed seams does not un-dismiss the toast. A retry already clears the dismissal
+  (`setDismissedFingerprint(null)` in `retryAll`), which is the intended un-dismiss path.
 
 **`frontend/src/components/Ai/AiFailureToast.tsx`**
 - When `anyTimedOut`, render timeout copy ("AI generation timed out.") plus an **"Adjust timeout"**
-  secondary action that calls `navigate('/settings/ai')` (alongside the existing Retry-all). Otherwise
-  the existing generic line + Retry-all.
+  secondary action (alongside the existing Retry-all). Otherwise the existing generic line + Retry-all.
+- The action calls `navigate('/settings/ai', { state: { backgroundLocation: location } })` — the
+  `backgroundLocation` state is **required** so the settings modal opens *over* the current PR; without
+  it, `App.tsx`'s `isSettingsPath` fallback (`{ pathname: '/' }`) tears the PR down and the user lands on
+  the Inbox with the failure context lost. After the user adjusts the timeout and closes Settings, the PR
+  remounts, the failed seams remain in the registry, and the toast re-appears so the user can Retry with
+  the new timeout.
 
 ---
 
@@ -217,37 +319,52 @@ Backed by config key `ui.ai.providerTimeoutSeconds`. The cap key `ui.ai.hunkAnno
 
 | Input | Rule | On violation |
 |-------|------|--------------|
-| `ui.ai.providerTimeoutSeconds` | integer, clamp to `[30,600]` | non-integer → 400; out-of-range → clamped |
-| `ui.ai.hunkAnnotationCap` | integer, clamp to `[1,50]` | non-integer → 400; out-of-range → clamped |
+| `ui.ai.providerTimeoutSeconds` | integer, clamp to `[30,600]` on write | non-integer → 400; out-of-range → clamped |
+| `ui.ai.hunkAnnotationCap` | integer, clamp to `[1,50]` on write | non-integer → 400; out-of-range → clamped |
 | AI seam 503 | body `{ reason }` set from `ex.TimedOut` | missing reason on FE → `provider-error` |
 
-Server-side clamp is authoritative; the stepper enforces bounds client-side as UX, not as the security
-boundary. The GET response always echoes the post-clamp value, so a clamped write self-corrects the UI.
+**Clamp-not-reject rationale.** The control is a bounded `NumberStepper`, so the UI can never emit an
+out-of-range value — the clamp path is unreachable from the real user flow. Server-side clamp is the
+authoritative backstop (defends a direct API call or a hand-edited config), and because `set` is
+apply-on-success the POST response returns the post-clamp value directly (no GET round-trip, no
+visible flicker). Clamp-not-reject is scoped to these **bounded-numeric** knobs only; future free-form
+AI settings (model IDs, prompts in #485 phases 2–3) should reject-with-message rather than silently
+rewrite a user-typed value.
 
 ---
 
 ## Testing
 
 **Backend (xUnit + FluentAssertions):**
-- `ConfigStore` patch: numeric timeout/cap accepted; out-of-range clamped to bounds; non-integer → throws.
+- `ConfigStore` patch: numeric timeout/cap accepted (new `Int` field type); out-of-range clamped to
+  bounds; non-integer (`null` from the endpoint) → `ConfigPatchException`.
 - `PreferencesEndpoints`: `JsonValueKind.Number` patch round-trips; GET DTO exposes both values; `3.5` → 400.
 - `ClaudeCodeLlmProvider`: `TimeoutProvider` is evaluated per call (changing the backing value between
   calls changes the `ProcessSpec.Timeout`); default still `() => Timeout`.
+- DI factory: the registered `ClaudeCodeProviderOptions.TimeoutProvider` reads `IConfigStore.Current`
+  (patch the store, resolve options, assert the provider sees the new value).
 - `LlmProviderException.TimedOut`: `true` only on the timeout path, `false` on exit-code / spawn / parse paths.
 - `AiEndpoints`: timeout `LlmProviderException` → 503 `{ reason: "timeout" }`; generic → `provider-error`;
   oversized-prompt `ArgumentException` → `provider-error`.
 
 **Frontend (vitest + Testing Library):**
-- `AiPane`: renders the three controls; mode control behaves as it did in Appearance (incl. Live consent
-  modal); steppers clamp to bounds and write the right `set(...)` key.
-- `AppearancePane`: no longer renders the AI-mode section.
+- `NumberStepper`: renders spinbutton with `aria-valuetext`; keyboard ±step / Home / End; decrement
+  disabled at min, increment disabled at max; `onChange` fires with the stepped value.
+- **Migrate the ~13 AI-mode cases** (radiogroup render, Live two-phase commit cases, already-consented
+  short-circuit, focus-to-Live-on-Accept, focus-restore-on-Decline, abort-on-downgrade, no-advance-
+  while-pending) **and their `vi.hoisted` prefs harness + `aiConsent` mocks** from
+  `AppearancePane.test.tsx` to `AiPane.test.tsx`. `AppearancePane.test.tsx` loses its AI cases and the
+  `aiConsent` mock and asserts the section is gone.
 - api clients: 503 with `{reason:'timeout'}` surfaces `reason: 'timeout'`; 503 without a body → `provider-error`.
-- `aiFailure`: `anyTimedOut` derives correctly across mixed-reason failures and recovers on clear.
-- `AiFailureToast`: timeout copy + "Adjust timeout" deep-link shown iff `anyTimedOut`; deep-link navigates.
+- `aiFailure`: `anyTimedOut` derives correctly across mixed-reason failures and recovers on clear; a
+  reason change for the same seam set does NOT un-dismiss.
+- `AiFailureToast`: timeout copy + "Adjust timeout" deep-link shown iff `anyTimedOut`; the action
+  navigates with `backgroundLocation` state.
 
 **e2e (Playwright):**
 - Open Settings → AI tab renders; change the timeout stepper; reload → value persists.
-- Force a seam 503 with `{reason:'timeout'}` → toast shows "Adjust timeout" → clicking it lands on the AI tab.
+- Force a seam 503 with `{reason:'timeout'}` → toast shows "Adjust timeout" → clicking it opens the AI
+  tab over the PR (PR not torn down).
 
 **Visual baselines:** new AI pane (both themes) + Appearance pane with the AI section removed (both themes).
 
@@ -255,6 +372,6 @@ boundary. The GET response always echoes the post-clamp value, so a clamped writ
 
 ## Open questions
 
-- Exact position of the AI tab in the nav (after Appearance vs. end of the primary list) — resolve at
-  visual review.
-- Whether the timeout stepper step should be 30 s (coarse, fewer detents) or 15 s — default 30 s.
+- Position of the AI tab in the nav. Criterion for visual review: is AI mode + provider config more like
+  a *display preference* (keep adjacent to Appearance) or a *feature configuration* (move to the end of
+  the PRIMARY list, before the System divider)? Default to after Appearance pending that call.
