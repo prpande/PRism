@@ -129,6 +129,7 @@ export function ChangeMinimap({
     <div
       ref={railRef}
       className={expanded ? `${styles.rail} ${styles.expanded}` : styles.rail}
+      data-testid="change-minimap"
       data-expanded={expanded ? 'true' : undefined}
       style={{ right: scrollbarW }}
       aria-hidden="true"
@@ -142,6 +143,7 @@ export function ChangeMinimap({
     >
       <div
         className={styles.viewport}
+        data-testid="change-minimap-viewport"
         style={{ top: `${viewport.topPct}%`, height: `${viewport.heightPct}%` }}
       />
       {ticks.map((t, i) => (
