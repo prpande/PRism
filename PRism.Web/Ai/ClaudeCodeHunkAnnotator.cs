@@ -33,7 +33,6 @@ internal sealed partial class ClaudeCodeHunkAnnotator : IHunkAnnotator, IDisposa
     internal const string ClaudeProviderId = AiProviderIds.Claude;
     internal const string HunkAnnotationModel = "claude-sonnet-4-6"; // matches the ranker/summarizer tier
     private const string ComponentName = "hunkAnnotations";          // matches AiSeamFeatureKeys + FE feature key
-    internal const int DefaultCap = 10;                              // clamp target for a nonsensical config value
 
     // EGRESS ALLOWLIST (spec §12): the ONLY PR-derived field categories sent. Adding here widens egress.
     internal static readonly IReadOnlyList<string> PromptFieldAllowlist = new[] { "path", "status", "hunkBodies" };
@@ -117,8 +116,10 @@ internal sealed partial class ClaudeCodeHunkAnnotator : IHunkAnnotator, IDisposa
             return Array.Empty<HunkAnnotation>();
         }
 
-        var cap = _configStore.Current.Ui.Ai.HunkAnnotationCap;
-        if (cap <= 0) cap = DefaultCap; // clamp-on-read (spec §8)
+        // #496: ClampCapForRead = legacy/absent (<=0) → 10 (NOT min 1), else cap at MaxCap (50). Single
+        // source shared with the GET DTO's display-clamp so shown == effective. Preserves the prior
+        // <=0 → 10 floor (pinned by Nonpositive_cap_clamps_to_ten).
+        var cap = AiConfigBounds.ClampCapForRead(_configStore.Current.Ui.Ai.HunkAnnotationCap);
 
         var result = await CompleteAndParseAsync(pr, headSha, flaggedFiles, cap, ct).ConfigureAwait(false);
         if (result is null)
