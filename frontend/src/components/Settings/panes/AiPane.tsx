@@ -140,6 +140,10 @@ export function AiPane() {
         </div>
       </div>
 
+      {/* The min/max literals below (and the "30–600" / "1–50" help text) MIRROR the canonical bounds
+          in PRism.Core/Config/AiConfigBounds.cs (MinTimeout=30/MaxTimeout=600, MinCap=1/MaxCap=50). The
+          server re-clamps on write, so a stale literal here only mis-bounds the stepper UI — keep them in
+          sync if AiConfigBounds changes. The `step` values (30, 1) are UI-only and have no backend mirror. */}
       <div className={pane.row}>
         <div>
           <div className={pane.label} id="ai-timeout-label">

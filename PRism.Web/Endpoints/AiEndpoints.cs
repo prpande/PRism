@@ -56,10 +56,10 @@ internal static class AiEndpoints
         // merge the seam swap without this gate.
         // #496 GUARDRAIL: draft-suggestions has NO try/catch because PlaceholderDraftSuggester is canned
         // and cannot throw. When a real draft-suggestions seam is swapped in, it MUST add the
-        // `catch (LlmProviderException ex) → Results.Json(new AiFailureBody(ex.TimedOut ? "timeout" :
-        // "provider-error"), statusCode: 503)` arm (mirroring the other three seams). Without it, a
-        // provider timeout here surfaces as a 500 and bypasses the reason mechanism — the "Adjust timeout"
-        // deep-link will never fire for this seam. The frontend treats a missing reason as "provider-error".
+        // `catch (LlmProviderException ex) → ProviderFailure(ex)` + `catch (ArgumentException) →
+        // ProviderFailure()` arms (mirroring the other three seams). Without them, a provider timeout here
+        // surfaces as a 500 and bypasses the reason mechanism — the "Adjust timeout" deep-link will never
+        // fire for this seam. The frontend treats a missing reason as "provider-error".
         app.MapGet("/api/pr/{owner}/{repo}/{number:int}/ai/draft-suggestions",
             async (string owner, string repo, int number,
                    IAiSeamSelector ai, CancellationToken ct) =>
@@ -93,16 +93,14 @@ internal static class AiEndpoints
         }
         catch (LlmProviderException ex)
         {
-            return Results.Json(new AiFailureBody(ex.TimedOut ? "timeout" : "provider-error"),
-                statusCode: StatusCodes.Status503ServiceUnavailable);
+            return ProviderFailure(ex);
         }
         catch (ArgumentException)
         {
             // PromptSanitizer.WrapAsData throws ArgumentException when a single diff field exceeds the
             // 2 MB default cap. The content is diff-derived (attacker-influenceable), so this must map
             // to 503 — not 500 — to preserve the "provider failure → 503 (never 500)" contract.
-            return Results.Json(new AiFailureBody("provider-error"),
-                statusCode: StatusCodes.Status503ServiceUnavailable);
+            return ProviderFailure();
         }
     }
 
@@ -127,8 +125,7 @@ internal static class AiEndpoints
         }
         catch (LlmProviderException ex)
         {
-            return Results.Json(new AiFailureBody(ex.TimedOut ? "timeout" : "provider-error"),
-                statusCode: StatusCodes.Status503ServiceUnavailable);
+            return ProviderFailure(ex);
         }
         catch (ArgumentException)
         {
@@ -136,8 +133,7 @@ internal static class AiEndpoints
             // ArgumentException when a single file's concatenated hunk bodies exceed the 2 MB cap.
             // The content is diff-derived (attacker-influenceable), so this must map to 503 — not 500 —
             // matching the "provider failure → 503 (never 500)" contract documented above.
-            return Results.Json(new AiFailureBody("provider-error"),
-                statusCode: StatusCodes.Status503ServiceUnavailable);
+            return ProviderFailure();
         }
     }
 
@@ -160,18 +156,28 @@ internal static class AiEndpoints
         }
         catch (LlmProviderException ex)
         {
-            return Results.Json(new AiFailureBody(ex.TimedOut ? "timeout" : "provider-error"),
-                statusCode: StatusCodes.Status503ServiceUnavailable);
+            return ProviderFailure(ex);
         }
         catch (ArgumentException)
         {
             // PromptSanitizer.WrapAsData throws ArgumentException when a single file's hunk bodies exceed
             // the 2 MB cap (in either the ranker's or the annotator's BuildPrompt). Diff-derived content is
             // attacker-influenceable, so map to 503 — not 500 — per the "provider failure → 503" contract.
-            return Results.Json(new AiFailureBody("provider-error"),
-                statusCode: StatusCodes.Status503ServiceUnavailable);
+            return ProviderFailure();
         }
     }
+
+    // #496: shared 503 failure responses so all three seam gate chains map provider failures identically
+    // (DRY — extracted from three copies). A timed-out provider yields { reason: "timeout" } (→ the
+    // frontend's "Adjust timeout" deep-link); a generic provider error or an oversized diff-derived prompt
+    // (ArgumentException) yields { reason: "provider-error" }. Both are 503 — never 500.
+    private static IResult ProviderFailure(LlmProviderException ex) =>
+        Results.Json(new AiFailureBody(ex.TimedOut ? "timeout" : "provider-error"),
+            statusCode: StatusCodes.Status503ServiceUnavailable);
+
+    private static IResult ProviderFailure() =>
+        Results.Json(new AiFailureBody("provider-error"),
+            statusCode: StatusCodes.Status503ServiceUnavailable);
 }
 
 // #496: 503 body so the frontend can distinguish a provider timeout (→ "Adjust timeout" deep-link)

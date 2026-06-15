@@ -30,11 +30,7 @@ export function useAiHunkAnnotations(
         if (cancelled) return;
         setEntries(null);
         if (err instanceof ApiError && err.status === 401) clear(prRef, 'hunk-annotations');
-        else
-          report(prRef, 'hunk-annotations', {
-            retry,
-            reason: err instanceof ApiError ? readFailureReason(err.body) : 'provider-error',
-          });
+        else report(prRef, 'hunk-annotations', { retry, reason: readFailureReason(err) });
       });
     return () => {
       cancelled = true;

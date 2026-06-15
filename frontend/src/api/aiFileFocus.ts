@@ -18,9 +18,6 @@ export async function getAiFileFocusResult(prRef: PrReference): Promise<AiFileFo
     return result ? { kind: 'ok', result } : { kind: 'no-content' };
   } catch (err) {
     if (err instanceof ApiError && err.status === 401) return { kind: 'auth' };
-    return {
-      kind: 'error',
-      reason: err instanceof ApiError ? readFailureReason(err.body) : 'provider-error',
-    };
+    return { kind: 'error', reason: readFailureReason(err) };
   }
 }

@@ -14,9 +14,11 @@ export class ApiError extends Error {
   }
 }
 
-// #496: extract the AI-failure reason from a 503 body ({ reason }). Defaults to 'provider-error' for
-// a missing/unknown reason or a non-ApiError throw (network failure), so callers never branch on null.
-export function readFailureReason(body: unknown): AiFailureReason {
+// #496: extract the AI-failure reason from a caught error. For an ApiError carrying a 503 body
+// ({ reason }) returns that reason; for a missing/unknown reason or a non-ApiError throw (network
+// failure) defaults to 'provider-error', so callers pass the raw caught error and never branch on null.
+export function readFailureReason(err: unknown): AiFailureReason {
+  const body = err instanceof ApiError ? err.body : err;
   if (body && typeof body === 'object' && 'reason' in body) {
     const r = (body as { reason?: unknown }).reason;
     if (r === 'timeout' || r === 'provider-error') return r;

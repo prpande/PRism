@@ -30,11 +30,7 @@ export function useAiDraftSuggestions(
         if (cancelled) return;
         setEntries(null);
         if (err instanceof ApiError && err.status === 401) clear(prRef, 'draft-suggestions');
-        else
-          report(prRef, 'draft-suggestions', {
-            retry,
-            reason: err instanceof ApiError ? readFailureReason(err.body) : 'provider-error',
-          });
+        else report(prRef, 'draft-suggestions', { retry, reason: readFailureReason(err) });
       });
     return () => {
       cancelled = true;
