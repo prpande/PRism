@@ -13,6 +13,7 @@ public static class ServiceCollectionExtensions
     public static IServiceCollection AddPrismClaudeCode(
         this IServiceCollection services, ClaudeCodeProviderOptions options, string usageDir)
     {
+        ArgumentNullException.ThrowIfNull(services);
         ArgumentNullException.ThrowIfNull(options);
         // Delegate to the factory overload so there is ONE registration code path. The instance
         // overload protects the existing instance-overload test call sites, which do NOT register IConfigStore.
