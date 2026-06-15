@@ -8,6 +8,9 @@ interface NavItem {
 }
 const PRIMARY: NavItem[] = [
   { section: 'appearance', label: 'Appearance' },
+  // TODO(#496 visual-review): final AI-tab position unresolved (spec §Open Questions —
+  // display-preference-adjacent vs feature-config-at-end). Defaulting to after Appearance.
+  { section: 'ai', label: 'AI' },
   { section: 'inbox', label: 'Inbox' },
   { section: 'github-connection', label: 'GitHub Connection' },
 ];
