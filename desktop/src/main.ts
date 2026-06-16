@@ -45,6 +45,18 @@ if (!gotLock) {
     app.setAppUserModelId("com.prpande.prism.desktop");
   }
 
+  // macOS reads the dock label + the "About/Hide/Quit <app>" role items from
+  // app.name, and the dock icon from app.dock — NOT from BrowserWindow.icon, which
+  // it ignores. An unpackaged dev run is hosted by Electron.app, so without this
+  // the dock shows "Electron" and Electron's icon. A packaged .app gets PRism's
+  // name + icon from electron-builder (productName + icon.icns) at build time;
+  // setting the name here makes the dev run match. The dock icon itself is applied
+  // post-ready in bootstrap (app.dock isn't populated until then). This is the
+  // macOS counterpart to the win32 AppUserModelId fix above.
+  if (process.platform === "darwin") {
+    app.setName("PRism");
+  }
+
   // Custom window controls: the SPA renders its own minimize/maximize/close
   // (traffic-light) buttons in the navbar and drives them through these channels.
   // The native OS controls are suppressed (no titleBarOverlay on Windows;
@@ -117,15 +129,33 @@ function resolveIconPath(): string | undefined {
   // PRism's icon; undefined falls back to Electron's default without erroring.
   //
   // .ico only — this sets the WINDOWS window/taskbar icon (the dev pain point).
-  // macOS uses .icns for the dock/app icon, which is supplied at PACKAGING time
-  // by electron-builder (the later packaging slice), not by BrowserWindow.icon;
-  // on macOS this returns undefined and the dev dock icon stays Electron's
-  // default. Linux desktop icons are also packaging-time, out of scope here.
+  // macOS ignores BrowserWindow.icon entirely; its dock icon comes from app.dock
+  // (applied via resolveDockIconPath/applyMacDockIcon below) in dev and from the
+  // bundle icon electron-builder bakes at PACKAGING time in a shipped .app. Linux
+  // desktop icons are also packaging-time, out of scope here.
   const candidates = [
     path.join(__dirname, "..", "assets", "icon.ico"),
     path.join(process.resourcesPath, "assets", "icon.ico"),
   ];
   return candidates.find((p) => fs.existsSync(p));
+}
+
+function resolveDockIconPath(): string | undefined {
+  // macOS dock/app icon source for a DEV run: desktop/assets/icon.icns next to
+  // dist/. .icns only — NSImage reads it natively, and app.dock.setIcon takes the
+  // path directly. A packaged macOS .app already shows PRism via the bundle icon
+  // electron-builder bakes from mac.icon, and the .icns is not shipped inside
+  // Resources (electron-builder.yml `files` ships only icon.ico), so this returns
+  // undefined there and the bundle icon stands — which is exactly what we want.
+  const candidate = path.join(__dirname, "..", "assets", "icon.icns");
+  return fs.existsSync(candidate) ? candidate : undefined;
+}
+
+function applyMacDockIcon(): void {
+  // Post-ready only: app.dock is undefined off macOS and before the app is ready.
+  if (process.platform !== "darwin" || !app.dock) return;
+  const icon = resolveDockIconPath();
+  if (icon) app.dock.setIcon(icon);
 }
 
 function resolveBinaryPath(): string {
@@ -152,6 +182,9 @@ function resolveDataDir(): string | null {
 
 async function bootstrap(): Promise<void> {
   startupMarks.set("whenReady", Date.now());
+  // macOS dock icon — must run post-ready (app.dock is only populated once the
+  // app is ready). Cheap and side-effect-free off macOS, so it's unconditional.
+  applyMacDockIcon();
   try {
     startupMarks.set("sidecarSpawn", Date.now());
     sidecar = await startSidecar({
