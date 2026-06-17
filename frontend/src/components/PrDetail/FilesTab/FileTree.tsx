@@ -170,7 +170,15 @@ export function FileTree({
   }
 
   return (
-    <div className={`file-tree ${styles.fileTree}`} data-testid="file-tree">
+    <div
+      className={`file-tree ${styles.fileTree}`}
+      data-testid="file-tree"
+      // #492 — drives the AI column width AND the synthetic-hscroll spacer reservation
+      // in lockstep (CSS), so the fixed AI gutter appears only in Preview/Live and the
+      // scrollbar keeps spanning the tree column only. Set from the prop at render — no
+      // post-mount flash.
+      data-ai-on={aiPreview ? '1' : '0'}
+    >
       <div className={`file-tree-header ${styles.fileTreeHeader}`}>
         Files · {viewedCount}/{files.length} viewed
         {aiPreview && <SampleBadge variant="region" />}
@@ -194,11 +202,29 @@ export function FileTree({
                   isViewed={viewedPaths.has(row.node.path)}
                   onSelectFile={onSelectFile}
                   focusLevel={focusByPath?.get(row.node.path) ?? null}
-                  aiPreview={aiPreview}
                 />
               ),
             )}
           </div>
+        </div>
+        {/* #492 — AI focus column. A fixed column OUTSIDE .fileTreeScroll (like the
+            checkbox column), so the dot stays visible at any horizontal scroll position
+            instead of riding off-screen at the end of a long filename. Rendered from the
+            same flat `rows` list so row i lines up across all three columns. Collapses to
+            0 width when AI is off (data-ai-on on the root), and is aria-hidden — the
+            spoken "AI focus: <level>" signal lives in the row after the filename. */}
+        <div className={`file-tree-ai-col ${styles.fileTreeAiCol}`} aria-hidden="true">
+          {rows.map((row) =>
+            row.kind === 'file' ? (
+              <AiSlot
+                key={row.key}
+                focusLevel={focusByPath?.get(row.node.path) ?? null}
+                aiPreview={aiPreview}
+              />
+            ) : (
+              <div key={row.key} className={styles.fileTreeAiSlot} />
+            ),
+          )}
         </div>
         {/* Checkbox column — a separate object that never scrolls horizontally, so the
             checkboxes stay fixed while names scroll. It shares the outer pane's vertical
@@ -254,14 +280,12 @@ function FileCell({
   isViewed,
   onSelectFile,
   focusLevel,
-  aiPreview,
 }: {
   row: FileRow;
   isSelected: boolean;
   isViewed: boolean;
   onSelectFile: (path: string) => void;
   focusLevel: FocusLevel | null;
-  aiPreview: boolean;
 }) {
   const node = row.node;
   return (
@@ -301,6 +325,25 @@ function FileCell({
       >
         {node.name}
       </span>
+      {/* #492 — the VISUAL dot moved to the fixed .file-tree-ai-col (so it can't scroll
+          off with a long name). The spoken signal stays here, after the filename, so the
+          screen-reader reading order (status word → name → AI focus) is unchanged. */}
+      {focusLevel && focusLevel !== 'low' && (
+        <span className="sr-only">{` AI focus: ${focusLevel}`}</span>
+      )}
+    </div>
+  );
+}
+
+// #492 — one slot per file row in the fixed .file-tree-ai-col. The `.file-tree-ai`
+// span and its inner High/Medium dot are unchanged from the old in-row markup (same
+// data-on gate, title, aria-hidden); only the location moved. Directory rows render a
+// bare .fileTreeAiSlot (no .file-tree-ai), so the `count === files.length` invariant
+// holds. The span keeps its own data-on collapse; the column-level data-ai-on gate
+// (root) collapses the whole gutter when AI is off.
+function AiSlot({ focusLevel, aiPreview }: { focusLevel: FocusLevel | null; aiPreview: boolean }) {
+  return (
+    <div className={styles.fileTreeAiSlot}>
       <span
         className={`file-tree-ai ${styles.fileTreeAi}`}
         data-on={aiPreview ? '1' : '0'}
@@ -313,9 +356,6 @@ function FileCell({
           />
         )}
       </span>
-      {focusLevel && focusLevel !== 'low' && (
-        <span className="sr-only">{` AI focus: ${focusLevel}`}</span>
-      )}
     </div>
   );
 }
