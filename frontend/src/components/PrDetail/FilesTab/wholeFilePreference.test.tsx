@@ -53,4 +53,14 @@ describe('useWholeFilePreference', () => {
     act(() => result.current.setShowFullFile(true)); // no false->true transition inside the set itself
     expect(result.current.failedPaths.has('a.ts')).toBe(true);
   });
+  it('#510: clearFailed retries one path without disturbing others or the global pref', () => {
+    const { result } = renderHook(() => useWholeFilePreference());
+    act(() => result.current.setShowFullFile(true));
+    act(() => result.current.markFailed('a.ts'));
+    act(() => result.current.markFailed('b.ts'));
+    act(() => result.current.clearFailed('a.ts'));
+    expect(result.current.failedPaths.has('a.ts')).toBe(false); // retried
+    expect(result.current.failedPaths.has('b.ts')).toBe(true); // untouched
+    expect(result.current.showFullFile).toBe(true); // global pref unchanged
+  });
 });

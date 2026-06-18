@@ -68,12 +68,28 @@ internal static partial class PrDetailEndpoints
                     return Results.Problem(type: "/sha/invalid", statusCode: 422);
 
                 var prRef = new PrReference(owner, repo, number);
-                var snapshot = loader.TryGetCachedSnapshot(prRef);
-                if (snapshot is null)
-                    return Results.Problem(type: "/file/snapshot-evicted", statusCode: 422);
 
+                // #510: authorize against the diff memo, NOT a live snapshot. The diff memo is
+                // content-addressed by (prRef, range) and is never evicted by background
+                // activity — the poller head/comment-count change, comment post-now,
+                // root-comment post, and draft submit all call Invalidate, which drops only the
+                // per-(prRef,headSha,gen) snapshot (see PrDetailLoader). Serving file content
+                // needs only the sha (GetFileContentAsync fetches the blob directly), so the
+                // common "expand a file I'm already viewing" path must not dead-end on a
+                // snapshot the background machinery dropped out from under it.
                 if (!loader.IsPathInAnyCachedDiff(prRef, path))
                 {
+                    // Path is outside any diff visited this session. Classifying it
+                    // (truncation-window vs not-in-diff) needs the canonical base..head range,
+                    // which lives on the snapshot. #510: re-hydrate on demand if a background
+                    // event evicted the snapshot, rather than surfacing the manual-reload
+                    // /file/snapshot-evicted dead-end. Only surface snapshot-evicted when
+                    // re-hydration also fails (LoadAsync => null: the PR no longer exists).
+                    var snapshot = loader.TryGetCachedSnapshot(prRef)
+                        ?? await loader.LoadAsync(prRef, ct).ConfigureAwait(false);
+                    if (snapshot is null)
+                        return Results.Problem(type: "/file/snapshot-evicted", statusCode: 422);
+
                     // Determine whether the canonical (base..head) diff was truncated; if it
                     // was, the path may legitimately be in the PR's diff but landed outside
                     // the cached file list. Spec § 8.
@@ -132,6 +148,11 @@ internal static partial class PrDetailEndpoints
                     return Results.Problem(type: "/viewed/tab-id-missing", statusCode: 422);
 
                 var prRef = new PrReference(owner, repo, number);
+                // Unlike /file (#510), this path intentionally does NOT re-hydrate an evicted
+                // snapshot: it asserts the caller's HeadSha matches the live snapshot's to reject
+                // viewed-state writes against a stale head (the 409 below). Re-hydrating would
+                // silently rebuild the snapshot at the current head and mask that staleness
+                // conflict — so a missing snapshot is a hard 422 here, not a lazy reload.
                 var snapshot = loader.TryGetCachedSnapshot(prRef);
                 if (snapshot is null)
                     return Results.Problem(type: "/viewed/snapshot-evicted", statusCode: 422);
@@ -199,6 +220,9 @@ internal static partial class PrDetailEndpoints
                     return Results.Problem(type: "/viewed/path-invalid", statusCode: 422);
 
                 var prRef = new PrReference(owner, repo, number);
+                // Like /mark-viewed (and unlike /file, #510), this intentionally does NOT
+                // re-hydrate an evicted snapshot: the HeadSha equality check below rejects a
+                // viewed-state write against a stale head, and a lazy reload would mask that.
                 var snapshot = loader.TryGetCachedSnapshot(prRef);
                 if (snapshot is null)
                     return Results.Problem(type: "/viewed/snapshot-evicted", statusCode: 422);

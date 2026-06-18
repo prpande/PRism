@@ -93,7 +93,8 @@ export function FilesTab() {
   // false = a single synthetic scrollbar shifts both split panes in lockstep
   // (useLockedPaneScroll); true = long lines soft-wrap within their pane.
   const [lineWrap, setLineWrap] = useState(false);
-  const { showFullFile, setShowFullFile, failedPaths, markFailed } = useWholeFilePreference();
+  const { showFullFile, setShowFullFile, failedPaths, markFailed, clearFailed } =
+    useWholeFilePreference();
 
   const iterationGatePermits = activeRange === 'all' && selectedCommits === null;
   // wholeFileEnabled is fully derived below, after `selectedFile` is computed,
@@ -252,6 +253,14 @@ export function FilesTab() {
     },
     [selectedPath, markFailed],
   );
+
+  // #510: banner Retry — drop the current file from failedPaths so
+  // deriveWholeFileEnabled re-permits whole-file view and the fetch re-attempts.
+  // Scoped to this path so a retry doesn't disturb other files' fallback state.
+  const handleWholeFileRetry = useCallback(() => {
+    if (!selectedPath) return;
+    clearFailed(selectedPath);
+  }, [selectedPath, clearFailed]);
 
   useFilesTabShortcuts({
     onNextFile: handleNextFile,
@@ -647,6 +656,7 @@ export function FilesTab() {
             isLoading={diff.isLoading}
             wholeFileEnabled={wholeFileEnabled}
             onWholeFileFailed={handleWholeFileFailed}
+            onWholeFileRetry={handleWholeFileRetry}
             headSha={prDetail.pr.headSha}
             baseSha={prDetail.pr.baseSha}
             lineWrap={lineWrap}
