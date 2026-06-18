@@ -309,8 +309,8 @@ public sealed class ClaudeCodeFileFocusRankerTests
             "selectivity: LOW is the default; high/medium is reserved for files that genuinely need a human");
         provider.LastSystemPrompt.Should().Contain("AT MOST 10",
             "the ranker must bound how many files it flags high/medium (owner feedback)");
-        provider.LastSystemPrompt.Should().MatchRegex("(?i)bulleted markdown",
-            "the rationale must be concise bulleted markdown so the reviewer has real context (owner feedback)");
+        provider.LastSystemPrompt.Should().MatchRegex("(?i)synopsis|bullets",
+            "the rationale must be synopsis-first (headline) followed by bullets so the Hotspots tab can show real context (owner feedback)");
     }
 
     [Fact]
