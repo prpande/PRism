@@ -170,6 +170,15 @@ internal static class ServiceCollectionExtensions
                 sp.GetRequiredService<IConfigStore>());
         });
 
+        // #410 — the real IInboxItemEnricher. Categorizes inbox PRs by change kind.
+        services.AddSingleton<ClaudeCodeInboxItemEnricher>(sp => new ClaudeCodeInboxItemEnricher(
+            sp.GetRequiredService<ILlmProvider>(),
+            sp.GetRequiredService<ITokenUsageTracker>(),
+            sp.GetRequiredService<IAiInteractionLog>(),
+            sp.GetRequiredService<IReviewEventBus>(),
+            sp.GetRequiredService<AiConsentState>(),
+            sp.GetRequiredService<ILogger<ClaudeCodeInboxItemEnricher>>()));
+
         var realSeams = new Dictionary<Type, object>();   // P1: populated below with the first real impl
         // Pass the live dictionary BY REFERENCE (not a .Keys snapshot) — the resolver and the selector
         // (real: realSeams below) must read the same instance so P1's first real impl lights up both
@@ -182,6 +191,7 @@ internal static class ServiceCollectionExtensions
             realSeams[typeof(IPrSummarizer)] = sp.GetRequiredService<ClaudeCodeSummarizer>();
             realSeams[typeof(IFileFocusRanker)] = sp.GetRequiredService<ClaudeCodeFileFocusRanker>();
             realSeams[typeof(IHunkAnnotator)] = sp.GetRequiredService<ClaudeCodeHunkAnnotator>();
+            realSeams[typeof(IInboxItemEnricher)] = sp.GetRequiredService<ClaudeCodeInboxItemEnricher>(); // #410
             return new AiSeamSelector(
             sp.GetRequiredService<AiModeState>(),
             noop: new Dictionary<Type, object>
