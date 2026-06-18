@@ -94,12 +94,27 @@ away with the row, and clutters the leading edge.)
    **always rendered, one per file row**, regardless of gate state — that is what the
    `count === files.length` test asserts.
 
-6. **`--ai-col-w` value.** The dot's outer `.file-tree-ai` span is `16px`; the column
-   adds a small symmetric inset so it sits comfortably beside the checkbox without
-   crowding — start at `calc(16px + 2 * var(--s-2))` and confirm the exact gutter in
-   the B1 live pass. The `.file-tree-ai-col` cell has **no background** (transparent,
-   inheriting the same surface as the rows), so the unchanged `--accent` dot colors
-   keep their current contrast in both themes — no color work.
+6. **`--ai-col-w` value.** Set to `12px` — just wide enough for the 6px dot plus the
+   2px high-focus halo — so the AI signal reads as a compact pair immediately left of
+   the viewed checkbox and the filename keeps the room. The `.file-tree-ai` span width
+   tracks `--ai-col-w` so the dot centers without overflowing the slot. (Tuned down
+   from an initial 24px after the B1 live pass: at 24px the centered dot left too wide
+   a gap to the checkbox and ate filename width — owner feedback.) The
+   `.file-tree-ai-col` cell has **no background** (transparent, inheriting the same
+   surface as the rows), so the unchanged `--accent` dot colors keep their current
+   contrast in both themes — no color work.
+
+7. **Checkbox gutter tightened to `--s-1` (owner B1 feedback — scope deviation).**
+   `.fileTreeCheckSlot` padding goes `var(--s-3)` → `var(--s-1)` (4px each side) in
+   **both** AI modes, and `--check-col-w` becomes `calc(14px + 2 * var(--s-1))` to
+   match. This reclaims horizontal room for filenames across the board and, when AI is
+   on, pairs the viewed checkbox closely with the AI dot as one compact metadata
+   gutter. This **deliberately overrides** the issue's "checkbox column unchanged"
+   guard and the matching acceptance criterion below: the owner asked for it during the
+   B1 live pass after seeing the at-rest gutter was wider than the metadata needed. The
+   checkbox's *behavior* (toggle, viewed-dim, tab order) is untouched — only its
+   horizontal padding changes. The single AI-off visual baseline that captures this
+   column (`pr-detail-files-tree.png`) is regenerated.
 
 ## Acceptance criteria
 
@@ -108,7 +123,10 @@ away with the row, and clutters the leading edge.)
 - [ ] Dot still reflects focus level (High vs Medium) and only shows in Preview/Live
       (`data-on` gate preserved).
 - [ ] `sr-only` "AI focus: \<level\>" announcement preserved, read after the filename.
-- [ ] Viewed checkbox column behavior unchanged.
+- [ ] Viewed checkbox *behavior* unchanged (toggle, viewed-dim, tab order). Its
+      horizontal gutter is intentionally tightened `--s-3` → `--s-1` per owner B1
+      feedback (Mechanics §7) — a deliberate, documented deviation from the issue's
+      "checkbox column unchanged" scope guard.
 - [ ] When AI is off, the AI column collapses to `0` width (no empty gutter) and the
       synthetic horizontal scrollbar still aligns under the tree column only.
 - [ ] In both light and dark themes, at a narrow pane width with at least one long
@@ -138,3 +156,8 @@ Ranker, focus-level thresholds, `data-on` Preview/Live gating logic, deep-link-o
 Layout/placement only. Visual-baseline regen for the moved dot (e2e parity baselines +
 `ai-gating-sweep` still assert the dots are *visible*, which holds) is expected B1 work,
 not a code-logic change.
+
+**Documented in-scope deviation:** the checkbox gutter tighten (`--s-3` → `--s-1`,
+Mechanics §7) touches the checkbox column the issue marked unchanged. It is an explicit
+owner B1 request, not scope creep — recorded here and in the acceptance criteria so the
+deviation is durable rather than silent.
