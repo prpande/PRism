@@ -33,9 +33,14 @@ the Hotspots accordion as the container its markdown rationale lands in.
 
 - Every AI-generated text surface renders GFM markdown via the existing `MarkdownRenderer`
   (bullets, links, inline code, fenced code), with a **consistent** compact treatment.
-- The summarizer, file-focus ranker, and hunk annotator are prompted to emit **concise,
+- The summarizer, file-focus ranker, and hunk annotator are prompted to **prefer concise,
   bulleted, human-readable markdown**; the `PRism.AI.Placeholder` generators emit the same
   shape so Preview/Sample mode demonstrates it.
+- **Render faithfully, never fabricate structure.** Bullets are *requested* in the prompt, not
+  enforced. `MarkdownRenderer` renders exactly what the model returns — a bullet list as `<ul>`,
+  prose as `<p>`. No surface synthesizes bullets from prose or strips them; if the model answers
+  in sentences, the summary reads as sentences. This is why no surface needs a prose-vs-bullets
+  mode switch.
 - The Hotspots tab becomes a collapsible accordion (per #488) whose **expanded** panel is
   where the markdown rationale renders; the **collapsed** preview stays a plain truncated
   one-liner.
@@ -44,7 +49,9 @@ the Hotspots accordion as the container its markdown rationale lands in.
 
 - No new sanitization surface. `MarkdownRenderer` is used **as-is** — it already renders
   untrusted PR descriptions/comments and is NOT configured with `rehype-raw`/raw-HTML
-  passthrough. (See Constraints.)
+  passthrough. (See Constraints. The one pre-existing HTML-injection path — ` ```mermaid `
+  fences routed to `MermaidBlock`'s `dangerouslySetInnerHTML` — is unchanged by this work and
+  is gated by mermaid's own sanitizer; these AI surfaces add no new path.)
 - No nested per-hunk detail in the accordion — that is #468/#487. This design only builds
   the accordion as the container they will later nest into.
 - No chunked summarization, no change to the `CATEGORY:` first-line contract, no change to
@@ -54,9 +61,12 @@ the Hotspots accordion as the container its markdown rationale lands in.
 
 - **XSS safety.** The Hotspots rationale is currently a deliberate plain-text node. The
   replacement must route through the existing `MarkdownRenderer` (GFM + `remark-gfm`,
-  `urlTransform` scheme allowlist, no `rehype-raw`). No raw-HTML passthrough is introduced
-  on any surface. A regression test asserts an inline `<script>`/raw-HTML string is not
-  rendered as live HTML.
+  `urlTransform` scheme allowlist, no `rehype-raw`). This work introduces **no new** raw-HTML
+  passthrough; the renderer's only HTML-injection path — ` ```mermaid ` → `MermaidBlock`
+  (`dangerouslySetInnerHTML`, gated by mermaid's own sanitizer) — is pre-existing and shared
+  with comment/description rendering, not added here. A regression test asserts an inline
+  `<script>`/raw-HTML string is not rendered as live HTML, and includes a ` ```mermaid ` case
+  to pin that an AI body cannot smuggle live markup through the mermaid path.
 - **Compact surfaces stay compact.** Markdown must render compactly in the tight chrome of
   the annotation popover and the hotspot rows. The collapsed hotspot preview stays a single
   truncated line (preview-only truncation — does not re-introduce the #414 truncation bug,
@@ -71,8 +81,8 @@ the Hotspots accordion as the container its markdown rationale lands in.
 | D1 | Shared markdown treatment | **Approach A** — render each surface through `MarkdownRenderer` directly with a shared `.ai-markdown` CSS class. No wrapper component, no prop on the generic renderer. Matches the existing validator-card pattern. |
 | D2 | Accordion expand model | **Multi-open** — any number of rows open at once (compare rationales). |
 | D3 | Accordion default state | **All collapsed** — scan-first, drill on demand. |
-| D4 | Accordion layout | **Keep High/Medium sections** with a per-row level badge/color-dot inside each section. |
-| D5 | Collapsed row content | **Path + level badge + one-line rationale preview** (markdown stripped to plain text, first non-empty line, CSS-ellipsis truncated). |
+| D4 | Accordion layout | **Keep High/Medium sections** with a per-row level dot (monochrome accent, reusing the Files-tree convention — see Slice 2) inside each section. |
+| D5 | Collapsed row content | **Path + level dot + one-line rationale preview** (markdown stripped to plain text, first non-empty line, CSS-ellipsis truncated). |
 | D6 | Annotation popover markdown | **Full markdown incl. fenced code**, with an extra-tight `.ai-markdown--popover` modifier so it does not bloat the popover. |
 | D7 | Delivery | **Two slices / two PRs.** Slice 1 = shared treatment + summary + annotation + all prompt/placeholder changes (low-risk, no layout shift). Slice 2 = #488 Hotspots accordion + its markdown rationale (carries the B1 visual gate). |
 
@@ -128,11 +138,12 @@ className, abstraction with no behavior — YAGNI); a `compact`/`variant` prop o
 ### Backend prompts (text-only edits, no control-flow change)
 
 - **`ClaudeCodeSummarizer.SystemPromptV1`** — change item 2 from "A concise plain-text
-  summary (3–6 sentences)…" to "A concise summary as **bulleted markdown** — intent, risk
-  areas, and notable specifics as a short scannable bullet list; use fenced code blocks for
-  code and inline code for symbols; do not pad." Item 1 (`CATEGORY: <x>` first line) is
-  unchanged; `PrCategoryParser.Parse` still splits the first line, so the body simply becomes
-  markdown. Keep the untrusted-content instruction.
+  summary (3–6 sentences)…" to "A concise, scannable summary in markdown — **prefer** a short
+  bullet list for intent / risk areas / notable specifics when the content suits it; use fenced
+  code blocks for code and inline code for symbols; do not pad." (Prefer, not mandate — per the
+  render-faithfully principle, prose answers render as prose.) Item 1 (`CATEGORY: <x>` first
+  line) is unchanged; `PrCategoryParser.Parse` still splits the first line, so the body simply
+  becomes markdown. Keep the untrusted-content instruction.
 - **`ClaudeCodeFileFocusRanker.SystemPromptV1`** — change the `rationale` instruction to
   "concise bulleted markdown explaining WHY this file needs review (the specific risk or
   change), scannable, not a paragraph." JSON array shape and the at-most-10 selectivity rule
@@ -141,6 +152,17 @@ className, abstraction with no behavior — YAGNI); a `compact`/`variant` prop o
   "concise bulleted markdown (use a fenced code block when referencing code); keep it short
   and under the character cap." The `{cap}` upper-bound rule and `BodyCap` (600) are unchanged;
   `HunkAnnotationParser` still enforces `BodyCap` as a defensive backstop.
+
+**Cap × markdown note (no code change, but keep in view).** The two caps behave differently and
+markdown is denser per line, so the "keep it under the cap" prompt instruction matters more now:
+- `FileFocusParser.CapRationale` truncates **mid-character** (`s[..599] + "…"`). On a compliant
+  short rationale this never fires (600 ≈ 3–4 sentences), but if it ever does on bulleted markdown
+  it could sever a fenced block, so the *expanded* panel renders oddly. Acceptable as a backstop;
+  do **not** silently inflate output past it.
+- `HunkAnnotationParser` **drops** the whole over-cap body (the annotation vanishes), not truncates.
+  Bulleted markdown + a fenced snippet is denser, so an undisciplined model is marginally likelier
+  to blow the cap and lose the note entirely — another reason the prompt's "keep it short, under
+  the cap" line stays firm. Neither cap value changes here.
 
 ### Design-doc prompt text (`docs/backlog/02-P1-core-ai.md`)
 
@@ -166,7 +188,8 @@ prefix becomes the lead text before the bullets; confirm it reads sensibly above
 ### Slice 1 tests
 - FE unit (per surface): asserts markdown structure renders — a `<li>` for a bullet, a
   `<code>` for a fenced block — and an **XSS regression**: a raw `<script>`/`<img onerror>`
-  string in the body does not produce a live element.
+  string in the body does not produce a live element, plus a ` ```mermaid ` case asserting an
+  AI body cannot smuggle live markup through the pre-existing mermaid render path.
 - FE: `.ai-markdown` class is applied on each surface (guards the shared treatment wiring).
 - Backend: pin placeholder **shape** (e.g. `SummaryBody` contains a markdown bullet marker),
   not prompt prose (prompt text is brittle to assert; leave to review). Existing summarizer /
@@ -179,13 +202,17 @@ prefix becomes the lead text before the bullets; confirm it reads sensibly above
 ### `HotspotsTab.tsx`
 - Keep the High/Medium two-section structure (D4). Within each section, render rows as
   accordion items.
-- **Collapsed row (button):** level badge/color-dot + file path + one-line rationale preview.
+- **Collapsed row (button):** level dot + file path + one-line rationale preview.
   - preview = `stripMarkdown(rationale)` → first non-empty line → CSS `text-overflow: ellipsis`
     single-line clamp. `stripMarkdown` is a small local util (strip bullet markers, headings,
     emphasis/inline-code backticks, links→text); preview-only, so full text is never lost.
-  - badge/dot color tokens are the **same source** as the Files-tree wayfinding dots (single
-    source of truth — relates to the oklch per-theme surface-scale asymmetry note; define the
-    level→token mapping once and consume it in both places).
+  - the level dot reuses the Files-tree wayfinding convention **verbatim** (monochrome accent,
+    not per-level hue): High = `--accent` with the 2px halo (`.fileTreeAiHigh`), Medium =
+    `--accent` at `opacity: 0.6` (`.fileTreeAiMed`). There is no per-level color token to share
+    — the Files-tree distinguishes level by halo/opacity, not hue — so the accordion matches
+    that exact treatment rather than introducing a second color vocabulary for the same concept.
+    (Per-level hues were considered and deferred; revisit only if the monochrome signal proves
+    too subtle at the B1 mockup.)
 - **Expanded panel:** `<MarkdownRenderer source={r.rationale} className="ai-markdown" />`.
 - a11y: each row header is a `<button aria-expanded aria-controls>`, keyboard toggle
   (Enter/Space), panel `id` referenced by `aria-controls`. Multi-open (D2): independent
@@ -235,7 +262,8 @@ prefix becomes the lead text before the bullets; confirm it reads sensibly above
 - [ ] Hotspot rationale renders markdown in the **expanded** accordion view; collapsed preview
       is an unchanged-in-spirit plain truncated one-liner.
 - [ ] Hotspots tab is a multi-open, default-collapsed accordion keeping High/Medium sections,
-      with per-row level badge/dot tied to the Files-tree dot tokens; deep-link-to-diff preserved.
+      with per-row level dot reusing the Files-tree monochrome-accent convention verbatim
+      (High = accent + halo, Medium = accent at 0.6 opacity); deep-link-to-diff preserved.
 - [ ] Summarizer, ranker, and annotator prompts instruct concise bulleted markdown.
 - [ ] `Placeholder` summarizer/ranker/annotator emit bulleted markdown so Preview shows the shape.
 - [ ] No raw-HTML/XSS regression; compact surfaces stay compact; both themes verified (B1 on
