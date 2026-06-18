@@ -20,4 +20,14 @@ public sealed class InboxEnrichmentContentTests
     public void Token_treats_null_description_distinctly_from_empty()
         => InboxEnrichmentContent.Token("T", null)
             .Should().NotBe(InboxEnrichmentContent.Token("T", ""));
+
+    [Fact]
+    public void Token_distinguishes_literal_null_string_from_null_reference()
+        => InboxEnrichmentContent.Token("T", "null")
+            .Should().NotBe(InboxEnrichmentContent.Token("T", null));
+
+    [Fact]
+    public void Token_has_no_field_boundary_collision()
+        => InboxEnrichmentContent.Token("a b", "c")
+            .Should().NotBe(InboxEnrichmentContent.Token("a", "b c"));
 }

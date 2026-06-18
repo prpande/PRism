@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text;
+using System;
 
 namespace PRism.Core.Inbox;
 
@@ -11,8 +12,14 @@ public static class InboxEnrichmentContent
 {
     public static string Token(string title, string? description)
     {
-        // U+0000 separator + a null/empty sentinel so ("T", null) != ("T", "").
-        var material = $"{title} {(description is null ? "null" : description)}";
+        ArgumentNullException.ThrowIfNull(title);
+
+        // Length-prefixed, space-separated fields so boundaries are unambiguous: no choice of
+        // (title, description) can collide with another, and a null description is distinct
+        // from every string value (including "" and the literal "null"). (#410 content guard.)
+        var material = description is null
+            ? $"{title.Length} {title} null"
+            : $"{title.Length} {title} {description.Length} {description}";
         var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(material));
         return Convert.ToHexString(bytes);
     }
