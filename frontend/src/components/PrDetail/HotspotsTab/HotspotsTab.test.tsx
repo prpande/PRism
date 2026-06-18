@@ -120,5 +120,4 @@ describe('HotspotsTab', () => {
     expect(screen.queryByText('a.cs')).not.toBeInTheDocument(); // no rows
     expect(screen.queryByRole('button', { name: /retry/i })).not.toBeInTheDocument();
   });
-
 });
