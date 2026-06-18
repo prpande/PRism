@@ -96,7 +96,11 @@ internal static class FileFocusParser
         var s = AiTextSanitizer.StripDangerous(raw).Trim();
         if (s.Length == 0) return string.Empty;
         if (s.Length <= RationaleCap) return s;
-        return s[..(RationaleCap - 1)] + "…";
+        var cut = RationaleCap - 1;
+        // Don't split a UTF-16 surrogate pair at the cut — that would leave a dangling high
+        // surrogate before the ellipsis. Back the cut off one unit so the pair drops whole.
+        if (cut > 0 && char.IsHighSurrogate(s[cut - 1])) cut--;
+        return s[..cut] + "…";
     }
 
 }

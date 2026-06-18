@@ -79,12 +79,20 @@
   font-family: var(--font-mono);
   font-size: var(--text-sm);
   color: var(--text-1);
-  flex: none;
+  /* The path is the primary identifier, so it may shrink + ellipsis (a long path no longer
+     overflows the row) but resists shrinking far more than the secondary preview below. */
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .rowPreview {
   font-size: var(--text-xs);
   color: var(--text-2);
-  flex: 1;
+  /* High shrink factor: the teaser preview yields space first, so the path stays readable
+     before either truncates. Grows to fill the row when there is room. */
+  flex: 1 100 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
