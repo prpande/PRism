@@ -32,9 +32,13 @@ export interface WholeFilePreference {
   showFullFile: boolean;
   /** Direction-aware: setting true clears failedPaths (a retry affordance). */
   setShowFullFile: (next: boolean) => void;
-  /** Read-only to consumers; mutate only via markFailed / setShowFullFile. */
+  /** Read-only to consumers; mutate only via markFailed / clearFailed / setShowFullFile. */
   failedPaths: ReadonlySet<string>;
   markFailed: (path: string) => void;
+  /** #510: per-file retry — drop one path from the failed set so deriveWholeFileEnabled
+   * re-permits it and the whole-file fetch re-attempts, WITHOUT toggling the global
+   * showFullFile pref (which would clear every failed path, retrying unrelated files). */
+  clearFailed: (path: string) => void;
 }
 
 export function useWholeFilePreference(): WholeFilePreference {
@@ -63,5 +67,14 @@ export function useWholeFilePreference(): WholeFilePreference {
     });
   }, []);
 
-  return { showFullFile, setShowFullFile, failedPaths, markFailed };
+  const clearFailed = useCallback((path: string) => {
+    setFailedPaths((prev) => {
+      if (!prev.has(path)) return prev;
+      const next = new Set(prev);
+      next.delete(path);
+      return next;
+    });
+  }, []);
+
+  return { showFullFile, setShowFullFile, failedPaths, markFailed, clearFailed };
 }

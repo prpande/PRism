@@ -757,6 +757,64 @@ describe('DiffPane whole-file mode', () => {
     expect(onFailed).toHaveBeenCalledTimes(1);
   });
 
+  it('#510: Retry action calls onWholeFileRetry, clears the banner, and re-latches on a fresh failure', async () => {
+    const onRetry = vi.fn();
+    const failed = {
+      fetchStatus: 'failed' as const,
+      headContent: null,
+      baseContent: null,
+      failureReason: 'diff snapshot has been evicted — reload the PR',
+    };
+    vi.mocked(useWholeFileContent).mockReturnValue(failed);
+    const fileWithHunk = makeModifiedFile([
+      { oldStart: 1, oldLines: 1, newStart: 1, newLines: 1, body: '@@ -1,1 +1,1 @@\n-old\n+new' },
+    ]);
+    const props = {
+      ...defaultProps,
+      file: fileWithHunk,
+      wholeFileEnabled: true,
+      onWholeFileRetry: onRetry,
+    };
+    const { rerender } = render(<DiffPane {...props} />);
+    expect(await screen.findByTestId('whole-file-failure-banner')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /retry whole-file/i }));
+    expect(onRetry).toHaveBeenCalledTimes(1);
+    // The latch clears immediately so the banner disappears.
+    expect(screen.queryByTestId('whole-file-failure-banner')).not.toBeInTheDocument();
+
+    // The real retry re-permits the fetch; model that as loading → failed and
+    // assert the banner re-latches on the fresh failed transition (proving the
+    // cleared latch doesn't suppress a subsequent genuine failure).
+    vi.mocked(useWholeFileContent).mockReturnValue({
+      fetchStatus: 'loading',
+      headContent: null,
+      baseContent: null,
+      failureReason: null,
+    });
+    rerender(<DiffPane {...props} />);
+    expect(screen.queryByTestId('whole-file-failure-banner')).not.toBeInTheDocument();
+
+    vi.mocked(useWholeFileContent).mockReturnValue(failed);
+    rerender(<DiffPane {...props} />);
+    expect(await screen.findByTestId('whole-file-failure-banner')).toBeInTheDocument();
+  });
+
+  it('#510: omits the Retry action when onWholeFileRetry is not provided', async () => {
+    vi.mocked(useWholeFileContent).mockReturnValue({
+      fetchStatus: 'failed',
+      headContent: null,
+      baseContent: null,
+      failureReason: 'file is binary',
+    });
+    const fileWithHunk = makeModifiedFile([
+      { oldStart: 1, oldLines: 1, newStart: 1, newLines: 1, body: '@@ -1,1 +1,1 @@\n-old\n+new' },
+    ]);
+    render(<DiffPane {...defaultProps} file={fileWithHunk} wholeFileEnabled={true} />);
+    expect(await screen.findByTestId('whole-file-failure-banner')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /retry whole-file/i })).not.toBeInTheDocument();
+  });
+
   it('latch survives the toggle revert: banner stays visible when wholeFileEnabled flips false after a failure', async () => {
     const onFailed = vi.fn();
     vi.mocked(useWholeFileContent).mockReturnValue({

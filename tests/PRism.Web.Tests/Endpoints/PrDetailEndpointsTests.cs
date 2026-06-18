@@ -2,8 +2,10 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using FluentAssertions;
+using Microsoft.Extensions.DependencyInjection;
 using PRism.Core.Contracts;
 using PRism.Core.Iterations;
+using PRism.Core.PrDetail;
 using PRism.Core.State;
 using PRism.GitHub;
 using PRism.Web.Tests.TestHelpers;
@@ -328,16 +330,80 @@ public class PrDetailEndpointsTests
     }
 
     [Fact]
-    public async Task Get_file_returns_422_snapshot_evicted_when_no_snapshot_loaded()
+    public async Task Get_file_returns_200_when_snapshot_evicted_but_path_in_cached_diff()
     {
+        // #510 core fix. A background event (poller head/comment-count change, comment
+        // post-now, root-comment post, draft submit) evicts the per-(prRef,headSha,gen)
+        // snapshot while the PR is open. The diff memo is content-addressed by SHA and is
+        // NOT evicted by that activity, so expanding a file already present in the loaded
+        // diff must still serve content — not dead-end with /file/snapshot-evicted.
         var (factory, _) = MakeFactory();
         using var _f = factory;
-
-        // Use a valid Git OID so the new /sha/invalid guard doesn't short-circuit before
-        // the snapshot probe — the snapshot-evicted contract is what this test exercises.
+        var client = factory.CreateClient();
+        await client.GetAsync(new Uri("/api/pr/octo/repo/1", UriKind.Relative));   // load snapshot
+        // Any valid-OID range primes the diff memo; the range SHAs need not equal the PR's
+        // canonical base1/head1 (those aren't valid git OIDs, so /diff would 422 them). The
+        // path-in-diff authz gate is sha-agnostic — it matches the path across ALL cached
+        // diffs for the prRef regardless of range — which is exactly what keeps it working
+        // after the snapshot (and its head SHA) is evicted.
+        var validBase = new string('a', 40);
         var validHead = new string('b', 40);
-        var resp = await factory.CreateClient().GetAsync(
-            new Uri($"/api/pr/octo/repo/1/file?path=src/Foo.cs&sha={validHead}", UriKind.Relative));
+        await client.GetAsync(new Uri($"/api/pr/octo/repo/1/diff?range={validBase}..{validHead}", UriKind.Relative));
+
+        // Evict the snapshot exactly as a background ActivePrUpdated/comment/submit event does.
+        var prRef = new PrReference("octo", "repo", 1);
+        var loader = factory.Services.GetRequiredService<PrDetailLoader>();
+        loader.Invalidate(prRef);
+        loader.TryGetCachedSnapshot(prRef).Should().BeNull();   // precondition: snapshot is gone
+
+        var resp = await client.GetAsync(new Uri($"/api/pr/octo/repo/1/file?path=src/Foo.cs&sha={validHead}", UriKind.Relative));
+
+        resp.StatusCode.Should().Be(HttpStatusCode.OK);
+        (await resp.Content.ReadAsStringAsync()).Should().Be("content of src/Foo.cs");
+    }
+
+    [Fact]
+    public async Task Get_file_rehydrates_evicted_snapshot_for_path_outside_cached_diff_instead_of_dead_ending()
+    {
+        // #510. When the path is NOT in any cached diff, classifying it (truncation-window
+        // vs not-in-diff) needs the canonical base..head range, which lives on the snapshot.
+        // If a background event evicted the snapshot, re-hydrate on demand rather than
+        // returning the manual-reload /file/snapshot-evicted dead-end. src/Ghost.cs is absent
+        // from the canonical diff (default fake exposes only src/Foo.cs, not truncated).
+        var (factory, _) = MakeFactory();
+        using var _f = factory;
+        var client = factory.CreateClient();
+        await client.GetAsync(new Uri("/api/pr/octo/repo/1", UriKind.Relative));   // load snapshot
+        var loader = factory.Services.GetRequiredService<PrDetailLoader>();
+        loader.Invalidate(new PrReference("octo", "repo", 1));                      // background eviction
+
+        var validHead = new string('b', 40);
+        var resp = await client.GetAsync(
+            new Uri($"/api/pr/octo/repo/1/file?path=src/Ghost.cs&sha={validHead}", UriKind.Relative));
+
+        resp.StatusCode.Should().Be(HttpStatusCode.UnprocessableEntity);
+        var bodyText = await resp.Content.ReadAsStringAsync();
+        bodyText.Should().Contain("/file/not-in-diff");
+        bodyText.Should().NotContain("/file/snapshot-evicted");   // the dead-end is gone
+    }
+
+    [Fact]
+    public async Task Get_file_returns_422_snapshot_evicted_only_when_rehydrate_fails()
+    {
+        // The /file/snapshot-evicted contract is retained for the genuine failure: the path
+        // is outside any cached diff AND re-hydration cannot rebuild the snapshot because the
+        // PR no longer exists (GetPrDetail -> null). Nothing is primed, so the
+        // path-not-in-cached-diff fallback runs, LoadAsync returns null, and the endpoint
+        // surfaces snapshot-evicted.
+        var (factory, review) = MakeFactory();
+        using var _f = factory;
+        review.GetPrDetailAsyncOverride = (_, _) => Task.FromResult<PrDetailDto?>(null);
+        var client = factory.CreateClient();
+
+        // Use a valid Git OID so the /sha/invalid guard doesn't short-circuit first.
+        var validHead = new string('b', 40);
+        var resp = await client.GetAsync(
+            new Uri($"/api/pr/octo/repo/1/file?path=src/Ghost.cs&sha={validHead}", UriKind.Relative));
 
         resp.StatusCode.Should().Be(HttpStatusCode.UnprocessableEntity);
         (await resp.Content.ReadAsStringAsync()).Should().Contain("/file/snapshot-evicted");

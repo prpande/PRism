@@ -639,6 +639,22 @@ a:hover { text-decoration: underline; }
 }
 .banner-warning { background: var(--warning-soft); color: var(--warning-fg); }
 .banner-danger { background: var(--danger-soft); color: var(--danger-fg); }
+/* #510 — inline recovery action on a banner (e.g. WholeFileFailureBanner Retry).
+   Outlined in the banner's own foreground colour so it reads as actionable
+   against any banner tint without hard-coding a palette. */
+.banner-action {
+  padding: 1px var(--s-2);
+  font: inherit;
+  font-weight: 600;
+  color: inherit;
+  background: transparent;
+  border: 1px solid currentColor;
+  border-radius: var(--radius-2);
+  cursor: pointer;
+}
+.banner-action:hover {
+  background: color-mix(in oklch, currentColor 14%, transparent);
+}
 
 /* Avatar */
 .avatar {

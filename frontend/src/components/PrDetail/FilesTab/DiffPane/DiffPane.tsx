@@ -138,6 +138,10 @@ export interface DiffPaneProps {
   // Slice 2 additions (all optional with defaults — see destructuring below):
   wholeFileEnabled?: boolean;
   onWholeFileFailed?: (reason: string) => void;
+  // #510: re-attempt the whole-file fetch from the failure banner (FilesTab drops
+  // this file from its failed set so deriveWholeFileEnabled re-permits it). Absent
+  // → the banner shows only Dismiss.
+  onWholeFileRetry?: () => void;
   headSha?: string;
   baseSha?: string;
 
@@ -176,6 +180,7 @@ export function DiffPane({
   isLoading = false,
   wholeFileEnabled = false,
   onWholeFileFailed,
+  onWholeFileRetry,
   headSha = '',
   baseSha = '',
   lineWrap = false,
@@ -259,6 +264,16 @@ export function DiffPane({
   const dismissBanner = () => {
     setLocalFailure(null);
   };
+
+  // #510: in-place retry. Clear the local latch (hides the banner immediately) and
+  // ask FilesTab to re-permit whole-file view for this file, which re-fires the
+  // fetch (failed results are never cached). A re-failure simply re-latches.
+  const retryWholeFile = onWholeFileRetry
+    ? () => {
+        setLocalFailure(null);
+        onWholeFileRetry();
+      }
+    : undefined;
 
   // allLines: whole-file branch takes over when enabled + ok; else plain hunk
   // parsing.
@@ -724,7 +739,11 @@ export function DiffPane({
         )}
       </div>
       {localFailure !== null && (
-        <WholeFileFailureBanner reason={localFailure} onDismiss={dismissBanner} />
+        <WholeFileFailureBanner
+          reason={localFailure}
+          onDismiss={dismissBanner}
+          onRetry={retryWholeFile}
+        />
       )}
       <div className={styles.diffBodyWrap}>
         <div
