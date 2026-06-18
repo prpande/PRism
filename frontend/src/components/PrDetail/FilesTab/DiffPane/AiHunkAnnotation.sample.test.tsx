@@ -20,6 +20,15 @@ beforeEach(() => {
   mock.aiMode = 'preview';
 });
 
+describe('AiHunkAnnotation ai marker', () => {
+  it('renders the AiMarker and no raw sparkle emoji', () => {
+    render(<AiHunkAnnotation annotation={annotation} />);
+    expect(screen.getByTestId('ai-marker')).toBeInTheDocument();
+    expect(screen.getByTestId('ai-hunk').textContent).not.toContain('✨');
+    expect(screen.getByText('AI')).toBeInTheDocument();
+  });
+});
+
 describe('AiHunkAnnotation sample badge', () => {
   it('renders the badge in preview', () => {
     render(<AiHunkAnnotation annotation={annotation} />);

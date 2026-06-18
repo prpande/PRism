@@ -28,4 +28,12 @@ describe('SettingsNav', () => {
     );
     expect(screen.getByRole('link', { name: 'Appearance' })).not.toHaveAttribute('aria-current');
   });
+
+  it('shows the AI marker only on the AI nav item', () => {
+    renderAt('/settings/appearance');
+    const aiLink = screen.getByRole('link', { name: 'AI' });
+    expect(aiLink.querySelector('[data-ai-marker]')).not.toBeNull();
+    const appearance = screen.getByRole('link', { name: 'Appearance' });
+    expect(appearance.querySelector('[data-ai-marker]')).toBeNull();
+  });
 });

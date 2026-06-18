@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from 'react';
 import type { PrSummary } from '../../../api/types';
 import { Spinner } from '../../Spinner/Spinner';
 import { SampleBadge } from '../../Ai/SampleBadge';
+import { AiMarker } from '../../Ai/AiMarker';
 import { Skeleton } from '../../Skeleton/Skeleton';
 import styles from './AiSummaryCard.module.css';
 
@@ -89,6 +90,10 @@ export function AiSummaryCard({
       className={`ai-summary-card ${styles.aiSummaryCard} overview-card overview-card-hero ai-tint`}
       data-testid="ai-summary-card"
     >
+      <span className={styles.aiSummaryLabel}>
+        <AiMarker variant="lead" decorative />
+        AI Summary
+      </span>
       <SampleBadge />
       {/* Live-only status region. Rendered ONLY when `live` so that in Preview/Off the empty div does
           not sit between SampleBadge and the body and steal the `[data-sample-badge] + *` margin

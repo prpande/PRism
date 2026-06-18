@@ -1,4 +1,5 @@
 import type { HunkAnnotation, AnnotationTone } from '../../../../api/types';
+import { AiMarker } from '../../../Ai/AiMarker';
 import { SampleBadge } from '../../../Ai/SampleBadge';
 import styles from './AiHunkAnnotation.module.css';
 
@@ -25,9 +26,7 @@ export function AiHunkAnnotation({ annotation }: AiHunkAnnotationProps) {
   const chip = TONE_CHIP[annotation.tone] ?? { variant: 'info' as const, label: annotation.tone };
   return (
     <div className={`ai-hunk ${styles.aiHunk}`} data-testid="ai-hunk">
-      <span className="ai-icon" aria-hidden="true">
-        ✨
-      </span>
+      <AiMarker variant="inline" decorative className="ai-icon" />
       <div className={styles.aiHunkBody}>
         <div className={`ai-hunk-meta ${styles.aiHunkMeta}`}>
           <span>AI</span>
