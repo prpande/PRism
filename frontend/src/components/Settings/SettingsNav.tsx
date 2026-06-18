@@ -1,4 +1,5 @@
 import { useLocation } from 'react-router-dom';
+import { AiMarker } from '../Ai/AiMarker';
 import { SettingsLink } from './SettingsLink';
 import styles from './SettingsModal.module.css';
 
@@ -25,6 +26,7 @@ function Item({ section, label, active }: NavItem & { active: boolean }) {
       aria-current={active ? 'page' : undefined}
     >
       {label}
+      {section === 'ai' && <AiMarker variant="inline" decorative />}
     </SettingsLink>
   );
 }

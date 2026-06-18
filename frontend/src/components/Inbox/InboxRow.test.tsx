@@ -278,7 +278,8 @@ describe('InboxRow Draft chip', () => {
       },
     );
     expect(screen.getByText('Feature')).toBeInTheDocument();
-    expect(screen.getByText('AI')).toBeInTheDocument();
+    // #489: the chip marker is now an AiMarker icon (not literal "AI" text).
+    expect(screen.getByTestId('ai-marker')).toBeInTheDocument();
   });
 });
 
@@ -293,12 +294,8 @@ describe('InboxRow chip + badge placement (on the meta line, not the metrics tai
     // the fixed-width metrics tail (where it would be clipped — see #227 B1)
     expect(chip.closest('[class*="meta"]')).not.toBeNull();
     expect(chip.closest('[class*="tail"]')).toBeNull();
-    // #283: the chip carries a visual "AI" preview marker (aria-hidden — the fake
-    // category is visual-only) so the canned category reads as a sample, not a real label.
-    const marker = chip.querySelector('[class*="chipMarker"]');
-    expect(marker).not.toBeNull();
-    expect(marker).toHaveTextContent('AI');
-    expect(marker).toHaveAttribute('aria-hidden', 'true');
+    // #489: the chip marker is now an AiMarker icon (not literal "AI" text).
+    expect(screen.getByTestId('ai-marker')).toBeInTheDocument();
   });
 
   it('shows merged state via the leading icon + aria, not a meta-line badge', () => {
@@ -394,5 +391,26 @@ describe('InboxRow unread bar, New-badge removal, and age', () => {
     expect(screen.queryByText('New')).not.toBeInTheDocument();
     // ...and the unread bar is suppressed too (done rows never flag).
     expect(screen.getByRole('button')).toHaveAttribute('data-unread', 'false');
+  });
+});
+
+describe('InboxRow AI chip: provenance in aria-label', () => {
+  it('AI category chip: icon replaces the "AI" text and provenance rides the row aria-label', () => {
+    renderInboxRow(PR, {
+      showCategoryChip: true,
+      enrichment: { prId: 'acme/api#99', categoryChip: 'Refactor', hoverSummary: 's' },
+    });
+    const row = screen.getByRole('button');
+    expect(row).toHaveAccessibleName(/AI-generated/); // provenance via accessible name
+    expect(screen.getByTestId('ai-marker')).toBeInTheDocument(); // icon, not literal "AI"
+    expect(screen.getByText('Refactor')).toBeInTheDocument();
+  });
+
+  it('no AI provenance in the aria-label when the chip is hidden', () => {
+    renderInboxRow(PR, {
+      showCategoryChip: false,
+      enrichment: { prId: 'acme/api#99', categoryChip: 'Refactor', hoverSummary: 's' },
+    });
+    expect(screen.getByRole('button')).not.toHaveAccessibleName(/AI-generated/);
   });
 });

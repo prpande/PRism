@@ -3,6 +3,8 @@ import type { PrInboxItem, InboxItemEnrichment } from '../../api/types';
 import { useOpenTabs } from '../../contexts/OpenTabsContext';
 import { formatAge } from '../../utils/relativeTime';
 import { Avatar } from '../Avatar/Avatar';
+import { AiMarker } from '../Ai/AiMarker';
+import { AI_PROVENANCE_LABEL } from '../Ai/aiStrings';
 import { DiffBar } from './DiffBar';
 import styles from './InboxRow.module.css';
 
@@ -82,11 +84,15 @@ export function InboxRow({
   // CI_GLYPH_LABEL so the suffix and the <title> tooltip never drift.
   const ciSuffix = !isDone && pr.ci !== 'none' ? ` · ${CI_GLYPH_LABEL[pr.ci]}` : '';
 
+  // #489: the chip's sparkle is visual-only (button swallows descendant labels),
+  // so the AI provenance rides the row aria-label instead.
+  const aiSuffix = showCategoryChip && enrichment?.categoryChip ? ` · ${AI_PROVENANCE_LABEL}` : '';
+
   const ariaLabel = isDone
-    ? `${pr.title} · ${pr.repo} · ${doneState}`
+    ? `${pr.title} · ${pr.repo} · ${doneState}${aiSuffix}`
     : `${pr.title} · ${pr.repo} · open · iteration ${pr.iterationNumber}${
         hasUnseenActivity ? ' · unread' : ''
-      }${ciSuffix}`;
+      }${ciSuffix}${aiSuffix}`;
 
   return (
     <button
@@ -133,9 +139,7 @@ export function InboxRow({
                     so the category text — not the marker — absorbs any width pressure, and it
                     hides together with the chip below the 560px breakpoint. */}
                   <span className={styles.chip}>
-                    <span className={styles.chipMarker} aria-hidden="true">
-                      AI
-                    </span>
+                    <AiMarker variant="inline" decorative className={styles.chipMarker} />
                     {enrichment.categoryChip}
                   </span>
                   <span className={styles.dotsep}>·</span>

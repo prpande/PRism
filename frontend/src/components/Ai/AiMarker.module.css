@@ -1,0 +1,27 @@
+.aiMarker {
+  display: inline-flex;
+  align-items: center;
+  color: var(--accent);
+}
+.glyph {
+  width: 1em;
+  height: 1em;
+  display: block;
+}
+/* Superscript: tiny raised glyph against a text label. Sits OUTSIDE the label's
+   truncation region (caller spaces it); never animate (spec §4/§8). */
+.superscript {
+  font-size: 0.72em;
+  vertical-align: super;
+  margin-inline-start: 0.2em;
+}
+/* Inline: baseline glyph for buttons / nav / headers. */
+.inline {
+  font-size: 1rem;
+}
+/* Lead: a larger glyph placed BEFORE a text label (AI Summary heading, Hotspots
+   tab). Sized in em so it scales with the host label and reads clearly larger
+   than the small surrounding text; spacing is owned by the caller's flex gap. */
+.lead {
+  font-size: 1.3em;
+}

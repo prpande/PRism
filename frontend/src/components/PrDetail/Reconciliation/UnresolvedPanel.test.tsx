@@ -333,7 +333,8 @@ describe('UnresolvedPanel — StaleDraftRow AI suggestion (D48)', () => {
     expect(ai).toBeInTheDocument();
     const icon = ai.querySelector('.ai-icon');
     expect(icon).toBeInTheDocument();
-    expect(icon).toHaveAttribute('aria-hidden', 'true');
+    expect(icon).toHaveAttribute('data-ai-marker');
+    expect(ai.querySelector('.ai-icon svg')).toHaveAttribute('aria-hidden', 'true');
     expect(screen.getByText('AI suggestion')).toBeInTheDocument();
     expect(screen.getByText('Worth a comment here?')).toBeInTheDocument();
   });

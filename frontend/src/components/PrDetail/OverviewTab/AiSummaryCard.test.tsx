@@ -181,4 +181,19 @@ describe('AiSummaryCard', () => {
     fireEvent.click(screen.getByRole('button', { name: /regenerate summary/i }));
     expect(onRegenerate).toHaveBeenCalledTimes(1);
   });
+
+  it('renders an "AI Summary" label with the decorative marker on success', () => {
+    render(
+      <AiSummaryCard summary={{ body: 'x', category: 'fix' }} loading={false} error={false} />,
+    );
+    expect(screen.getByText('AI Summary')).toBeInTheDocument();
+    expect(screen.getByTestId('ai-marker')).toBeInTheDocument();
+  });
+
+  it('does NOT render the label/marker on loading or error', () => {
+    const { rerender } = render(<AiSummaryCard summary={null} loading error={false} />);
+    expect(screen.queryByTestId('ai-marker')).toBeNull();
+    rerender(<AiSummaryCard summary={null} loading={false} error />);
+    expect(screen.queryByTestId('ai-marker')).toBeNull();
+  });
 });

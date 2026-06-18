@@ -75,22 +75,5 @@ export function PanelsIcon() {
   );
 }
 
-/** AI (in active development) — sparkle. */
-export function SparkIcon() {
-  return (
-    <svg {...SVG_PROPS}>
-      <path
-        d="M7.5 3.25 8.85 7.65 13 9 8.85 10.35 7.5 14.75 6.15 10.35 2 9 6.15 7.65 Z"
-        stroke="currentColor"
-        strokeWidth="1.35"
-        strokeLinejoin="round"
-      />
-      <path
-        d="M13.75 3 14.2 4.3 15.5 4.75 14.2 5.2 13.75 6.5 13.3 5.2 12 4.75 13.3 4.3 Z"
-        stroke="currentColor"
-        strokeWidth="1.1"
-        strokeLinejoin="round"
-      />
-    </svg>
-  );
-}
+// SparkIcon now lives in the shared Ai module (#489); re-export so /welcome is unchanged.
+export { SparkIcon } from '../components/Ai/SparkIcon';
