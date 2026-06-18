@@ -50,6 +50,8 @@
 }
 
 .aiSummaryLabel {
+  display: inline-flex;
+  align-items: baseline;
   font-weight: 600;
   font-size: var(--text-xs);
   letter-spacing: 0.02em;
