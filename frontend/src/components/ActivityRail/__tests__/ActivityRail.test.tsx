@@ -1,12 +1,15 @@
-import { describe, test, expect, vi, beforeEach } from 'vitest';
+import { describe, test, expect, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import type { ActivityResponse } from '../../../api/types';
+import type { UseActivityResult } from '../../../hooks/useActivity';
 import { ActivityRail } from '../ActivityRail';
 
-const { useActivityMock } = vi.hoisted(() => ({ useActivityMock: vi.fn() }));
-vi.mock('../../../hooks/useActivity', () => ({ useActivity: useActivityMock }));
+// #507 — ActivityRail is now presentational: it takes { data, isLoading, error } as
+// props (the fetch was hoisted to InboxPage). Each test sets `railProps`, and renderRail
+// spreads it in — replacing the previous useActivity mock.
+let railProps: UseActivityResult = { data: null, isLoading: false, error: null };
 
 function resp(partial: Partial<ActivityResponse> = {}): ActivityResponse {
   return {
@@ -36,26 +39,28 @@ const item = (over: Partial<ActivityResponse['items'][0]>): ActivityResponse['it
 const renderRail = () =>
   render(
     <MemoryRouter>
-      <ActivityRail />
+      <ActivityRail {...railProps} />
     </MemoryRouter>,
   );
 
-beforeEach(() => useActivityMock.mockReset());
+beforeEach(() => {
+  railProps = { data: null, isLoading: false, error: null };
+});
 
 describe('ActivityRail (P1)', () => {
   test('renders only the Activity section — no Watching', () => {
-    useActivityMock.mockReturnValue({ data: resp(), isLoading: false, error: null });
+    railProps = { data: resp(), isLoading: false, error: null };
     renderRail();
     expect(screen.getByText('Activity')).toBeInTheDocument();
     expect(screen.queryByText('Watching')).toBeNull();
   });
 
   test('renders actor + verb + PR ref as an in-app link', () => {
-    useActivityMock.mockReturnValue({
+    railProps = {
       data: resp({ items: [item({ actorLogin: 'noah.s', verb: 'reviewed', prNumber: 1810 })] }),
       isLoading: false,
       error: null,
-    });
+    };
     renderRail();
     const link = screen.getByRole('link', { name: /noah\.s reviewed #1810/i });
     expect(link).toHaveAttribute('href', '/pr/acme/api/1810');
@@ -66,7 +71,7 @@ describe('ActivityRail (P1)', () => {
       item({ actorLogin: 'alice', prNumber: 1 }),
       item({ actorLogin: 'mergewatch[bot]', actorIsBot: true, prNumber: 2 }),
     ];
-    useActivityMock.mockReturnValue({ data: resp({ items }), isLoading: false, error: null });
+    railProps = { data: resp({ items }), isLoading: false, error: null };
     renderRail();
 
     // Default hidden: bot row absent.
@@ -79,30 +84,30 @@ describe('ActivityRail (P1)', () => {
   });
 
   test('empty (quiet) state names the window', () => {
-    useActivityMock.mockReturnValue({ data: resp({ items: [] }), isLoading: false, error: null });
+    railProps = { data: resp({ items: [] }), isLoading: false, error: null };
     renderRail();
     expect(screen.getByText('No pull-request activity in the last 24h')).toBeInTheDocument();
   });
 
   test('empty (all-bots, default hidden) names the filter, not the window', () => {
-    useActivityMock.mockReturnValue({
+    railProps = {
       data: resp({ items: [item({ actorLogin: 'ci[bot]', actorIsBot: true })] }),
       isLoading: false,
       error: null,
-    });
+    };
     renderRail();
     expect(screen.getByText(/no human activity in the last 24h/i)).toBeInTheDocument();
   });
 
   test('degraded note shows on backend-degraded flag', () => {
-    useActivityMock.mockReturnValue({
+    railProps = {
       data: resp({
         items: [],
         degraded: { receivedEvents: true, notifications: false, watching: false },
       }),
       isLoading: false,
       error: null,
-    });
+    };
     renderRail();
     expect(screen.getByText('Activity unavailable')).toBeInTheDocument();
   });
@@ -110,17 +115,17 @@ describe('ActivityRail (P1)', () => {
   test('degraded note also shows when the initial fetch itself fails (no data)', () => {
     // The (!data && error) branch — a frontend fetch failure, distinct from the
     // backend degraded flag. Same copy by design (both are "unavailable").
-    useActivityMock.mockReturnValue({ data: null, isLoading: false, error: new Error('net') });
+    railProps = { data: null, isLoading: false, error: new Error('net') };
     renderRail();
     expect(screen.getByText('Activity unavailable')).toBeInTheDocument();
   });
 
   test('malformed PR url falls back to an external anchor without throwing', () => {
-    useActivityMock.mockReturnValue({
+    railProps = {
       data: resp({ items: [item({ url: 'not a url' })] }),
       isLoading: false,
       error: null,
-    });
+    };
     renderRail();
     const link = screen.getByRole('link', { name: /alice reviewed #7/i });
     expect(link).toHaveAttribute('href', 'not a url'); // external <a>, no crash
@@ -129,7 +134,7 @@ describe('ActivityRail (P1)', () => {
 
 describe('ActivityRail (P2) — actorless phrasing', () => {
   test('actorless review-requested → "Review requested on #N", no actor, no null', () => {
-    useActivityMock.mockReturnValue({
+    railProps = {
       data: resp({
         items: [
           item({
@@ -143,14 +148,14 @@ describe('ActivityRail (P2) — actorless phrasing', () => {
       }),
       isLoading: false,
       error: null,
-    });
+    };
     renderRail();
     const link = screen.getByRole('link', { name: /review requested on #1842/i });
     expect(link.getAttribute('aria-label')).not.toMatch(/null/);
   });
 
   test('actorless mentioned → "You were mentioned in #N"', () => {
-    useActivityMock.mockReturnValue({
+    railProps = {
       data: resp({
         items: [
           item({ actorLogin: null, verb: 'mentioned', prNumber: 99, source: 'notification' }),
@@ -158,14 +163,14 @@ describe('ActivityRail (P2) — actorless phrasing', () => {
       }),
       isLoading: false,
       error: null,
-    });
+    };
     renderRail();
     const link = screen.getByRole('link', { name: /you were mentioned in #99/i });
     expect(link.getAttribute('aria-label')).not.toMatch(/null/);
   });
 
   test('standalone actorless commented row → "New comment on #N"', () => {
-    useActivityMock.mockReturnValue({
+    railProps = {
       data: resp({
         items: [
           item({ actorLogin: null, verb: 'commented', prNumber: 55, source: 'notification' }),
@@ -173,27 +178,27 @@ describe('ActivityRail (P2) — actorless phrasing', () => {
       }),
       isLoading: false,
       error: null,
-    });
+    };
     renderRail();
     const link = screen.getByRole('link', { name: /new comment on #55/i });
     expect(link.getAttribute('aria-label')).not.toMatch(/null/);
   });
 
   test('actorless other → generic fallback "New update on #N", never a dangling fragment/null', () => {
-    useActivityMock.mockReturnValue({
+    railProps = {
       data: resp({
         items: [item({ actorLogin: null, verb: 'other', prNumber: 12, source: 'notification' })],
       }),
       isLoading: false,
       error: null,
-    });
+    };
     renderRail();
     const link = screen.getByRole('link', { name: /new update on #12/i });
     expect(link.getAttribute('aria-label')).not.toMatch(/null/);
   });
 
   test('enriched notification row renders actor + resolved action ("dave approved #N")', () => {
-    useActivityMock.mockReturnValue({
+    railProps = {
       data: resp({
         items: [
           item({ actorLogin: 'dave', verb: 'approved', prNumber: 88, source: 'notification' }),
@@ -201,19 +206,19 @@ describe('ActivityRail (P2) — actorless phrasing', () => {
       }),
       isLoading: false,
       error: null,
-    });
+    };
     renderRail();
     expect(screen.getByRole('link', { name: /dave approved #88/i })).toBeInTheDocument();
   });
 
   test('actorless opened → "Opened #N", never null', () => {
-    useActivityMock.mockReturnValue({
+    railProps = {
       data: resp({
         items: [item({ actorLogin: null, verb: 'opened', prNumber: 34, source: 'notification' })],
       }),
       isLoading: false,
       error: null,
-    });
+    };
     renderRail();
     const link = screen.getByRole('link', { name: /opened #34/i });
     expect(link.getAttribute('aria-label')).not.toMatch(/null/);
@@ -222,23 +227,23 @@ describe('ActivityRail (P2) — actorless phrasing', () => {
 
 describe('ActivityRail (P2) — landmarks', () => {
   test('Activity section is a named region landmark', () => {
-    useActivityMock.mockReturnValue({
+    railProps = {
       data: resp({ items: [item({})] }),
       isLoading: false,
       error: null,
-    });
+    };
     renderRail();
     expect(screen.getByRole('region', { name: /activity/i })).toBeInTheDocument();
   });
 
   test('Watching section is a named region landmark when present', () => {
-    useActivityMock.mockReturnValue({
+    railProps = {
       data: resp({
         watching: [{ repo: 'acme/api', count: 3, url: 'https://github.com/acme/api' }],
       }),
       isLoading: false,
       error: null,
-    });
+    };
     renderRail();
     expect(screen.getByRole('region', { name: /watching/i })).toBeInTheDocument();
   });
@@ -246,41 +251,41 @@ describe('ActivityRail (P2) — landmarks', () => {
 
 describe('ActivityRail (P2) — split degraded gating', () => {
   test('watching-only degraded with items present → Activity list still renders (NOT unavailable)', () => {
-    useActivityMock.mockReturnValue({
+    railProps = {
       data: resp({
         items: [item({ actorLogin: 'alice', verb: 'reviewed', prNumber: 7 })],
         degraded: { receivedEvents: false, notifications: false, watching: true },
       }),
       isLoading: false,
       error: null,
-    });
+    };
     renderRail();
     expect(screen.queryByText('Activity unavailable')).toBeNull();
     expect(screen.getByRole('link', { name: /alice reviewed #7/i })).toBeInTheDocument();
   });
 
   test('receivedEvents degraded → Activity unavailable note shows', () => {
-    useActivityMock.mockReturnValue({
+    railProps = {
       data: resp({
         items: [item({})],
         degraded: { receivedEvents: true, notifications: false, watching: false },
       }),
       isLoading: false,
       error: null,
-    });
+    };
     renderRail();
     expect(screen.getByText('Activity unavailable')).toBeInTheDocument();
   });
 
   test('notifications degraded → Activity unavailable note shows', () => {
-    useActivityMock.mockReturnValue({
+    railProps = {
       data: resp({
         items: [item({})],
         degraded: { receivedEvents: false, notifications: true, watching: false },
       }),
       isLoading: false,
       error: null,
-    });
+    };
     renderRail();
     expect(screen.getByText('Activity unavailable')).toBeInTheDocument();
   });
@@ -288,13 +293,13 @@ describe('ActivityRail (P2) — split degraded gating', () => {
 
 describe('ActivityRail (P2) — Watching section + states', () => {
   test('renders watching rows with repo + count and external link/aria-label', () => {
-    useActivityMock.mockReturnValue({
+    railProps = {
       data: resp({
         watching: [{ repo: 'acme/api', count: 3, url: 'https://github.com/acme/api' }],
       }),
       isLoading: false,
       error: null,
-    });
+    };
     renderRail();
     expect(screen.getByText('Watching')).toBeInTheDocument();
     // Owner is stripped for the accessible name (display = short repo "api").
@@ -305,13 +310,13 @@ describe('ActivityRail (P2) — Watching section + states', () => {
   });
 
   test('single recent item uses singular "item" in aria-label', () => {
-    useActivityMock.mockReturnValue({
+    railProps = {
       data: resp({
         watching: [{ repo: 'acme/api', count: 1, url: 'https://github.com/acme/api' }],
       }),
       isLoading: false,
       error: null,
-    });
+    };
     renderRail();
     expect(
       screen.getByRole('link', { name: /api — 1 recent item, opens on github/i }),
@@ -319,13 +324,13 @@ describe('ActivityRail (P2) — Watching section + states', () => {
   });
 
   test('idle (count 0) watching row uses no-recent-activity aria-label', () => {
-    useActivityMock.mockReturnValue({
+    railProps = {
       data: resp({
         watching: [{ repo: 'acme/api', count: 0, url: 'https://github.com/acme/api' }],
       }),
       isLoading: false,
       error: null,
-    });
+    };
     renderRail();
     expect(
       screen.getByRole('link', { name: /api — no recent activity, opens on github/i }),
@@ -333,28 +338,28 @@ describe('ActivityRail (P2) — Watching section + states', () => {
   });
 
   test('Watching absent when empty and not degraded', () => {
-    useActivityMock.mockReturnValue({
+    railProps = {
       data: resp({
         watching: [],
         degraded: { receivedEvents: false, notifications: false, watching: false },
       }),
       isLoading: false,
       error: null,
-    });
+    };
     renderRail();
     expect(screen.queryByText('Watching')).toBeNull();
     expect(screen.queryByText(/subscription/i)).toBeNull();
   });
 
   test('Watching empty + degraded → header omitted, inline note shown', () => {
-    useActivityMock.mockReturnValue({
+    railProps = {
       data: resp({
         watching: [],
         degraded: { receivedEvents: false, notifications: false, watching: true },
       }),
       isLoading: false,
       error: null,
-    });
+    };
     renderRail();
     expect(screen.queryByText('Watching')).toBeNull();
     expect(
@@ -363,14 +368,14 @@ describe('ActivityRail (P2) — Watching section + states', () => {
   });
 
   test('Watching items + degraded → rows render PLUS incomplete note below', () => {
-    useActivityMock.mockReturnValue({
+    railProps = {
       data: resp({
         watching: [{ repo: 'acme/api', count: 2, url: 'https://github.com/acme/api' }],
         degraded: { receivedEvents: false, notifications: false, watching: true },
       }),
       isLoading: false,
       error: null,
-    });
+    };
     renderRail();
     expect(screen.getByText('Watching')).toBeInTheDocument();
     expect(
@@ -385,7 +390,7 @@ describe('ActivityRail (P2) — server order + external routing', () => {
     const older = new Date(Date.now() - 60_000).toISOString();
     const newer = new Date().toISOString();
     // Input is intentionally NOT timestamp-sorted: older first, newer second.
-    useActivityMock.mockReturnValue({
+    railProps = {
       data: resp({
         items: [
           item({ actorLogin: 'first', prNumber: 100, timestamp: older }),
@@ -394,7 +399,7 @@ describe('ActivityRail (P2) — server order + external routing', () => {
       }),
       isLoading: false,
       error: null,
-    });
+    };
     renderRail();
     const links = screen.getAllByRole('link');
     expect(links[0].getAttribute('aria-label')).toMatch(/first/);
@@ -402,7 +407,7 @@ describe('ActivityRail (P2) — server order + external routing', () => {
   });
 
   test('non-PR notification url → external <a>; in-app PR url → <Link>', () => {
-    useActivityMock.mockReturnValue({
+    railProps = {
       data: resp({
         items: [
           item({
@@ -417,7 +422,7 @@ describe('ActivityRail (P2) — server order + external routing', () => {
       }),
       isLoading: false,
       error: null,
-    });
+    };
     renderRail();
     const external = screen.getByRole('link', { name: /you were mentioned in #5/i });
     expect(external).toHaveAttribute('href', 'https://github.com/notifications');

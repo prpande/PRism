@@ -65,4 +65,33 @@ describe('useActivity', () => {
     await waitFor(() => expect(result.current.error).not.toBeNull());
     expect(result.current.data?.items[0].prNumber).toBe(1);
   });
+
+  // #507 — the hook is now hoisted into InboxPage and called unconditionally with an
+  // `enabled` flag, so the no-fetch-when-hidden guarantee (#300/#283) lives here, on the
+  // flag, rather than on whether the rail mounts.
+  test('disabled: never fetches and settles to a not-loading idle state', async () => {
+    getActivityMock.mockResolvedValue(RESP(1));
+    const { result } = renderHook(() => useActivity(false));
+
+    // No request fires, even after a full poll interval elapses.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(90_000);
+    });
+    expect(getActivityMock).not.toHaveBeenCalled();
+    expect(result.current.isLoading).toBe(false);
+    expect(result.current.data).toBeNull();
+    expect(result.current.error).toBeNull();
+  });
+
+  test('enabling after being disabled starts the fetch', async () => {
+    getActivityMock.mockResolvedValue(RESP(1));
+    const { result, rerender } = renderHook(({ on }) => useActivity(on), {
+      initialProps: { on: false },
+    });
+    expect(getActivityMock).not.toHaveBeenCalled();
+
+    rerender({ on: true });
+    await waitFor(() => expect(result.current.data?.items[0].prNumber).toBe(1));
+    expect(getActivityMock).toHaveBeenCalledTimes(1);
+  });
 });
