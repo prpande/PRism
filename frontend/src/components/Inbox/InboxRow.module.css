@@ -230,10 +230,10 @@
   white-space: nowrap;
 }
 
-/* #283 AI-preview marker inside the category chip. Muted (--text-3), distinct from the
-   chip's --accent category text, so the canned "Refactor" reads as a sample not a real
-   label. Fixed-width / non-shrinking so the category text absorbs any width pressure
-   ("shorten category, not marker"). Hides with the chip below the 560px breakpoint. */
+/* #489 shared AiMarker (SparkIcon) inside the category chip — marks the chip as AI-derived.
+   Muted (--text-3), distinct from the chip's --accent category text. Fixed-width /
+   non-shrinking so the category text absorbs any width pressure ("shorten category, not
+   marker"). Hides with the chip below the 560px breakpoint. */
 .chipMarker {
   flex: none;
   margin-right: 5px;

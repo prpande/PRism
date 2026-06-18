@@ -64,7 +64,13 @@ internal static class JsonArrayExtractor
                         break;
                 }
             }
-            break; // no matching close anywhere — give up
+            // No matching close for THIS '[' within the scan window. A later '[' may still have
+            // its match inside the window (an unbalanced bracket in prose can precede the real
+            // array), so advance past this '[' and retry rather than abandoning the search.
+            // MaxRestarts bounds the retry count; the pathological all-'[' input still bails fast.
+            searchFrom = start + 1;
+            restarts++;
+            continue;
             foundClose:
             var span = text.Substring(start, end - start + 1);
             // Validate: only return a span that is syntactically valid JSON.

@@ -49,8 +49,12 @@ public sealed class ClaudeCodeInboxItemEnricherTests
             LastUserContent = request.UserContent;
             LastSystemPrompt = request.SystemPrompt;
             if (_throw is not null) throw _throw;
-            var idx = Math.Min(CallCount - 1, _responses.Length - 1);
-            return Task.FromResult(new LlmResult(_responses[idx], 100, 20, 0, 0.01m));
+            // Surface a retry-logic bug loudly: a test configures exactly the responses it expects
+            // to be consumed, so an extra call is a defect — not a reason to silently replay the last.
+            if (CallCount > _responses.Length)
+                throw new InvalidOperationException(
+                    $"FakeLlmProvider called {CallCount} times but only {_responses.Length} response(s) configured.");
+            return Task.FromResult(new LlmResult(_responses[CallCount - 1], 100, 20, 0, 0.01m));
         }
     }
     private sealed class FakeTokenUsageTracker : ITokenUsageTracker
@@ -63,14 +67,6 @@ public sealed class ClaudeCodeInboxItemEnricherTests
         public List<AiInteractionRecord> Records { get; } = new();
         public void Record(AiInteractionRecord record) => Records.Add(record);
     }
-    private sealed class FakeBus : IReviewEventBus
-    {
-        public List<object> Published { get; } = new();
-        public void Publish<TEvent>(TEvent evt) where TEvent : IReviewEvent => Published.Add(evt!);
-        public IDisposable Subscribe<TEvent>(Action<TEvent> handler) where TEvent : IReviewEvent => new Noop();
-        private sealed class Noop : IDisposable { public void Dispose() { } }
-    }
-
     private sealed class CapturingBus : IReviewEventBus
     {
         public List<object> Published { get; } = new();
@@ -104,7 +100,7 @@ public sealed class ClaudeCodeInboxItemEnricherTests
     }
 
     private static ClaudeCodeInboxItemEnricher Build(ILlmProvider provider) => new(
-        provider, new FakeTokenUsageTracker(), new FakeAiInteractionLog(), new FakeBus(),
+        provider, new FakeTokenUsageTracker(), new FakeAiInteractionLog(), new CapturingBus(),
         Consented(), NullLogger<ClaudeCodeInboxItemEnricher>.Instance);
 
     private static ClaudeCodeInboxItemEnricher BuildWithBus(ILlmProvider provider, CapturingBus bus,
