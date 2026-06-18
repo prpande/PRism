@@ -105,8 +105,13 @@ describe('HotspotsTab', () => {
   });
 
   it('a synopsis-only row renders no toggle (not expandable) but still has a Diff pill', () => {
-    renderTab({ status: 'ok', entries: [{ path: 'a.cs', level: 'high', rationale: 'Just a synopsis' }] });
-    expect(screen.queryByRole('button', { name: /toggle a\.cs rationale/i })).not.toBeInTheDocument();
+    renderTab({
+      status: 'ok',
+      entries: [{ path: 'a.cs', level: 'high', rationale: 'Just a synopsis' }],
+    });
+    expect(
+      screen.queryByRole('button', { name: /toggle a\.cs rationale/i }),
+    ).not.toBeInTheDocument();
     expect(screen.getByText('Just a synopsis')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /open a\.cs in diff/i })).toBeInTheDocument();
   });
@@ -114,7 +119,9 @@ describe('HotspotsTab', () => {
   it('a backfill row uses the path as its headline (path stays primary)', () => {
     renderTab({
       status: 'ok',
-      entries: [{ path: 'src/Backfilled.cs', level: 'medium', rationale: 'Not individually ranked.' }],
+      entries: [
+        { path: 'src/Backfilled.cs', level: 'medium', rationale: 'Not individually ranked.' },
+      ],
     });
     expect(screen.getByText('src/Backfilled.cs')).toBeInTheDocument();
     expect(screen.queryByText('Not individually ranked.')).not.toBeInTheDocument();
@@ -204,7 +211,9 @@ describe('HotspotsTab', () => {
       entries: [{ path: 'a.cs', level: 'medium', rationale: 'x' }],
     });
     expect(screen.getByText(/couldn't rank this pr automatically/i)).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /toggle a\.cs rationale/i })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: /toggle a\.cs rationale/i }),
+    ).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /retry/i })).not.toBeInTheDocument();
   });
 });

@@ -36,7 +36,10 @@ export function splitRationale(rationale: string): SplitRationale {
 
   if (firstHeadline.length > 0 && !isListItem) {
     // Conforming: a dedicated synopsis line. Body is everything after it.
-    const body = lines.slice(firstIdx + 1).join('\n').trim();
+    const body = lines
+      .slice(firstIdx + 1)
+      .join('\n')
+      .trim();
     return { headline: firstHeadline, body };
   }
 
