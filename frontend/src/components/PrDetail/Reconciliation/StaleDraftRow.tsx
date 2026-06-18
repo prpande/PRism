@@ -4,6 +4,7 @@ import { sendPatch } from '../../../api/draft';
 import type { PrReference, DraftSuggestion } from '../../../api/types';
 import type { DraftLike } from '../draftKinds';
 import type { PrTabId } from '../PrSubTabStrip';
+import { AiMarker } from '../../Ai/AiMarker';
 import { SampleBadge } from '../../Ai/SampleBadge';
 import styles from './StaleDraftRow.module.css';
 
@@ -128,9 +129,7 @@ export function StaleDraftRow({
           className={`stale-ai ai-tint ${styles.staleAi}`}
           data-testid="stale-draft-ai-suggestion"
         >
-          <span className="ai-icon" aria-hidden="true">
-            ✨
-          </span>
+          <AiMarker variant="inline" decorative className="ai-icon" />
           <div className={styles.staleAiBody}>
             <div className={`ai-summary-label ${styles.staleAiLabel}`}>
               AI suggestion <SampleBadge />

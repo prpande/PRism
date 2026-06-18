@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { DraftSuggestion, DraftCommentDto } from '../../../api/types';
 import type { DraftLike } from '../draftKinds';
@@ -69,5 +69,23 @@ describe('StaleDraftRow sample badge', () => {
     );
     expect(screen.getByTestId('stale-draft-ai-suggestion')).toBeInTheDocument();
     expect(screen.queryByTestId('sample-badge')).toBeNull();
+  });
+
+  it('renders the AiMarker, keeps the "AI suggestion" label, drops the emoji', () => {
+    render(
+      <ul>
+        <StaleDraftRow
+          prRef={PR_REF}
+          draft={draft}
+          onMutated={() => {}}
+          aiSuggestion={aiSuggestion}
+          onSelectSubTab={() => {}}
+        />
+      </ul>,
+    );
+    const block = screen.getByTestId('stale-draft-ai-suggestion');
+    expect(within(block).getByTestId('ai-marker')).toBeInTheDocument();
+    expect(within(block).getByText('AI suggestion')).toBeInTheDocument();
+    expect(block.textContent).not.toContain('✨');
   });
 });
