@@ -6,6 +6,7 @@ import { useToast } from '../components/Toast/useToast';
 import { useAiGate } from '../hooks/useAiGate';
 import { usePreferences } from '../hooks/usePreferences';
 import { useMediaQuery } from '../hooks/useMediaQuery';
+import { useActivity } from '../hooks/useActivity';
 import { INBOX_RAIL_MIN_WIDTH } from '../components/Inbox/inboxLayout';
 import { orderInboxSections } from '../components/Inbox/sectionOrder';
 import { InboxToolbar } from '../components/Inbox/InboxToolbar';
@@ -45,6 +46,11 @@ export function InboxPage() {
   // false means an opted-out user never sees a rail flash before preferences resolve.
   const wideEnoughForRail = useMediaQuery(`(min-width: ${INBOX_RAIL_MIN_WIDTH}px)`);
   const showRail = (preferences?.inbox.showActivityRail ?? false) && wideEnoughForRail;
+  // #507 — hoist the activity fetch to InboxPage so /api/activity starts in parallel
+  // with the inbox fetch on cold load, instead of waiting for the rail to mount after
+  // the inbox resolves. `showRail` gates the fetch (#300/#283 no-fetch-when-hidden);
+  // called unconditionally here (above the loading/error early returns) per Rules of Hooks.
+  const activity = useActivity(showRail);
   // #331 — memoize so `sections` is referentially stable across renders where the
   // fetched sections don't change, keeping the `maxDiff` memo (and the derived
   // filter state) from recomputing on unrelated re-renders.
@@ -153,7 +159,7 @@ export function InboxPage() {
               ))}
             {data.tokenScopeFooterEnabled && <InboxFooter />}
           </div>
-          {showRail && <ActivityRail />}
+          {showRail && <ActivityRail {...activity} />}
         </div>
       </main>
     </>

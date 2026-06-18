@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Avatar } from '../Avatar/Avatar';
 import { formatAge } from '../../utils/relativeTime';
-import { useActivity } from '../../hooks/useActivity';
+import type { UseActivityResult } from '../../hooks/useActivity';
 import type { ActivityItem, ActivityVerb, WatchedRepoActivity } from '../../api/types';
 import styles from './ActivityRail.module.css';
 
@@ -159,8 +159,10 @@ function WatchRow({ w }: { w: WatchedRepoActivity }) {
   );
 }
 
-export function ActivityRail() {
-  const { data, isLoading, error } = useActivity();
+// #507 — presentational: the activity fetch now lives in InboxPage (hoisted so it can
+// run in parallel with the inbox fetch on cold load). The rail just renders the
+// { data, isLoading, error } it is handed.
+export function ActivityRail({ data, isLoading, error }: UseActivityResult) {
   const [showBots, setShowBots] = useState(false); // transient; default HIDDEN
 
   // #331 — memoize so `all` is referentially stable across renders where the
