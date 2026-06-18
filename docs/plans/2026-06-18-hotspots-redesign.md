@@ -539,7 +539,9 @@ const PANEL_ID_UNSAFE_CHARS = /[^a-z0-9]/gi;
 // Rationale strings the parser assigns BY RULE (not model-authored). Kept in
 // sync with the backend: FileFocusParser.BackfillRationale and the ranker's
 // LowByRuleRationale. Used to (a) keep the path primary on backfilled rows and
-// (b) exclude low-by-rule files from the Low count (#520 D7/D9).
+// (b) exclude low-by-rule files from the Low count (#520 D7/D9). These are
+// string-keyed: if either backend constant changes, update these too — a
+// divergence silently regresses the count/headline (no type error to catch it).
 const BACKFILL_RATIONALE = 'Not individually ranked.';
 const LOW_BY_RULE_RATIONALE = 'No changes to review in this file.';
 
@@ -779,7 +781,7 @@ function CodeIcon() {
 
 - [ ] **Step 4: Replace the row/group/dot styles in the CSS module**
 
-In `frontend/src/components/PrDetail/HotspotsTab/HotspotsTab.module.css`, **remove** the now-unused rules: `.group`, `.groupHeading`, `.dot`, `.dotMed`, `.dotHigh`, and the old `.rowPath` / `.rowPreview` / `.openInDiff` rules. **Keep** `.hotspots`, `.skeletonRow`, `@keyframes pulse`, `.message`, `.messagePositive`, `.messageError`, `.retryButton`, and the glyph rules added in Task 2. **Add** these rules:
+In `frontend/src/components/PrDetail/HotspotsTab/HotspotsTab.module.css`, **remove** the now-unused rules (all present in the current module — verified): `.group`, `.groupHeading`, `.dot`, `.dotMed`, `.dotHigh`, and the old `.rowPath` / `.rowPreview` / `.openInDiff` rules. **Keep** `.hotspots`, `.skeletonRow`, `@keyframes pulse`, `.message`, `.messagePositive`, `.messageError`, `.retryButton`, and the glyph rules added in Task 2. **Add** these rules:
 
 ```css
 /* One outer container; the flex gap (--s-4) is the whitespace divider between
@@ -956,7 +958,14 @@ git commit -m "feat(hotspots): headline-led rows, single card, signal-bars glyph
 
 - [ ] **Step 1: Reshape the `rationale` instruction in `SystemPromptV1`**
 
-In `PRism.Web/Ai/ClaudeCodeFileFocusRanker.cs`, replace the single `rationale = …` line inside `SystemPromptV1` (currently `"rationale = concise bulleted markdown explaining WHY this file needs review … not a long paragraph. "`) with:
+In `PRism.Web/Ai/ClaudeCodeFileFocusRanker.cs`, the `rationale` instruction is **two concatenated string literals** inside `SystemPromptV1` (currently lines 53-54):
+
+```csharp
+        "rationale = concise bulleted markdown explaining WHY this file needs review — the specific risk or change — " +
+        "so the reviewer has real context (not just a label); keep it scannable and short, not a long paragraph. " +
+```
+
+Replace **both** of those literals (a verbatim search for a single line will not match) with:
 
 ```csharp
         "rationale = a SHORT synopsis on the first line (a headline of at most ~8 words, no bullet, " +
