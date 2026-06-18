@@ -70,4 +70,16 @@ public sealed class PrCategoryParserTests
         var (body, _) = PrCategoryParser.Parse("CATEGORY: fix\n- one\n- two");
         body.Should().Be("- one\n- two");
     }
+
+    [Fact]
+    public void BidiOverrideChar_InCategoryValue_RejectedAsOutOfTaxonomy_BodyStillSanitized()
+    {
+        // A bidi override smuggled into the CATEGORY value can't poison the chip: it makes the value
+        // miss the taxonomy → "" fallback. Pins that invariant so loosening the taxonomy check can't
+        // silently pass a bidi-poisoned category to the frontend; the body is sanitized independently.
+        var rlo = ((char)0x202E).ToString();
+        var (body, category) = PrCategoryParser.Parse($"CATEGORY: f{rlo}ix\nBody.");
+        category.Should().Be("");
+        body.Should().Be("Body.");
+    }
 }
