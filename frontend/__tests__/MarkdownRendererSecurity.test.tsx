@@ -4,6 +4,7 @@ import type { ReactElement } from 'react';
 import { MarkdownRenderer } from '../src/components/Markdown/MarkdownRenderer';
 import { ComposerMarkdownPreview } from '../src/components/PrDetail/Composer/ComposerMarkdownPreview';
 import { AiSummaryCard } from '../src/components/PrDetail/OverviewTab/AiSummaryCard';
+import { AiHunkAnnotation } from '../src/components/PrDetail/FilesTab/DiffPane/AiHunkAnnotation';
 
 vi.mock('../src/hooks/usePreferences', () => ({
   usePreferences: () => ({ preferences: { ui: { aiMode: 'preview' } } }),
@@ -28,6 +29,12 @@ const CONSUMERS: { name: string; render: (md: string) => ReactElement }[] = [
     name: 'AiSummaryCard',
     render: (md: string) => (
       <AiSummaryCard summary={{ body: md, category: 'fix' }} loading={false} error={false} />
+    ),
+  },
+  {
+    name: 'AiHunkAnnotation',
+    render: (md: string) => (
+      <AiHunkAnnotation annotation={{ path: 'x.ts', hunkIndex: 0, body: md, tone: 'calm' }} />
     ),
   },
 ];

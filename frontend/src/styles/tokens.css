@@ -427,6 +427,12 @@ a:hover { text-decoration: underline; }
   margin: 0.5em 0 0.25em;
 }
 
+/* #465/#488 — extra-tight modifier for the hunk-annotation popover, whose chrome
+   is narrower than the summary card. */
+.ai-markdown--popover ul,
+.ai-markdown--popover ol { padding-left: 1em; }
+.ai-markdown--popover pre { font-size: 0.85em; }
+
 ::selection { background: var(--accent-soft); color: var(--text-1); }
 
 /* focus ring */
