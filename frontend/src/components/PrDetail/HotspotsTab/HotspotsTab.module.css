@@ -4,11 +4,11 @@
   flex-direction: column;
   gap: var(--s-4);
 }
-/* #489: region-level AI provenance marker, top-right of the tab content. */
+/* #489: region-level AI provenance marker, top-right of the tab content.
+   Color is set by AiMarker itself, so the wrapper only handles layout. */
 .aiRegionMark {
   display: flex;
   justify-content: flex-end;
-  color: var(--accent);
 }
 .group {
   display: flex;

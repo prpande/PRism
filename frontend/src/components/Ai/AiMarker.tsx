@@ -19,13 +19,7 @@ export function AiMarker({
   decorative = false,
   className,
 }: AiMarkerProps) {
-  const cls = [
-    styles.aiMarker,
-    variant === 'inline' ? styles.inline : styles.superscript,
-    className,
-  ]
-    .filter(Boolean)
-    .join(' ');
+  const cls = [styles.aiMarker, styles[variant], className].filter(Boolean).join(' ');
   return (
     <span className={cls} data-ai-marker="" data-testid="ai-marker">
       <SparkIcon className={styles.glyph} />
