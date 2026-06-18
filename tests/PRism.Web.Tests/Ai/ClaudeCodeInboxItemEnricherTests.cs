@@ -13,6 +13,7 @@ using PRism.Core.Ai;
 using PRism.Core.Config;
 using PRism.Core.Contracts;
 using PRism.Core.Events;
+using PRism.Core.Inbox;
 using PRism.Web.Ai;
 using Xunit;
 
@@ -70,9 +71,22 @@ public sealed class ClaudeCodeInboxItemEnricherTests
         private sealed class Noop : IDisposable { public void Dispose() { } }
     }
 
+    private sealed class CapturingBus : IReviewEventBus
+    {
+        public List<object> Published { get; } = new();
+        public void Publish<TEvent>(TEvent evt) where TEvent : IReviewEvent => Published.Add(evt!);
+        public IDisposable Subscribe<TEvent>(Action<TEvent> handler) where TEvent : IReviewEvent => new Noop();
+        private sealed class Noop : IDisposable { public void Dispose() { } }
+    }
+
     private static ClaudeCodeInboxItemEnricher Build(ILlmProvider provider) => new(
         provider, new FakeTokenUsageTracker(), new FakeAiInteractionLog(), new FakeBus(),
         Consented(), NullLogger<ClaudeCodeInboxItemEnricher>.Instance);
+
+    private static ClaudeCodeInboxItemEnricher BuildWithBus(ILlmProvider provider, CapturingBus bus,
+        AiConsentState? consent = null) => new(
+        provider, new FakeTokenUsageTracker(), new FakeAiInteractionLog(), bus,
+        consent ?? Consented(), NullLogger<ClaudeCodeInboxItemEnricher>.Instance);
 
     [Fact]
     public async Task EnrichBatch_parses_and_normalizes_categories()
@@ -121,5 +135,82 @@ public sealed class ClaudeCodeInboxItemEnricherTests
         var act = async () => await sut.EnrichBatchAsync(new[] { Item(1, "x", "y") }, default);
 
         await act.Should().ThrowAsync<LlmProviderException>();
+    }
+
+    [Fact]
+    public async Task EnrichAsync_returns_empty_on_cold_cache_then_publishes_on_background_completion()
+    {
+        var provider = new FakeLlmProvider("""[{"prId":"octo/repo#1","category":"feature"}]""");
+        var bus = new CapturingBus();
+        var sut = BuildWithBus(provider, bus);
+
+        var immediate = await sut.EnrichAsync(new[] { Item(1, "Add X", "desc") }, default);
+        immediate.Should().BeEmpty();
+
+        await sut.DrainPendingAsync();
+
+        var published = bus.Published.OfType<InboxEnrichmentsReady>().Single();
+        var r = published.Results.Single();
+        r.CategoryChip.Should().Be("Feature");
+        r.ContentToken.Should().Be(InboxEnrichmentContent.Token("Add X", "desc"));
+    }
+
+    [Fact]
+    public async Task EnrichAsync_serves_cache_and_skips_LLM_on_unchanged_content()
+    {
+        var provider = new FakeLlmProvider("""[{"prId":"octo/repo#1","category":"feature"}]""");
+        var sut = BuildWithBus(provider, new CapturingBus());
+
+        await sut.EnrichAsync(new[] { Item(1, "Add X", "desc") }, default);
+        await sut.DrainPendingAsync();
+        var second = await sut.EnrichAsync(new[] { Item(1, "Add X", "desc") with { HeadSha = "newsha" } }, default);
+
+        second.Single().CategoryChip.Should().Be("Feature");
+        provider.CallCount.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task EnrichAsync_reenriches_when_description_changes()
+    {
+        var provider = new FakeLlmProvider(
+            """[{"prId":"octo/repo#1","category":"feature"}]""",
+            """[{"prId":"octo/repo#1","category":"docs"}]""");
+        var sut = BuildWithBus(provider, new CapturingBus());
+
+        await sut.EnrichAsync(new[] { Item(1, "Add X", "v1") }, default);
+        await sut.DrainPendingAsync();
+        await sut.EnrichAsync(new[] { Item(1, "Add X", "v2 edited") }, default);
+        await sut.DrainPendingAsync();
+
+        provider.CallCount.Should().Be(2);
+    }
+
+    [Fact]
+    public async Task EnrichAsync_does_not_cache_on_provider_failure_and_does_not_throw()
+    {
+        var provider = FakeLlmProvider.Throwing(new LlmProviderException("boom"));
+        var bus = new CapturingBus();
+        var sut = BuildWithBus(provider, bus);
+
+        var result = await sut.EnrichAsync(new[] { Item(1, "x", "y") }, default);
+        result.Should().BeEmpty();
+        await sut.DrainPendingAsync();
+
+        bus.Published.OfType<InboxEnrichmentsReady>().Should().BeEmpty(); // soft-fail: nothing published
+    }
+
+    [Fact]
+    public async Task EnrichAsync_aborts_before_egress_when_consent_revoked_midflight()
+    {
+        var consent = new AiConsentState(); // not consented
+        var provider = new FakeLlmProvider("""[{"prId":"octo/repo#1","category":"feature"}]""");
+        var bus = new CapturingBus();
+        var sut = BuildWithBus(provider, bus, consent);
+
+        await sut.EnrichAsync(new[] { Item(1, "Add X", "desc") }, default);
+        await sut.DrainPendingAsync();
+
+        provider.CallCount.Should().Be(0);                 // no egress
+        bus.Published.Should().BeEmpty();                  // no publish
     }
 }

@@ -1,6 +1,7 @@
 using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
+using PRism.AI.ClaudeCode;
 using PRism.AI.Contracts.Dtos;
 using PRism.AI.Contracts.Observability;
 using PRism.AI.Contracts.Provider;
@@ -8,6 +9,7 @@ using PRism.AI.Contracts.Seams;
 using PRism.Core.Ai;
 using PRism.Core.Contracts;
 using PRism.Core.Events;
+using PRism.Core.Inbox;
 
 namespace PRism.Web.Ai;
 
@@ -64,12 +66,75 @@ internal sealed partial class ClaudeCodeInboxItemEnricher : IInboxItemEnricher, 
             .ToList();
     }
 
-    // IInboxItemEnricher.EnrichAsync is implemented by Task 5 (async pop-in delivery with cache +
-    // background batch + InboxEnrichmentsReady publish). Stub here to satisfy the interface contract
-    // until Task 5 replaces it.
+    internal readonly record struct EnrichKey(PrReference Ref, string Title, string? Description);
+
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<EnrichKey, InboxItemEnrichment> _cache = new();
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<EnrichKey, byte> _inflight = new();
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<int, Task> _pending = new();
+    private readonly CancellationTokenSource _cts = new();
+    private int _batchSeq;
+
+    private static EnrichKey KeyOf(PrInboxItem i) => new(i.Reference, i.Title, i.Description);
+
     public Task<IReadOnlyList<InboxItemEnrichment>> EnrichAsync(
         IReadOnlyList<PrInboxItem> items, CancellationToken ct)
-        => throw new NotImplementedException("Implemented in Task 5 (async delivery).");
+    {
+        var cached = new List<InboxItemEnrichment>();
+        var misses = new List<PrInboxItem>();
+        foreach (var i in items)
+        {
+            if (_cache.TryGetValue(KeyOf(i), out var hit)) cached.Add(hit);
+            else if (_inflight.TryAdd(KeyOf(i), 0)) misses.Add(i); // claim the in-flight slot
+            // else: already in flight in another batch — it will publish later
+        }
+
+        if (misses.Count > 0 && !_cts.IsCancellationRequested)
+        {
+            var id = System.Threading.Interlocked.Increment(ref _batchSeq);
+            var task = Task.Run(() => RunBackgroundBatchAsync(misses), _cts.Token);
+            _pending[id] = task;
+            _ = task.ContinueWith(_ => _pending.TryRemove(id, out Task? _), TaskScheduler.Default);
+        }
+
+        return Task.FromResult<IReadOnlyList<InboxItemEnrichment>>(cached);
+    }
+
+    private async Task RunBackgroundBatchAsync(IReadOnlyList<PrInboxItem> misses)
+    {
+        var keys = misses.Select(KeyOf).ToList(); // cannot throw (non-null record fields)
+        try
+        {
+            _cts.Token.ThrowIfCancellationRequested();
+            // Re-check consent immediately before egress — the seam selector checked it at Resolve
+            // time, but this detached task can outlive a mid-flight withdrawal.
+            if (!_consent.IsConsented(ClaudeProviderId, AiDisclosure.CurrentVersion)) return;
+
+            var results = await EnrichBatchAsync(misses, _cts.Token).ConfigureAwait(false);
+            foreach (var (item, result) in misses.Zip(results))
+                _cache[KeyOf(item)] = result; // cache even a confident null-chip ("Other")
+
+            if (_cts.IsCancellationRequested) return; // don't publish into a disposing host
+            var payload = misses.Zip(results)
+                .Select(pair => new InboxEnrichmentResult(
+                    pair.Second.PrId, pair.Second.CategoryChip,
+                    InboxEnrichmentContent.Token(pair.First.Title, pair.First.Description)))
+                .ToList();
+            _bus.Publish(new InboxEnrichmentsReady(payload));
+        }
+        catch (OperationCanceledException) { /* shutdown — no publish, in-flight cleared below */ }
+        catch (LlmProviderException ex) { Log.BatchFailed(_logger, ex); }       // provider message is safe to log
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            Log.BatchAborted(_logger, ex.GetType().Name); // type only — never log content (JSON/desc)
+        }
+        finally
+        {
+            foreach (var k in keys) _inflight.TryRemove(k, out _);
+        }
+    }
+
+    /// Test hook: await all currently in-flight background batches.
+    internal Task DrainPendingAsync() => Task.WhenAll(_pending.Values.ToArray());
 
     private static string BuildPrompt(IReadOnlyList<PrInboxItem> items)
     {
@@ -142,5 +207,18 @@ internal sealed partial class ClaudeCodeInboxItemEnricher : IInboxItemEnricher, 
             ResponseChars: r.Text.Length));
     }
 
-    public void Dispose() { }
+    public void Dispose()
+    {
+        _cts.Cancel();
+        _cts.Dispose();
+    }
+
+    private static partial class Log
+    {
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Inbox enrichment batch failed (provider); not cached, will retry")]
+        internal static partial void BatchFailed(ILogger logger, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Inbox enrichment batch aborted: {ExceptionType}; not cached")]
+        internal static partial void BatchAborted(ILogger logger, string exceptionType);
+    }
 }
