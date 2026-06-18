@@ -1,9 +1,13 @@
-import { useState, type ReactNode } from 'react';
+import { useState } from 'react';
 import { usePrDetailContext } from '../prDetailContext';
 import type { FileFocus } from '../../../api/types';
 import { MarkdownRenderer } from '../../Markdown/MarkdownRenderer';
 import { stripMarkdown } from './stripMarkdown';
 import styles from './HotspotsTab.module.css';
+
+// Collapses every non-alphanumeric run in a path to '-' so it is safe inside an
+// id attribute. Module-scope so it compiles once, not per row per render.
+const PANEL_ID_UNSAFE_CHARS = /[^a-z0-9]/gi;
 
 // The triage surface (spec §8 / #488): filtered High→Medium as a multi-open,
 // default-collapsed accordion. The collapsed row shows path + level dot + a
@@ -33,7 +37,7 @@ export function HotspotsTab() {
     );
   }
   if (status === 'fallback') {
-    return <Message className={styles.message}>Couldn’t rank this PR automatically.</Message>;
+    return <div className={styles.message}>Couldn’t rank this PR automatically.</div>;
   }
   if (status === 'error') {
     return (
@@ -46,10 +50,10 @@ export function HotspotsTab() {
     );
   }
   if (status === 'not-subscribed') {
-    return <Message className={styles.message}>AI file focus isn’t active for this PR.</Message>;
+    return <div className={styles.message}>AI file focus isn’t active for this PR.</div>;
   }
   if (status === 'no-changes') {
-    return <Message className={styles.message}>No file changes to review.</Message>;
+    return <div className={styles.message}>No file changes to review.</div>;
   }
 
   const high = entries.filter((e) => e.level === 'high');
@@ -57,9 +61,9 @@ export function HotspotsTab() {
 
   if (status === 'empty' || (high.length === 0 && medium.length === 0)) {
     return (
-      <Message className={styles.messagePositive}>
+      <div className={styles.messagePositive}>
         Nothing needs special attention — the AI didn't flag any file. Skim freely.
-      </Message>
+      </div>
     );
   }
 
@@ -111,7 +115,7 @@ function Group({
           // Path-stable (not index-based): survives reorder/filter so aria-controls
           // never mis-wires; the label prefix disambiguates the same path appearing
           // in both High and Medium. Consistent with key={r.path} below.
-          const panelId = `hotspot-panel-${label}-${r.path.replace(/[^a-z0-9]/gi, '-')}`;
+          const panelId = `hotspot-panel-${label}-${r.path.replace(PANEL_ID_UNSAFE_CHARS, '-')}`;
           return (
             <li key={r.path} className={styles.item}>
               <div className={styles.itemHeader}>
@@ -155,10 +159,6 @@ function Group({
       </ul>
     </section>
   );
-}
-
-function Message({ children, className }: { children: ReactNode; className: string }) {
-  return <div className={className}>{children}</div>;
 }
 
 // Both row affordances are 14px line-icons differing only in the path data: the

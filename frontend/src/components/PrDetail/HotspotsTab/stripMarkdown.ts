@@ -6,12 +6,13 @@
  * code, link/image syntax) and returns the first non-empty resulting line.
  */
 export function stripMarkdown(md: string): string {
-  return (
-    md
-      .split('\n')
-      .map((line) => stripLine(line))
-      .find((line) => line.length > 0) ?? ''
-  );
+  // Stop at the first line that survives stripping — most rationales lead with
+  // real content, so this avoids stripping every subsequent line needlessly.
+  for (const line of md.split('\n')) {
+    const stripped = stripLine(line);
+    if (stripped.length > 0) return stripped;
+  }
+  return '';
 }
 
 function stripLine(line: string): string {
