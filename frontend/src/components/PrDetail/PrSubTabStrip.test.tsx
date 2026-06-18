@@ -4,11 +4,7 @@ import { PrSubTabStrip } from './PrSubTabStrip';
 
 function renderStrip(showHotspots: boolean) {
   return render(
-    <PrSubTabStrip
-      activeTab="overview"
-      onTabChange={vi.fn()}
-      showHotspots={showHotspots}
-    />,
+    <PrSubTabStrip activeTab="overview" onTabChange={vi.fn()} showHotspots={showHotspots} />,
   );
 }
 
