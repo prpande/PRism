@@ -250,6 +250,38 @@ describe('InboxRow tail reserve-and-collapse', () => {
   });
 });
 
+describe('InboxRow Draft chip', () => {
+  it('renders a Draft chip for open draft PRs with AI off', () => {
+    renderInboxRow({ ...PR, isDraft: true }, { showCategoryChip: false });
+    expect(screen.getByText('Draft')).toBeInTheDocument();
+    expect(screen.queryByText('AI')).not.toBeInTheDocument();
+  });
+
+  it('draft PR shows Draft, not an AI category chip', () => {
+    renderInboxRow(
+      { ...PR, isDraft: true },
+      {
+        showCategoryChip: true,
+        enrichment: { prId: 'x', categoryChip: 'Feature', hoverSummary: null },
+      },
+    );
+    expect(screen.getByText('Draft')).toBeInTheDocument();
+    expect(screen.queryByText('Feature')).not.toBeInTheDocument();
+  });
+
+  it('non-draft PR shows the AI category chip', () => {
+    renderInboxRow(
+      { ...PR, isDraft: false },
+      {
+        showCategoryChip: true,
+        enrichment: { prId: 'x', categoryChip: 'Feature', hoverSummary: null },
+      },
+    );
+    expect(screen.getByText('Feature')).toBeInTheDocument();
+    expect(screen.getByText('AI')).toBeInTheDocument();
+  });
+});
+
 describe('InboxRow chip + badge placement (on the meta line, not the metrics tail)', () => {
   it('renders the AI category chip on the meta line, not inside the metrics tail', () => {
     renderInboxRow(PR, {

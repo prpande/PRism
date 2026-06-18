@@ -242,6 +242,18 @@
   letter-spacing: 0.03em;
 }
 
+.draftChip {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  background: var(--surface-3);
+  color: var(--text-2);
+  border-radius: var(--radius-2);
+  font-size: var(--text-2xs);
+  font-weight: 500;
+  white-space: nowrap;
+}
+
 .counts {
   display: flex;
   gap: 6px;
@@ -278,6 +290,13 @@
    surface-3 in light, but a distinct value in dark where --row-hover sits next to
    surface-3 (#347). */
 .row:hover .comments {
+  background: var(--row-hover-pill);
+}
+
+/* Keep the draft chip readable on a hovered row — same dark-surface asymmetry as the
+   comment pill: --surface-3 abuts --row-hover in dark, so without this the chip
+   vanishes into the hovered row background (#410). */
+.row:hover .draftChip {
   background: var(--row-hover-pill);
 }
 
