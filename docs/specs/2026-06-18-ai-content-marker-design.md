@@ -66,7 +66,7 @@ Rendering:
 
 **No hooks inside `AiMarker`.** Unlike `SampleBadge` (which self-checks `useIsSampleMode()`), `AiMarker` does not gate itself — but the host is responsible for mounting it **only where real AI content is present** (Decision 7), i.e. after a surface's loading/error/empty early-returns, never on app-authored fallback copy. "AI feature enabled" ≠ "AI content present"; the host must mount the marker on the success branch.
 
-**Animation:** the marker is **static** (no pulse/shimmer). If animation is ever added later it must be gated behind `prefers-reduced-motion: no-preference`.
+**Animation:** the marker is **static by default** (no pulse/shimmer) on every surface. **Exception (owner B1, 2026-06-18):** the Hotspots sub-tab marker mirrors the tab label's hover treatment — muted (`opacity: 0.6`) while the tab is idle, full strength on `:hover`/`:focus-visible`/active, matching the label's own instant `--text-3 → --text-1` brightness shift. This is scoped to the Hotspots tab via `PrSubTabStrip.module.css` targeting `[data-ai-marker]`; the shared `AiMarker` component and all other surfaces stay static. The change is an instant opacity step (no transition/transform), so no `prefers-reduced-motion` guard is needed. Any future *continuous* animation must still be gated behind `prefers-reduced-motion: no-preference`.
 
 ## 5. Glyph relocation
 

@@ -21,10 +21,12 @@ describe('AiMarker', () => {
     expect(marker).not.toHaveAttribute('title');
   });
 
-  it('applies the variant class (superscript default, inline opt-in)', () => {
+  it('applies the variant class (superscript default, inline + lead opt-in)', () => {
     const { rerender } = render(<AiMarker />);
     expect(screen.getByTestId('ai-marker').className).toMatch(/superscript/);
     rerender(<AiMarker variant="inline" />);
     expect(screen.getByTestId('ai-marker').className).toMatch(/inline/);
+    rerender(<AiMarker variant="lead" />);
+    expect(screen.getByTestId('ai-marker').className).toMatch(/lead/);
   });
 });

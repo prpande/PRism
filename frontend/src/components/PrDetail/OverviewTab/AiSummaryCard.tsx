@@ -91,8 +91,8 @@ export function AiSummaryCard({
       data-testid="ai-summary-card"
     >
       <span className={styles.aiSummaryLabel}>
+        <AiMarker variant="lead" decorative />
         AI Summary
-        <AiMarker variant="superscript" decorative />
       </span>
       <SampleBadge />
       {/* Live-only status region. Rendered ONLY when `live` so that in Preview/Off the empty div does

@@ -4,8 +4,9 @@ import styles from './AiMarker.module.css';
 
 export interface AiMarkerProps {
   /** 'superscript' (default) = tiny raised glyph beside a text label;
-   *  'inline' = baseline glyph for buttons / nav / headers. */
-  variant?: 'superscript' | 'inline';
+   *  'inline' = baseline glyph for buttons / nav / headers;
+   *  'lead' = larger glyph placed before a text label (headings / sub-tabs). */
+  variant?: 'superscript' | 'inline' | 'lead';
   /** Identity use: decorative glyph only, no sr-only label. Use where adjacent
    *  visible "AI…" text already announces provenance. Default false = provenance. */
   decorative?: boolean;

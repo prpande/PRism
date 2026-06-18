@@ -80,9 +80,9 @@ interface TabProps {
   // visible numeric badge is unchanged). Single consumer = Hotspots; not worth
   // a function-valued prop on the generic Tab.
   srCountSuffix?: string;
-  // When true, renders a superscript AiMarker (decorative) immediately after the
-  // label text. The tab's accessible name is unaffected (decorative=true means no
-  // sr-only label inside the marker). Single consumer = Hotspots tab.
+  // When true, renders a larger leading AiMarker (decorative) immediately before
+  // the label text. The tab's accessible name is unaffected (decorative=true means
+  // no sr-only label inside the marker). Single consumer = Hotspots tab.
   aiMarker?: boolean;
 }
 
@@ -107,8 +107,8 @@ function Tab({ id, label, active, onSelect, disabled, count, srCountSuffix, aiMa
         if (!disabled) onSelect(id);
       }}
     >
+      {aiMarker && <AiMarker variant="lead" decorative />}
       {label}
-      {aiMarker && <AiMarker variant="superscript" decorative />}
       {count !== undefined && count > 0 && (
         <>
           <span
