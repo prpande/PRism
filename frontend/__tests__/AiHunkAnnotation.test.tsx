@@ -55,7 +55,7 @@ describe('AiHunkAnnotation', () => {
     expect(chip.className).toContain('chip-danger');
   });
 
-  it('renders the ai-icon with aria-hidden', () => {
+  it('renders the ai-icon as a decorative AiMarker (svg is aria-hidden)', () => {
     const { container } = render(
       <AiHunkAnnotation
         annotation={{
@@ -68,6 +68,7 @@ describe('AiHunkAnnotation', () => {
     );
     const icon = container.querySelector('.ai-icon');
     expect(icon).toBeInTheDocument();
-    expect(icon).toHaveAttribute('aria-hidden', 'true');
+    expect(icon).toHaveAttribute('data-ai-marker');
+    expect(container.querySelector('.ai-icon svg')).toHaveAttribute('aria-hidden', 'true');
   });
 });
