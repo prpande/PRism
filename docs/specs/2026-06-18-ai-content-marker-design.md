@@ -7,17 +7,17 @@
 
 ## 1. Problem
 
-PRism renders AI-generated content alongside real PR/GitHub data in several places, with **no consistent visual signal** for which is which. Worse, a sparkle `✨` glyph is *already* scattered across the app as raw emoji (Ask-AI pull-tab, Ask-AI drawer header, hunk annotations, stale-draft row) with no shared component, no shared sizing, and no accessibility contract. Emoji is itself the inconsistency: it is multicolour (ignores `--accent`, won't tint per theme) and **renders differently per OS**, which is a concrete baseline-flake risk because the Playwright visual baselines are platform-split (`linux/` vs `win32/`).
+PRism renders AI-generated content alongside real PR/GitHub data in several places, with **no consistent visual signal** for which is which. Worse, a sparkle `✨` glyph is *already* scattered across the app as raw emoji (Ask-AI pull-tab, Ask-AI drawer ×3, hunk annotations, stale-draft row — 6 occurrences in 4 files) with no shared component, no shared sizing, and no accessibility contract. Emoji is itself the inconsistency: it is multicolour (ignores `--accent`, won't tint per theme) and **renders differently per OS**, which is a concrete baseline-flake risk because the Playwright visual baselines are platform-split (`linux/` vs `win32/`).
 
-This slice ships **one shared, accessible, theme-stable AI marker** and applies it consistently to every surface where AI generates text — replacing every raw emoji with it.
+This slice ships **one shared, accessible, theme-stable AI marker** and applies it to every surface where AI generates text — replacing every raw sparkle emoji with it and adding the marker on AI surfaces that have no glyph today.
 
 ## 2. Goals / Non-goals
 
 **Goals**
 - A single design-system component (`AiMarker`) as the one source of truth for the AI sparkle.
-- Applied to every current AI **text** surface (provenance) and used as the AI **identity** glyph in AI nav/entry-points.
-- Replace **every** existing raw `✨` emoji usage with the component.
-- Theme-consistent (`currentColor`/`--accent`) and cross-platform pixel-stable (monochrome SVG).
+- **Two kinds of work, both in scope:** (a) *migrate* — replace every existing raw `✨` emoji with the component; (b) *add* — place the marker on AI-text/identity surfaces that have no glyph today (AI summary, Hotspots, AI settings tab).
+- Provenance marking on genuinely AI-generated **text**; identity marking on AI nav/entry-points.
+- Theme-consistent (`currentColor`/`--accent`) and cross-platform pixel-stable (monochrome SVG, static — no animation).
 - Always-on for AI content (truthfulness); no user toggle.
 
 **Non-goals**
@@ -25,20 +25,22 @@ This slice ships **one shared, accessible, theme-stable AI marker** and applies 
 - No change to `SampleBadge`'s behaviour or to the AI gating model.
 - No settings toggle or icon-style picker (deferred to #485 if ever wanted).
 - No marker on non-text AI signals (the file-tree focus dots from #492 stay as-is).
+- **Non-`✨` emoji are out of scope** (`✕`, `⌘ ⏎`, etc. are not AI markers and are untouched). The grep gate (§11) is scoped to `✨` in `frontend/src` deliberately.
 - Not de-duplicating the Preview-mode sparkle-vs-"Sample" overlap — #463 owns that.
 
-## 3. Decisions (resolved in brainstorming)
+## 3. Decisions (resolved in brainstorming + doc-review)
 
-1. **Relationship to `SampleBadge`: coexist / layered.** The sparkle signals **provenance** ("this is AI-generated"), always-on in both Preview and Live. `SampleBadge` remains a separate **data-quality** qualifier ("and this content is illustrative"), Preview-only. In Preview a content surface shows both; in Live it shows only the sparkle. They answer different questions, so layering is honest. Disposition of the overlap is #463's job, not this slice's.
-2. **Glyph: the existing welcome-screen `SparkIcon`** (`frontend/src/pages/welcomeIcons.tsx:79`) — a monochrome 4-point sparkle SVG, `currentColor`, `aria-hidden`, 18×18 viewBox. Reused, not reinvented. Relocated to a shared module (§5).
-3. **Placement: per-region, superscript, on text only.** The marker marks the *boundary of an AI region* (a card label, a tab, a chip, an annotation), not every item inside it. It is **not** placed on dot/colour-only signals (file-tree focus dots). Rendered as a small superscript adjacent to a text boundary, or as an inline glyph in a button/nav slot.
-4. **Two roles, one glyph.** *Provenance* (labelled "AI-generated") on generated content; *identity* (decorative, no label) on AI nav/entry-points where adjacent text already says "AI." The component supports both.
-5. **Scope: migrate everywhere.** All existing raw `✨` emoji usages are swapped to the component in this slice.
+1. **Relationship to `SampleBadge`: coexist / layered.** The sparkle signals **provenance** ("this is AI-generated"), always-on wherever real AI content renders. `SampleBadge` remains a separate **data-quality** qualifier ("and this content is illustrative"), Preview-only. They answer different questions, so layering is honest. Disposition of the overlap is #463's job. To keep the layered pair legible, the sparkle and the "Sample" pill are **co-located as one adjacent cluster** so Preview reads as a single "AI · illustrative" unit rather than two competing badges.
+2. **Glyph: the existing welcome-screen `SparkIcon`** (`frontend/src/pages/welcomeIcons.tsx`) — a monochrome 4-point sparkle SVG, `currentColor`. Reused, not reinvented. Relocated to a shared module and made size-overridable (§5).
+3. **Placement granularity: mark each distinct AI output; mark homogeneous lists once at their region boundary.** A single AI artifact (a summary, a hunk annotation, one chat reply) gets one marker. A *list of homogeneous ranked items under one AI feature* (Hotspots rows) gets **one** marker at the region boundary, not one per row. This reconciles per-item marking (hunk annotations, chat messages — each is a distinct generation) with per-region marking (Hotspots list). The marker is **never** placed on dot/colour-only signals (file-tree focus dots).
+4. **Two roles, one glyph.** *Provenance* (labelled "AI-generated") on generated content; *identity* (decorative, no label) on AI nav/entry-points where adjacent text already says "AI." The same visible glyph deliberately serves both — this is an intentional **recognition** tradeoff (one learnable AI mark everywhere), accepted with eyes open even though sighted users can't distinguish the two roles (the distinction lives only in the a11y layer).
+5. **Scope: migrate every `✨` AND add markers to the un-glyphed AI surfaces** (§6). All six raw `✨` occurrences are swapped to the component in this slice.
 6. **Configurability: always-on, no toggle.** A truthfulness signal must not be user-hideable; a style picker is gold-plating.
+7. **Provenance attaches to present AI content, not to "the AI feature is on."** The marker is placed on the success-content boundary — never on app-authored loading skeletons or error copy, and never on a surface that only ever shows placeholder data (see §4 and the inbox-chip decision in §6).
 
 ## 4. Component API
 
-New pure-presentational component `frontend/src/components/Ai/AiMarker.tsx` + `AiMarker.module.css`.
+A new pure-presentational component `frontend/src/components/Ai/AiMarker.tsx` + `AiMarker.module.css`.
 
 ```tsx
 export interface AiMarkerProps {
@@ -46,8 +48,8 @@ export interface AiMarkerProps {
    *  'inline' is a normal-baseline glyph for buttons / nav / headers. */
   variant?: 'superscript' | 'inline';
   /** Identity use (default false = provenance). When true, the marker is purely
-   *  decorative: no screen-reader label and no tooltip, because adjacent visible
-   *  text ("AI", "AI Settings") already conveys it. */
+   *  decorative: no screen-reader label, because adjacent visible text
+   *  ("AI", "AI Settings") already conveys it. */
   decorative?: boolean;
   /** Optional extra class for spacing at a specific call site. */
   className?: string;
@@ -55,78 +57,98 @@ export interface AiMarkerProps {
 ```
 
 Rendering:
-- **Provenance** (`decorative` falsy): a wrapper `<span>` containing the decorative `SparkIcon` (`aria-hidden`) **plus** a visually-hidden `<span class="sr-only">AI-generated</span>`, with `title="AI-generated"` on the wrapper for a sighted-user hover tooltip. Carries `data-ai-marker=""` and `data-testid="ai-marker"`.
-- **Identity** (`decorative` true): just the wrapper + `SparkIcon`, `aria-hidden`, no sr-only text, no tooltip.
+- **Provenance** (`decorative` falsy): a wrapper `<span>` containing the decorative `SparkIcon` (`aria-hidden`) **plus** a visually-hidden `<span class="sr-only">{AI_PROVENANCE_LABEL}</span>`. **No `title` attribute** — a native `title` can double-announce with the sr-only text in some screen readers, and a hover-only tooltip is no help to keyboard/touch users; the sr-only text serves AT and the adjacent visible content serves sighted users.
+- **Identity** (`decorative` true): just the wrapper + `SparkIcon`, `aria-hidden`, no sr-only text.
+- **Both variants** carry `data-ai-marker=""` and `data-testid="ai-marker"` (the only rendering difference between them is the sr-only span).
+- The accessible string is a single shared constant `AI_PROVENANCE_LABEL = 'AI-generated'` (in a shared a11y-strings module), referenced everywhere, so a future rename touches one place.
 
-**No hooks inside `AiMarker`.** Unlike `SampleBadge` (which self-checks `useIsSampleMode()`), `AiMarker` does not gate itself. Every host surface already renders only under its own AI gate (`useAiGate(...)` / mode checks), so the marker inherits that gating by being mounted there. This keeps the component trivially pure and testable, and avoids a second, drifting copy of the gating logic.
+**The marker is non-interactive** — not focusable, no tab stop, no tooltip. Provenance is exposed via the sr-only text; there is no keyboard/touch affordance to design.
+
+**No hooks inside `AiMarker`.** Unlike `SampleBadge` (which self-checks `useIsSampleMode()`), `AiMarker` does not gate itself — but the host is responsible for mounting it **only where real AI content is present** (Decision 7), i.e. after a surface's loading/error/empty early-returns, never on app-authored fallback copy. "AI feature enabled" ≠ "AI content present"; the host must mount the marker on the success branch.
+
+**Animation:** the marker is **static** (no pulse/shimmer). If animation is ever added later it must be gated behind `prefers-reduced-motion: no-preference`.
 
 ## 5. Glyph relocation
 
-`SparkIcon` currently lives in `frontend/src/pages/welcomeIcons.tsx` alongside `LockIcon`/`PanelsIcon` (page-local benefit-row icons). Move **`SparkIcon` only** to the shared `frontend/src/components/Ai/` module (e.g. `SparkIcon.tsx`), and have `welcomeIcons.tsx` re-import/re-export it so `/welcome` is visually unchanged. `LockIcon`/`PanelsIcon` stay put (page-local, not AI). The icon is `currentColor` + viewBox-scaled, so the consuming wrapper controls colour and size — the same source serves both the 18×18 welcome row and the ~11–12px superscript.
+`SparkIcon` currently lives in `frontend/src/pages/welcomeIcons.tsx` alongside `LockIcon`/`PanelsIcon` (page-local benefit-row icons) and hard-codes `width/height = 18` via `SVG_PROPS`. Move **`SparkIcon` only** to the shared `frontend/src/components/Ai/` module (e.g. `SparkIcon.tsx`), have `welcomeIcons.tsx` re-import/re-export it so `/welcome` is visually unchanged, and **make its size overridable** (accept a `size`/`className` or drop the fixed `width/height` so a CSS rule / `em`-based sizing can scale it). The fixed 18px attributes resist the ~11–12px superscript size otherwise. `LockIcon`/`PanelsIcon` stay put (page-local, not AI).
 
 ## 6. Per-surface integration
 
-| # | Surface | File (current) | Variant / role | a11y |
-|---|---|---|---|---|
-| 1 | AI Summary card label ("AI Summary") | `components/PrDetail/OverviewTab/AiSummaryCard.tsx` | superscript / provenance | sr-only "AI-generated" |
-| 2 | Hotspots tab — single marker at the tab/region boundary (not per row) | `components/PrDetail/HotspotsTab/HotspotsTab.tsx` | superscript / provenance | sr-only "AI-generated" |
-| 3 | Hunk annotation — **replaces** the raw `✨`; keeps the existing visible "AI" text label | `components/PrDetail/FilesTab/DiffPane/AiHunkAnnotation.tsx` | inline / **decorative** | adjacent "AI" text |
-| 4 | Inbox AI category chip — **replaces** the literal "AI" text in `.chipMarker` | `components/Inbox/InboxRow.tsx` | superscript / provenance | sr-only "AI-generated" |
-| 5 | AI Settings tab label | `/settings/ai` pane / `Settings` nav (from #496) | inline / **decorative** | tab text says "AI" |
-| 6 | Ask-AI pull-tab — **replaces** the raw `✨` | `AskAiPullTab.tsx` | inline / **decorative** | adjacent "Ask AI" label |
-| 7 | Ask-AI drawer header — **replaces** the raw `✨` | `AskAiDrawer.tsx` | inline / **decorative** | adjacent header text |
-| 8 | Stale-draft suggestion row — **replaces** the raw `✨` | `StaleDraftRow.tsx` | inline / **decorative** | adjacent label |
-| — | File-tree focus dots (#492) | `components/PrDetail/FilesTab/FileTree.tsx` | **untouched** | dot is the signal |
+"Kind" = **R** (replace an existing `✨`) or **A** (additive — no glyph today).
 
-**Placement rule:** where a visible "AI" / "AI Summary" / "AI Settings" word already sits beside the glyph → `decorative` (avoid a redundant "AI-generated" announcement); where the sparkle stands alone (the chip, which replaces the only "AI" word; the summary/hotspots labels) → labelled provenance.
+| # | Surface | File | Kind | Variant / role | a11y |
+|---|---|---|---|---|---|
+| 1 | AI Summary card — add an "AI Summary" label (wire up the currently-unused `.aiSummaryLabel` class), marker on it | `components/PrDetail/OverviewTab/AiSummaryCard.tsx` | **A** | superscript / provenance | sr-only "AI-generated" |
+| 2 | Hotspots tab — add one small AI region label at the top of the tab **content** (not the shared tab-strip), marker on it | `components/PrDetail/HotspotsTab/HotspotsTab.tsx` | **A** | superscript / provenance | sr-only "AI-generated" |
+| 3 | Hunk annotation — replaces the raw `✨`; keeps the existing visible "AI" text label | `components/PrDetail/FilesTab/DiffPane/AiHunkAnnotation.tsx` | **R** | inline / **decorative** | adjacent "AI" text |
+| 4 | Inbox AI category chip — replaces the literal "AI" text in `.chipMarker` | `components/Inbox/InboxRow.tsx` | **R** | superscript / **decorative** | see note below |
+| 5 | AI Settings tab label | `/settings/ai` pane / `Settings` nav (from #496) | **A** | inline / **decorative** | tab text says "AI" |
+| 6 | Ask-AI pull-tab — replaces the raw `✨` | `components/AskAiDrawer/AskAiPullTab.tsx` | **R** | inline / **decorative** | adjacent "Ask AI" label |
+| 7a | Ask-AI drawer **header** (line 87) — replaces the raw `✨` | `components/AskAiDrawer/AskAiDrawer.tsx` | **R** | inline / **decorative** | adjacent header text |
+| 7b | Ask-AI drawer **per-AI-message** glyph (line 112) — replaces the raw `✨` | `components/AskAiDrawer/AskAiDrawer.tsx` | **R** | inline / **provenance** | sr-only "AI-generated" per reply |
+| 7c | Ask-AI drawer **typing indicator** (line 121) — replaces the raw `✨` | `components/AskAiDrawer/AskAiDrawer.tsx` | **R** | inline / **decorative** | no generated text yet |
+| 8 | Stale-draft suggestion row — replaces the raw `✨` | `components/PrDetail/Reconciliation/StaleDraftRow.tsx` | **R** | inline / **decorative** | adjacent label |
+| — | File-tree focus dots (#492) | `components/PrDetail/FilesTab/FileTree.tsx` | — | **untouched** | dot is the signal |
 
-**Inbox-chip note:** the chip renders **today only in Preview** (placeholder enricher data; `inboxEnrichment` is not in `LIVE_CAPABILITIES` and has no real impl yet — #410). Per owner decision, we mark it in Preview now anyway — the marker lives in `InboxRow` and will already be in place when #410 lights up Live. No wait on #410.
+**Placement rule:** where a visible "AI" / "AI Summary" / "AI Settings" word sits beside the glyph → `decorative` (avoid a redundant announcement); where the sparkle marks distinct generated text with no adjacent "AI" word → labelled provenance — **except the inbox chip (below)**.
 
-## 7. Coexistence with `SampleBadge` (no change)
+**Surface #1 (AI Summary) details:** the card renders no "AI Summary" text today, only `SampleBadge` → optional Live status head → optional category chip → body, with error/loading branches *before* `if (!summary) return null`. The label + marker go in the **success branch** (after that early-return). Placement must respect the existing `.aiSummaryCard [data-sample-badge] + *` margin selector (§7) — don't make the marker the unintended `+ *` target.
 
-`SampleBadge` keeps self-gating on `useIsSampleMode()` and its current mounts (AiSummaryCard, AiHunkAnnotation `solid`). The new marker is mounted independently. Net effect in Preview: a content surface shows the sparkle (always) **and** the "Sample" pill (Preview only). This redundancy is intentional and acknowledged; reconciling it is #463's scope.
+**Surface #4 (inbox chip) — decorative, not provenance.** Two reasons override the default rule: (1) the chip renders **today only in Preview** with placeholder data (`inboxEnrichment` is off in Live until #410), so an sr-only "AI-generated" claim would be literally false on the one surface where it currently shows; (2) the existing `.chipMarker` is deliberately `aria-hidden` — an in-code comment notes the row's `aria-label` omits the category and "the button swallows descendant labels," so adding sr-only text would both reverse a deliberate a11y decision and likely not surface anyway. Decorative keeps the sparkle visible in Preview (per owner decision: mark it now, don't wait for #410) without asserting false provenance.
+
+## 7. Coexistence with `SampleBadge` (no behavioural change)
+
+`SampleBadge` keeps self-gating on `useIsSampleMode()` and its current mounts (AiSummaryCard, AiHunkAnnotation `solid`). The new marker is mounted independently. Net effect in Preview: a content surface shows the sparkle (always) **and** the "Sample" pill (Preview only), co-located as one cluster (Decision 1). Reconciling the redundancy is #463's scope.
+
+**CSS coupling to mind:** `AiSummaryCard.module.css` has a live `.aiSummaryCard [data-sample-badge] + *` margin rule. In Preview, `SampleBadge` renders, so whatever element sits immediately after it inherits that margin. The marker/label placement on surface #1 must not silently become that `+ *` target (the file already documents this constraint in-code); either place the label so the existing target is preserved or update the selector deliberately.
 
 ## 8. Theming & visual (B1)
 
-- Colour from `currentColor`/`--accent`; accent tokens are theme-symmetric (no per-theme override needed, unlike surface tokens per #347), but **both themes are mocked from real tokens before hardening** (B1 requirement).
-- `superscript`: ~11–12px, `vertical-align` raised, sits flush against the trailing/leading edge of its text label.
-- `inline`: ~16–18px glyph; identity slots may reuse the existing global `.ai-icon` box styling.
-- **Visual gate:** the B1 human assert happens after green-and-ready (per the issue-resolution workflow). Affected Playwright baselines to regenerate: `pr-detail-overview`, `pr-detail-files-diff`, `pr-detail-drafts`, `ask-ai-drawer`, `inbox` (Preview), and the settings AI pane. **`pr-detail-files-tree` is NOT affected** (no marker there). Linux baselines regen from the CI `e2e-results` artifact (exact render); win32 via local `--update-snapshots`.
+- Colour from `currentColor`/`--accent`; accent tokens are theme-symmetric, but **both themes are mocked from real tokens before hardening** (B1 requirement). Verify the glyph clears WCAG AA non-text contrast (≥3:1) against the surfaces it sits on in **both** themes.
+- `superscript`: ~11–12px, raised, against the trailing/leading edge of its text label. **Must not be clipped when the label truncates** — the #492 lesson (long file names hiding the focus dot) applies; the superscript sits outside the label's overflow/ellipsis region.
+- `inline`: ~16–18px glyph. The existing global `.ai-icon` slot wraps emoji in a tinted rounded box — a monochrome SVG may need that box's background/border-radius dropped or adjusted, so reusing `.ai-icon` is a starting point, not a guarantee; verify per identity site.
+- **Visual gate:** the B1 human assert happens after green-and-ready. Affected Playwright baselines to regenerate: `pr-detail-overview`, `pr-detail-hotspots`, `pr-detail-files-diff`, `pr-detail-drafts`, `ask-ai-drawer`, `inbox` (Preview), and the settings AI pane. **`pr-detail-files-tree` is NOT affected.** Linux baselines regen from the CI `e2e-results` artifact (exact render); win32 via local `--update-snapshots`.
 
 ## 9. Testing
 
-- Co-located `AiMarker.test.tsx`: renders the sparkle; provenance variant exposes the sr-only "AI-generated" + `title`; `decorative` variant has neither; `superscript`/`inline` apply the right class; `data-testid="ai-marker"` present.
-- `SparkIcon` relocation: a render test that it still mounts from the shared path; `/welcome` benefit-row test unaffected.
-- Update each migrated surface's existing test to assert the marker is present (and that the old emoji is gone, where applicable). Surfaces that stub `SampleBadge` keep doing so; add the analogous `AiMarker` handling where a test needs it.
-- **Both test trees:** co-located `src/**/*.test.tsx` **and** the legacy `frontend/__tests__/` mirror must be updated where a mirror exists. A change that touches only one leaves the other stale.
+- Co-located `AiMarker.test.tsx`: sparkle renders; provenance variant exposes the sr-only `AI_PROVENANCE_LABEL` (and **no** `title`); `decorative` variant has neither sr-only nor title; both variants carry `data-testid="ai-marker"`; `superscript`/`inline` apply the right class.
+- `SparkIcon` relocation: renders from the shared path and accepts a size override; `/welcome` benefit-row test unaffected.
+- Update each migrated surface's test to assert the marker is present and the old emoji is gone. For the AI-summary surface, assert the marker mounts on the **success** branch only (absent in loading/error renders).
+- **Both test trees:** co-located `src/**/*.test.tsx` **and** the legacy `frontend/__tests__/` mirror where a mirror exists.
 - Type + build: run `npm run build` / `tsc -b` after the shared-component move (test run strips types).
 
 ## 10. Forward-compounding: future AI-text surfaces
 
-Several AI surfaces we discussed are **not yet built**. When each is picked up it must render its AI-generated **text** behind the shared `AiMarker`. A pointer comment will be posted on each so the wiring isn't forgotten:
+Several AI surfaces we discussed are **not yet built**. When each is picked up it must render its AI-generated **text** behind the shared `AiMarker`. Pointer comments will be posted on each (this is a *before-closing follow-up task*, not an implementation acceptance criterion — see §11):
 
 - **#411** composer assistant ("Refine with AI") output
 - **#409 / #410** inbox ranker / enricher (the Live category chip; the marker is already wired into `InboxRow`, so #410 inherits it — note kept for confirmation)
 - **#415 / #416** draft reconciliation / draft suggester output
-- **#420** per-hunk risk scores (if surfaced as text/label, not a bare number/dot)
+- **#420** per-hunk risk scores (only if surfaced as text/label, not a bare number/dot)
 
 (Dot/numeric-only signals do not get the marker, per Decision 3.)
 
+**Durability of the zero-emoji invariant (recommended follow-up):** pointer comments are reminders, not enforcement — a future surface could ship raw-emoji text and silently erode the marker invariant with no test/lint catching it. A lightweight ESLint `no-restricted-syntax` rule banning the literal `✨` in `frontend/src` would make "single source of truth" durable. Tracked as a follow-up (out of this slice's AC unless the owner pulls it in).
+
 ## 11. Acceptance criteria
 
-- [ ] `AiMarker` component exists with the API in §4; pure (no hooks); provenance vs decorative a11y verified by tests.
-- [ ] `SparkIcon` relocated to the shared module; `/welcome` visually unchanged.
-- [ ] All 8 surfaces in §6 render the shared marker as specified; the file-tree is untouched.
-- [ ] **Zero** raw `✨` emoji remain in `frontend/src` (grep-clean), all replaced by the component.
-- [ ] `SampleBadge` behaviour unchanged; Preview shows both signals.
+- [ ] `AiMarker` component exists with the API in §4; pure (no hooks); non-interactive; provenance vs decorative a11y (sr-only present/absent, no `title`) verified by tests.
+- [ ] `SparkIcon` relocated to the shared module and size-overridable; `/welcome` visually unchanged.
+- [ ] All surfaces in §6 render the shared marker as specified (rows 1, 2, 5 additive; 3, 4, 6, 7a–c, 8 replacements); the file-tree is untouched.
+- [ ] AI-summary marker mounts on the success branch only — absent on the loading skeleton and error copy.
+- [ ] Inbox chip uses the **decorative** variant (no false "AI-generated" on Preview-only placeholder).
+- [ ] **Zero** raw `✨` emoji remain in `frontend/src` (grep-clean) — all six occurrences replaced. Non-`✨` glyphs are intentionally untouched.
+- [ ] `SampleBadge` behaviour unchanged; in Preview the sparkle + "Sample" pill render as one co-located cluster.
 - [ ] Always-on: no settings toggle introduced.
-- [ ] Both themes mocked from real tokens; affected baselines regenerated (`files-tree` excluded); B1 human visual assert obtained.
+- [ ] Both themes mocked from real tokens; affected baselines regenerated (incl. `pr-detail-hotspots`; `files-tree` excluded); B1 human visual assert obtained.
 - [ ] FE lint/build/test green in both test trees; full pre-push checklist passes.
-- [ ] Pointer comments posted on #411/#409/#410/#415/#416/#420.
+
+**Before-closing follow-up (not a merge gate):** pointer comments posted on #411/#409/#410/#415/#416/#420; file the ESLint-guard follow-up issue.
 
 ## 12. Risks / deferrals
 
-- **Preview visual redundancy** (sparkle + "Sample" pill on the same surface). Accepted; #463 owns reconciliation.
-- **Baseline churn** across several screenshots. Mitigated by the exact-regen-from-artifact workflow; `files-tree` explicitly excluded.
-- **Superscript metrics** (alignment against varying label sizes) is the main visual-fidelity risk → resolved at the B1 mock/assert, both themes.
-- **Inbox chip is Preview-only today.** Marking it now is intentional and future-proof; not blocked on #410.
+- **Preview visual redundancy** (sparkle + "Sample" pill). Accepted; co-located per Decision 1; #463 owns reconciliation. The stacked layout is validated at the B1 assert.
+- **Two-roles-one-glyph** is visually indistinguishable to sighted users and correctness is partly unobservable (only an SR audit catches a wrong variant). Accepted as the recognition tradeoff (Decision 4); the named constant + per-surface table + tests reduce drift.
+- **Additive labels (#1, #2)** change layout/baselines and need the B1 eyeball; the exact label position is a B1 decision within the constraints in §6/§7.
+- **`.ai-icon` box vs monochrome SVG** — the inline identity sites may need the tinted box adjusted; verify per site at B1.
+- **Baseline churn** across several screenshots. Mitigated by exact-regen-from-artifact; `files-tree` excluded.
