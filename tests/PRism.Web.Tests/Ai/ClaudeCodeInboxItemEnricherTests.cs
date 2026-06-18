@@ -1,0 +1,125 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
+using FluentAssertions;
+using Microsoft.Extensions.Logging.Abstractions;
+using PRism.AI.ClaudeCode;
+using PRism.AI.Contracts.Dtos;
+using PRism.AI.Contracts.Observability;
+using PRism.AI.Contracts.Provider;
+using PRism.Core.Ai;
+using PRism.Core.Config;
+using PRism.Core.Contracts;
+using PRism.Core.Events;
+using PRism.Web.Ai;
+using Xunit;
+
+namespace PRism.Web.Tests.Ai;
+
+public sealed class ClaudeCodeInboxItemEnricherTests
+{
+    private static PrInboxItem Item(int n, string title, string? desc, bool draft = false) => new(
+        new PrReference("octo", "repo", n), title, "octo", "octo/repo",
+        DateTimeOffset.UnixEpoch, DateTimeOffset.UnixEpoch, 1, 0, 0, 0, "sha",
+        CiStatus.None, null, null, IsDraft: draft, Description: desc);
+
+    private static AiConsentState Consented()
+    {
+        var c = new AiConsentState();
+        c.Set(new AiConsentConfig(AiProviderIds.Claude, AiDisclosure.CurrentVersion, DateTimeOffset.UtcNow));
+        return c;
+    }
+
+    private sealed class FakeLlmProvider : ILlmProvider
+    {
+        private readonly string[] _responses;
+        private readonly Exception? _throw;
+        public FakeLlmProvider(params string[] responses) => _responses = responses;
+        private FakeLlmProvider(Exception ex) { _throw = ex; _responses = Array.Empty<string>(); }
+        public static FakeLlmProvider Throwing(Exception ex) => new(ex);
+        public int CallCount { get; private set; }
+        public string? LastUserContent { get; private set; }
+        public string? LastSystemPrompt { get; private set; }
+        public Task<LlmResult> CompleteAsync(LlmRequest request, CancellationToken ct)
+        {
+            CallCount++;
+            LastUserContent = request.UserContent;
+            LastSystemPrompt = request.SystemPrompt;
+            if (_throw is not null) throw _throw;
+            var idx = Math.Min(CallCount - 1, _responses.Length - 1);
+            return Task.FromResult(new LlmResult(_responses[idx], 100, 20, 0, 0.01m));
+        }
+    }
+    private sealed class FakeTokenUsageTracker : ITokenUsageTracker
+    {
+        public List<TokenUsageRecord> Records { get; } = new();
+        public Task RecordAsync(TokenUsageRecord record, CancellationToken ct) { Records.Add(record); return Task.CompletedTask; }
+    }
+    private sealed class FakeAiInteractionLog : IAiInteractionLog
+    {
+        public List<AiInteractionRecord> Records { get; } = new();
+        public void Record(AiInteractionRecord record) => Records.Add(record);
+    }
+    private sealed class FakeBus : IReviewEventBus
+    {
+        public List<object> Published { get; } = new();
+        public void Publish<TEvent>(TEvent evt) where TEvent : IReviewEvent => Published.Add(evt!);
+        public IDisposable Subscribe<TEvent>(Action<TEvent> handler) where TEvent : IReviewEvent => new Noop();
+        private sealed class Noop : IDisposable { public void Dispose() { } }
+    }
+
+    private static ClaudeCodeInboxItemEnricher Build(ILlmProvider provider) => new(
+        provider, new FakeTokenUsageTracker(), new FakeAiInteractionLog(), new FakeBus(),
+        Consented(), NullLogger<ClaudeCodeInboxItemEnricher>.Instance);
+
+    [Fact]
+    public async Task EnrichBatch_parses_and_normalizes_categories()
+    {
+        var provider = new FakeLlmProvider(
+            """[{"prId":"octo/repo#1","category":"feature"},{"prId":"octo/repo#2","category":"Other"}]""");
+        var sut = Build(provider);
+
+        var result = await sut.EnrichBatchAsync(new[] { Item(1, "Add login", "x"), Item(2, "misc", "") }, default);
+
+        result.Single(e => e.PrId == "octo/repo#1").CategoryChip.Should().Be("Feature");
+        result.Single(e => e.PrId == "octo/repo#2").CategoryChip.Should().BeNull();
+        provider.CallCount.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task EnrichBatch_retries_once_on_garbage_then_succeeds()
+    {
+        var provider = new FakeLlmProvider("not json", """[{"prId":"octo/repo#1","category":"fix"}]""");
+        var sut = Build(provider);
+
+        var result = await sut.EnrichBatchAsync(new[] { Item(1, "Fix crash", "x") }, default);
+
+        result.Single().CategoryChip.Should().Be("Bug fix");
+        provider.CallCount.Should().Be(2);
+    }
+
+    [Fact]
+    public async Task EnrichBatch_wraps_title_and_description_as_data_regions()
+    {
+        var provider = new FakeLlmProvider("""[{"prId":"octo/repo#1","category":"docs"}]""");
+        var sut = Build(provider);
+
+        await sut.EnrichBatchAsync(new[] { Item(1, "Update guide", "Edits the README.") }, default);
+
+        provider.LastUserContent.Should().Contain("<pr_title>").And.Contain("<pr_description>");
+        provider.LastSystemPrompt.Should().Contain("untrusted");
+    }
+
+    [Fact]
+    public async Task EnrichBatch_surfaces_provider_failure_to_caller()
+    {
+        var provider = FakeLlmProvider.Throwing(new LlmProviderException("boom"));
+        var sut = Build(provider);
+
+        var act = async () => await sut.EnrichBatchAsync(new[] { Item(1, "x", "y") }, default);
+
+        await act.Should().ThrowAsync<LlmProviderException>();
+    }
+}
