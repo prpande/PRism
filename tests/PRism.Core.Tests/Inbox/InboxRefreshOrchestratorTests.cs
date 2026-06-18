@@ -219,6 +219,12 @@ public sealed class InboxRefreshOrchestratorTests
     // Open, non-draft PR (no terminal timestamps, IsDraft=false — default)
     private static RawPrInboxItem RawOpen(int n) => RawPr(n, "sha" + n);
 
+    // Open, non-draft PR with explicit title and description (for content-token tests)
+    private static RawPrInboxItem RawOpen(int n, string title, string desc, string owner = "octo", string repo = "repo")
+        => new(Ref(n, owner, repo), title, "author", $"{owner}/{repo}",
+            DateTimeOffset.UtcNow, DateTimeOffset.UtcNow, 0, 0, 0, "sha" + n, 1,
+            Description: desc);
+
     // Draft PR (open, but IsDraft=true)
     private static RawPrInboxItem RawDraft(int n) => RawPr(n, "sha" + n) with { IsDraft = true };
 
@@ -859,6 +865,21 @@ public sealed class InboxRefreshOrchestratorTests
         sections.LastClosedWindowDays.Should().Be(30);
     }
 
+    // Build overload for enrichments-ready tests: accepts an explicit bus and a section
+    // seeded with the given open items in "review-requested".
+    private static InboxRefreshOrchestrator BuildOrchestrator(
+        IReviewEventBus bus,
+        RawPrInboxItem[] openItems)
+        => Build(
+            config: ConfigStoreFake(ConfigWithSections(
+                reviewRequested: true, awaitingAuthor: false, authoredByMe: false, mentioned: false)),
+            sections: new FakeSectionQueryRunner(_ =>
+                new Dictionary<string, IReadOnlyList<RawPrInboxItem>>
+                {
+                    ["review-requested"] = openItems
+                }),
+            events: bus);
+
     [Fact]
     public async Task RefreshAsync_excludes_closed_merged_and_draft_PRs_from_enrichment()
     {
@@ -891,5 +912,30 @@ public sealed class InboxRefreshOrchestratorTests
             .Should().BeEquivalentTo(new[] { 1, 2 });
         sut.Current.Sections[InboxHistoryConstants.SectionId].Select(i => i.Reference.Number)
             .Should().Contain(3);
+    }
+
+    [Fact]
+    public async Task InboxEnrichmentsReady_merges_into_current_snapshot_and_publishes_InboxUpdated()
+    {
+        var bus = new ReviewEventBus();
+        var published = new List<IReviewEvent>();
+        bus.Subscribe<InboxUpdated>(e => published.Add(e));
+
+        using var orch = BuildOrchestrator(bus: bus, openItems: new[] { RawOpen(1, title: "Add X", desc: "d") });
+        await orch.RefreshAsync(default);
+        published.Clear();
+
+        var liveToken = InboxEnrichmentContent.Token("Add X", "d");
+        bus.Publish(new InboxEnrichmentsReady(new[]
+        {
+            new InboxEnrichmentResult("octo/repo#1", "Feature", liveToken),        // applies
+            new InboxEnrichmentResult("octo/repo#999", "Docs", liveToken),         // not in snapshot → ignored
+            new InboxEnrichmentResult("octo/repo#1", "Refactor", "STALE_TOKEN"),   // token mismatch → ignored
+            new InboxEnrichmentResult("octo/repo#1", null, liveToken),             // null chip → ignored
+        }));
+
+        orch.Current!.Enrichments["octo/repo#1"].CategoryChip.Should().Be("Feature");
+        orch.Current!.Enrichments.Should().NotContainKey("octo/repo#999");
+        published.OfType<InboxUpdated>().Should().NotBeEmpty(); // fired despite ComputeDiff ignoring enrichments
     }
 }
