@@ -161,3 +161,23 @@
     opacity: 0.5;
   }
 }
+/* Signal-bars level glyph (#520). Active bars take the level hue (via the
+   data-level on the svg → currentColor); inactive bars are a faint track. */
+.glyph {
+  flex: none;
+}
+.glyph[data-level='high'] {
+  color: var(--warning);
+}
+.glyph[data-level='medium'] {
+  color: var(--info);
+}
+.glyph[data-level='low'] {
+  color: var(--text-3);
+}
+.barActive {
+  fill: currentColor;
+}
+.barInactive {
+  fill: var(--border-1);
+}
