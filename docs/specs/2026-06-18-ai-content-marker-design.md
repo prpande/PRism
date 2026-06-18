@@ -32,7 +32,7 @@ This slice ships **one shared, accessible, theme-stable AI marker** and applies 
 
 1. **Relationship to `SampleBadge`: coexist / layered.** The sparkle signals **provenance** ("this is AI-generated"), always-on wherever real AI content renders. `SampleBadge` remains a separate **data-quality** qualifier ("and this content is illustrative"), Preview-only. They answer different questions, so layering is honest. Disposition of the overlap is #463's job. To keep the layered pair legible, the sparkle and the "Sample" pill are **co-located as one adjacent cluster** so Preview reads as a single "AI · illustrative" unit rather than two competing badges.
 2. **Glyph: the existing welcome-screen `SparkIcon`** (`frontend/src/pages/welcomeIcons.tsx`) — a monochrome 4-point sparkle SVG, `currentColor`. Reused, not reinvented. Relocated to a shared module and made size-overridable (§5).
-3. **Placement granularity: mark each distinct AI output; mark homogeneous lists once at their region boundary.** A single AI artifact (a summary, a hunk annotation, one chat reply) gets one marker. A *list of homogeneous ranked items under one AI feature* (Hotspots rows) gets **one** marker at the region boundary, not one per row. This reconciles per-item marking (hunk annotations, chat messages — each is a distinct generation) with per-region marking (Hotspots list). The marker is **never** placed on dot/colour-only signals (file-tree focus dots).
+3. **Placement granularity: mark each standalone AI artifact; mark grouped/streamed AI regions once at their boundary.** A standalone AI artifact (a summary, a hunk annotation) gets one provenance marker. A *grouped AI region* — the Hotspots ranked list, or the Ask-AI chat transcript — is marked **once at its boundary/header**, not once per row or per reply; per-item marking inside such a region is noise (owner call: per-reply chat provenance is overkill). The marker is **never** placed on dot/colour-only signals (file-tree focus dots).
 4. **Two roles, one glyph.** *Provenance* (labelled "AI-generated") on generated content; *identity* (decorative, no label) on AI nav/entry-points where adjacent text already says "AI." The same visible glyph deliberately serves both — this is an intentional **recognition** tradeoff (one learnable AI mark everywhere), accepted with eyes open even though sighted users can't distinguish the two roles (the distinction lives only in the a11y layer).
 5. **Scope: migrate every `✨` AND add markers to the un-glyphed AI surfaces** (§6). All six raw `✨` occurrences are swapped to the component in this slice.
 6. **Configurability: always-on, no toggle.** A truthfulness signal must not be user-hideable; a style picker is gold-plating.
@@ -85,12 +85,12 @@ Rendering:
 | 5 | AI Settings tab label | `/settings/ai` pane / `Settings` nav (from #496) | **A** | inline / **decorative** | tab text says "AI" |
 | 6 | Ask-AI pull-tab — replaces the raw `✨` | `components/AskAiDrawer/AskAiPullTab.tsx` | **R** | inline / **decorative** | adjacent "Ask AI" label |
 | 7a | Ask-AI drawer **header** (line 87) — replaces the raw `✨` | `components/AskAiDrawer/AskAiDrawer.tsx` | **R** | inline / **decorative** | adjacent header text |
-| 7b | Ask-AI drawer **per-AI-message** glyph (line 112) — replaces the raw `✨` | `components/AskAiDrawer/AskAiDrawer.tsx` | **R** | inline / **provenance** | sr-only "AI-generated" per reply |
+| 7b | Ask-AI drawer **per-AI-message** glyph (line 112) — replaces the raw `✨` | `components/AskAiDrawer/AskAiDrawer.tsx` | **R** | inline / **decorative** | drawer is one AI region; the header (7a) marks it — per-reply provenance is overkill (owner call) |
 | 7c | Ask-AI drawer **typing indicator** (line 121) — replaces the raw `✨` | `components/AskAiDrawer/AskAiDrawer.tsx` | **R** | inline / **decorative** | no generated text yet |
 | 8 | Stale-draft suggestion row — replaces the raw `✨` | `components/PrDetail/Reconciliation/StaleDraftRow.tsx` | **R** | inline / **decorative** | adjacent label |
 | — | File-tree focus dots (#492) | `components/PrDetail/FilesTab/FileTree.tsx` | — | **untouched** | dot is the signal |
 
-**Placement rule:** where a visible "AI" / "AI Summary" / "AI Settings" word sits beside the glyph → `decorative` (avoid a redundant announcement); where the sparkle marks distinct generated text with no adjacent "AI" word → labelled provenance — **except the inbox chip (below)**.
+**Placement rule:** where a visible "AI" / "AI Summary" / "AI Settings" word sits beside the glyph → `decorative` (avoid a redundant announcement); where the sparkle marks a standalone AI artifact with no adjacent "AI" word → labelled provenance. Two deliberate exceptions: the **inbox chip** (below) and the **Ask-AI chat drawer** (one region marked once at its header per Decision 3) are decorative.
 
 **Surface #1 (AI Summary) details:** the card renders no "AI Summary" text today, only `SampleBadge` → optional Live status head → optional category chip → body, with error/loading branches *before* `if (!summary) return null`. The label + marker go in the **success branch** (after that early-return). Placement must respect the existing `.aiSummaryCard [data-sample-badge] + *` margin selector (§7) — don't make the marker the unintended `+ *` target.
 
@@ -128,7 +128,7 @@ Several AI surfaces we discussed are **not yet built**. When each is picked up i
 
 (Dot/numeric-only signals do not get the marker, per Decision 3.)
 
-**Durability of the zero-emoji invariant (recommended follow-up):** pointer comments are reminders, not enforcement — a future surface could ship raw-emoji text and silently erode the marker invariant with no test/lint catching it. A lightweight ESLint `no-restricted-syntax` rule banning the literal `✨` in `frontend/src` would make "single source of truth" durable. Tracked as a follow-up (out of this slice's AC unless the owner pulls it in).
+**Durability of the zero-emoji invariant (in scope — owner pulled in):** pointer comments are reminders, not enforcement — a future surface could ship raw-emoji text and silently erode the marker invariant with no test/lint catching it. This slice adds a lightweight ESLint `no-restricted-syntax` (or equivalent) rule banning the literal `✨` in `frontend/src`, with a clear message pointing at `AiMarker`, so "single source of truth" is durable. The rule must land green (it presupposes the grep-clean migration is complete).
 
 ## 11. Acceptance criteria
 
@@ -138,12 +138,13 @@ Several AI surfaces we discussed are **not yet built**. When each is picked up i
 - [ ] AI-summary marker mounts on the success branch only — absent on the loading skeleton and error copy.
 - [ ] Inbox chip uses the **decorative** variant (no false "AI-generated" on Preview-only placeholder).
 - [ ] **Zero** raw `✨` emoji remain in `frontend/src` (grep-clean) — all six occurrences replaced. Non-`✨` glyphs are intentionally untouched.
+- [ ] An ESLint rule bans the literal `✨` in `frontend/src` (message points at `AiMarker`) and passes green.
 - [ ] `SampleBadge` behaviour unchanged; in Preview the sparkle + "Sample" pill render as one co-located cluster.
 - [ ] Always-on: no settings toggle introduced.
 - [ ] Both themes mocked from real tokens; affected baselines regenerated (incl. `pr-detail-hotspots`; `files-tree` excluded); B1 human visual assert obtained.
 - [ ] FE lint/build/test green in both test trees; full pre-push checklist passes.
 
-**Before-closing follow-up (not a merge gate):** pointer comments posted on #411/#409/#410/#415/#416/#420; file the ESLint-guard follow-up issue.
+**Before-closing follow-up (not a merge gate):** pointer comments posted on #411/#409/#410/#415/#416/#420.
 
 ## 12. Risks / deferrals
 
