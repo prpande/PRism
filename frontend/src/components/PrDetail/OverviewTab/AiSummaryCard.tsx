@@ -4,6 +4,7 @@ import { Spinner } from '../../Spinner/Spinner';
 import { SampleBadge } from '../../Ai/SampleBadge';
 import { AiMarker } from '../../Ai/AiMarker';
 import { Skeleton } from '../../Skeleton/Skeleton';
+import { MarkdownRenderer } from '../../Markdown/MarkdownRenderer';
 import styles from './AiSummaryCard.module.css';
 
 interface AiSummaryCardProps {
@@ -151,7 +152,7 @@ export function AiSummaryCard({
           {label}
         </span>
       )}
-      <div className={styles.aiSummaryBody}>{summary.body}</div>
+      <MarkdownRenderer source={summary.body} className={`ai-markdown ${styles.aiSummaryBody}`} />
     </section>
   );
 }

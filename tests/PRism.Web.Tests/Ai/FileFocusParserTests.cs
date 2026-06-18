@@ -155,4 +155,42 @@ public sealed class FileFocusParserTests
         fb.Should().OnlyContain(e => e.Level == FocusLevel.Medium
             && e.Rationale == "Automatic fallback — ranking unavailable.");
     }
+
+    [Fact]
+    public void Strips_bidi_override_chars_from_rationale_keeps_text()
+    {
+        // The rationale renders as markdown on the Hotspots tab, so it runs the same bidi/control-char
+        // strip the hunk annotator does (#465). U+202E (RLO) is a Cf char char.IsControl misses.
+        // \\u202E in the C# literal is a JSON \u escape — no literal invisible char in this source file.
+        var text = "[{\"path\":\"a.cs\",\"score\":\"high\",\"rationale\":\"safe\\u202Etext\"}]";
+        FileFocusParser.TryParse(text, Changed, out var entries).Should().BeTrue();
+        entries.Single(e => e.Path == "a.cs").Rationale.Should().Be("safetext");
+    }
+
+    [Fact]
+    public void Preserves_newlines_in_rationale_so_markdown_structure_survives()
+    {
+        // Sanitizing must keep \n so a multi-bullet rationale renders as a real list, not one paragraph (#465).
+        var text = "[{\"path\":\"a.cs\",\"score\":\"high\",\"rationale\":\"- one\\n- two\"}]";
+        FileFocusParser.TryParse(text, Changed, out var entries).Should().BeTrue();
+        entries.Single(e => e.Path == "a.cs").Rationale.Should().Be("- one\n- two");
+    }
+
+    [Fact]
+    public void Caps_rationale_without_splitting_a_surrogate_pair()
+    {
+        // A non-BMP char (emoji = a UTF-16 surrogate pair) straddling the cut must not be split into a
+        // dangling high surrogate (claude[bot] PR #518). 😀 is built from its code point so this source
+        // file stays pure ASCII. Placed at UTF-16 indices cap-2 / cap-1 so the naive cut at cap-1 would
+        // split it; the fix backs the cut off one unit, dropping the pair whole.
+        var emoji = char.ConvertFromUtf32(0x1F600); // 😀 — high+low surrogate
+        var head = new string('x', FileFocusParser.RationaleCap - 2);
+        var rationale = head + emoji + new string('y', 50);
+        var text = $$"""[{"path":"a.cs","score":"high","rationale":"{{rationale}}"}]""";
+        FileFocusParser.TryParse(text, Changed, out var entries).Should().BeTrue();
+        var r = entries.Single(e => e.Path == "a.cs").Rationale;
+        r.Should().Be(head + "…");                       // pair dropped whole — no half character
+        char.IsHighSurrogate(r[^2]).Should().BeFalse();  // char before the ellipsis is not a lone surrogate
+        r.Length.Should().BeLessThanOrEqualTo(FileFocusParser.RationaleCap);
+    }
 }

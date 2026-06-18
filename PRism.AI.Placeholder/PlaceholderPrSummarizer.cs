@@ -12,7 +12,7 @@ public sealed class PlaceholderPrSummarizer : IPrSummarizer
     {
         ArgumentNullException.ThrowIfNull(pr);
         return Task.FromResult<PrSummary?>(new PrSummary(
-            $"Sample AI summary for {pr.PrId}. {PlaceholderData.SummaryBody}", PlaceholderData.SummaryCategory));
+            $"Sample AI summary for {pr.PrId}.\n\n{PlaceholderData.SummaryBody}", PlaceholderData.SummaryCategory));
     }
 
     // Preview mode has no cache to bypass — regenerate returns the same placeholder (no real spend).

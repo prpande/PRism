@@ -61,7 +61,7 @@ describe('HotspotsTab (integration through context)', () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole('button', { name: /src\/Calc\.cs/ }));
+    fireEvent.click(screen.getByRole('button', { name: /open src\/Calc\.cs in diff/i }));
 
     expect(onSelectSubTab).toHaveBeenCalledWith('files');
     expect(screen.getByTestId('pending').textContent).toBe('src/Calc.cs');

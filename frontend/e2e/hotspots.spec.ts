@@ -14,8 +14,10 @@
 //      High file and one Medium file. A real LLM never runs in e2e — the point
 //      is the integrated FE flow (tab → row → Files diff), not the ranker.
 //   4. Open the Hotspots tab; assert the flagged rows are listed.
-//   5. Click the High row; assert the Files tab becomes active (aria-selected)
-//      and that file's tree row is selected (data-selected="true").
+//   5. Click the High file's "Open … in diff" control; assert the Files tab
+//      becomes active (aria-selected) and that file's tree row is selected
+//      (data-selected="true"). After the #488 accordion rewrite the row header
+//      only toggles the rationale panel — the deep-link moved to its own button.
 //
 // Mirrors ai-summary-stale-regenerate.spec.ts precisely: import { test, expect }
 // from '@playwright/test', reuse the shared preferences fixtures, intercept every
@@ -133,9 +135,20 @@ const draftSession = {
 // here — this spec is about the focus → tab → diff flow, not staleness.
 const SSE_BODY = 'event: subscriber-assigned\ndata: {"subscriberId":"mock-sub-1"}\n\n';
 
-// Escape a path for use inside a RegExp (paths carry `.` and `/`).
-function pathPattern(path: string): RegExp {
-  return new RegExp(path.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+// Escape a path for embedding in a RegExp (paths carry `.` and `/`).
+function escapeRe(path: string): string {
+  return path.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+// The #488 accordion row exposes two buttons per file: a header "Toggle {path}
+// rationale" toggle that only expands the panel, and a separate "Open {path} in
+// diff" control that deep-links to the file. Match each by its full accessible
+// name so a bare path substring never matches both buttons (strict-mode clash).
+function togglePattern(path: string): RegExp {
+  return new RegExp(`Toggle ${escapeRe(path)} rationale`, 'i');
+}
+function openInDiffPattern(path: string): RegExp {
+  return new RegExp(`Open ${escapeRe(path)} in diff`, 'i');
 }
 
 // ---------------------------------------------------------------------------
@@ -312,18 +325,22 @@ test('hotspots: tab lists flagged files and deep-links to the diff', async ({ pa
 
   // ── Step 2: the flagged files are listed ───────────────────────────────────
 
-  // Rows are <button>s whose accessible name includes the file path + rationale.
-  const highRow = page.getByRole('button', { name: pathPattern(HIGH_FILE) });
-  const mediumRow = page.getByRole('button', { name: pathPattern(MEDIUM_FILE) });
-  await expect(highRow).toBeVisible({ timeout: 10_000 });
-  await expect(mediumRow).toBeVisible();
+  // Each flagged file is an accordion row with a "Toggle {path} rationale"
+  // header button (default-collapsed). Match the toggle, not the bare path, so
+  // the locator doesn't also catch the sibling "Open … in diff" button.
+  const highToggle = page.getByRole('button', { name: togglePattern(HIGH_FILE) });
+  const mediumToggle = page.getByRole('button', { name: togglePattern(MEDIUM_FILE) });
+  await expect(highToggle).toBeVisible({ timeout: 10_000 });
+  await expect(mediumToggle).toBeVisible();
 
   // The Low file is filtered out of the triage surface (High→Medium only).
-  await expect(page.getByRole('button', { name: pathPattern(OTHER_FILE) })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: togglePattern(OTHER_FILE) })).toHaveCount(0);
 
-  // ── Step 3: click the High row → Files tab active, that file's diff selected ─
+  // ── Step 3: deep-link the High file → Files tab active, that file's diff selected ─
 
-  await highRow.click();
+  // The header toggle only expands the rationale panel now; the deep-link lives
+  // on the dedicated "Open {path} in diff" control (#488).
+  await page.getByRole('button', { name: openInDiffPattern(HIGH_FILE) }).click();
 
   // The Files tab becomes the active tab.
   await expect(page.getByTestId('pr-tab-files')).toHaveAttribute('aria-selected', 'true', {

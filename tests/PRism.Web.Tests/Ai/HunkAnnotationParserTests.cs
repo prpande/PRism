@@ -116,6 +116,21 @@ public sealed class HunkAnnotationParserTests
     }
 
     [Fact]
+    public void Preserves_newlines_in_body_so_markdown_structure_survives()
+    {
+        // #465: StripDangerous must keep \n/\r/\t — they carry the body's markdown structure. Stripping
+        // them (char.IsControl is true for \n) collapsed a multi-bullet annotation into a single
+        // paragraph in live mode; the placeholder bypasses the parser, which hid the regression.
+        var ok = HunkAnnotationParser.TryParse(
+            "[{\"path\":\"a.cs\",\"hunkIndex\":0,\"body\":\"- first point\\n- second point\",\"tone\":\"calm\"}]",
+            Flagged(File("a.cs", 1)), cap: 10, out var entries);
+
+        ok.Should().BeTrue();
+        entries.Should().ContainSingle();
+        entries[0].Body.Should().Be("- first point\n- second point"); // newlines survive → real bullet list
+    }
+
+    [Fact]
     public void Body_that_is_only_bidi_or_control_is_dropped_as_empty()
     {
         var ok = HunkAnnotationParser.TryParse(

@@ -47,3 +47,19 @@ describe('AiHunkAnnotation sample badge', () => {
     expect(screen.queryByTestId('sample-badge')).toBeNull();
   });
 });
+
+describe('AiHunkAnnotation markdown body', () => {
+  it('renders a bulleted body as a real list with the popover treatment', () => {
+    render(<AiHunkAnnotation annotation={{ ...annotation, body: '- note one\n- note two' }} />);
+    expect(screen.getAllByRole('listitem')).toHaveLength(2);
+    expect(
+      document.querySelector('.markdown-body.ai-markdown.ai-markdown--popover'),
+    ).not.toBeNull();
+  });
+
+  it('does not render a raw <script> body as a live element (XSS)', () => {
+    render(<AiHunkAnnotation annotation={{ ...annotation, body: '<script>alert(1)</script>' }} />);
+    // raw HTML is dropped by react-markdown (no rehype-raw) — assert no live element.
+    expect(document.querySelector('script')).toBeNull();
+  });
+});

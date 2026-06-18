@@ -22,7 +22,7 @@ These can be implemented in any order once P0-1 (LLM provider) and P0-2 (cache) 
 **Implementation notes.**
 - New project `PRism.AI.Summarizer` with `ClaudeCodeSummarizer : IPrSummarizer`.
 - Inputs: `IReviewContext.CurrentPr`, `Diff`, `Iterations`. For iteration scope, restrict to the iteration's diff range.
-- System prompt: "You are a senior engineer summarizing this PR for a reviewer. Be concise (3-5 sentences). Focus on intent and risk areas. Do not flatter; do not catastrophize. If the PR title says one thing but the diff shows another, note the mismatch."
+- System prompt: "You are a senior engineer summarizing this PR for a reviewer. Be concise and scannable — prefer a short bulleted markdown list of intent and risk areas; use fenced code for code and inline code for symbols; do not pad. Plain prose is fine when it reads better. Do not flatter; do not catastrophize. If the PR title says one thing but the diff shows another, note the mismatch."
 - Wrap user-controlled content (PR title, description, file paths) in delimiter tags per P0-5 sanitizer.
 - Cache key: `summary:claude-code:<pr_ref>:<head_sha>:<scope>`. Invalidate on `PrUpdated` event.
 - Render in `<AiSummarySlot>` as a card: collapsed shows the first sentence, expandable to full summary; small "stale" badge if generated against a now-superseded `head_sha`.
@@ -56,7 +56,7 @@ These can be implemented in any order once P0-1 (LLM provider) and P0-2 (cache) 
 - **Seam**: `IFileFocusRanker` (replaces `NoopFileFocusRanker`)
 - **UI slot**: new **Hotspots** sub-tab + minimal Files-tree wayfinding dots
 
-**Description.** `ClaudeCodeFileFocusRanker` ranks each changed file `high | medium | low` with a one-line rationale using a structured-output harness (parse → validate → dedup → backfill → retry-once → all-medium fallback). The primary surface is a dedicated **Hotspots tab** (filtered high/medium, rationale inline, click-through to the file diff) for triage/navigate. A minimal monochrome dot in the Files tree acts as lightweight wayfinding. Rationale is shown **inline** in the tab, not as a Files-tab hover tooltip. Spec: [`docs/specs/2026-06-13-v2-ai-p1-2-file-focus-design.md`](../specs/2026-06-13-v2-ai-p1-2-file-focus-design.md).
+**Description.** `ClaudeCodeFileFocusRanker` ranks each changed file `high | medium | low` with a concise bulleted-markdown rationale using a structured-output harness (parse → validate → dedup → backfill → retry-once → all-medium fallback). The primary surface is a dedicated **Hotspots tab** (filtered high/medium, rationale inline, click-through to the file diff) for triage/navigate. A minimal monochrome dot in the Files tree acts as lightweight wayfinding. Rationale is shown **inline** in the tab, not as a Files-tab hover tooltip. Spec: [`docs/specs/2026-06-13-v2-ai-p1-2-file-focus-design.md`](../specs/2026-06-13-v2-ai-p1-2-file-focus-design.md).
 
 **Shipped scope (P1-2, #408).** Ranker + Hotspots tab + wayfinding dots + inline rationale. Tracker: #408.
 
@@ -101,7 +101,7 @@ These can be implemented in any order once P0-1 (LLM provider) and P0-2 (cache) 
 **Acceptance criteria sketch.**
 - Ranker produces deterministic ordering for the same input within a 10-minute window (caching ensures this).
 - Toggling the capability flag off restores chronological/default order.
-- Rank rationale is human-readable.
+- Rank rationale is human-readable concise bulleted markdown.
 
 **Connections.**
 - Pairs well with: P1-4 inbox enricher.

@@ -78,4 +78,32 @@ public class PlaceholderSeamTests
         result.Should().HaveCount(3);
         result.Should().BeEquivalentTo(input);
     }
+
+    [Fact]
+    public async Task Summarizer_body_is_bulleted_markdown()
+    {
+        IPrSummarizer s = new PlaceholderPrSummarizer();
+        var result = await s.SummarizeAsync(Ref, CancellationToken.None);
+        // A bullet list line (lead sentence is its own paragraph above the bullets).
+        result!.Body.Should().Contain("\n- ");
+    }
+
+    [Fact]
+    public async Task FileFocus_rationale_is_bulleted_markdown()
+    {
+        IFileFocusRanker s = new PlaceholderFileFocusRanker();
+        var result = await s.RankAsync(Ref, CancellationToken.None);
+        result.Entries.Should().NotBeEmpty();
+        result.Entries[0].Rationale.Should().StartWith("- ");
+    }
+
+    [Fact]
+    public async Task HunkAnnotation_body_is_bulleted_markdown_with_fenced_code()
+    {
+        IHunkAnnotator s = new PlaceholderHunkAnnotator();
+        var result = await s.AnnotateAsync(Ref, string.Empty, 0, CancellationToken.None);
+        result.Should().NotBeEmpty();
+        result[0].Body.Should().StartWith("- ");
+        result[0].Body.Should().Contain("```"); // exercises the popover fenced-code path
+    }
 }

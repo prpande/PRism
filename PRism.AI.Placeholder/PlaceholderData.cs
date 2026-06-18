@@ -5,20 +5,25 @@ namespace PRism.AI.Placeholder;
 internal static class PlaceholderData
 {
     public const string SummaryBody =
-        "Refactors the Calc utilities to tighten arithmetic boundary handling and simplify error mapping. " +
-        "Behavior is preserved; tests added for the new boundary cases.";
+        "- Refactors the `Calc` utilities to tighten arithmetic boundary handling.\n" +
+        "- Simplifies error mapping; behavior is preserved.\n" +
+        "- Adds tests for the new boundary cases.";
 
     public const string SummaryCategory = "Refactor";
 
     public static IReadOnlyList<FileFocus> FileFocus { get; } = new[]
     {
-        new FileFocus("src/Calc.cs", FocusLevel.High, "Sample: core calculation logic — review closely."),
-        new FileFocus("src/Calc.Tests.cs", FocusLevel.Medium, "Sample: tests for the changed logic."),
+        new FileFocus("src/Calc.cs", FocusLevel.High,
+            "- Core calculation logic — review the boundary handling closely."),
+        new FileFocus("src/Calc.Tests.cs", FocusLevel.Medium,
+            "- Tests for the changed logic; confirm the new boundary cases are covered."),
     };
 
     public static IReadOnlyList<HunkAnnotation> HunkAnnotations { get; } = new[]
     {
-        new HunkAnnotation("src/Calc.cs", 0, "Reads cleaner — same behavior.", AnnotationTone.Calm),
+        new HunkAnnotation("src/Calc.cs", 0,
+            "- Reads cleaner — same behavior.\n- Guard still rejects overflow:\n\n```cs\nif (x > Max) throw;\n```",
+            AnnotationTone.Calm),
     };
 
     public static IReadOnlyList<DraftSuggestion> DraftSuggestions { get; } = new[]
