@@ -79,6 +79,30 @@ public sealed class ClaudeCodeInboxItemEnricherTests
         private sealed class Noop : IDisposable { public void Dispose() { } }
     }
 
+    /// <summary>
+    /// A gated LLM provider whose CompleteAsync blocks until the test releases it.
+    /// Exposes <see cref="Entered"/> so the test can await "runner reached the provider"
+    /// before disposing — guaranteeing the runner is past its entry ThrowIfCancellationRequested.
+    /// </summary>
+    private sealed class GatedLlmProvider : ILlmProvider
+    {
+        private readonly TaskCompletionSource _entered = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource<string> _gate = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        /// Completes when CompleteAsync has been entered (runner is mid-flight at the provider).
+        public Task Entered => _entered.Task;
+
+        /// Unblocks CompleteAsync with the given JSON response.
+        public void Release(string json) => _gate.TrySetResult(json);
+
+        public async Task<LlmResult> CompleteAsync(LlmRequest request, CancellationToken ct)
+        {
+            _entered.TrySetResult();
+            var json = await _gate.Task.ConfigureAwait(false);
+            return new LlmResult(json, 100, 20, 0, 0.01m);
+        }
+    }
+
     private static ClaudeCodeInboxItemEnricher Build(ILlmProvider provider) => new(
         provider, new FakeTokenUsageTracker(), new FakeAiInteractionLog(), new FakeBus(),
         Consented(), NullLogger<ClaudeCodeInboxItemEnricher>.Instance);
@@ -212,5 +236,22 @@ public sealed class ClaudeCodeInboxItemEnricherTests
 
         provider.CallCount.Should().Be(0);                 // no egress
         bus.Published.Should().BeEmpty();                  // no publish
+    }
+
+    [Fact]
+    public async Task EnrichAsync_does_not_publish_when_disposed_before_batch_completes()
+    {
+        var gate = new GatedLlmProvider();
+        var bus = new CapturingBus();
+        var sut = BuildWithBus(gate, bus);
+
+        await sut.EnrichAsync(new[] { Item(1, "Add X", "desc") }, default);
+        await gate.Entered;            // runner is now awaiting the provider, mid-flight (no sleep)
+
+        sut.Dispose();                 // cancels the CTS while the batch is in flight
+        gate.Release("""[{"prId":"octo/repo#1","category":"feature"}]""");
+
+        await sut.DrainPendingAsync(); // must NOT throw; awaits the (RanToCompletion) batch
+        bus.Published.Should().BeEmpty();   // shutdown suppressed the publish
     }
 }

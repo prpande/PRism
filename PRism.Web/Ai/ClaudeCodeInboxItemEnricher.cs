@@ -91,7 +91,7 @@ internal sealed partial class ClaudeCodeInboxItemEnricher : IInboxItemEnricher, 
         if (misses.Count > 0 && !_cts.IsCancellationRequested)
         {
             var id = System.Threading.Interlocked.Increment(ref _batchSeq);
-            var task = Task.Run(() => RunBackgroundBatchAsync(misses), _cts.Token);
+            var task = Task.Run(() => RunBackgroundBatchAsync(misses), CancellationToken.None);
             _pending[id] = task;
             _ = task.ContinueWith(_ => _pending.TryRemove(id, out Task? _), TaskScheduler.Default);
         }
