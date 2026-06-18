@@ -90,8 +90,14 @@ describe('HotspotsTab', () => {
     });
     fireEvent.click(screen.getByRole('button', { name: /toggle a\.cs/i }));
     fireEvent.click(screen.getByRole('button', { name: /toggle b\.cs/i }));
-    expect(screen.getByRole('button', { name: /toggle a\.cs/i })).toHaveAttribute('aria-expanded', 'true');
-    expect(screen.getByRole('button', { name: /toggle b\.cs/i })).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByRole('button', { name: /toggle a\.cs/i })).toHaveAttribute(
+      'aria-expanded',
+      'true',
+    );
+    expect(screen.getByRole('button', { name: /toggle b\.cs/i })).toHaveAttribute(
+      'aria-expanded',
+      'true',
+    );
   });
 
   it('keyboard Enter on the toggle expands the row (spec: keyboard toggle)', async () => {
@@ -109,7 +115,10 @@ describe('HotspotsTab', () => {
     fireEvent.click(screen.getByRole('button', { name: /open a\.cs in diff/i }));
     expect(req).toHaveBeenCalledWith('a.cs');
     // header toggle stayed collapsed
-    expect(screen.getByRole('button', { name: /toggle a\.cs/i })).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.getByRole('button', { name: /toggle a\.cs/i })).toHaveAttribute(
+      'aria-expanded',
+      'false',
+    );
   });
 
   it('the header toggle is wired to its panel via aria-controls', () => {

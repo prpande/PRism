@@ -182,7 +182,11 @@ describe('AiSummaryCard', () => {
 
   it('applies the shared .ai-markdown treatment to the body', () => {
     render(
-      <AiSummaryCard summary={{ body: 'plain body', category: 'fix' }} loading={false} error={false} />,
+      <AiSummaryCard
+        summary={{ body: 'plain body', category: 'fix' }}
+        loading={false}
+        error={false}
+      />,
     );
     expect(document.querySelector('.markdown-body.ai-markdown')).not.toBeNull();
   });

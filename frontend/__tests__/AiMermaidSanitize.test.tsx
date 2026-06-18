@@ -8,7 +8,10 @@ vi.unmock('mermaid');
 describe('AI body coerces a mermaid fence — real mermaid, no live markup', () => {
   it('renders the safe error fallback (jsdom cannot lay out SVG), never a live <script>', async () => {
     const { container } = render(
-      <MarkdownRenderer source={'```mermaid\n<script>alert(1)</script>\n```'} className="ai-markdown" />,
+      <MarkdownRenderer
+        source={'```mermaid\n<script>alert(1)</script>\n```'}
+        className="ai-markdown"
+      />,
     );
     // Real mermaid initializes with securityLevel:'strict' then throws on layout
     // under jsdom (no getBBox) → MermaidBlock's catch renders .mermaid-error. The

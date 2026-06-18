@@ -50,13 +50,11 @@ describe('AiHunkAnnotation sample badge', () => {
 
 describe('AiHunkAnnotation markdown body', () => {
   it('renders a bulleted body as a real list with the popover treatment', () => {
-    render(
-      <AiHunkAnnotation
-        annotation={{ ...annotation, body: '- note one\n- note two' }}
-      />,
-    );
+    render(<AiHunkAnnotation annotation={{ ...annotation, body: '- note one\n- note two' }} />);
     expect(screen.getAllByRole('listitem')).toHaveLength(2);
-    expect(document.querySelector('.markdown-body.ai-markdown.ai-markdown--popover')).not.toBeNull();
+    expect(
+      document.querySelector('.markdown-body.ai-markdown.ai-markdown--popover'),
+    ).not.toBeNull();
   });
 
   it('does not render a raw <script> body as a live element (XSS)', () => {
