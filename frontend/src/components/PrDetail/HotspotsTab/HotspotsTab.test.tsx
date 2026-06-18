@@ -1,5 +1,6 @@
 import { render, screen, fireEvent } from '@testing-library/react';
 import { describe, it, expect, vi } from 'vitest';
+import userEvent from '@testing-library/user-event';
 import { HotspotsTab } from './HotspotsTab';
 import { PrDetailContextProvider } from '../prDetailContext';
 import type { FileFocusState } from '../../../hooks/useFileFocusResult';
@@ -49,33 +50,84 @@ describe('HotspotsTab', () => {
     expect(screen.queryByRole('heading', { name: /medium/i })).not.toBeInTheDocument();
   });
 
-  it('renders rationale as plain text (no HTML injection)', () => {
+  it('defaults to all-collapsed: shows stripped previews, no rendered markdown list', () => {
     renderTab({
       status: 'ok',
-      entries: [{ path: 'a.cs', level: 'high', rationale: '<script>alert(1)</script>' }],
+      entries: [{ path: 'a.cs', level: 'high', rationale: '- **core** logic\n- second' }],
     });
-    // text node, escaped — the literal string is present, no <script> element created.
-    expect(screen.getByText('<script>alert(1)</script>')).toBeInTheDocument();
+    // collapsed preview = first stripped line
+    expect(screen.getByText('core logic')).toBeInTheDocument();
+    // no expanded panel yet → no list items
+    expect(screen.queryByRole('listitem')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /toggle a\.cs/i })).toHaveAttribute('aria-expanded', 'false');
+  });
+
+  it('expanding a row renders the rationale as markdown', () => {
+    renderTab({
+      status: 'ok',
+      entries: [{ path: 'a.cs', level: 'high', rationale: '- first\n- second' }],
+    });
+    fireEvent.click(screen.getByRole('button', { name: /toggle a\.cs/i }));
+    const items = screen.getAllByRole('listitem');
+    expect(items).toHaveLength(2);
+    expect(screen.getByRole('button', { name: /toggle a\.cs/i })).toHaveAttribute('aria-expanded', 'true');
+  });
+
+  it('is multi-open: two rows can be expanded at once', () => {
+    renderTab({
+      status: 'ok',
+      entries: [
+        { path: 'a.cs', level: 'high', rationale: 'ra' },
+        { path: 'b.cs', level: 'medium', rationale: 'rb' },
+      ],
+    });
+    fireEvent.click(screen.getByRole('button', { name: /toggle a\.cs/i }));
+    fireEvent.click(screen.getByRole('button', { name: /toggle b\.cs/i }));
+    expect(screen.getByRole('button', { name: /toggle a\.cs/i })).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByRole('button', { name: /toggle b\.cs/i })).toHaveAttribute('aria-expanded', 'true');
+  });
+
+  it('keyboard Enter on the toggle expands the row (spec: keyboard toggle)', async () => {
+    const user = userEvent.setup();
+    renderTab({ status: 'ok', entries: [{ path: 'a.cs', level: 'high', rationale: 'r' }] });
+    const toggle = screen.getByRole('button', { name: /toggle a\.cs/i });
+    toggle.focus();
+    await user.keyboard('{Enter}');
+    expect(toggle).toHaveAttribute('aria-expanded', 'true');
+  });
+
+  it('the open-in-diff control calls requestFileView without toggling the row', () => {
+    const req = vi.fn();
+    renderTab({ status: 'ok', entries: [{ path: 'a.cs', level: 'high', rationale: 'x' }] }, req);
+    fireEvent.click(screen.getByRole('button', { name: /open a\.cs in diff/i }));
+    expect(req).toHaveBeenCalledWith('a.cs');
+    // header toggle stayed collapsed
+    expect(screen.getByRole('button', { name: /toggle a\.cs/i })).toHaveAttribute('aria-expanded', 'false');
+  });
+
+  it('the header toggle is wired to its panel via aria-controls', () => {
+    renderTab({ status: 'ok', entries: [{ path: 'a.cs', level: 'high', rationale: 'r' }] });
+    const toggle = screen.getByRole('button', { name: /toggle a\.cs/i });
+    fireEvent.click(toggle);
+    const panelId = toggle.getAttribute('aria-controls');
+    expect(panelId).toBeTruthy();
+    expect(document.getElementById(panelId!)).not.toBeNull();
+  });
+
+  it('expanded panel renders no live <script> and no javascript: link (XSS)', () => {
+    renderTab({
+      status: 'ok',
+      entries: [
+        {
+          path: 'a.cs',
+          level: 'high',
+          rationale: '<script>alert(1)</script>\n\n[click](javascript:alert(1))',
+        },
+      ],
+    });
+    fireEvent.click(screen.getByRole('button', { name: /toggle a\.cs/i }));
     expect(document.querySelector('script')).toBeNull();
-  });
-
-  it('clicking a row calls requestFileView with the path', () => {
-    const req = vi.fn();
-    renderTab({ status: 'ok', entries: [{ path: 'a.cs', level: 'high', rationale: 'x' }] }, req);
-    fireEvent.click(screen.getByRole('button', { name: /a\.cs/ }));
-    expect(req).toHaveBeenCalledWith('a.cs');
-  });
-
-  it('row is a native button (keyboard activation is a browser guarantee)', () => {
-    // The row is a native <button>, so Enter/Space activation is handled by the
-    // browser via onClick — no custom onKeyDown to unit-test. We assert the
-    // element is a button and that activating it calls requestFileView.
-    const req = vi.fn();
-    renderTab({ status: 'ok', entries: [{ path: 'a.cs', level: 'high', rationale: 'x' }] }, req);
-    const row = screen.getByRole('button', { name: /a\.cs/ });
-    expect(row.tagName).toBe('BUTTON');
-    fireEvent.click(row);
-    expect(req).toHaveBeenCalledWith('a.cs');
+    expect(document.querySelector('a[href*="javascript:"]')).toBeNull();
   });
 
   it('loading shows skeleton', () => {

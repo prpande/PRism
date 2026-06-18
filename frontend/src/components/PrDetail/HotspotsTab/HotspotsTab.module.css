@@ -23,40 +23,97 @@
   flex-direction: column;
   gap: var(--s-1);
 }
-.row {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 2px;
-  width: 100%;
-  text-align: left;
+.item {
   background: var(--surface-2);
   border: 1px solid var(--border-1);
   border-radius: var(--radius-2);
+}
+.itemHeader {
+  display: flex;
+  align-items: center;
+}
+.rowToggle {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+  background: none;
+  border: none;
   padding: var(--s-2) var(--s-3);
   cursor: pointer;
 }
-.row:hover {
+.rowToggle:hover {
   background: var(--surface-3);
+  border-top-left-radius: var(--radius-2);
 }
-.row:focus-visible {
+/* When collapsed there is no panel below, so round the bottom-left corner too —
+   otherwise the hover fill bleeds a square corner past the .item border-radius. */
+.rowToggle[aria-expanded='false']:hover {
+  border-bottom-left-radius: var(--radius-2);
+}
+.rowToggle:focus-visible,
+.openInDiff:focus-visible {
   outline: 2px solid var(--accent);
-  outline-offset: 1px;
+  outline-offset: -2px;
+}
+/* Level dot — reuses the Files-tree wayfinding convention VERBATIM (monochrome
+   accent, not per-level hue): High = accent + halo, Medium = accent at 0.6
+   opacity. Mirrors .fileTreeAiHigh / .fileTreeAiMed in FileTree.module.css —
+   if that convention changes there, update these three rules in lockstep. */
+.dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  flex: none;
+}
+.dotMed {
+  opacity: 0.6;
+}
+.dotHigh {
+  box-shadow: 0 0 0 2px color-mix(in oklch, var(--accent) 25%, transparent);
 }
 .rowPath {
   font-family: var(--font-mono);
   font-size: var(--text-sm);
   color: var(--text-1);
+  flex: none;
 }
-.rowRationale {
+.rowPreview {
   font-size: var(--text-xs);
   color: var(--text-2);
-  /* Show the FULL LLM narrative (owner live-validation 2026-06-14): the prior single-line
-     ellipsis clamp hid the reviewer's why-it-matters context. Wrap across lines; break only
-     overlong unbreakable tokens (paths/identifiers) so a long word can't force horizontal scroll. */
-  white-space: normal;
-  overflow-wrap: anywhere;
-  line-height: 1.4;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chevron {
+  flex: none;
+  color: var(--text-3);
+  transition: transform 0.15s ease;
+}
+.chevron[data-open='true'] {
+  transform: rotate(180deg);
+}
+.openInDiff {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  padding: var(--s-2);
+  color: var(--text-3);
+  cursor: pointer;
+}
+.openInDiff:hover {
+  color: var(--text-1);
+}
+.panel {
+  padding: 0 var(--s-3) var(--s-3);
 }
 .message,
 .messagePositive,
