@@ -31,4 +31,7 @@ describe('stripMarkdown', () => {
     expect(out).not.toBe('cs');
     expect(out).toBe('if (x) throw;');
   });
+  it('skips a thematic break, falling through to the first real content line', () => {
+    expect(stripMarkdown('---\n- first point')).toBe('first point');
+  });
 });

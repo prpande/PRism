@@ -155,4 +155,24 @@ public sealed class FileFocusParserTests
         fb.Should().OnlyContain(e => e.Level == FocusLevel.Medium
             && e.Rationale == "Automatic fallback — ranking unavailable.");
     }
+
+    [Fact]
+    public void Strips_bidi_override_chars_from_rationale_keeps_text()
+    {
+        // The rationale renders as markdown on the Hotspots tab, so it runs the same bidi/control-char
+        // strip the hunk annotator does (#465). U+202E (RLO) is a Cf char char.IsControl misses.
+        // \\u202E in the C# literal is a JSON \u escape — no literal invisible char in this source file.
+        var text = "[{\"path\":\"a.cs\",\"score\":\"high\",\"rationale\":\"safe\\u202Etext\"}]";
+        FileFocusParser.TryParse(text, Changed, out var entries).Should().BeTrue();
+        entries.Single(e => e.Path == "a.cs").Rationale.Should().Be("safetext");
+    }
+
+    [Fact]
+    public void Preserves_newlines_in_rationale_so_markdown_structure_survives()
+    {
+        // Sanitizing must keep \n so a multi-bullet rationale renders as a real list, not one paragraph (#465).
+        var text = "[{\"path\":\"a.cs\",\"score\":\"high\",\"rationale\":\"- one\\n- two\"}]";
+        FileFocusParser.TryParse(text, Changed, out var entries).Should().BeTrue();
+        entries.Single(e => e.Path == "a.cs").Rationale.Should().Be("- one\n- two");
+    }
 }

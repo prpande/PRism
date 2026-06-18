@@ -88,9 +88,12 @@ internal static class FileFocusParser
         }
     }
 
+    // Sanitize BEFORE capping: the rationale renders as markdown on the Hotspots tab (panel + stripped
+    // preview), so it must run the same bidi/control-char strip every AI-markdown surface does (#465).
+    // StripDangerous keeps \n/\r/\t, so a multi-line rationale's markdown structure survives the cap.
     private static string CapRationale(string? raw)
     {
-        var s = (raw ?? string.Empty).Trim();
+        var s = AiTextSanitizer.StripDangerous(raw).Trim();
         if (s.Length == 0) return string.Empty;
         if (s.Length <= RationaleCap) return s;
         return s[..(RationaleCap - 1)] + "…";

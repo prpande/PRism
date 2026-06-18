@@ -19,8 +19,11 @@ internal static class PrCategoryParser
 
         const string prefix = "CATEGORY:";
         var trimmed = firstLine.TrimStart();
+        // The body renders as markdown on the AI summary card, so it runs the same bidi/control-char
+        // strip every AI-markdown surface does (#465). StripDangerous keeps \n/\r/\t, so the summary's
+        // markdown structure (bullet lists, fenced code) survives. No CATEGORY line ⇒ the whole text is body.
         if (!trimmed.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
-            return (raw, "");
+            return (AiTextSanitizer.StripDangerous(raw), "");
 
         var value = trimmed[prefix.Length..].Trim();
 
@@ -28,7 +31,7 @@ internal static class PrCategoryParser
         // (prefer ToUpperInvariant for normalisation). We want the lowercase canonical
         // value, so we ask the set for the stored key rather than calling ToLower on input.
         var category = Taxonomy.TryGetValue(value, out var canonical) ? canonical : "";
-        var body = newline >= 0 ? raw[(newline + 1)..] : "";
+        var body = AiTextSanitizer.StripDangerous(newline >= 0 ? raw[(newline + 1)..] : "");
         return (body, category);
     }
 }

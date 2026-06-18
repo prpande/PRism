@@ -1,4 +1,3 @@
-using System.Text;
 using System.Text.Json;
 using PRism.AI.Contracts.Dtos;
 using PRism.Core.Contracts;
@@ -66,7 +65,7 @@ internal static class HunkAnnotationParser
 
             var rawBody = el.TryGetProperty("body", out var bodyEl) && bodyEl.ValueKind == JsonValueKind.String
                 ? bodyEl.GetString() : null;
-            var body = StripDangerous(rawBody).Trim();
+            var body = AiTextSanitizer.StripDangerous(rawBody).Trim();
             if (body.Length == 0 || body.Length > BodyCap) continue;                  // empty / over-length → drop
 
             // Dedup key INCLUDES body: only an exact (path, hunkIndex, body) repeat is a duplicate
@@ -102,30 +101,4 @@ internal static class HunkAnnotationParser
         if (string.Equals(s, "concern", StringComparison.OrdinalIgnoreCase)) { tone = AnnotationTone.Concern; return true; }
         return false;
     }
-
-    /// <summary>Strip category-Cc control characters — EXCEPT the whitespace controls \n/\r/\t, which
-    /// carry the body's markdown structure (bullet lists, fenced code). Stripping them collapsed a
-    /// multi-bullet annotation into a single paragraph in live mode (#465); the placeholder bypasses
-    /// this parser, which is why sample mode looked fine. Also strip the Unicode bidi / directional-formatting
-    /// characters that are category Cf (so <c>char.IsControl</c> misses them): U+061C (ALM),
-    /// U+200E/U+200F (LRM/RLM), U+202A–U+202E (LRE…RLO/PDF), U+2066–U+2069 (LRI…PDI). Written as explicit
-    /// \u escapes (not literal invisible chars) so an editor that strips zero-width characters can't
-    /// silently disarm the filter — mirrors PromptSanitizer's discipline. Bounds what an injected payload can
-    /// render in a card (spec §5/§12). All targets are BMP single UTF-16 units, so a per-char scan is exact.</summary>
-    private static string StripDangerous(string? raw)
-    {
-        if (string.IsNullOrEmpty(raw)) return string.Empty;
-        var sb = new StringBuilder(raw.Length);
-        foreach (var ch in raw)
-        {
-            if (char.IsControl(ch) && ch is not ('\n' or '\r' or '\t')) continue;   // Cc except whitespace
-            if (ch == '\u061C') continue;                             // ALM (Arabic Letter Mark)
-            if (ch is '\u200E' or '\u200F') continue;                 // LRM / RLM
-            if (ch >= '\u202A' && ch <= '\u202E') continue;           // LRE..RLO/PDF
-            if (ch >= '\u2066' && ch <= '\u2069') continue;           // LRI..PDI
-            sb.Append(ch);
-        }
-        return sb.ToString();
-    }
-
 }
