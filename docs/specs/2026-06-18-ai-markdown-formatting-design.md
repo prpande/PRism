@@ -47,11 +47,18 @@ the Hotspots accordion as the container its markdown rationale lands in.
 
 ## Non-goals
 
-- No new sanitization surface. `MarkdownRenderer` is used **as-is** — it already renders
-  untrusted PR descriptions/comments and is NOT configured with `rehype-raw`/raw-HTML
-  passthrough. (See Constraints. The one pre-existing HTML-injection path — ` ```mermaid `
-  fences routed to `MermaidBlock`'s `dangerouslySetInnerHTML` — is unchanged by this work and
-  is gated by mermaid's own sanitizer; these AI surfaces add no new path.)
+- No new **render-side** sanitization surface. `MarkdownRenderer` is used **as-is** — it
+  already renders untrusted PR descriptions/comments and is NOT configured with
+  `rehype-raw`/raw-HTML passthrough. (See Constraints. The one pre-existing HTML-injection
+  path — ` ```mermaid ` fences routed to `MermaidBlock`'s `dangerouslySetInnerHTML` — is
+  unchanged by this work and is gated by mermaid's own sanitizer; these AI surfaces add no new
+  path.) **Implementation note (owner-directed):** preflight review found the *backend*
+  ingestion-side strip was applied inconsistently — only `HunkAnnotationParser` removed bidi /
+  control characters, while `FileFocusParser` (hotspot rationale) and `PrCategoryParser`
+  (summary body) fed the same renderer unsanitized, leaving a bidi text-spoofing gap on those
+  surfaces. The fix extracts a shared `AiTextSanitizer` and routes all three parsers through it
+  (see Architecture). This is backend normalization on ingestion, not a new render-side path,
+  so it does not weaken the render-side non-goal above.
 - No nested per-hunk detail in the accordion — that is #468/#487. This design only builds
   the accordion as the container they will later nest into.
 - No chunked summarization, no change to the `CATEGORY:` first-line contract, no change to
@@ -111,6 +118,23 @@ A `.ai-markdown--popover` modifier tightens it further for the hunk-annotation p
 Every AI surface renders `<MarkdownRenderer source={…} className="ai-markdown …" />`.
 `MarkdownRenderer` applies `markdown-body <className>`, so each surface gets
 `.markdown-body.ai-markdown` and the compact rules layer on the global base.
+
+`.ai-markdown` also styles code: `code:not(pre code)` renders an inline-code chip
+(surface-3 background, small radius) and `pre` recesses fenced blocks on `surface-2`. These
+are needed because the existing inline-code chip lives on `CommentCard`'s `.body code` /
+`PrDescription`'s scoped rules — AI surfaces have no `.body` ancestor, so without these
+selectors AI code rendered as unstyled text. (Added during implementation; the prompts now
+ask the model for language-tagged fenced blocks so Shiki highlights them.)
+
+**Backend ingestion sanitizer (`AiTextSanitizer`).** All three parsers that feed
+`MarkdownRenderer` — `FileFocusParser`, `HunkAnnotationParser`, `PrCategoryParser` — route
+their free-text fields through one shared `AiTextSanitizer.StripDangerous`. It strips
+category-Cc control characters and the Cf bidi / directional-formatting characters (U+061C,
+U+200E/F, U+202A–E, U+2066–9) **except** `\n`/`\r`/`\t`, which carry the markdown structure
+(bullet lists, fenced code). Preserving those whitespace controls also fixes a live-mode bug
+where the old per-parser strip collapsed a multi-bullet annotation into one paragraph (the
+placeholder bypasses the parser, so sample mode looked fine). Code points are compared as
+hex so the source stays pure ASCII and the filter can't be silently disarmed by an editor.
 
 Rejected alternatives: a new `<AiMarkdown>` wrapper component (thin wrapper over a
 className, abstraction with no behavior — YAGNI); a `compact`/`variant` prop on
