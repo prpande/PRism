@@ -78,10 +78,10 @@ Rendering:
 
 | # | Surface | File | Kind | Variant / role | a11y |
 |---|---|---|---|---|---|
-| 1 | AI Summary card — add an "AI Summary" label (wire up the currently-unused `.aiSummaryLabel` class), marker on it | `components/PrDetail/OverviewTab/AiSummaryCard.tsx` | **A** | superscript / provenance | sr-only "AI-generated" |
-| 2 | Hotspots tab — add one small AI region label at the top of the tab **content** (not the shared tab-strip), marker on it | `components/PrDetail/HotspotsTab/HotspotsTab.tsx` | **A** | superscript / provenance | sr-only "AI-generated" |
+| 1 | AI Summary card — add a visible "AI Summary" label (wire up the currently-unused `.aiSummaryLabel` class), marker beside it | `components/PrDetail/OverviewTab/AiSummaryCard.tsx` | **A** | superscript / **decorative** | visible "AI Summary" text announces it |
+| 2 | Hotspots tab — place the marker (icon only, **no** visible AI text) at the top of the tab **content** (not the shared tab-strip) | `components/PrDetail/HotspotsTab/HotspotsTab.tsx` | **A** | superscript / **provenance** | sr-only "AI-generated" (nothing else announces it) |
 | 3 | Hunk annotation — replaces the raw `✨`; keeps the existing visible "AI" text label | `components/PrDetail/FilesTab/DiffPane/AiHunkAnnotation.tsx` | **R** | inline / **decorative** | adjacent "AI" text |
-| 4 | Inbox AI category chip — replaces the literal "AI" text in `.chipMarker` | `components/Inbox/InboxRow.tsx` | **R** | superscript / **decorative** | see note below |
+| 4 | Inbox AI category chip — icon **replaces** the literal "AI" text in `.chipMarker` | `components/Inbox/InboxRow.tsx` | **R** | superscript / **provenance** | sr-only "AI-generated" — see note (owner override + caveat) |
 | 5 | AI Settings tab label | `/settings/ai` pane / `Settings` nav (from #496) | **A** | inline / **decorative** | tab text says "AI" |
 | 6 | Ask-AI pull-tab — replaces the raw `✨` | `components/AskAiDrawer/AskAiPullTab.tsx` | **R** | inline / **decorative** | adjacent "Ask AI" label |
 | 7a | Ask-AI drawer **header** (line 87) — replaces the raw `✨` | `components/AskAiDrawer/AskAiDrawer.tsx` | **R** | inline / **decorative** | adjacent header text |
@@ -90,11 +90,15 @@ Rendering:
 | 8 | Stale-draft suggestion row — replaces the raw `✨` | `components/PrDetail/Reconciliation/StaleDraftRow.tsx` | **R** | inline / **decorative** | adjacent label |
 | — | File-tree focus dots (#492) | `components/PrDetail/FilesTab/FileTree.tsx` | — | **untouched** | dot is the signal |
 
-**Placement rule:** where a visible "AI" / "AI Summary" / "AI Settings" word sits beside the glyph → `decorative` (avoid a redundant announcement); where the sparkle marks a standalone AI artifact with no adjacent "AI" word → labelled provenance. Two deliberate exceptions: the **inbox chip** (below) and the **Ask-AI chat drawer** (one region marked once at its header per Decision 3) are decorative.
+**Placement rule (governed by available space):**
+- **Compact surfaces with no room for a text label** — the inbox category chip and the Hotspots tab boundary — use the marker **icon-only**, in the **provenance** variant. The sr-only "AI-generated" is the *only* thing announcing AI there, so it must be present.
+- **Surfaces that already carry running text or a heading** — AI Summary, hunk annotation, stale-draft, AI Settings tab, the Ask-AI surfaces — place the icon **beside a visible "AI…" word** and use the **decorative** variant. The visible text announces AI; an sr-only label would double-announce.
 
-**Surface #1 (AI Summary) details:** the card renders no "AI Summary" text today, only `SampleBadge` → optional Live status head → optional category chip → body, with error/loading branches *before* `if (!summary) return null`. The label + marker go in the **success branch** (after that early-return). Placement must respect the existing `.aiSummaryCard [data-sample-badge] + *` margin selector (§7) — don't make the marker the unintended `+ *` target.
+So the two provenance (icon-only) consumers in this slice are the **inbox chip** and the **Hotspots tab**; everything else is decorative beside visible text. The Ask-AI chat drawer is one AI region marked once at its header (Decision 3); its per-message/typing glyphs are decorative.
 
-**Surface #4 (inbox chip) — decorative, not provenance.** Two reasons override the default rule: (1) the chip renders **today only in Preview** with placeholder data (`inboxEnrichment` is off in Live until #410), so an sr-only "AI-generated" claim would be literally false on the one surface where it currently shows; (2) the existing `.chipMarker` is deliberately `aria-hidden` — an in-code comment notes the row's `aria-label` omits the category and "the button swallows descendant labels," so adding sr-only text would both reverse a deliberate a11y decision and likely not surface anyway. Decorative keeps the sparkle visible in Preview (per owner decision: mark it now, don't wait for #410) without asserting false provenance.
+**Surface #1 (AI Summary) details:** the card renders no "AI Summary" text today, only `SampleBadge` → optional Live status head → optional category chip → body, with error/loading branches *before* `if (!summary) return null`. Add a visible "AI Summary" label (wiring the unused `.aiSummaryLabel` class) with a decorative superscript marker beside it, in the **success branch** (after that early-return — never on the loading/error copy). Placement must respect the existing `.aiSummaryCard [data-sample-badge] + *` margin selector (§7) — don't make the label/marker the unintended `+ *` target.
+
+**Surface #4 (inbox chip) — provenance (owner decision, overriding the earlier truthfulness reservation).** The chip has no room for a text label, so the icon replaces the literal "AI" text and the sr-only "AI-generated" is the only AI announcement. Two caveats the implementer must handle: (1) the chip renders **today only in Preview** with placeholder data (`inboxEnrichment` off in Live until #410) — the owner accepts marking it now regardless (the adjacent `SampleBadge` "Sample" pill still qualifies it as illustrative for sighted users); (2) the existing `.chipMarker` is deliberately `aria-hidden` and an in-code comment notes the row is a `<button>` whose `aria-label` omits descendants ("the button swallows descendant labels"). The implementer **must verify the sr-only "AI-generated" actually reaches AT** (e.g. via a test asserting it in the row's accessible name); if the button swallows it, compose "AI-generated" into the row's `aria-label` instead of relying on a descendant sr-only span.
 
 ## 7. Coexistence with `SampleBadge` (no behavioural change)
 
@@ -136,7 +140,7 @@ Several AI surfaces we discussed are **not yet built**. When each is picked up i
 - [ ] `SparkIcon` relocated to the shared module and size-overridable; `/welcome` visually unchanged.
 - [ ] All surfaces in §6 render the shared marker as specified (rows 1, 2, 5 additive; 3, 4, 6, 7a–c, 8 replacements); the file-tree is untouched.
 - [ ] AI-summary marker mounts on the success branch only — absent on the loading skeleton and error copy.
-- [ ] Inbox chip uses the **decorative** variant (no false "AI-generated" on Preview-only placeholder).
+- [ ] Provenance (icon-only) is used on the **inbox chip** and the **Hotspots tab**; a test asserts the chip's "AI-generated" sr-only actually reaches AT (composed into the row `aria-label` if the button swallows the descendant span). Every other surface is decorative beside visible "AI…" text.
 - [ ] **Zero** raw `✨` emoji remain in `frontend/src` (grep-clean) — all six occurrences replaced. Non-`✨` glyphs are intentionally untouched.
 - [ ] An ESLint rule bans the literal `✨` in `frontend/src` (message points at `AiMarker`) and passes green.
 - [ ] `SampleBadge` behaviour unchanged; in Preview the sparkle + "Sample" pill render as one co-located cluster.
