@@ -118,20 +118,21 @@ away with the row, and clutters the leading edge.)
 
 ## Acceptance criteria
 
-- [ ] AI focus dot for High/Medium files is visible **without horizontal scrolling**,
+- [x] AI focus dot for High/Medium files is visible **without horizontal scrolling**,
       regardless of filename length, because the dot is outside `.fileTreeScroll`.
-- [ ] Dot still reflects focus level (High vs Medium) and only shows in Preview/Live
+- [x] Dot still reflects focus level (High vs Medium) and only shows in Preview/Live
       (`data-on` gate preserved).
-- [ ] `sr-only` "AI focus: \<level\>" announcement preserved, read after the filename.
-- [ ] Viewed checkbox *behavior* unchanged (toggle, viewed-dim, tab order). Its
+- [x] `sr-only` "AI focus: \<level\>" announcement preserved, read after the filename.
+- [x] Viewed checkbox *behavior* unchanged (toggle, viewed-dim, tab order). Its
       horizontal gutter is intentionally tightened `--s-3` → `--s-1` per owner B1
       feedback (Mechanics §7) — a deliberate, documented deviation from the issue's
       "checkbox column unchanged" scope guard.
-- [ ] When AI is off, the AI column collapses to `0` width (no empty gutter) and the
+- [x] When AI is off, the AI column collapses to `0` width (no empty gutter) and the
       synthetic horizontal scrollbar still aligns under the tree column only.
-- [ ] In both light and dark themes, at a narrow pane width with at least one long
+- [x] In both light and dark themes, at a narrow pane width with at least one long
       path (≥ ~60 chars), the High/Medium dot is fully visible in the fixed column at
-      every horizontal scroll position. (B1 live visual assert.)
+      every horizontal scroll position. (B1 live visual assert — owner-approved during
+      the interactive spacing-tuning pass.)
 
 ## Test plan (TDD, red-on-V2 first)
 

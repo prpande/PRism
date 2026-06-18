@@ -339,8 +339,13 @@ function FileCell({
 // span and its inner High/Medium dot are unchanged from the old in-row markup (same
 // data-on gate, title, aria-hidden); only the location moved. Directory rows render a
 // bare .fileTreeAiSlot (no .file-tree-ai), so the `count === files.length` invariant
-// holds. The span keeps its own data-on collapse; the column-level data-ai-on gate
-// (root) collapses the whole gutter when AI is off.
+// holds. Two gates compose intentionally (spec Mechanics §5): the column-level
+// data-ai-on gate on the root collapses the whole gutter when AI is off, and this
+// per-span data-on is the original, untouched marker gate kept in place by the issue's
+// scope guard ("don't change the data-on Preview/Live gating"). When AI is off the
+// column is already width-0, so the per-span collapse isn't visible — `aiPreview` is
+// still threaded here only to preserve that pre-existing gate verbatim, not because
+// the slot needs it to hide.
 function AiSlot({ focusLevel, aiPreview }: { focusLevel: FocusLevel | null; aiPreview: boolean }) {
   return (
     <div className={styles.fileTreeAiSlot}>
