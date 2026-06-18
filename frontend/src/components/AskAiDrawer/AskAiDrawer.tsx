@@ -4,6 +4,7 @@ import { useEffectiveLocation } from '../../hooks/useEffectiveLocation';
 import { useAskAiDrawer } from '../../contexts/AskAiDrawerContext';
 import { parsePrRefFromPathname } from './parsePrRefFromPathname';
 import { prRefKey } from '../../api/types';
+import { AiMarker } from '../Ai/AiMarker';
 import styles from './AskAiDrawer.module.css';
 
 export function AskAiDrawer() {
@@ -83,9 +84,7 @@ export function AskAiDrawer() {
     >
       <div className={styles.head}>
         <span id={titleId} className={styles.headTitle}>
-          <span className="ai-icon" aria-hidden="true">
-            ✨
-          </span>
+          <AiMarker variant="inline" decorative className="ai-icon" />
           <span>
             Ask about this PR <span className={styles.headSubtitle}>· AI unavailable</span>
           </span>
@@ -108,18 +107,14 @@ export function AskAiDrawer() {
             </div>
           ) : (
             <div key={m.ts} className={styles.msgAi}>
-              <span className="ai-icon" aria-hidden="true">
-                ✨
-              </span>
+              <AiMarker variant="inline" decorative className="ai-icon" />
               <div className={styles.msgAiBody}>{m.body}</div>
             </div>
           ),
         )}
         {thread?.pendingAiReply && (
           <div className={styles.msgAi} data-testid="ai-typing-indicator">
-            <span className="ai-icon" aria-hidden="true">
-              ✨
-            </span>
+            <AiMarker variant="inline" decorative className="ai-icon" />
             <span className={styles.typing} aria-label="AI is responding">
               <span className={styles.typingDot} />
               <span className={styles.typingDot} />

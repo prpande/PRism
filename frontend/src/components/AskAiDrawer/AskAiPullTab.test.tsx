@@ -54,4 +54,11 @@ describe('AskAiPullTab', () => {
     renderAt('/pr/acme/api/123');
     expect(screen.getByTestId('ask-ai-pull-tab').querySelector('.ai-icon')).toBeInTheDocument();
   });
+  it('renders the AiMarker and no raw emoji', () => {
+    mocks.gate.mockReturnValue(true);
+    mocks.drawer.mockReturnValue({ isOpen: false, toggle: vi.fn() });
+    renderAt('/pr/acme/api/123');
+    expect(screen.getByTestId('ai-marker')).toBeInTheDocument();
+    expect(screen.getByRole('button').textContent).not.toContain('✨');
+  });
 });
