@@ -1,0 +1,21 @@
+.aiMarker {
+  display: inline-flex;
+  align-items: center;
+  color: var(--accent);
+}
+.glyph {
+  width: 1em;
+  height: 1em;
+  display: block;
+}
+/* Superscript: tiny raised glyph against a text label. Sits OUTSIDE the label's
+   truncation region (caller spaces it); never animate (spec §4/§8). */
+.superscript {
+  font-size: 0.72em;
+  vertical-align: super;
+  margin-inline-start: 0.2em;
+}
+/* Inline: baseline glyph for buttons / nav / headers. */
+.inline {
+  font-size: 1rem;
+}
