@@ -52,12 +52,15 @@ const ALL_OFF: AiCapabilities = {
 // so hardcoding `summary: true` here surfaces the real error card rather than hiding the seam.
 // For P1-2 the live seams are summary + fileFocus; #414 (P2-4) adds hunkAnnotations now that the real
 // ClaudeCodeHunkAnnotator is registered in realSeams and the /ai/hunk-annotations endpoint gates on
-// IsSubscribed + maps provider failure to 503. (The remaining seams stay off until their slices.)
+// IsSubscribed + maps provider failure to 503. #410 (P1-4) adds inboxEnrichment now that the real
+// ClaudeCodeInboxItemEnricher is registered in realSeams and the orchestrator delivers chips via
+// InboxEnrichmentsReady → InboxUpdated. (The remaining seams stay off until their slices.)
 const LIVE_CAPABILITIES: AiCapabilities = {
   ...ALL_OFF,
   summary: true,
   fileFocus: true,
   hunkAnnotations: true,
+  inboxEnrichment: true,
 };
 
 // Stable no-op: capabilities are derived from the shared preferences store, which
