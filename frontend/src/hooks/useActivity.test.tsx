@@ -94,6 +94,9 @@ describe('useActivity', () => {
     expect(getActivityMock).not.toHaveBeenCalled();
 
     rerender({ on: true });
+    // Enabling enters the loading state (skeleton-before-data) when nothing is cached,
+    // before the first response lands — documents the enable→loading contract.
+    expect(result.current.isLoading).toBe(true);
     await waitFor(() => expect(result.current.data?.items[0].prNumber).toBe(1));
     expect(getActivityMock).toHaveBeenCalledTimes(1);
   });

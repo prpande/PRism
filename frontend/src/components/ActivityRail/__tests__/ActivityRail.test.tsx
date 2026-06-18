@@ -66,7 +66,7 @@ describe('ActivityRail (P1)', () => {
     expect(link).toHaveAttribute('href', '/pr/acme/api/1810');
   });
 
-  test('hides bots by default and reveals them via the toggle, re-capping to 12', async () => {
+  test('hides bots by default and reveals them via the toggle', async () => {
     const items = [
       item({ actorLogin: 'alice', prNumber: 1 }),
       item({ actorLogin: 'mergewatch[bot]', actorIsBot: true, prNumber: 2 }),
