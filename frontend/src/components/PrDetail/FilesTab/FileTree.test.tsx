@@ -511,3 +511,77 @@ describe('FileTree — AI focus dot (D32a)', () => {
     });
   });
 });
+
+describe('FileTree — AI dot fixed column (#492)', () => {
+  // A long path so the row would overflow the scroller; the dot must not ride off
+  // with it. The path also builds dir rows, exercising the empty dir-slot path.
+  const longPath = 'src/components/AVeryLongComponentDirectory/AVeryLongFileName.tsx';
+
+  it('renders the AI dot in .file-tree-ai-col, OUTSIDE the horizontal scroller', () => {
+    // Regression for #492: on V2 the dot is the last child of the row inside
+    // .file-tree-scroll, so a long filename scrolls it off-screen. It must live in a
+    // fixed column outside the scroller, like the viewed checkbox.
+    const entries: FileFocus[] = [{ path: longPath, level: 'high', rationale: 'core logic' }];
+    const { container } = render(
+      <FileTree
+        files={[F(longPath)]}
+        selectedPath={null}
+        onSelectFile={() => {}}
+        viewedPaths={new Set()}
+        onToggleViewed={() => {}}
+        focusEntries={entries}
+        aiPreview={true}
+      />,
+    );
+    const scroller = container.querySelector('.file-tree-scroll') as HTMLElement;
+    const aiCol = container.querySelector('.file-tree-ai-col') as HTMLElement;
+    expect(aiCol).not.toBeNull();
+    const dot = container.querySelector('[class*="fileTreeAiHigh"]') as HTMLElement;
+    expect(dot).not.toBeNull();
+    // dot is in the fixed AI column, NOT inside the horizontal scroller, so it stays
+    // visible regardless of how far a long filename scrolls the tree
+    expect(aiCol.contains(dot)).toBe(true);
+    expect(scroller.contains(dot)).toBe(false);
+  });
+
+  it('places the AI column to the LEFT of the viewed-checkbox column', () => {
+    const { container } = render(
+      <FileTree
+        files={[F('a.ts')]}
+        selectedPath={null}
+        onSelectFile={() => {}}
+        viewedPaths={new Set()}
+        onToggleViewed={() => {}}
+        focusEntries={[{ path: 'a.ts', level: 'high', rationale: 'core' }]}
+        aiPreview={true}
+      />,
+    );
+    const aiCol = container.querySelector('.file-tree-ai-col') as HTMLElement;
+    const checkCol = container.querySelector('.file-tree-check-col') as HTMLElement;
+    expect(aiCol).not.toBeNull();
+    expect(checkCol).not.toBeNull();
+    // AI column precedes the checkbox column in document order → it renders to its left
+    const order = aiCol.compareDocumentPosition(checkCol);
+    expect(order & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it('aligns the AI column to the rows: a .file-tree-ai per file, an empty slot per dir', () => {
+    const { container } = render(
+      <FileTree
+        files={[F('src/a.ts'), F('src/b.ts')]}
+        selectedPath={null}
+        onSelectFile={() => {}}
+        viewedPaths={new Set()}
+        onToggleViewed={() => {}}
+        focusEntries={[{ path: 'src/a.ts', level: 'high', rationale: 'core' }]}
+        aiPreview={true}
+      />,
+    );
+    const aiCol = container.querySelector('.file-tree-ai-col') as HTMLElement;
+    // 'src' dir + a.ts + b.ts = 3 rows ⇒ 3 slots, one per row
+    expect(aiCol.children).toHaveLength(3);
+    // exactly one .file-tree-ai per FILE row; the dir slot carries none, so the
+    // count===files invariant (and its aria-hidden guard) holds unchanged
+    expect(aiCol.querySelectorAll('.file-tree-ai')).toHaveLength(2);
+  });
+});
