@@ -167,6 +167,40 @@ describe('AiSummaryCard', () => {
     expect(screen.queryByText('Summary updated')).not.toBeInTheDocument();
   });
 
+  it('renders a bulleted body as a real list (markdown)', () => {
+    render(
+      <AiSummaryCard
+        summary={{ body: '- first point\n- second point', category: 'fix' }}
+        loading={false}
+        error={false}
+      />,
+    );
+    const items = screen.getAllByRole('listitem');
+    expect(items).toHaveLength(2);
+    expect(items[0]).toHaveTextContent('first point');
+  });
+
+  it('applies the shared .ai-markdown treatment to the body', () => {
+    render(
+      <AiSummaryCard summary={{ body: 'plain body', category: 'fix' }} loading={false} error={false} />,
+    );
+    expect(document.querySelector('.markdown-body.ai-markdown')).not.toBeNull();
+  });
+
+  it('does not render a raw <script> body as a live element (XSS)', () => {
+    render(
+      <AiSummaryCard
+        summary={{ body: '<script>alert(1)</script>', category: 'fix' }}
+        loading={false}
+        error={false}
+      />,
+    );
+    // react-markdown (no rehype-raw) DROPS raw HTML — there is neither a live
+    // <script> element nor visible escaped text. Assert no live element only,
+    // matching the repo's MarkdownRenderer security-test idiom.
+    expect(document.querySelector('script')).toBeNull();
+  });
+
   it('clicking Regenerate calls onRegenerate', () => {
     const onRegenerate = vi.fn();
     render(

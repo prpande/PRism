@@ -59,30 +59,3 @@
   text-transform: uppercase;
   color: var(--accent);
 }
-
-.aiSummaryBullets {
-  margin: 4px 0 6px 0;
-  padding-left: var(--s-4);
-  color: var(--text-2);
-  list-style: none;
-}
-
-.aiSummaryBullets li {
-  margin: 2px 0;
-  display: flex;
-  gap: 10px;
-  line-height: 1.5;
-  align-items: baseline;
-}
-
-.aiRisk {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 10px;
-  border-radius: var(--radius-2);
-  font-size: var(--text-xs);
-  margin-top: 4px;
-  background: var(--warning-soft);
-  color: var(--warning-fg);
-}
