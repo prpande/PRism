@@ -132,7 +132,13 @@ describe('HotspotsTab', () => {
 
   it.each([
     ['loading', { status: 'loading' as const, entries: [] }],
-    ['fallback', { status: 'fallback' as const, entries: [{ path: 'a.cs', level: 'medium' as const, rationale: 'x' }] }],
+    [
+      'fallback',
+      {
+        status: 'fallback' as const,
+        entries: [{ path: 'a.cs', level: 'medium' as const, rationale: 'x' }],
+      },
+    ],
     ['error', { status: 'error' as const, entries: [] }],
     ['not-subscribed', { status: 'not-subscribed' as const, entries: [] }],
     ['no-changes', { status: 'no-changes' as const, entries: [] }],

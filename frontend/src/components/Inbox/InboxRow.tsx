@@ -86,8 +86,7 @@ export function InboxRow({
 
   // #489: the chip's sparkle is visual-only (button swallows descendant labels),
   // so the AI provenance rides the row aria-label instead.
-  const aiSuffix =
-    showCategoryChip && enrichment?.categoryChip ? ` · ${AI_PROVENANCE_LABEL}` : '';
+  const aiSuffix = showCategoryChip && enrichment?.categoryChip ? ` · ${AI_PROVENANCE_LABEL}` : '';
 
   const ariaLabel = isDone
     ? `${pr.title} · ${pr.repo} · ${doneState}${aiSuffix}`

@@ -57,18 +57,15 @@ export default [
         'error',
         {
           selector: 'Literal[value=/\\u2728/]',
-          message:
-            'Use <AiMarker /> (components/Ai/AiMarker) instead of the raw ✨ emoji (#489).',
+          message: 'Use <AiMarker /> (components/Ai/AiMarker) instead of the raw ✨ emoji (#489).',
         },
         {
           selector: 'JSXText[value=/\\u2728/]',
-          message:
-            'Use <AiMarker /> (components/Ai/AiMarker) instead of the raw ✨ emoji (#489).',
+          message: 'Use <AiMarker /> (components/Ai/AiMarker) instead of the raw ✨ emoji (#489).',
         },
         {
           selector: 'TemplateElement[value.raw=/\\u2728/]',
-          message:
-            'Use <AiMarker /> (components/Ai/AiMarker) instead of the raw ✨ emoji (#489).',
+          message: 'Use <AiMarker /> (components/Ai/AiMarker) instead of the raw ✨ emoji (#489).',
         },
       ],
     },

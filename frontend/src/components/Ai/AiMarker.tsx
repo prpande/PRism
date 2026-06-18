@@ -14,7 +14,11 @@ export interface AiMarkerProps {
 
 // Pure presentational AI marker (#489). Holds no hooks: the host mounts it only
 // where real AI content renders (never on loading/error copy). Static, non-interactive.
-export function AiMarker({ variant = 'superscript', decorative = false, className }: AiMarkerProps) {
+export function AiMarker({
+  variant = 'superscript',
+  decorative = false,
+  className,
+}: AiMarkerProps) {
   const cls = [
     styles.aiMarker,
     variant === 'inline' ? styles.inline : styles.superscript,

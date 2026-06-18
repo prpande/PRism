@@ -173,7 +173,9 @@ describe('AiSummaryCard', () => {
   });
 
   it('renders an "AI Summary" label with the decorative marker on success', () => {
-    render(<AiSummaryCard summary={{ body: 'x', category: 'fix' }} loading={false} error={false} />);
+    render(
+      <AiSummaryCard summary={{ body: 'x', category: 'fix' }} loading={false} error={false} />,
+    );
     expect(screen.getByText('AI Summary')).toBeInTheDocument();
     expect(screen.getByTestId('ai-marker')).toBeInTheDocument();
   });
