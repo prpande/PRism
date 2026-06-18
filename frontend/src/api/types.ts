@@ -129,6 +129,7 @@ export interface PrInboxItem {
   lastSeenCommentId: number | null;
   mergedAt: string | null;
   closedAt: string | null;
+  isDraft: boolean;
 }
 
 export interface InboxSection {

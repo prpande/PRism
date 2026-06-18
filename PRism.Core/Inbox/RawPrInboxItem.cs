@@ -22,4 +22,6 @@ public sealed record RawPrInboxItem(
     int IterationNumberApprox,
     DateTimeOffset? MergedAt = null,
     DateTimeOffset? ClosedAt = null,
-    string? AvatarUrl = null);
+    string? AvatarUrl = null,
+    bool IsDraft = false,
+    string? Description = null);

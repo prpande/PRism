@@ -24,6 +24,7 @@ const PR: PrInboxItem = {
   mergedAt: null,
   closedAt: null,
   avatarUrl: 'https://avatars.githubusercontent.com/u/1?v=4',
+  isDraft: false,
 };
 
 function TabsProbe() {
@@ -246,6 +247,39 @@ describe('InboxRow tail reserve-and-collapse', () => {
     const slot = container.querySelector('[class*="commentSlot"]')!;
     expect(slot.textContent).toContain('123');
     expect(slot.querySelector('svg')).not.toBeNull();
+  });
+});
+
+describe('InboxRow Draft chip', () => {
+  it('renders a Draft chip for open draft PRs with AI off', () => {
+    renderInboxRow({ ...PR, isDraft: true }, { showCategoryChip: false });
+    expect(screen.getByText('Draft')).toBeInTheDocument();
+    expect(screen.queryByText('AI')).not.toBeInTheDocument();
+  });
+
+  it('draft PR shows Draft, not an AI category chip', () => {
+    renderInboxRow(
+      { ...PR, isDraft: true },
+      {
+        showCategoryChip: true,
+        enrichment: { prId: 'x', categoryChip: 'Feature', hoverSummary: null },
+      },
+    );
+    expect(screen.getByText('Draft')).toBeInTheDocument();
+    expect(screen.queryByText('Feature')).not.toBeInTheDocument();
+  });
+
+  it('non-draft PR shows the AI category chip', () => {
+    renderInboxRow(
+      { ...PR, isDraft: false },
+      {
+        showCategoryChip: true,
+        enrichment: { prId: 'x', categoryChip: 'Feature', hoverSummary: null },
+      },
+    );
+    expect(screen.getByText('Feature')).toBeInTheDocument();
+    // #489: the chip marker is now an AiMarker icon (not literal "AI" text).
+    expect(screen.getByTestId('ai-marker')).toBeInTheDocument();
   });
 });
 
