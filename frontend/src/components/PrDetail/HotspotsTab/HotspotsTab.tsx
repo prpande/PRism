@@ -133,22 +133,7 @@ function Group({
                   {!isOpen && (
                     <span className={styles.rowPreview}>{stripMarkdown(r.rationale)}</span>
                   )}
-                  <svg
-                    className={styles.chevron}
-                    data-open={isOpen}
-                    width="14"
-                    height="14"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    aria-hidden="true"
-                    focusable="false"
-                  >
-                    <path d="M6 9l6 6 6-6" />
-                  </svg>
+                  <Icon className={styles.chevron} dataOpen={isOpen} d="M6 9l6 6 6-6" />
                 </button>
                 <button
                   type="button"
@@ -156,20 +141,7 @@ function Group({
                   aria-label={`Open ${r.path} in diff`}
                   onClick={() => onOpen(r.path)}
                 >
-                  <svg
-                    width="14"
-                    height="14"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    aria-hidden="true"
-                    focusable="false"
-                  >
-                    <path d="M9 18l6-6-6-6" />
-                  </svg>
+                  <Icon d="M9 18l6-6-6-6" />
                 </button>
               </div>
               {isOpen && (
@@ -187,4 +159,29 @@ function Group({
 
 function Message({ children, className }: { children: ReactNode; className: string }) {
   return <div className={className}>{children}</div>;
+}
+
+// Both row affordances are 14px line-icons differing only in the path data: the
+// disclosure chevron (rotated in CSS via the data-open attribute) and the
+// open-in-diff arrow. dataOpen is omitted for the arrow, so React drops the
+// attribute and only the chevron carries it.
+function Icon({ d, className, dataOpen }: { d: string; className?: string; dataOpen?: boolean }) {
+  return (
+    <svg
+      className={className}
+      data-open={dataOpen}
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      focusable="false"
+    >
+      <path d={d} />
+    </svg>
+  );
 }
