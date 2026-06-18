@@ -1,4 +1,5 @@
 using System.Diagnostics.CodeAnalysis;
+using System.Text.Json.Serialization;
 
 namespace PRism.Core.Contracts;
 
@@ -23,4 +24,6 @@ public sealed record PrInboxItem(
     long? LastSeenCommentId,
     DateTimeOffset? MergedAt = null,
     DateTimeOffset? ClosedAt = null,
-    string? AvatarUrl = null);
+    string? AvatarUrl = null,
+    bool IsDraft = false,
+    [property: JsonIgnore] string? Description = null);

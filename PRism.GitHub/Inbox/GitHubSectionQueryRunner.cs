@@ -135,6 +135,10 @@ public sealed partial class GitHubSectionQueryRunner : ISectionQueryRunner
                 var title = item.GetProperty("title").GetString() ?? "";
                 var updated = item.GetProperty("updated_at").GetDateTimeOffset();
                 var comments = item.TryGetProperty("comments", out var c) ? c.GetInt32() : 0;
+                var description = item.TryGetProperty("body", out var b) && b.ValueKind == JsonValueKind.String
+                    ? b.GetString() : null;
+                var isDraft = item.TryGetProperty("draft", out var dr) && dr.ValueKind != JsonValueKind.Null
+                    && dr.GetBoolean();
 
                 result.Add(new RawPrInboxItem(
                     new PrReference(path[0], path[1], n),
@@ -144,7 +148,9 @@ public sealed partial class GitHubSectionQueryRunner : ISectionQueryRunner
                     0, 0, // additions/deletions not in Search API; refined in fan-out
                     "",   // head_sha not in Search API; refined in fan-out
                     1,    // iteration approx
-                    AvatarUrl: avatarUrl));
+                    AvatarUrl: avatarUrl,
+                    IsDraft: isDraft,
+                    Description: description));
             }
             catch (Exception ex) when (InboxJsonGuard.IsMalformedItem(ex))
             {

@@ -127,7 +127,7 @@ public sealed class FileFocusParserTests
         // each '[' triggers a depth-walk to end-of-string with no matching ']', then the scan
         // restarts one character further. With MaxRestarts=32 and MaxScanChars=64 KB the method
         // must bail out well before scanning a multi-MB string.
-        var junk = new string('[', FileFocusParser.MaxScanChars + 10_000);
+        var junk = new string('[', JsonArrayExtractor.MaxScanChars + 10_000);
         var sw = System.Diagnostics.Stopwatch.StartNew();
         var result = FileFocusParser.TryParse(junk, Changed, out _);
         sw.Stop();

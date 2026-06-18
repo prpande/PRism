@@ -28,6 +28,8 @@ public sealed partial class InboxRefreshOrchestrator : IInboxRefreshOrchestrator
     private TaskCompletionSource _firstSnapshotTcs = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly SemaphoreSlim _writerLock = new(1, 1);
     private int _coldStartKicked;
+    private readonly IDisposable _enrichmentSub;
+    private volatile bool _disposed;
 
     public InboxRefreshOrchestrator(
         IConfigStore config,
@@ -53,6 +55,7 @@ public sealed partial class InboxRefreshOrchestrator : IInboxRefreshOrchestrator
         _stateStore = stateStore;
         _viewerLoginProvider = viewerLoginProvider;
         _log = log ?? NullLogger<InboxRefreshOrchestrator>.Instance;
+        _enrichmentSub = _events.Subscribe<InboxEnrichmentsReady>(OnInboxEnrichmentsReady);
     }
 
     public InboxSnapshot? Current => Volatile.Read(ref _current);
@@ -244,6 +247,7 @@ public sealed partial class InboxRefreshOrchestrator : IInboxRefreshOrchestrator
             // ToDictionary would throw, leaving the snapshot uninitialized and the inbox 503.
             var allItems = sectionsFinal.Values.SelectMany(v => v)
                 .DistinctBy(i => i.Reference)
+                .Where(i => i.MergedAt == null && i.ClosedAt == null && !i.IsDraft) // #410: enrich open, non-draft only
                 .ToList();
             var enricher = _aiSelector.Resolve<IInboxItemEnricher>();
             var enrichments = await enricher.EnrichAsync(allItems, ct).ConfigureAwait(false);
@@ -299,7 +303,8 @@ public sealed partial class InboxRefreshOrchestrator : IInboxRefreshOrchestrator
             r.IterationNumberApprox, r.CommentCount,
             r.Additions, r.Deletions, r.HeadSha, ci,
             lastViewedHeadSha, lastSeenCommentId,
-            r.MergedAt, r.ClosedAt, r.AvatarUrl);
+            r.MergedAt, r.ClosedAt, r.AvatarUrl,
+            r.IsDraft, r.Description);
     }
 
     // NewOrUpdatedPrCount is named for the common case (added or updated PRs) but its
@@ -362,7 +367,59 @@ public sealed partial class InboxRefreshOrchestrator : IInboxRefreshOrchestrator
 
     private static int CountAll(InboxSnapshot s) => s.Sections.Values.Sum(v => v.Count);
 
-    public void Dispose() => _writerLock.Dispose();
+    public void Dispose()
+    {
+        _enrichmentSub.Dispose();   // unsubscribe first so no new handler invocations start
+        _disposed = true;           // then flag so any in-flight invocation exits early
+        _writerLock.Dispose();      // finally release the semaphore
+    }
+
+    // Merge a completed enrichment batch into the live snapshot. Runs synchronously on the
+    // enricher's background thread (ReviewEventBus delivers inline). Takes the writer-lock and
+    // re-reads _current so it never clobbers a fresher snapshot the poller just committed; and
+    // applies each result only if the live PR's content token still matches the one the result
+    // was computed against (#410 edit-during-batch guard).
+    private void OnInboxEnrichmentsReady(InboxEnrichmentsReady evt)
+    {
+        if (_disposed) return; // host shutting down — don't touch a disposing _writerLock
+        _writerLock.Wait();
+        try
+        {
+            if (_disposed) return;
+            var current = _current;
+            if (current is null) return;
+
+            var liveByPrId = current.Sections.Values
+                .SelectMany(s => s)
+                .GroupBy(p => p.Reference.PrId, StringComparer.Ordinal)
+                .ToDictionary(g => g.Key, g => g.First(), StringComparer.Ordinal);
+
+            var merged = new Dictionary<string, InboxItemEnrichment>(current.Enrichments, StringComparer.Ordinal);
+            var changedSections = new HashSet<string>(StringComparer.Ordinal);
+            var applied = 0;
+            foreach (var r in evt.Results)
+            {
+                if (r.CategoryChip is null) continue;
+                if (!liveByPrId.TryGetValue(r.PrId, out var live)) continue;      // PR gone since batch started
+                if (InboxEnrichmentContent.Token(live.Title, live.Description) != r.ContentToken) continue; // stale
+                merged[r.PrId] = new InboxItemEnrichment(r.PrId, r.CategoryChip, HoverSummary: null);
+                applied++;
+                foreach (var kv in current.Sections)
+                    if (kv.Value.Any(p => p.Reference.PrId == r.PrId)) changedSections.Add(kv.Key);
+            }
+            if (applied == 0) return;
+
+            Volatile.Write(ref _current, current with { Enrichments = merged });
+
+            // Unconditional publish: ComputeDiff is blind to enrichment changes, so we must NOT gate
+            // this on diff.Changed (false for a pure-enrichment update).
+            _events.Publish(new InboxUpdated(changedSections.ToArray(), applied));
+        }
+        finally
+        {
+            _writerLock.Release();
+        }
+    }
 
     private static partial class Log
     {

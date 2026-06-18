@@ -25,6 +25,7 @@ const item = (repo: string, author: string, n: number, commentCount = 0): PrInbo
   lastSeenCommentId: null,
   mergedAt: null,
   closedAt: null,
+  isDraft: false,
 });
 const secs: InboxSection[] = [
   { id: 'a', label: 'a', items: [item('acme/api', 'dana', 1), item('acme/bff', 'pat', 2)] },

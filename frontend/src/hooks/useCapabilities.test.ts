@@ -46,7 +46,7 @@ describe('useCapabilities tri-state derivation', () => {
     });
   });
 
-  it('Live → summary + fileFocus + hunkAnnotations (live seams); not-yet-live seams stay off', () => {
+  it('Live → summary + fileFocus + hunkAnnotations + inboxEnrichment (live seams); not-yet-live seams stay off', () => {
     mock.aiMode = 'live';
     const { result } = renderHook(() => useCapabilities());
     // The regression: a two-state `aiMode === 'preview' ? AllOn : AllOff` derivation
@@ -54,11 +54,12 @@ describe('useCapabilities tri-state derivation', () => {
     expect(result.current.capabilities?.summary).toBe(true);
     expect(result.current.capabilities?.fileFocus).toBe(true);
     expect(result.current.capabilities?.hunkAnnotations).toBe(true); // #414 P2-4 — real annotator is live
+    expect(result.current.capabilities?.inboxEnrichment).toBe(true); // #410 P1-4 — real enricher is live
     expect(result.current.capabilities).toMatchObject({
       composerAssist: false,
       preSubmitValidators: false,
       draftSuggestions: false,
-      inboxEnrichment: false,
+      inboxRanking: false,
     });
   });
 });
