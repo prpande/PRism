@@ -244,6 +244,7 @@ public sealed partial class InboxRefreshOrchestrator : IInboxRefreshOrchestrator
             // ToDictionary would throw, leaving the snapshot uninitialized and the inbox 503.
             var allItems = sectionsFinal.Values.SelectMany(v => v)
                 .DistinctBy(i => i.Reference)
+                .Where(i => i.MergedAt == null && i.ClosedAt == null && !i.IsDraft) // #410: enrich open, non-draft only
                 .ToList();
             var enricher = _aiSelector.Resolve<IInboxItemEnricher>();
             var enrichments = await enricher.EnrichAsync(allItems, ct).ConfigureAwait(false);

@@ -216,6 +216,23 @@ public sealed class InboxRefreshOrchestratorTests
             ciDetector: ciDetector,
             events: events);
 
+    // Open, non-draft PR (no terminal timestamps, IsDraft=false — default)
+    private static RawPrInboxItem RawOpen(int n) => RawPr(n, "sha" + n);
+
+    // Draft PR (open, but IsDraft=true)
+    private static RawPrInboxItem RawDraft(int n) => RawPr(n, "sha" + n) with { IsDraft = true };
+
+    // Capturing inbox-item enricher — records the list passed to EnrichAsync
+    private sealed class CapturingEnricher : IInboxItemEnricher
+    {
+        public IReadOnlyList<PrInboxItem> LastInput { get; private set; } = Array.Empty<PrInboxItem>();
+        public Task<IReadOnlyList<InboxItemEnrichment>> EnrichAsync(IReadOnlyList<PrInboxItem> items, CancellationToken ct)
+        {
+            LastInput = items;
+            return Task.FromResult<IReadOnlyList<InboxItemEnrichment>>(Array.Empty<InboxItemEnrichment>());
+        }
+    }
+
     // ── Tests ──────────────────────────────────────────────────────────────────
 
     [Fact]
@@ -840,5 +857,39 @@ public sealed class InboxRefreshOrchestratorTests
         await sut.RefreshAsync(CancellationToken.None);
 
         sections.LastClosedWindowDays.Should().Be(30);
+    }
+
+    [Fact]
+    public async Task RefreshAsync_excludes_closed_merged_and_draft_PRs_from_enrichment()
+    {
+        // Only open, non-draft PRs should reach IInboxItemEnricher.EnrichAsync.
+        // Draft (#2) and recently-closed (#3) PRs must be excluded from the enricher
+        // input even though they still appear in the snapshot sections shown to the user.
+        var enricher = new CapturingEnricher();
+        var when = DateTimeOffset.UtcNow.AddDays(-1);
+        var sections = new FakeSectionQueryRunner(
+            _ => new Dictionary<string, IReadOnlyList<RawPrInboxItem>>
+            {
+                ["review-requested"] = new[] { RawOpen(1), RawDraft(2) },
+            },
+            closed: new[] { RawClosed(3, merged: null, closed: when) });
+
+        var configFake = ConfigStoreFake(ConfigWithSections(
+            reviewRequested: true, awaitingAuthor: false, authoredByMe: false,
+            mentioned: false, recentlyClosed: true));
+        using var sut = Build(
+            config: configFake,
+            sections: sections,
+            aiSelector: new FakeAiSeamSelector(enricher));
+
+        await sut.RefreshAsync(CancellationToken.None);
+
+        // Only PR #1 (open, non-draft) should reach the enricher
+        enricher.LastInput.Select(i => i.Reference.Number).Should().BeEquivalentTo(new[] { 1 });
+        // Snapshot still contains all three PRs (draft and closed still visible in UI)
+        sut.Current!.Sections["review-requested"].Select(i => i.Reference.Number)
+            .Should().BeEquivalentTo(new[] { 1, 2 });
+        sut.Current.Sections[InboxHistoryConstants.SectionId].Select(i => i.Reference.Number)
+            .Should().Contain(3);
     }
 }
