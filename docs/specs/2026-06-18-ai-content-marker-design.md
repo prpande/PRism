@@ -79,9 +79,9 @@ Rendering:
 | # | Surface | File | Kind | Variant / role | a11y |
 |---|---|---|---|---|---|
 | 1 | AI Summary card — add a visible "AI Summary" label (wire up the currently-unused `.aiSummaryLabel` class), marker beside it | `components/PrDetail/OverviewTab/AiSummaryCard.tsx` | **A** | superscript / **decorative** | visible "AI Summary" text announces it |
-| 2 | Hotspots tab — place the marker (icon only, **no** visible AI text) at the top of the tab **content** (not the shared tab-strip) | `components/PrDetail/HotspotsTab/HotspotsTab.tsx` | **A** | superscript / **provenance** | sr-only "AI-generated" (nothing else announces it) |
+| 2 | Hotspots tab — place the marker (icon only, **no** visible AI text) at the top of the tab **content** (not the shared tab-strip) | `components/PrDetail/HotspotsTab/HotspotsTab.tsx` | **A** | inline / **provenance** | sr-only "AI-generated" on the marker (nothing else announces it; not inside a label-swallowing control, so it surfaces) |
 | 3 | Hunk annotation — replaces the raw `✨`; keeps the existing visible "AI" text label | `components/PrDetail/FilesTab/DiffPane/AiHunkAnnotation.tsx` | **R** | inline / **decorative** | adjacent "AI" text |
-| 4 | Inbox AI category chip — icon **replaces** the literal "AI" text in `.chipMarker` | `components/Inbox/InboxRow.tsx` | **R** | superscript / **provenance** | sr-only "AI-generated" — see note (owner override + caveat) |
+| 4 | Inbox AI category chip — icon **replaces** the literal "AI" text in `.chipMarker` | `components/Inbox/InboxRow.tsx` | **R** | inline / **decorative** (visual) | provenance via the **row `aria-label`** — see note (owner override + caveat) |
 | 5 | AI Settings tab label | `/settings/ai` pane / `Settings` nav (from #496) | **A** | inline / **decorative** | tab text says "AI" |
 | 6 | Ask-AI pull-tab — replaces the raw `✨` | `components/AskAiDrawer/AskAiPullTab.tsx` | **R** | inline / **decorative** | adjacent "Ask AI" label |
 | 7a | Ask-AI drawer **header** (line 87) — replaces the raw `✨` | `components/AskAiDrawer/AskAiDrawer.tsx` | **R** | inline / **decorative** | adjacent header text |
@@ -90,11 +90,13 @@ Rendering:
 | 8 | Stale-draft suggestion row — replaces the raw `✨` | `components/PrDetail/Reconciliation/StaleDraftRow.tsx` | **R** | inline / **decorative** | adjacent label |
 | — | File-tree focus dots (#492) | `components/PrDetail/FilesTab/FileTree.tsx` | — | **untouched** | dot is the signal |
 
-**Placement rule (governed by available space):**
-- **Compact surfaces with no room for a text label** — the inbox category chip and the Hotspots tab boundary — use the marker **icon-only**, in the **provenance** variant. The sr-only "AI-generated" is the *only* thing announcing AI there, so it must be present.
-- **Surfaces that already carry running text or a heading** — AI Summary, hunk annotation, stale-draft, AI Settings tab, the Ask-AI surfaces — place the icon **beside a visible "AI…" word** and use the **decorative** variant. The visible text announces AI; an sr-only label would double-announce.
+**Placement rule (governed by available space + how AI is announced):**
+- **Surfaces that already carry running text or a heading** — AI Summary (superscript glyph trailing the "AI Summary" heading), hunk annotation, stale-draft, AI Settings tab, the Ask-AI surfaces — use the **decorative** variant **inline** beside the visible "AI…" word (AI Summary is the one superscript case). The visible text announces AI; an sr-only label would double-announce.
+- **Compact icon-only surfaces** — the Hotspots tab boundary and the inbox category chip — render a standalone **inline** glyph (superscript would clip inside the chip's `overflow:hidden` pill / has no text baseline at the tab top). How AI reaches AT differs by container:
+  - **Hotspots tab** → **provenance** variant: the sr-only "AI-generated" sits on the marker and surfaces normally (the tab top is not a label-swallowing control).
+  - **Inbox chip** → **decorative** marker (visual only) **plus** "AI-generated" composed into the **row `aria-label`**. The chip lives inside a `<button>` whose `aria-label` overrides descendant text, so an sr-only span on the marker would be swallowed — the aria-label is the working AT channel.
 
-So the two provenance (icon-only) consumers in this slice are the **inbox chip** and the **Hotspots tab**; everything else is decorative beside visible text. The Ask-AI chat drawer is one AI region marked once at its header (Decision 3); its per-message/typing glyphs are decorative.
+So the AT-announcing consumers are the **Hotspots tab** (sr-only on the marker) and the **inbox chip** (via row aria-label); all visible-text surfaces are decorative. The Ask-AI chat drawer is one AI region marked once at its header (Decision 3); its per-message/typing glyphs are decorative.
 
 **Surface #1 (AI Summary) details:** the card renders no "AI Summary" text today, only `SampleBadge` → optional Live status head → optional category chip → body, with error/loading branches *before* `if (!summary) return null`. Add a visible "AI Summary" label (wiring the unused `.aiSummaryLabel` class) with a decorative superscript marker beside it, in the **success branch** (after that early-return — never on the loading/error copy). Placement must respect the existing `.aiSummaryCard [data-sample-badge] + *` margin selector (§7) — don't make the label/marker the unintended `+ *` target.
 
@@ -109,7 +111,7 @@ So the two provenance (icon-only) consumers in this slice are the **inbox chip**
 ## 8. Theming & visual (B1)
 
 - Colour from `currentColor`/`--accent`; accent tokens are theme-symmetric, but **both themes are mocked from real tokens before hardening** (B1 requirement). Verify the glyph clears WCAG AA non-text contrast (≥3:1) against the surfaces it sits on in **both** themes.
-- `superscript`: ~11–12px, raised, against the trailing/leading edge of its text label. **Must not be clipped when the label truncates** — the #492 lesson (long file names hiding the focus dot) applies; the superscript sits outside the label's overflow/ellipsis region.
+- `superscript`: ~11–12px, raised, against the trailing edge of its text label. **Used only on the "AI Summary" heading.** Icon-only markers (inbox chip, Hotspots tab) are **inline**, not superscript — a raised glyph inside the chip's `overflow:hidden` pill would be clipped at the top edge (the #492 long-name-hiding-the-dot trap). Give `.aiSummaryLabel` a flex baseline context so the superscript aligns predictably.
 - `inline`: ~16–18px glyph. The existing global `.ai-icon` slot wraps emoji in a tinted rounded box — a monochrome SVG may need that box's background/border-radius dropped or adjusted, so reusing `.ai-icon` is a starting point, not a guarantee; verify per identity site.
 - **Visual gate:** the B1 human assert happens after green-and-ready. Affected Playwright baselines to regenerate: `pr-detail-overview`, `pr-detail-hotspots`, `pr-detail-files-diff`, `pr-detail-drafts`, `ask-ai-drawer`, `inbox` (Preview), and the settings AI pane. **`pr-detail-files-tree` is NOT affected.** Linux baselines regen from the CI `e2e-results` artifact (exact render); win32 via local `--update-snapshots`.
 

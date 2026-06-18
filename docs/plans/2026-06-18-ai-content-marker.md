@@ -118,8 +118,8 @@ Leave `LockIcon` and `PanelsIcon` untouched. `WelcomePage.tsx` keeps `import { L
 - [ ] **Step 5: Run tests + typecheck**
 
 Run: `node ./node_modules/vitest/vitest.mjs run src/components/Ai/SparkIcon.test.tsx` → PASS
-Run: `node ./node_modules/vitest/vitest.mjs run src/pages` → existing WelcomePage tests PASS
-Run: `npm run build` → typecheck PASS
+Run: `npm run build` → typecheck PASS (this is the regression guard for the `welcomeIcons.tsx` re-export + `WelcomePage.tsx` import — there is **no** WelcomePage unit test, so do not rely on a vitest run to cover `/welcome`).
+Run: `grep -n "export { SparkIcon }" frontend/src/pages/welcomeIcons.tsx` → confirms the re-export line is present.
 
 - [ ] **Step 6: Commit**
 
@@ -318,7 +318,7 @@ In `AiSummaryCard.tsx`, add the import:
 import { AiMarker } from '../../Ai/AiMarker';
 ```
 
-In the **success** return (the `<section …data-testid="ai-summary-card">` block, after `<SampleBadge />`), insert the label as the first content row. To avoid disturbing the `.aiSummaryCard [data-sample-badge] + *` margin selector, place the label *before* `<SampleBadge />` so SampleBadge's existing `+ *` target (the Live head / body) is unchanged:
+In the **success** return (the `<section …data-testid="ai-summary-card">` block), insert the label as the **first child, before `<SampleBadge />`** — so SampleBadge's `.aiSummaryCard [data-sample-badge] + *` margin target (its *next* sibling) is unchanged:
 
 ```tsx
     <section
@@ -333,7 +333,15 @@ In the **success** return (the `<section …data-testid="ai-summary-card">` bloc
       {/* …existing Live head / chip / body unchanged… */}
 ```
 
-(`.aiSummaryLabel` already exists in the module CSS, unused, lines ~52–58.)
+Then give `.aiSummaryLabel` (currently typography-only, `AiSummaryCard.module.css` ~lines 52–58) a flex baseline context so the superscript glyph aligns predictably beside the uppercase text:
+
+```css
+.aiSummaryLabel {
+  display: inline-flex;
+  align-items: baseline;
+  /* …existing font-weight / font-size / letter-spacing / text-transform / color… */
+}
+```
 
 - [ ] **Step 4: Run tests to verify they pass**
 
@@ -380,7 +388,7 @@ Expected: FAIL — no `ai-marker`.
 
 - [ ] **Step 3: Replace the emoji span**
 
-In `AiHunkAnnotation.tsx`, add `import { AiMarker } from '../../../../Ai/AiMarker';` and replace lines 27–29:
+In `AiHunkAnnotation.tsx`, add `import { AiMarker } from '../../../../Ai/AiMarker';` and replace the emoji span (lines 28–30, the `<span className="ai-icon" aria-hidden="true">✨</span>` before `<div className={styles.aiHunkBody}>`):
 
 ```tsx
       <span className="ai-icon" aria-hidden="true">
@@ -420,24 +428,30 @@ git commit -m "feat(ai-marker): swap hunk-annotation emoji for AiMarker (#489)"
 
 - [ ] **Step 1: Write the failing test**
 
+**Use the file's existing harness — do NOT invent `makePr()`.** `InboxRow.test.tsx` already has a `const PR` fixture and a `renderInboxRow(pr, props)` helper that wraps the row in `MemoryRouter` + `OpenTabsProvider` (the row calls `useNavigate`/`useOpenTabs` and requires a `maxDiff` prop — rendering `<InboxRow>` bare throws). `InboxItemEnrichment` requires `{ prId, categoryChip, hoverSummary }` — mirror the shape the existing enrichment tests pass. Add:
+
 ```tsx
 it('AI category chip: icon replaces the "AI" text and provenance rides the row aria-label', () => {
-  render(<InboxRow pr={makePr()} enrichment={{ categoryChip: 'Refactor' }} showCategoryChip />);
+  renderInboxRow(PR, {
+    showCategoryChip: true,
+    enrichment: { prId: PR.prId, categoryChip: 'Refactor', hoverSummary: 's' },
+  });
   const row = screen.getByRole('button');
-  // provenance reaches AT through the accessible name, not a swallowed descendant
-  expect(row).toHaveAccessibleName(/AI-generated/);
-  // visible chip shows the icon, not the literal "AI" text
-  expect(screen.getByTestId('ai-marker')).toBeInTheDocument();
+  expect(row).toHaveAccessibleName(/AI-generated/); // provenance via accessible name
+  expect(screen.getByTestId('ai-marker')).toBeInTheDocument(); // icon, not literal "AI"
   expect(screen.getByText('Refactor')).toBeInTheDocument();
 });
 
 it('no AI provenance in the aria-label when the chip is hidden', () => {
-  render(<InboxRow pr={makePr()} enrichment={{ categoryChip: 'Refactor' }} showCategoryChip={false} />);
+  renderInboxRow(PR, {
+    showCategoryChip: false,
+    enrichment: { prId: PR.prId, categoryChip: 'Refactor', hoverSummary: 's' },
+  });
   expect(screen.getByRole('button')).not.toHaveAccessibleName(/AI-generated/);
 });
 ```
 
-(`makePr()` — reuse the existing inbox test factory in this file/suite; mirror the current tests' fixture.)
+**Also update the pre-existing chip-marker assertions** (~lines 265–268) that break once the literal "AI" text becomes the marker. The old block does `chip.querySelector('[class*="chipMarker"]')` then `toHaveTextContent('AI')` + `toHaveAttribute('aria-hidden','true')` — neither holds on the marker wrapper (it wraps an SVG; `aria-hidden` is on the nested SVG). Replace with a `getByTestId('ai-marker')` presence check and drop the text/`aria-hidden`-on-wrapper assertions.
 
 - [ ] **Step 2: Run test to verify it fails**
 
@@ -467,16 +481,16 @@ Append `${aiSuffix}` to both `ariaLabel` branches (lines 85–89):
       }${ciSuffix}${aiSuffix}`;
 ```
 
-Replace the `.chipMarker` "AI" text (lines 129–131) with the decorative icon (the comment above it stays accurate — still a sighted-user cue):
+Replace the `.chipMarker` "AI" text (lines 129–131) with the decorative **inline** icon (the comment above it stays accurate — still a sighted-user cue):
 
 ```tsx
                 <span className={styles.chip}>
-                  <AiMarker variant="superscript" decorative className={styles.chipMarker} />
+                  <AiMarker variant="inline" decorative className={styles.chipMarker} />
                   {enrichment.categoryChip}
                 </span>
 ```
 
-(Keep `className={styles.chipMarker}` so the fixed-width `flex:none` slot behaviour described in the in-code comment is preserved.)
+Use `variant="inline"` — **not** superscript: the `.chip` pill has `overflow:hidden; text-overflow:ellipsis`, so a `vertical-align:super` glyph would be clipped at the pill's top edge (the #492 trap). Keep `className={styles.chipMarker}` so the fixed-width `flex:none` slot behaviour (in-code comment) is preserved; the SVG sizes to `1em` of the chip's font.
 
 - [ ] **Step 4: Run test to verify it passes**
 
@@ -499,18 +513,29 @@ git commit -m "feat(ai-marker): inbox chip icon + AI-generated in row aria-label
 - Test: `frontend/src/components/PrDetail/HotspotsTab/HotspotsTab.test.tsx`
 
 **Interfaces:**
-- Consumes: `AiMarker` (provenance superscript — sr-only "AI-generated", nothing else announces it).
+- Consumes: `AiMarker` (provenance **inline** — sr-only "AI-generated"; nothing else announces it, and the tab top is not a label-swallowing control so the sr-only surfaces).
 
 - [ ] **Step 1: Write the failing test**
 
+**Use the file's existing harness — `HotspotsTab` takes NO props** (it reads state from `usePrDetailContext()`). `HotspotsTab.test.tsx` already has a `renderTab(fileFocus, …)` helper that wraps `<HotspotsTab />` in a `PrDetailContextProvider` with a full context value; mirror it. Add a present-case and the negative present-content-boundary cases:
+
 ```tsx
-it('renders one provenance marker at the top of the tab', () => {
-  render(<HotspotsTab /* …existing fixture with at least one high/medium row… */ />);
-  const markers = screen.getAllByTestId('ai-marker');
-  expect(markers).toHaveLength(1); // region-level, not per row
-  expect(screen.getByText('AI-generated')).toBeInTheDocument(); // sr-only
+it('renders exactly one provenance marker at the top of the tab on success', () => {
+  renderTab(/* fileFocus fixture with ≥1 high/medium entry — mirror existing tests */);
+  expect(screen.getAllByTestId('ai-marker')).toHaveLength(1); // region-level, not per row
+  expect(screen.getByText('AI-generated')).toBeInTheDocument(); // sr-only, surfaces here
 });
+
+it.each(['loading', 'fallback', 'error', 'not-subscribed', 'no-changes', 'empty'])(
+  'does NOT render the marker in the %s state (present-content boundary)',
+  (status) => {
+    renderTab(/* fixture/ctx that drives HotspotsTab into this status — mirror existing tests */);
+    expect(screen.queryByTestId('ai-marker')).toBeNull();
+  },
+);
 ```
+
+(The implementation guards each non-success state with an early return *before* the success `<div className={styles.hotspots}>`, so these pass once the marker lives only in that success return — but TDD must assert the boundary, mirroring Task 3.)
 
 - [ ] **Step 2: Run test to verify it fails**
 
@@ -524,8 +549,8 @@ In `HotspotsTab.tsx`, add `import { AiMarker } from '../../Ai/AiMarker';` and in
 ```tsx
   return (
     <div className={styles.hotspots}>
-      <div className={styles.aiRegionMark} aria-label={undefined}>
-        <AiMarker variant="superscript" />
+      <div className={styles.aiRegionMark}>
+        <AiMarker variant="inline" />
       </div>
       {high.length > 0 && <Group label="High" rows={high} onOpen={requestFileView} />}
       {medium.length > 0 && <Group label="Medium" rows={medium} onOpen={requestFileView} />}
@@ -563,17 +588,19 @@ git commit -m "feat(ai-marker): provenance marker on the Hotspots tab (#489)"
 
 **Files:**
 - Modify: `frontend/src/components/Settings/SettingsNav.tsx`
-- Test: `frontend/src/components/Settings/SettingsNav.test.tsx` (create if absent)
+- Test: `frontend/src/components/Settings/SettingsNav.test.tsx` (**already exists — extend it**)
 
 **Interfaces:**
 - Consumes: `AiMarker` (inline decorative). Only the `section === 'ai'` item gets it.
 
 - [ ] **Step 1: Write the failing test**
 
+**Extend the existing file using its `renderAt(path)` helper** (it wraps `SettingsNav` in `MemoryRouter`; `SettingsNav`/`SettingsLink` call `useLocation`/`useEffectiveLocation`, so a bare `render(<SettingsNav />)` throws). Query by **exact** name to avoid matching a future "AI …" tab:
+
 ```tsx
 it('shows the AI marker only on the AI nav item', () => {
-  render(<SettingsNav /* at route /settings/appearance */ />);
-  const aiLink = screen.getByRole('link', { name: /AI/ });
+  renderAt('/settings/appearance');
+  const aiLink = screen.getByRole('link', { name: 'AI' });
   expect(aiLink.querySelector('[data-ai-marker]')).not.toBeNull();
   const appearance = screen.getByRole('link', { name: 'Appearance' });
   expect(appearance.querySelector('[data-ai-marker]')).toBeNull();
@@ -622,7 +649,7 @@ git commit -m "feat(ai-marker): AI identity marker on the settings AI tab (#489)
 **Files:**
 - Modify: `frontend/src/components/AskAiDrawer/AskAiPullTab.tsx`
 - Modify: `frontend/src/components/AskAiDrawer/AskAiDrawer.tsx`
-- Test: co-located `AskAiPullTab.test.tsx` / `AskAiDrawer.test.tsx` (extend existing)
+- Test: co-located `AskAiPullTab.test.tsx` / `AskAiDrawer.test.tsx` — **mirror each file's existing render harness** (the drawer uses its real provider/thread flow; drive one AI message + a `pendingAiReply` through that harness, not a bare `render`).
 
 **Interfaces:**
 - Consumes: `AiMarker` (inline decorative) at all four sites. Header (7a), per-message (7b), typing indicator (7c) are all decorative — the drawer is one AI region marked at the header (Decision 3).
@@ -630,21 +657,21 @@ git commit -m "feat(ai-marker): AI identity marker on the settings AI tab (#489)
 - [ ] **Step 1: Write the failing tests**
 
 ```tsx
-// AskAiPullTab.test.tsx
+// AskAiPullTab.test.tsx — mirror the file's existing render setup
 it('renders the AiMarker and no raw emoji', () => {
-  render(<AskAiPullTab /* existing props */ />);
+  /* render via the file's existing harness */
   expect(screen.getByTestId('ai-marker')).toBeInTheDocument();
   expect(screen.getByRole('button').textContent).not.toContain('✨');
 });
 ```
 
 ```tsx
-// AskAiDrawer.test.tsx — with a thread containing one AI message + pending reply
+// AskAiDrawer.test.tsx — open drawer, thread = exactly 1 AI message + pendingAiReply
 it('replaces all three drawer sparkles with markers and leaves no emoji', () => {
-  const { container } = render(<AskAiDrawer /* open, thread with 1 ai msg + pendingAiReply */ />);
+  const { container } = render(/* file's harness: drawer open, 1 ai msg + pendingAiReply */);
   expect(container.textContent).not.toContain('✨');
-  // header + one message + typing indicator
-  expect(screen.getAllByTestId('ai-marker').length).toBeGreaterThanOrEqual(3);
+  // header + one message + typing indicator = exactly three (exact count catches a missed swap)
+  expect(screen.getAllByTestId('ai-marker')).toHaveLength(3);
 });
 ```
 
@@ -655,7 +682,7 @@ Expected: FAIL — no `ai-marker`.
 
 - [ ] **Step 3: Swap all four emoji spans**
 
-In **`AskAiPullTab.tsx`** add `import { AiMarker } from '../Ai/AiMarker';` and replace lines 26–28:
+In **`AskAiPullTab.tsx`** add `import { AiMarker } from '../Ai/AiMarker';` and replace the emoji span (~lines 26–28):
 
 ```tsx
       <span className="ai-icon" aria-hidden="true">
@@ -667,7 +694,7 @@ with
       <AiMarker variant="inline" decorative className="ai-icon" />
 ```
 
-In **`AskAiDrawer.tsx`** add the same import and replace each of the three `<span className="ai-icon" aria-hidden="true">✨</span>` blocks (around lines 86–88, 112–114, 121–123) with:
+In **`AskAiDrawer.tsx`** add the same import and replace each of the three `<span className="ai-icon" aria-hidden="true">✨</span>` blocks — header (~lines 86–88), per-AI-message (~lines 111–113), typing indicator (~lines 120–122); match on the emoji-span content, not the exact line — with:
 
 ```tsx
       <AiMarker variant="inline" decorative className="ai-icon" />
@@ -690,16 +717,18 @@ git commit -m "feat(ai-marker): migrate Ask-AI pull-tab + drawer emoji to AiMark
 
 **Files:**
 - Modify: `frontend/src/components/PrDetail/Reconciliation/StaleDraftRow.tsx`
-- Test: co-located `StaleDraftRow.test.tsx` (extend existing)
+- Test: co-located **`StaleDraftRow.sample.test.tsx`** (the existing co-located test file — there is no plain `StaleDraftRow.test.tsx`; extend the `.sample` file and mirror its fixture)
 
 **Interfaces:**
 - Consumes: `AiMarker` (inline decorative). Keeps the existing visible "AI suggestion" label.
 
 - [ ] **Step 1: Write the failing test**
 
+**Mirror the fixture in `StaleDraftRow.sample.test.tsx`.** `StaleDraftRow` has several required props (`prRef`, `draft` (a non-trivial `DraftLike`), `onMutated`, `aiSuggestion`, `onSelectSubTab`); reuse the props object the existing sample test already builds rather than inventing one. Add:
+
 ```tsx
 it('renders the AiMarker, keeps the "AI suggestion" label, drops the emoji', () => {
-  render(<StaleDraftRow /* props with aiSuggestion */ />);
+  /* render via the file's existing fixture, ensuring aiSuggestion is present */
   const block = screen.getByTestId('stale-draft-ai-suggestion');
   expect(within(block).getByTestId('ai-marker')).toBeInTheDocument();
   expect(within(block).getByText('AI suggestion')).toBeInTheDocument();
@@ -709,12 +738,12 @@ it('renders the AiMarker, keeps the "AI suggestion" label, drops the emoji', () 
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `node ./node_modules/vitest/vitest.mjs run src/components/PrDetail/Reconciliation/StaleDraftRow.test.tsx`
+Run: `node ./node_modules/vitest/vitest.mjs run src/components/PrDetail/Reconciliation/StaleDraftRow.sample.test.tsx`
 Expected: FAIL — no `ai-marker`.
 
 - [ ] **Step 3: Swap the emoji span**
 
-In `StaleDraftRow.tsx` add `import { AiMarker } from '../../Ai/AiMarker';` and replace lines 130–132:
+In `StaleDraftRow.tsx` add `import { AiMarker } from '../../Ai/AiMarker';` and replace the emoji span (~lines 131–133, the `<span className="ai-icon" aria-hidden="true">✨</span>` before `<div className={styles.staleAiBody}>`):
 
 ```tsx
           <span className="ai-icon" aria-hidden="true">
@@ -728,12 +757,12 @@ with
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `node ./node_modules/vitest/vitest.mjs run src/components/PrDetail/Reconciliation/StaleDraftRow.test.tsx` → PASS
+Run: `node ./node_modules/vitest/vitest.mjs run src/components/PrDetail/Reconciliation/StaleDraftRow.sample.test.tsx` → PASS
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add frontend/src/components/PrDetail/Reconciliation/StaleDraftRow.tsx frontend/src/components/PrDetail/Reconciliation/StaleDraftRow.test.tsx
+git add frontend/src/components/PrDetail/Reconciliation/StaleDraftRow.tsx frontend/src/components/PrDetail/Reconciliation/StaleDraftRow.sample.test.tsx
 git commit -m "feat(ai-marker): migrate stale-draft emoji to AiMarker (#489)"
 ```
 
@@ -768,13 +797,19 @@ In `frontend/eslint.config.js`, extend the `files: ['**/*.{ts,tsx}']` block's `r
           selector: "JSXText[value=/\\u2728/]",
           message: 'Use <AiMarker /> (components/Ai/AiMarker) instead of the raw ✨ emoji (#489).',
         },
+        {
+          selector: "TemplateElement[value.raw=/\\u2728/]",
+          message: 'Use <AiMarker /> (components/Ai/AiMarker) instead of the raw ✨ emoji (#489).',
+        },
       ],
 ```
+
+(`Literal` covers string literals **and** JSX attribute string values; `JSXText` covers element children; `TemplateElement` covers template literals.)
 
 - [ ] **Step 3: Run lint to verify it passes (and would catch a regression)**
 
 Run: `node ./node_modules/eslint/bin/eslint.js .` (from `frontend/`) → PASS (0 errors).
-Sanity-check the rule bites: temporarily add `const x = '✨';` to any `.ts` file, re-run eslint, confirm it errors with the #489 message, then remove it.
+Sanity-check the rule bites at two sites: temporarily add `const x = '✨';` (string literal) **and** a JSX child `<span>✨</span>` to any `.tsx` file, re-run eslint, confirm both error with the #489 message, then remove them.
 
 - [ ] **Step 4: Commit**
 
@@ -801,7 +836,7 @@ node ./node_modules/eslint/bin/eslint.js .        # lint clean
 
 - [ ] **Step 2: Regenerate affected visual baselines**
 
-Affected: `pr-detail-overview`, `pr-detail-hotspots`, `pr-detail-files-diff`, `pr-detail-drafts`, `ask-ai-drawer`, `inbox` (Preview), settings AI pane. **NOT** `pr-detail-files-tree`.
+Affected (regenerate whichever the visual suite actually renders — a surface absent from a spec won't produce a baseline): `pr-detail-overview`, `pr-detail-hotspots`, `pr-detail-files-diff`, `pr-detail-drafts` (only if `StaleDraftRow` is in that spec's fixture), `ask-ai-drawer`, `inbox` (Preview), settings AI pane. **NOT** `pr-detail-files-tree`.
 - **win32:** run the Playwright visual suite locally with `--update-snapshots` for the affected specs.
 - **linux:** let CI render, download the `e2e-results` artifact, and commit the exact `__screenshots__/linux/*.png` (do not hand-tweak — exact regen per the #492 workflow).
 
@@ -820,9 +855,9 @@ Quality pass before PR (per repo pre-push checklist). Apply surviving suggestion
 
 ## Self-Review
 
-**Spec coverage:** Every §6 surface maps to a task — summary (T3), Hotspots (T6), hunk (T4), inbox chip (T5), settings tab (T7), pull-tab/drawer (T8), stale-draft (T9); component+glyph (T1/T2); ESLint+grep-clean (T10); baselines/gate (T11). Provenance vs decorative per the §6 table is encoded in each task's `AiMarker` props. The AT-reach caveat for the inbox chip is T5 Step 3 + its test. The present-content-boundary rule is T3's loading/error test.
+**Spec coverage:** Every §6 surface maps to a task — summary (T3), Hotspots (T6), hunk (T4), inbox chip (T5), settings tab (T7), pull-tab/drawer (T8), stale-draft (T9); component+glyph (T1/T2); ESLint+grep-clean (T10); baselines/gate (T11). Variant per the §6 table is encoded in each task's `AiMarker` props (provenance icon-only inline on Hotspots; decorative everywhere else; inbox chip = decorative marker + provenance via row aria-label). The AT-reach caveat for the inbox chip is T5 Step 3 + its test. The present-content-boundary rule is T3's and T6's loading/error/empty negative tests.
 
-**Placeholder scan:** No TBD/TODO; every code step shows concrete code. `makePr()` / existing fixtures in T5/T6/T8/T9 reference the suite's established factories rather than inventing shapes — the implementer mirrors the current tests in those files.
+**Test-harness note (post doc-review):** the surface tasks do **not** invent fixtures — each uses the host file's existing harness: `renderInboxRow(PR, props)` (T5, with `maxDiff` + `{prId,categoryChip,hoverSummary}` enrichment), `renderTab(fileFocus)` + `PrDetailContextProvider` (T6, `HotspotsTab` takes no props), `renderAt(path)` (T7, the file already exists), the drawer's real provider/thread flow (T8), and the existing `StaleDraftRow.sample.test.tsx` fixture (T9). Tasks 5 also updates the pre-existing `chipMarker` assertion that the swap would otherwise break.
 
 **Type consistency:** `AiMarker` props (`variant`, `decorative`, `className`) and `AI_PROVENANCE_LABEL` are defined in T2 and consumed unchanged in T3–T9; `SparkIcon` props (`size`, `className`) defined in T1 and consumed by T2.
 
