@@ -1,3 +1,4 @@
+import { AiMarker } from '../Ai/AiMarker';
 import styles from './PrSubTabStrip.module.css';
 
 export type PrTabId = 'overview' | 'files' | 'hotspots' | 'drafts';
@@ -46,6 +47,7 @@ export function PrSubTabStrip({
           active={activeTab === 'hotspots'}
           onSelect={onTabChange}
           count={hotspotsCount}
+          aiMarker
           // Spec § 6.1 — the hotspots badge announces "N files need attention"
           // rather than the generic "N items". Built at the call site (single
           // consumer) so the generic Tab keeps its default wording.
@@ -78,9 +80,13 @@ interface TabProps {
   // visible numeric badge is unchanged). Single consumer = Hotspots; not worth
   // a function-valued prop on the generic Tab.
   srCountSuffix?: string;
+  // When true, renders a superscript AiMarker (decorative) immediately after the
+  // label text. The tab's accessible name is unaffected (decorative=true means no
+  // sr-only label inside the marker). Single consumer = Hotspots tab.
+  aiMarker?: boolean;
 }
 
-function Tab({ id, label, active, onSelect, disabled, count, srCountSuffix }: TabProps) {
+function Tab({ id, label, active, onSelect, disabled, count, srCountSuffix, aiMarker }: TabProps) {
   // D11/D103 — the handoff (design/handoff/pr-detail.jsx:124 + :134) applies
   // `.pr-tab-count-warn` drafts-only, never on files. The base `.pr-tab-count`
   // class is shared. Conditional-render of the span (count > 0) already covers
@@ -102,6 +108,7 @@ function Tab({ id, label, active, onSelect, disabled, count, srCountSuffix }: Ta
       }}
     >
       {label}
+      {aiMarker && <AiMarker variant="superscript" decorative />}
       {count !== undefined && count > 0 && (
         <>
           <span
