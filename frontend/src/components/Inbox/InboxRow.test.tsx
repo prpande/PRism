@@ -24,6 +24,7 @@ const PR: PrInboxItem = {
   mergedAt: null,
   closedAt: null,
   avatarUrl: 'https://avatars.githubusercontent.com/u/1?v=4',
+  isDraft: false,
 };
 
 function TabsProbe() {

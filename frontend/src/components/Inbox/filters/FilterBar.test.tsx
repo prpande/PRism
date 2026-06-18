@@ -24,6 +24,7 @@ const item = (ci: PrInboxItem['ci'], n: number): PrInboxItem => ({
   lastSeenCommentId: null,
   mergedAt: null,
   closedAt: null,
+  isDraft: false,
 });
 const secs: InboxSection[] = [
   { id: 's', label: 's', items: [item('failing', 1), item('none', 2)] },

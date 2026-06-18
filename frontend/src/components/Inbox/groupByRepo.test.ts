@@ -20,6 +20,7 @@ function pr(owner: string, repo: string, number: number): PrInboxItem {
     lastSeenCommentId: null,
     mergedAt: null,
     closedAt: null,
+    isDraft: false,
   };
 }
 

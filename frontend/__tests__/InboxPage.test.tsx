@@ -146,6 +146,7 @@ const sampleData: InboxResponse = {
           lastSeenCommentId: null,
           mergedAt: null,
           closedAt: null,
+          isDraft: false,
         },
       ],
     },

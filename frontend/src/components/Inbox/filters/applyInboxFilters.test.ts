@@ -26,6 +26,7 @@ const pr = (over: Partial<PrInboxItem>): PrInboxItem => ({
   lastSeenCommentId: null,
   mergedAt: null,
   closedAt: null,
+  isDraft: false,
   ...over,
 });
 const section = (id: string, items: PrInboxItem[]): InboxSection => ({ id, label: id, items });

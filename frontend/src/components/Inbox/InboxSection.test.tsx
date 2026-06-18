@@ -23,6 +23,7 @@ const examplePr: PrInboxItem = {
   lastSeenCommentId: null,
   mergedAt: null,
   closedAt: null,
+  isDraft: false,
 };
 
 const emptySection: InboxSectionDto = {
