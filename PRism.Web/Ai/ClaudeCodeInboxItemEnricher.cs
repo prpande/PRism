@@ -169,9 +169,14 @@ internal sealed partial class ClaudeCodeInboxItemEnricher : IInboxItemEnricher, 
     private static bool TryParse(string content, out Dictionary<string, string> byId)
     {
         byId = new(System.StringComparer.Ordinal);
+        // The real claude-code CLI wraps the array in a ```json fence / prose preamble despite the
+        // "ONLY JSON" instruction (#410 live-validation finding); extract the first top-level array
+        // rather than parsing the whole reply — mirrors FileFocusParser / HunkAnnotationParser.
+        var json = JsonArrayExtractor.ExtractFirstArray(content);
+        if (json is null) return false;
         try
         {
-            using var doc = JsonDocument.Parse(content);
+            using var doc = JsonDocument.Parse(json);
             if (doc.RootElement.ValueKind != JsonValueKind.Array) return false;
             foreach (var el in doc.RootElement.EnumerateArray())
             {

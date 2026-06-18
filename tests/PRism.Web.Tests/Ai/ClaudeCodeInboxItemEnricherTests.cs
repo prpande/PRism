@@ -127,6 +127,38 @@ public sealed class ClaudeCodeInboxItemEnricherTests
     }
 
     [Fact]
+    public async Task EnrichBatch_parses_fenced_json_on_first_call()
+    {
+        // Live-validation finding (#410): the real claude-code CLI wraps the array in a
+        // ```json markdown fence despite the "ONLY JSON" instruction, so a strict
+        // JsonDocument.Parse on the whole reply throws and every chip comes back null.
+        // The parser must extract the first JSON array, and a fenced-but-valid first reply
+        // must NOT trigger the retry.
+        var provider = new FakeLlmProvider(
+            "```json\n[{\"prId\":\"octo/repo#1\",\"category\":\"fix\"}]\n```");
+        var sut = Build(provider);
+
+        var result = await sut.EnrichBatchAsync(new[] { Item(1, "Fix crash", "x") }, default);
+
+        result.Single().CategoryChip.Should().Be("Bug fix");
+        provider.CallCount.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task EnrichBatch_parses_json_with_prose_preamble()
+    {
+        // Defense for the other shape LLMs emit: a sentence before the array.
+        var provider = new FakeLlmProvider(
+            """Here is the categorization: [{"prId":"octo/repo#1","category":"docs"}]""");
+        var sut = Build(provider);
+
+        var result = await sut.EnrichBatchAsync(new[] { Item(1, "Update guide", "x") }, default);
+
+        result.Single().CategoryChip.Should().Be("Docs");
+        provider.CallCount.Should().Be(1);
+    }
+
+    [Fact]
     public async Task EnrichBatch_retries_once_on_garbage_then_succeeds()
     {
         var provider = new FakeLlmProvider("not json", """[{"prId":"octo/repo#1","category":"fix"}]""");
