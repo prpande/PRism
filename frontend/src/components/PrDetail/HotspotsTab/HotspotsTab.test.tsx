@@ -120,4 +120,28 @@ describe('HotspotsTab', () => {
     expect(screen.queryByText('a.cs')).not.toBeInTheDocument(); // no rows
     expect(screen.queryByRole('button', { name: /retry/i })).not.toBeInTheDocument();
   });
+
+  it('renders exactly one provenance marker at the top of the tab on success', () => {
+    renderTab({
+      status: 'ok',
+      entries: [{ path: 'a.cs', level: 'high', rationale: 'core' }],
+    });
+    expect(screen.getAllByTestId('ai-marker')).toHaveLength(1);
+    expect(screen.getByText('AI-generated')).toBeInTheDocument();
+  });
+
+  it.each([
+    ['loading', { status: 'loading' as const, entries: [] }],
+    ['fallback', { status: 'fallback' as const, entries: [{ path: 'a.cs', level: 'medium' as const, rationale: 'x' }] }],
+    ['error', { status: 'error' as const, entries: [] }],
+    ['not-subscribed', { status: 'not-subscribed' as const, entries: [] }],
+    ['no-changes', { status: 'no-changes' as const, entries: [] }],
+    ['empty', { status: 'empty' as const, entries: [] }],
+  ])(
+    'does NOT render the marker in the %s state (present-content boundary)',
+    (_label, fileFocus) => {
+      renderTab(fileFocus);
+      expect(screen.queryByTestId('ai-marker')).toBeNull();
+    },
+  );
 });

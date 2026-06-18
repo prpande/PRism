@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import { usePrDetailContext } from '../prDetailContext';
 import type { FileFocus } from '../../../api/types';
+import { AiMarker } from '../../Ai/AiMarker';
 import styles from './HotspotsTab.module.css';
 
 // The triage surface (spec §8): filtered High→Medium with inline rationale and a
@@ -53,6 +54,9 @@ export function HotspotsTab() {
 
   return (
     <div className={styles.hotspots}>
+      <div className={styles.aiRegionMark}>
+        <AiMarker variant="inline" />
+      </div>
       {high.length > 0 && <Group label="High" rows={high} onOpen={requestFileView} />}
       {medium.length > 0 && <Group label="Medium" rows={medium} onOpen={requestFileView} />}
     </div>
