@@ -113,7 +113,7 @@ function Group({
           // in both High and Medium. Consistent with key={r.path} below.
           const panelId = `hotspot-panel-${label}-${r.path.replace(/[^a-z0-9]/gi, '-')}`;
           return (
-            <li key={r.path} className={styles.item} role="presentation">
+            <li key={r.path} className={styles.item}>
               <div className={styles.itemHeader}>
                 <button
                   type="button"

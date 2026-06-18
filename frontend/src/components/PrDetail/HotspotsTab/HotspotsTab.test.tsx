@@ -1,4 +1,4 @@
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, within } from '@testing-library/react';
 import { describe, it, expect, vi } from 'vitest';
 import userEvent from '@testing-library/user-event';
 import { HotspotsTab } from './HotspotsTab';
@@ -50,16 +50,19 @@ describe('HotspotsTab', () => {
     expect(screen.queryByRole('heading', { name: /medium/i })).not.toBeInTheDocument();
   });
 
-  it('defaults to all-collapsed: shows stripped previews, no rendered markdown list', () => {
+  it('defaults to all-collapsed: shows stripped previews, no rendered markdown panel', () => {
     renderTab({
       status: 'ok',
       entries: [{ path: 'a.cs', level: 'high', rationale: '- **core** logic\n- second' }],
     });
     // collapsed preview = first stripped line
     expect(screen.getByText('core logic')).toBeInTheDocument();
-    // no expanded panel yet → no list items
-    expect(screen.queryByRole('listitem')).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /toggle a\.cs/i })).toHaveAttribute('aria-expanded', 'false');
+    // the second bullet only exists in the expanded markdown — absent while collapsed
+    expect(screen.queryByText('second')).not.toBeInTheDocument();
+    // the panel is not rendered at all while collapsed (its aria-controls target is absent)
+    const toggle = screen.getByRole('button', { name: /toggle a\.cs/i });
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    expect(document.getElementById(toggle.getAttribute('aria-controls')!)).toBeNull();
   });
 
   it('expanding a row renders the rationale as markdown', () => {
@@ -67,10 +70,14 @@ describe('HotspotsTab', () => {
       status: 'ok',
       entries: [{ path: 'a.cs', level: 'high', rationale: '- first\n- second' }],
     });
-    fireEvent.click(screen.getByRole('button', { name: /toggle a\.cs/i }));
-    const items = screen.getAllByRole('listitem');
-    expect(items).toHaveLength(2);
-    expect(screen.getByRole('button', { name: /toggle a\.cs/i })).toHaveAttribute('aria-expanded', 'true');
+    const toggle = screen.getByRole('button', { name: /toggle a\.cs/i });
+    fireEvent.click(toggle);
+    // Scope the listitem count to the panel: the accordion rows are real <li>s
+    // now (no role="presentation"), so a global getAllByRole would also count them.
+    const panel = document.getElementById(toggle.getAttribute('aria-controls')!);
+    expect(panel).not.toBeNull();
+    expect(within(panel!).getAllByRole('listitem')).toHaveLength(2);
+    expect(toggle).toHaveAttribute('aria-expanded', 'true');
   });
 
   it('is multi-open: two rows can be expanded at once', () => {
