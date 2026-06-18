@@ -83,8 +83,9 @@ internal sealed partial class ClaudeCodeInboxItemEnricher : IInboxItemEnricher, 
         var misses = new List<PrInboxItem>();
         foreach (var i in items)
         {
-            if (_cache.TryGetValue(KeyOf(i), out var hit)) cached.Add(hit);
-            else if (_inflight.TryAdd(KeyOf(i), 0)) misses.Add(i); // claim the in-flight slot
+            var key = KeyOf(i);
+            if (_cache.TryGetValue(key, out var hit)) cached.Add(hit);
+            else if (_inflight.TryAdd(key, 0)) misses.Add(i); // claim the in-flight slot
             // else: already in flight in another batch — it will publish later
         }
 
@@ -110,15 +111,22 @@ internal sealed partial class ClaudeCodeInboxItemEnricher : IInboxItemEnricher, 
             if (!_consent.IsConsented(ClaudeProviderId, AiDisclosure.CurrentVersion)) return;
 
             var results = await EnrichBatchAsync(misses, _cts.Token).ConfigureAwait(false);
-            foreach (var (item, result) in misses.Zip(results))
-                _cache[KeyOf(item)] = result; // cache even a confident null-chip ("Other")
+
+            // Single pass over the aligned (keys[i] ↔ misses[i] ↔ results[i]) triples: cache each
+            // result (even a confident null-chip "Other") and build the publish payload. Reuse the
+            // pre-computed `keys` — the same EnrichKey already carries Title/Description — so neither
+            // KeyOf nor the content Token is recomputed.
+            var payload = new List<InboxEnrichmentResult>(results.Count);
+            for (var i = 0; i < results.Count; i++)
+            {
+                var result = results[i];
+                _cache[keys[i]] = result;
+                payload.Add(new InboxEnrichmentResult(
+                    result.PrId, result.CategoryChip,
+                    InboxEnrichmentContent.Token(keys[i].Title, keys[i].Description)));
+            }
 
             if (_cts.IsCancellationRequested) return; // don't publish into a disposing host
-            var payload = misses.Zip(results)
-                .Select(pair => new InboxEnrichmentResult(
-                    pair.Second.PrId, pair.Second.CategoryChip,
-                    InboxEnrichmentContent.Token(pair.First.Title, pair.First.Description)))
-                .ToList();
             _bus.Publish(new InboxEnrichmentsReady(payload));
         }
         catch (OperationCanceledException) { /* shutdown — no publish, in-flight cleared below */ }
@@ -189,6 +197,8 @@ internal sealed partial class ClaudeCodeInboxItemEnricher : IInboxItemEnricher, 
         catch (JsonException) { return false; }
     }
 
+    // Wrapper exists to consume the bool return (CA1806 forbids ignoring a Try* result); the
+    // caller only needs the dictionary, which is empty when extraction/parse fails → every chip null.
     private static Dictionary<string, string> ParseCategories(string content)
         => TryParse(content, out var byId) ? byId : new(System.StringComparer.Ordinal);
 

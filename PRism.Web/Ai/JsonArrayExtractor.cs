@@ -10,8 +10,9 @@ namespace PRism.Web.Ai;
 /// close, and returns that span only when it parses as a JSON array — advancing past prose
 /// brackets ("Files [a, b] ranked") that precede the real array. Pure; no I/O.
 ///
-/// This is the shared home for the scanner that <c>FileFocusParser</c> and
-/// <c>HunkAnnotationParser</c> still each carry a private copy of (consolidation follow-up).</summary>
+/// Shared by <c>FileFocusParser</c>, <c>HunkAnnotationParser</c>, and
+/// <c>ClaudeCodeInboxItemEnricher</c> — consolidated from three byte-identical private copies
+/// (#410 /simplify pass; the third consumer was the documented cue to extract this helper).</summary>
 internal static class JsonArrayExtractor
 {
     // Maximum characters scanned. Real model output for a JSON array is a few KB to low tens of KB;

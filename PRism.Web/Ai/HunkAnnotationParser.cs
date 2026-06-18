@@ -19,10 +19,6 @@ internal static class HunkAnnotationParser
     /// payload can render (spec §5/§12).</summary>
     internal const int BodyCap = 600;
 
-    // Scan/restart caps mirror FileFocusParser — bound the O(n²) retry-loop blowup on pathological output.
-    internal const int MaxScanChars = 64 * 1024;
-    internal const int MaxRestarts = 32;
-
     /// <summary>Parse + validate + strip + dedup + cap. Returns false only when no top-level JSON array
     /// can be extracted (caller then retries / treats as parse failure). A valid-but-all-invalid array
     /// returns true with an empty list.</summary>
@@ -30,7 +26,7 @@ internal static class HunkAnnotationParser
         string text, IReadOnlyList<FileChange> flaggedFiles, int cap, out IReadOnlyList<HunkAnnotation> entries)
     {
         entries = Array.Empty<HunkAnnotation>();
-        var json = ExtractFirstArray(text);
+        var json = JsonArrayExtractor.ExtractFirstArray(text);
         if (json is null) return false;
 
         JsonElement root;
@@ -129,59 +125,4 @@ internal static class HunkAnnotationParser
         return sb.ToString();
     }
 
-    /// <summary>Extract the first top-level JSON array via a depth-balanced, string-literal-aware scan.
-    /// Mirrors <see cref="FileFocusParser"/>'s extractor (LLMs emit prose brackets / fences despite an
-    /// "ONLY JSON" instruction). Copied rather than shared to keep this keystone additive — no edit to the
-    /// shipped, tested ranker/parser; a future third consumer is the cue to extract a shared helper
-    /// (flagged for /simplify). Scans only the first <see cref="MaxScanChars"/> chars and caps restarts at
-    /// <see cref="MaxRestarts"/>. Returns null when no balanced JSON array is found.</summary>
-    private static string? ExtractFirstArray(string text)
-    {
-        if (string.IsNullOrEmpty(text)) return null;
-        var scanLimit = Math.Min(text.Length, MaxScanChars);
-        var searchFrom = 0;
-        var restarts = 0;
-        while (restarts < MaxRestarts)
-        {
-            var start = text.IndexOf('[', searchFrom, scanLimit - searchFrom);
-            if (start < 0) return null;
-            var depth = 0;
-            var inString = false;
-            var escaped = false;
-            var end = -1;
-            for (var i = start; i < scanLimit; i++)
-            {
-                var c = text[i];
-                if (inString)
-                {
-                    if (escaped) escaped = false;
-                    else if (c == '\\') escaped = true;
-                    else if (c == '"') inString = false;
-                    continue;
-                }
-                switch (c)
-                {
-                    case '"': inString = true; break;
-                    case '[': depth++; break;
-                    case ']':
-                        depth--;
-                        if (depth == 0) { end = i; goto foundClose; }
-                        break;
-                }
-            }
-            break; // no matching close anywhere — give up
-            foundClose:
-            var span = text.Substring(start, end - start + 1);
-            try
-            {
-                using var probe = JsonDocument.Parse(span);
-                if (probe.RootElement.ValueKind == JsonValueKind.Array)
-                    return span;
-            }
-            catch (JsonException) { }
-            searchFrom = start + 1;
-            restarts++;
-        }
-        return null;
-    }
 }
