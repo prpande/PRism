@@ -45,8 +45,12 @@ A new pure-presentational component `frontend/src/components/Ai/AiMarker.tsx` + 
 ```tsx
 export interface AiMarkerProps {
   /** Visual geometry. 'superscript' (default) sits raised beside a text label;
-   *  'inline' is a normal-baseline glyph for buttons / nav / headers. */
-  variant?: 'superscript' | 'inline';
+   *  'inline' is a normal-baseline glyph for buttons / nav / headers;
+   *  'lead' is a larger (~1.3em) glyph placed BEFORE a text label (headings /
+   *  sub-tabs) — used on the "AI Summary" heading and the "Hotspots" tab.
+   *  (owner B1, 2026-06-18: superseded the original trailing superscript on
+   *  those two surfaces after live validation.) */
+  variant?: 'superscript' | 'inline' | 'lead';
   /** Identity use (default false = provenance). When true, the marker is purely
    *  decorative: no screen-reader label, because adjacent visible text
    *  ("AI", "AI Settings") already conveys it. */
@@ -78,8 +82,8 @@ Rendering:
 
 | # | Surface | File | Kind | Variant / role | a11y |
 |---|---|---|---|---|---|
-| 1 | AI Summary card — add a visible "AI Summary" label (wire up the currently-unused `.aiSummaryLabel` class), marker beside it | `components/PrDetail/OverviewTab/AiSummaryCard.tsx` | **A** | superscript / **decorative** | visible "AI Summary" text announces it |
-| 2 | Hotspots **tab label** in the sub-tab strip (the bar where you switch Overview/Files/Hotspots/Drafts) — superscript sparkle **after the "Hotspots" text** (owner B1 decision: on the tab itself, not in the tab body) | `components/PrDetail/PrSubTabStrip.tsx` | **A** | superscript / **decorative** | tab announces "Hotspots, …"; sparkle is a visual AI cue (the Hotspots tab is AI-gated via `showHotspots`/fileFocus, so the marker shows only when the AI tab shows) |
+| 1 | AI Summary card — add a visible "AI Summary" label (wire up the currently-unused `.aiSummaryLabel` class), marker **before** it | `components/PrDetail/OverviewTab/AiSummaryCard.tsx` | **A** | **lead** / **decorative** | visible "AI Summary" text announces it |
+| 2 | Hotspots **tab label** in the sub-tab strip (the bar where you switch Overview/Files/Hotspots/Drafts) — larger `lead` sparkle **before the "Hotspots" text** (owner B1: on the tab itself, not in the tab body; leading + larger after live validation) | `components/PrDetail/PrSubTabStrip.tsx` | **A** | **lead** / **decorative** | tab announces "Hotspots, …"; sparkle is a visual AI cue (the Hotspots tab is AI-gated via `showHotspots`/fileFocus, so the marker shows only when the AI tab shows). Scoped hover/focus affordance mirrors the tab label's brightness (opacity 0.6→1, instant) — see §4 |
 | 3 | Hunk annotation — replaces the raw `✨`; keeps the existing visible "AI" text label | `components/PrDetail/FilesTab/DiffPane/AiHunkAnnotation.tsx` | **R** | inline / **decorative** | adjacent "AI" text |
 | 4 | Inbox AI category chip — icon **replaces** the literal "AI" text in `.chipMarker` | `components/Inbox/InboxRow.tsx` | **R** | inline / **decorative** (visual) | provenance via the **row `aria-label`** — see note (owner override + caveat) |
 | 5 | AI Settings tab label | `/settings/ai` pane / `Settings` nav (from #496) | **A** | inline / **decorative** | tab text says "AI" |
@@ -91,13 +95,13 @@ Rendering:
 | — | File-tree focus dots (#492) | `components/PrDetail/FilesTab/FileTree.tsx` | — | **untouched** | dot is the signal |
 
 **Placement rule (governed by available space + how AI is announced):**
-- **Trailing a text label** → **superscript decorative**: the "AI Summary" heading and the **Hotspots tab label** carry a small raised sparkle after the text. The adjacent text ("AI Summary", "Hotspots") is the visible anchor; the sparkle is a visual AI cue.
+- **Leading a text label** → **lead decorative** (owner B1, 2026-06-18; originally a trailing superscript): the "AI Summary" heading and the **Hotspots tab label** carry a larger (~1.3em) sparkle **before** the text. The adjacent text ("AI Summary", "Hotspots") is the visible anchor; the sparkle is a visual AI cue. (Live validation showed a small trailing superscript read as too faint against these labels.)
 - **Beside a visible "AI…" word** → **inline decorative**: hunk annotation, stale-draft, AI Settings tab, the Ask-AI surfaces. The visible "AI" word announces AI; an sr-only label would double-announce.
 - **Inbox chip** (compact, no text room) → **inline decorative** (visual only) **plus** "AI-generated" composed into the **row `aria-label`**. The chip lives inside a `<button>` whose `aria-label` overrides descendant text, so an sr-only span on the marker would be swallowed — the aria-label is the working AT channel.
 
 So the **inbox chip** is the one surface that announces AI to AT via a dedicated channel (row aria-label); every other surface is decorative beside/after visible text. The Ask-AI chat drawer is one AI region marked once at its header (Decision 3); its per-message/typing glyphs are decorative. **The provenance variant (sr-only on the marker) has no current consumer but is retained + unit-tested** for the future AI-text surfaces in §10 (composer output, etc.) that render generated text with no adjacent label. **a11y note (Hotspots tab):** the tab marker is decorative, so screen readers hear just "Hotspots"; if an audible AI cue is wanted there, switch to a labelled variant — deferred unless the owner asks.
 
-**Surface #1 (AI Summary) details:** the card renders no "AI Summary" text today, only `SampleBadge` → optional Live status head → optional category chip → body, with error/loading branches *before* `if (!summary) return null`. Add a visible "AI Summary" label (wiring the unused `.aiSummaryLabel` class) with a decorative superscript marker beside it, in the **success branch** (after that early-return — never on the loading/error copy). Placement must respect the existing `.aiSummaryCard [data-sample-badge] + *` margin selector (§7) — don't make the label/marker the unintended `+ *` target.
+**Surface #1 (AI Summary) details:** the card renders no "AI Summary" text today, only `SampleBadge` → optional Live status head → optional category chip → body, with error/loading branches *before* `if (!summary) return null`. Add a visible "AI Summary" label (wiring the unused `.aiSummaryLabel` class) with a larger `lead` decorative marker **before** it, in the **success branch** (after that early-return — never on the loading/error copy). Placement must respect the existing `.aiSummaryCard [data-sample-badge] + *` margin selector (§7) — don't make the label/marker the unintended `+ *` target.
 
 **Surface #4 (inbox chip) — provenance (owner decision, overriding the earlier truthfulness reservation).** The chip has no room for a text label, so the icon replaces the literal "AI" text and the sr-only "AI-generated" is the only AI announcement. Two caveats the implementer must handle: (1) the chip renders **today only in Preview** with placeholder data (`inboxEnrichment` off in Live until #410) — the owner accepts marking it now regardless (the adjacent `SampleBadge` "Sample" pill still qualifies it as illustrative for sighted users); (2) the existing `.chipMarker` is deliberately `aria-hidden` and an in-code comment notes the row is a `<button>` whose `aria-label` omits descendants ("the button swallows descendant labels"). The implementer **must verify the sr-only "AI-generated" actually reaches AT** (e.g. via a test asserting it in the row's accessible name); if the button swallows it, compose "AI-generated" into the row's `aria-label` instead of relying on a descendant sr-only span.
 
@@ -110,13 +114,14 @@ So the **inbox chip** is the one surface that announces AI to AT via a dedicated
 ## 8. Theming & visual (B1)
 
 - Colour from `currentColor`/`--accent`; accent tokens are theme-symmetric, but **both themes are mocked from real tokens before hardening** (B1 requirement). Verify the glyph clears WCAG AA non-text contrast (≥3:1) against the surfaces it sits on in **both** themes.
-- `superscript`: ~11–12px, raised, against the trailing edge of its text label. **Used only on the "AI Summary" heading.** Icon-only markers (inbox chip, Hotspots tab) are **inline**, not superscript — a raised glyph inside the chip's `overflow:hidden` pill would be clipped at the top edge (the #492 long-name-hiding-the-dot trap). Give `.aiSummaryLabel` a flex baseline context so the superscript aligns predictably.
+- `lead`: ~1.3em glyph (`em`-scaled, so it tracks the host label size), placed **before** the text. **Used on the "AI Summary" heading and the "Hotspots" tab label** (owner B1 — replaced the original trailing superscript on both after live validation). Caller owns the icon↔label spacing (the AI Summary label uses a `0.3em` flex gap; the Hotspots tab pulls the icon 4px tighter than its uniform 8px flex gap). The Hotspots-tab instance also carries a scoped hover/focus affordance (opacity 0.6→1, instant, no transition) — see §4.
+- `superscript`: ~11–12px, raised, against the trailing edge of its text label. **Retained in the component for future trailing-label use; no current surface uses it** (AI Summary / Hotspots moved to `lead`). A raised glyph inside an `overflow:hidden` pill would be clipped at the top edge (the #492 long-name-hiding-the-dot trap), so chip-style surfaces use `inline`.
 - `inline`: ~16–18px glyph. The existing global `.ai-icon` slot wraps emoji in a tinted rounded box — a monochrome SVG may need that box's background/border-radius dropped or adjusted, so reusing `.ai-icon` is a starting point, not a guarantee; verify per identity site.
 - **Visual gate:** the B1 human assert happens after green-and-ready. Affected Playwright baselines to regenerate: `pr-detail-overview`, `pr-detail-hotspots`, `pr-detail-files-diff`, `pr-detail-drafts`, `ask-ai-drawer`, `inbox` (Preview), and the settings AI pane. **`pr-detail-files-tree` is NOT affected.** Linux baselines regen from the CI `e2e-results` artifact (exact render); win32 via local `--update-snapshots`.
 
 ## 9. Testing
 
-- Co-located `AiMarker.test.tsx`: sparkle renders; provenance variant exposes the sr-only `AI_PROVENANCE_LABEL` (and **no** `title`); `decorative` variant has neither sr-only nor title; both variants carry `data-testid="ai-marker"`; `superscript`/`inline` apply the right class.
+- Co-located `AiMarker.test.tsx`: sparkle renders; provenance variant exposes the sr-only `AI_PROVENANCE_LABEL` (and **no** `title`); `decorative` variant has neither sr-only nor title; both variants carry `data-testid="ai-marker"`; `superscript`/`inline`/`lead` apply the right class.
 - `SparkIcon` relocation: renders from the shared path and accepts a size override; `/welcome` benefit-row test unaffected.
 - Update each migrated surface's test to assert the marker is present and the old emoji is gone. For the AI-summary surface, assert the marker mounts on the **success** branch only (absent in loading/error renders).
 - **Both test trees:** co-located `src/**/*.test.tsx` **and** the legacy `frontend/__tests__/` mirror where a mirror exists.
@@ -141,7 +146,7 @@ Several AI surfaces we discussed are **not yet built**. When each is picked up i
 - [ ] `SparkIcon` relocated to the shared module and size-overridable; `/welcome` visually unchanged.
 - [ ] All surfaces in §6 render the shared marker as specified (rows 1, 2, 5 additive; 3, 4, 6, 7a–c, 8 replacements); the file-tree is untouched.
 - [ ] AI-summary marker mounts on the success branch only — absent on the loading skeleton and error copy.
-- [ ] The **Hotspots tab label** (sub-tab strip) carries a superscript decorative marker after "Hotspots"; it is **not** in the tab body; it shows only when the AI-gated Hotspots tab shows. A tab-strip test asserts the Hotspots tab has the marker and the other tabs don't.
+- [ ] The **Hotspots tab label** (sub-tab strip) carries a larger `lead` decorative marker **before** "Hotspots"; it is **not** in the tab body; it shows only when the AI-gated Hotspots tab shows; on hover/focus/active it brightens (opacity 0.6→1) mirroring the tab label. A tab-strip test asserts the Hotspots tab has the marker and the other tabs don't.
 - [ ] The **inbox chip** announces AI via the row `aria-label` ("AI-generated" composed in when the chip shows); a test asserts it reaches the accessible name. Every other surface is decorative beside/after visible text. The provenance (sr-only) variant is unit-tested but has no current surface consumer.
 - [ ] **Zero** raw `✨` emoji remain in `frontend/src` (grep-clean) — all six occurrences replaced. Non-`✨` glyphs are intentionally untouched.
 - [ ] An ESLint rule bans the literal `✨` in `frontend/src` (message points at `AiMarker`) and passes green.
