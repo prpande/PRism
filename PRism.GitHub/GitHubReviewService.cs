@@ -134,8 +134,8 @@ public sealed partial class GitHubReviewService : IPrDiscovery, IPrReader
 
         // viewer is a sibling of repository (data.viewer.login), NOT under pull — resolve it
         // from the root and hand it to the parser (mirrors #367's passed-login pattern).
-        var viewerLogin = TryGetPath(doc.RootElement, out var viewerLoginEl, "data", "viewer", "login")
-            && viewerLoginEl.ValueKind == JsonValueKind.String ? viewerLoginEl.GetString() : null;
+        var viewerLogin = (TryGetPath(doc.RootElement, out var viewerLoginEl, "data", "viewer", "login")
+            && viewerLoginEl.ValueKind == JsonValueKind.String) ? viewerLoginEl.GetString() : null;
         var viewerReview = GitHubPrParser.ParseViewerReview(pull, viewerLogin);
 
         // Clustering is performed by PrDetailLoader (Task 4); IPrReader returns the

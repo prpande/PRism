@@ -230,6 +230,12 @@ internal static class GitHubPrParser
     // a review with no commit is still selected with CommitSha = null (staleness unknown).
     // viewerLogin is resolved by the caller from data.viewer.login (a sibling of
     // data.repository, unreachable from `pull` = data.repository.pullRequest).
+    //
+    // The query caps reviews at `reviews(last:100)` with no pageInfo (consistent with the
+    // comments/reviewThreads first:100 caps). The cap is safe for this read: `last:100`
+    // returns the 100 MOST-RECENT reviews, and we select by max submittedAt, so the latest
+    // review is always within the window even on a PR with >100 reviews. A viewer dropped
+    // here would only be one of their own older, superseded reviews.
     internal static ViewerReview? ParseViewerReview(JsonElement pull, string? viewerLogin)
     {
         if (string.IsNullOrEmpty(viewerLogin)) return null;
