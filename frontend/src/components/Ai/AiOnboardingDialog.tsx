@@ -1,9 +1,12 @@
-import { useId, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { Modal } from '../Modal/Modal';
 import { SparkIcon } from './SparkIcon';
 import { SegmentedControl } from '../controls/SegmentedControl';
+import { Spinner } from '../Spinner';
 import { usePreferences } from '../../hooks/usePreferences';
+import { getEgressDisclosure, postAiConsent, type EgressDisclosure } from '../../api/aiConsent';
+import { EgressDisclosureBody, EgressDisclosureSkeleton } from '../Settings/EgressDisclosureBody';
 import type { AiMode } from '../../api/types';
 import styles from './AiOnboardingDialog.module.css';
 
@@ -27,6 +30,26 @@ export function AiOnboardingDialog({ onDismiss }: { onDismiss: () => void }) {
   const [pending, setPending] = useState<AiMode>(current);
   const [open, setOpen] = useState(true);
   const regionId = useId();
+
+  // Live inline state machine state
+  const [disclosure, setDisclosure] = useState<EgressDisclosure | null>(null);
+  const [liveLoading, setLiveLoading] = useState(false);
+  const [fetchError, setFetchError] = useState(false); // getEgressDisclosure failed
+  const [submitError, setSubmitError] = useState(false); // postAiConsent failed
+  const [submitting, setSubmitting] = useState(false);
+
+  // Refs for abort and teardown guard
+  const abortRef = useRef<AbortController | null>(null);
+  const cancelledRef = useRef(false);
+
+  // Teardown: cancel any in-flight fetch or POST on unmount
+  useEffect(
+    () => () => {
+      cancelledRef.current = true;
+      abortRef.current?.abort();
+    },
+    [],
+  );
 
   const close = () => {
     setOpen(false);
@@ -52,6 +75,7 @@ export function AiOnboardingDialog({ onDismiss }: { onDismiss: () => void }) {
   // "consent recorded / mode still Preview". For Preview (no mode change) the seen-write is direct.
   // This preserves spec §6.1's "seen last" while closing the mode-write-fails gap.
   const commitMode = (mode: AiMode) => {
+    if (cancelledRef.current) return; // dismissed/unmounted mid-flow — never commit
     close();
     if (mode === current) {
       void set('ui.ai.onboardingSeen', true).catch(() => {});
@@ -62,10 +86,60 @@ export function AiOnboardingDialog({ onDismiss }: { onDismiss: () => void }) {
     }
   };
 
-  // Adaptive primary button.
-  const onCommit = () => {
-    if (pending === 'live') return; // Task 6 replaces this with the Live state machine.
-    commitMode(pending);
+  // Select a segment — fetches disclosure if Live, aborts prior fetch if switching away.
+  // No-op guard: re-selecting the already-selected segment never re-fetches.
+  const onSelect = (next: AiMode) => {
+    if (next === pending) return;
+    setPending(next);
+    setFetchError(false);
+    setSubmitError(false);
+    if (next !== 'live') {
+      abortRef.current?.abort();
+      setLiveLoading(false);
+      setDisclosure(null);
+      return;
+    }
+    setDisclosure(null);
+    setLiveLoading(true);
+    const ac = new AbortController();
+    abortRef.current = ac;
+    getEgressDisclosure(ac.signal)
+      .then((d) => {
+        if (!ac.signal.aborted && !cancelledRef.current) {
+          setDisclosure(d);
+          setLiveLoading(false);
+        }
+      })
+      .catch(() => {
+        if (!ac.signal.aborted && !cancelledRef.current) {
+          setFetchError(true);
+          setLiveLoading(false);
+        }
+      });
+  };
+
+  // Adaptive primary button handler — Live path goes through consent flow.
+  const onCommit = async () => {
+    if (pending !== 'live') {
+      commitMode(pending);
+      return;
+    }
+    if (!disclosure) return;
+    if (disclosure.alreadyConsented) {
+      commitMode('live');
+      return;
+    }
+    setSubmitting(true);
+    setSubmitError(false);
+    try {
+      await postAiConsent(disclosure.disclosureVersion);
+      if (cancelledRef.current) return; // dismissed mid-POST — never commit Live
+      commitMode('live');
+    } catch {
+      if (!cancelledRef.current) setSubmitError(true); // POST failed — disclosure stays, distinct copy
+    } finally {
+      if (!cancelledRef.current) setSubmitting(false);
+    }
   };
 
   // Concise SR status (announces the mode/region change without re-reading the whole legend card).
@@ -77,6 +151,11 @@ export function AiOnboardingDialog({ onDismiss }: { onDismiss: () => void }) {
         : 'Preview selected.';
 
   const btn = BUTTON[pending];
+
+  // Primary button disabled: while loading disclosure, or while submitting, or no disclosure yet
+  // (and no fetch error — fetch error state re-enables via the retry path where disclosure is null).
+  const primaryDisabled =
+    pending === 'live' && (liveLoading || submitting || (!disclosure && !fetchError));
 
   return (
     <Modal
@@ -99,9 +178,10 @@ export function AiOnboardingDialog({ onDismiss }: { onDismiss: () => void }) {
           label="AI mode"
           options={OPTIONS}
           value={pending}
-          onChange={(v) => setPending(v)}
+          onChange={onSelect}
           selectedDataRole="cancel"
           describedById={regionId}
+          disabled={submitting}
         />
       </div>
 
@@ -114,7 +194,22 @@ export function AiOnboardingDialog({ onDismiss }: { onDismiss: () => void }) {
 
       <div id={regionId}>
         {pending === 'live' ? (
-          <div /* Task 6: inline egress disclosure state machine */ />
+          fetchError ? (
+            <div role="alert" className={styles.legend}>
+              Couldn&apos;t load the data-sharing disclosure. Try again.
+            </div>
+          ) : liveLoading || !disclosure ? (
+            <EgressDisclosureSkeleton />
+          ) : (
+            <>
+              <EgressDisclosureBody disclosure={disclosure} />
+              {submitError && (
+                <div role="alert" className={styles.legend}>
+                  Couldn&apos;t enable Live AI. Try again.
+                </div>
+              )}
+            </>
+          )
         ) : (
           <div className={styles.legend}>
             <div className={styles.legendRow}>
@@ -142,16 +237,24 @@ export function AiOnboardingDialog({ onDismiss }: { onDismiss: () => void }) {
       </div>
 
       <div className={styles.actions}>
-        <button type="button" className="btn btn-link" onClick={onManage}>
+        <button type="button" className="btn btn-link" onClick={onManage} disabled={submitting}>
           Manage AI settings →
         </button>
         <button
           type="button"
           className={btn.className}
           data-modal-role="primary"
-          onClick={onCommit}
+          onClick={() => void onCommit()}
+          disabled={primaryDisabled}
         >
-          {btn.label}
+          {submitting ? (
+            <>
+              <Spinner size="sm" decorative />
+              Enabling…
+            </>
+          ) : (
+            btn.label
+          )}
         </button>
       </div>
     </Modal>
