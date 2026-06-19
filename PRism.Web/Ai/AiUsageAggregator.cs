@@ -31,7 +31,7 @@ internal static class AiUsageAggregator
             totals.CacheHits + totals.ProviderCalls == 0
                 ? 0
                 : (double)totals.CacheHits / (totals.CacheHits + totals.ProviderCalls));
-        var trend = BuildTrend(filtered, normalized, now);
+        var trend = BuildTrend(filtered, normalized);
 
         return new AiUsageReport(normalized, now, totals, byFeature, byPr, totalPrCount, cache, trend);
     }
@@ -101,7 +101,7 @@ internal static class AiUsageAggregator
         return (top, total);
     }
 
-    private static List<AiUsageTrendBucket> BuildTrend(List<Bucket> b, string window, DateTimeOffset now)
+    private static List<AiUsageTrendBucket> BuildTrend(List<Bucket> b, string window)
     {
         if (b.Count == 0) return new List<AiUsageTrendBucket>();
 

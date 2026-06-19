@@ -78,7 +78,7 @@ public sealed class AiUsageAggregatorTests
         var report = AiUsageAggregator.Aggregate(buckets, "7d", Now);
 
         report.TotalPrCount.Should().Be(26);
-        report.ByPr.Should().HaveCountLessOrEqualTo(21); // 20 + the always-included batch
+        report.ByPr.Should().HaveCount(21); // top 20 + the always-included batch
         report.ByPr.Should().Contain(r => r.PrRef == "batch");
         report.ByPr.Single(r => r.PrRef == "batch").DisplayLabel.Should().Be("Inbox (batched)");
     }
@@ -127,5 +127,28 @@ public sealed class AiUsageAggregatorTests
             B("summary", "o/r#1", Now.AddHours(-1), input: 10, cost: 0.01m, providerCalls: 1),
         };
         AiUsageAggregator.Aggregate(buckets, "all", Now).Trend.Should().NotBeEmpty().And.OnlyContain(t => t.Granularity == "week");
+    }
+
+    [Fact]
+    public void Aggregate_normalize_is_case_insensitive()
+    {
+        AiUsageAggregator.Aggregate(Array.Empty<Bucket>(), "24H", Now).Window.Should().Be("24h");
+        AiUsageAggregator.Aggregate(Array.Empty<Bucket>(), "ALL", Now).Window.Should().Be("all");
+    }
+
+    [Fact]
+    public void Aggregate_30d_excludes_buckets_older_than_30_days()
+    {
+        var buckets = new[]
+        {
+            B("summary", "o/r#1", Now.AddDays(-29), input: 200, cost: 0.10m, providerCalls: 2),
+            B("summary", "o/r#2", Now.AddDays(-31), input: 999, cost: 9.99m, providerCalls: 5), // outside 30d
+        };
+        var report = AiUsageAggregator.Aggregate(buckets, "30d", Now);
+
+        report.Window.Should().Be("30d");
+        report.Totals.TotalTokens.Should().Be(200);
+        report.Totals.EstimatedCostUsd.Should().Be(0.10m);
+        report.Totals.ProviderCalls.Should().Be(2);
     }
 }
