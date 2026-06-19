@@ -458,14 +458,16 @@ test('ai-tab: Live — expand AI features, toggle Summary off, POST fires + stor
   await expect(summarySwitch).toBeChecked();
 
   // Wait for the POST that carries { "ui.ai.features.summary": false }.
-  const postPromise = page.waitForRequest(
-    (req) =>
-      req.url().includes('/api/preferences') &&
-      req.method() === 'POST' &&
-      JSON.stringify(req.postDataJSON()) === JSON.stringify({ 'ui.ai.features.summary': false }),
+  // waitForResponse resolves AFTER the route handler runs (store mutated),
+  // avoiding a race where the store assertion runs before the mutation.
+  const postPromise = page.waitForResponse(
+    (r) => r.url().includes('/api/preferences') && r.request().method() === 'POST',
   );
   await summarySwitch.click();
-  await postPromise;
+  const postResponse = await postPromise;
+  expect(JSON.stringify(postResponse.request().postDataJSON())).toBe(
+    JSON.stringify({ 'ui.ai.features.summary': false }),
+  );
 
   // Switch is now off.
   await expect(summarySwitch).not.toBeChecked();
@@ -522,10 +524,10 @@ test('ai-tab: Preview — steppers absent + AI features button is aria-disabled'
   await expect(dialog).toBeVisible({ timeout: 30_000 });
   await expect(page.getByRole('heading', { name: 'AI', level: 2 })).toBeVisible();
 
-  // Steppers are Live-only — must not be present in Preview mode.
-  await expect(page.getByRole('spinbutton', { name: 'Provider timeout' })).not.toBeVisible();
-  await expect(page.getByRole('spinbutton', { name: 'Annotation cap' })).not.toBeVisible();
-  await expect(page.getByRole('spinbutton', { name: 'Summary length' })).not.toBeVisible();
+  // Steppers are Live-only — must not be present in Preview mode (absent from DOM).
+  await expect(page.getByRole('spinbutton', { name: 'Provider timeout' })).not.toBeAttached();
+  await expect(page.getByRole('spinbutton', { name: 'Annotation cap' })).not.toBeAttached();
+  await expect(page.getByRole('spinbutton', { name: 'Summary length' })).not.toBeAttached();
 
   // The disabled "AI features" button is shown in Preview with aria-disabled="true".
   const disabledFeaturesBtn = dialog.getByRole('button', { name: /AI features/i });
@@ -545,7 +547,7 @@ test('ai-tab: real-wire gate — features.summary=false masks summary capability
   // (5) the AI summary card is not rendered on the PR overview.
   // A truly "real-serialized-response" gate is deferred to the `real/` suite
   // which runs against a live backend.
-  test.setTimeout(120_000);
+  test.setTimeout(60_000);
 
   // Shared mutable store seeded from makeAiPreferences (Live, all features on).
   const store = makeAiPreferences();
