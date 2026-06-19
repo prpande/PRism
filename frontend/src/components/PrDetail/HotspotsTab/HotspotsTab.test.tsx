@@ -171,6 +171,29 @@ describe('HotspotsTab', () => {
     expect(screen.getByTestId('hotspots-skeleton')).toBeInTheDocument();
   });
 
+  it('renders skeleton rows shaped like the live hotspot rows while loading', () => {
+    renderTab({ status: 'loading', entries: [] });
+    const rows = within(screen.getByTestId('hotspots-skeleton')).getAllByTestId(
+      'hotspots-skeleton-row',
+    );
+    expect(rows.length).toBeGreaterThanOrEqual(3);
+    expect(within(rows[0]).getByTestId('hotspots-skeleton-glyph')).toBeInTheDocument();
+    expect(within(rows[0]).getByTestId('hotspots-skeleton-headline')).toBeInTheDocument();
+    expect(within(rows[0]).getByTestId('hotspots-skeleton-path')).toBeInTheDocument();
+  });
+
+  it('exposes a persistent role=status announcer that is NOT inside the aria-busy skeleton', () => {
+    renderTab({ status: 'loading', entries: [] });
+    expect(screen.getByRole('status')).toHaveTextContent(/analyzing ai hotspots/i);
+    // the announcer must be a sibling of, not a descendant of, the aria-busy skeleton
+    expect(within(screen.getByTestId('hotspots-skeleton')).queryByRole('status')).toBeNull();
+  });
+
+  it('announces the resolved outcome via the same persistent status region', () => {
+    renderTab({ status: 'empty', entries: [] });
+    expect(screen.getByRole('status')).toHaveTextContent(/no files need special attention/i);
+  });
+
   it('empty (all-low) shows the positive message, no card, no footer, no retry', () => {
     renderTab({ status: 'empty', entries: [] });
     expect(screen.getByText(/nothing needs special attention/i)).toBeInTheDocument();

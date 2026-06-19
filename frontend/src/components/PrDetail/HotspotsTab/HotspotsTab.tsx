@@ -42,96 +42,141 @@ export function HotspotsTab() {
       return next;
     });
 
-  if (status === 'loading') {
-    return (
-      <div className={styles.hotspots} data-testid="hotspots-skeleton">
-        <div className={styles.skeletonRow} />
-        <div className={styles.skeletonRow} />
-        <div className={styles.skeletonRow} />
-      </div>
-    );
-  }
-  if (status === 'fallback') {
-    return <div className={styles.message}>Couldn't rank this PR automatically.</div>;
-  }
-  if (status === 'error') {
-    return (
-      <div className={styles.messageError}>
-        <span>Couldn't load AI focus right now.</span>{' '}
-        <button type="button" className={styles.retryButton} onClick={retry}>
-          Retry
-        </button>
-      </div>
-    );
-  }
-  if (status === 'not-subscribed') {
-    return <div className={styles.message}>AI file focus isn't active for this PR.</div>;
-  }
-  if (status === 'no-changes') {
-    return <div className={styles.message}>No file changes to review.</div>;
-  }
+  // Compute high/medium unconditionally so statusAnnouncement can reference the
+  // count for the 'ok' branch regardless of render order. For non-'ok' statuses
+  // these are empty arrays (entries is [] or we're in a short-circuit branch).
+  const high = status === 'ok' ? entries.filter((e) => e.level === 'high').sort(byPath) : [];
+  const medium = status === 'ok' ? entries.filter((e) => e.level === 'medium').sort(byPath) : [];
+  const highMediumCount = high.length + medium.length;
 
-  const high = entries.filter((e) => e.level === 'high').sort(byPath);
-  const medium = entries.filter((e) => e.level === 'medium').sort(byPath);
-  // Exclude low-by-rule (empty-body renames/deletes) — they have no changed body
-  // to skim, so they would inflate and mis-frame the count (#520 D7).
-  const lowCount = entries.filter(
-    (e) => e.level === 'low' && e.rationale !== LOW_BY_RULE_RATIONALE,
-  ).length;
+  // One persistent polite announcer across all status branches (loading → ok/empty/fallback/
+  // error/no-changes/not-subscribed). role="status" is an implicit aria-live="polite"; because
+  // it is always mounted and lives outside any aria-busy subtree, AT announces each transition.
+  const statusAnnouncement =
+    status === 'loading'
+      ? 'Analyzing AI hotspots…'
+      : status === 'ok'
+        ? `${highMediumCount} ${highMediumCount === 1 ? 'file needs' : 'files need'} attention`
+        : status === 'empty'
+          ? 'No files need special attention'
+          : status === 'fallback'
+            ? 'AI could not rank this pull request automatically'
+            : ''; // 'error' | 'no-changes' | 'not-subscribed' announce nothing (no AI outcome)
 
-  if (status === 'empty' || (high.length === 0 && medium.length === 0)) {
+  const renderHotspotsBody = () => {
+    if (status === 'loading') {
+      return (
+        <div
+          className={styles.hotspots}
+          data-testid="hotspots-skeleton"
+          role="region"
+          aria-label="AI hotspots loading"
+          aria-busy="true"
+        >
+          {[0, 1, 2].map((i) => (
+            <div key={i} className={styles.skeletonRow} data-testid="hotspots-skeleton-row">
+              <span className={styles.skeletonGlyph} data-testid="hotspots-skeleton-glyph" />
+              <span className={styles.skeletonStack}>
+                <span
+                  className={styles.skeletonHeadline}
+                  data-testid="hotspots-skeleton-headline"
+                />
+                <span className={styles.skeletonPath} data-testid="hotspots-skeleton-path" />
+              </span>
+            </div>
+          ))}
+        </div>
+      );
+    }
+    if (status === 'fallback') {
+      return <div className={styles.message}>Couldn't rank this PR automatically.</div>;
+    }
+    if (status === 'error') {
+      return (
+        <div className={styles.messageError}>
+          <span>Couldn't load AI focus right now.</span>{' '}
+          <button type="button" className={styles.retryButton} onClick={retry}>
+            Retry
+          </button>
+        </div>
+      );
+    }
+    if (status === 'not-subscribed') {
+      return <div className={styles.message}>AI file focus isn't active for this PR.</div>;
+    }
+    if (status === 'no-changes') {
+      return <div className={styles.message}>No file changes to review.</div>;
+    }
+
+    // Exclude low-by-rule (empty-body renames/deletes) — they have no changed body
+    // to skim, so they would inflate and mis-frame the count (#520 D7).
+    const lowCount = entries.filter(
+      (e) => e.level === 'low' && e.rationale !== LOW_BY_RULE_RATIONALE,
+    ).length;
+
+    if (status === 'empty' || (high.length === 0 && medium.length === 0)) {
+      return (
+        <div className={styles.messagePositive}>
+          Nothing needs special attention — the AI didn't flag any file. Skim freely.
+        </div>
+      );
+    }
+
     return (
-      <div className={styles.messagePositive}>
-        Nothing needs special attention — the AI didn't flag any file. Skim freely.
+      <div className={styles.hotspots}>
+        <div className={styles.card}>
+          {high.length > 0 && (
+            <ul className={styles.rows} role="list">
+              {high.map((r) => (
+                <Row
+                  key={r.path}
+                  entry={r}
+                  isOpen={openPaths.has(r.path)}
+                  onToggle={toggle}
+                  onOpen={requestFileView}
+                />
+              ))}
+            </ul>
+          )}
+          {medium.length > 0 && (
+            <ul className={styles.rows} role="list">
+              {medium.map((r) => (
+                <Row
+                  key={r.path}
+                  entry={r}
+                  isOpen={openPaths.has(r.path)}
+                  onToggle={toggle}
+                  onOpen={requestFileView}
+                />
+              ))}
+            </ul>
+          )}
+          {lowCount > 0 && (
+            <button
+              type="button"
+              className={styles.lowFooter}
+              aria-label={`${lowCount} low-priority ${lowCount === 1 ? 'file' : 'files'} — switch to the Files tab`}
+              onClick={() => onSelectSubTab('files')}
+            >
+              <LevelGlyph level="low" />
+              <span>
+                {lowCount} low-priority {lowCount === 1 ? 'file' : 'files'} — skim them in the Files
+                tab.
+              </span>
+            </button>
+          )}
+        </div>
       </div>
     );
-  }
+  };
 
   return (
-    <div className={styles.hotspots}>
-      <div className={styles.card}>
-        {high.length > 0 && (
-          <ul className={styles.rows} role="list">
-            {high.map((r) => (
-              <Row
-                key={r.path}
-                entry={r}
-                isOpen={openPaths.has(r.path)}
-                onToggle={toggle}
-                onOpen={requestFileView}
-              />
-            ))}
-          </ul>
-        )}
-        {medium.length > 0 && (
-          <ul className={styles.rows} role="list">
-            {medium.map((r) => (
-              <Row
-                key={r.path}
-                entry={r}
-                isOpen={openPaths.has(r.path)}
-                onToggle={toggle}
-                onOpen={requestFileView}
-              />
-            ))}
-          </ul>
-        )}
-        {lowCount > 0 && (
-          <button
-            type="button"
-            className={styles.lowFooter}
-            aria-label={`${lowCount} low-priority ${lowCount === 1 ? 'file' : 'files'} — switch to the Files tab`}
-            onClick={() => onSelectSubTab('files')}
-          >
-            <LevelGlyph level="low" />
-            <span>
-              {lowCount} low-priority {lowCount === 1 ? 'file' : 'files'} — skim them in the Files
-              tab.
-            </span>
-          </button>
-        )}
-      </div>
-    </div>
+    <>
+      <span role="status" className="sr-only">
+        {statusAnnouncement}
+      </span>
+      {renderHotspotsBody()}
+    </>
   );
 }
 
