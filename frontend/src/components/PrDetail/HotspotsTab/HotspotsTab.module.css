@@ -1,4 +1,9 @@
 .hotspots {
+  /* Centered, capped column matching the Overview tab (#470) so the triage
+     surface doesn't sprawl edge-to-edge next to the constrained Overview. Same
+     920px cap as .overviewGrid; revisit together if #470 fluidizes the cap. */
+  max-width: 920px;
+  margin: 0 auto;
   padding: var(--s-3);
   display: flex;
   flex-direction: column;
