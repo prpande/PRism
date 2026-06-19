@@ -964,4 +964,77 @@ public sealed class InboxRefreshOrchestratorTests
         authored.Single(i => i.Reference.Number == 2).IsDraft.Should().BeTrue();
         authored.Single(i => i.Reference.Number == 1).IsDraft.Should().BeFalse();
     }
+
+    // ── AiEnrichmentSettled ───────────────────────────────────────────────────
+
+    [Fact]
+    public void InboxSnapshot_AiEnrichmentSettled_DefaultsToEmptyNonNull()
+    {
+        var snap = new InboxSnapshot(new Dictionary<string, IReadOnlyList<PrInboxItem>>(),
+            new Dictionary<string, InboxItemEnrichment>(), DateTimeOffset.UtcNow);
+        Assert.NotNull(snap.AiEnrichmentSettled);
+        Assert.Empty(snap.AiEnrichmentSettled);
+        Assert.NotNull(InboxSnapshot.Empty.AiEnrichmentSettled); // the static Empty must also normalize
+        Assert.Empty(InboxSnapshot.Empty.AiEnrichmentSettled);
+        var withSet = snap with { AiEnrichmentSettled = new HashSet<string>(StringComparer.Ordinal) { "o/r#1" } };
+        Assert.Contains("o/r#1", withSet.AiEnrichmentSettled);
+    }
+
+    [Fact]
+    public async Task RefreshAsync_AiEnrichmentSettled_ContainsPrIds_OfEnrichedItems()
+    {
+        // Main path: enricher returns N results (cache hits) → committed snapshot's
+        // AiEnrichmentSettled == those N PR-IDs.
+        // Use PlaceholderInboxItemEnricher which returns one enrichment per open item.
+        var sections = new FakeSectionQueryRunner(_ => new Dictionary<string, IReadOnlyList<RawPrInboxItem>>
+        {
+            ["review-requested"] = new[] { RawOpen(1, "Add X", "d"), RawOpen(2, "Fix Y", "e") },
+        });
+
+        var configFake = ConfigStoreFake(ConfigWithSections(
+            reviewRequested: true, awaitingAuthor: false, authoredByMe: false, mentioned: false));
+        using var sut = Build(
+            config: configFake,
+            sections: sections,
+            aiSelector: new FakeAiSeamSelector(new PlaceholderInboxItemEnricher()));
+
+        await sut.RefreshAsync(CancellationToken.None);
+
+        sut.Current!.AiEnrichmentSettled.Should().NotBeNull();
+        // The two PRs' PrIds should be settled (PlaceholderInboxItemEnricher returns chips for both)
+        sut.Current!.AiEnrichmentSettled.Should().HaveCount(2);
+        sut.Current!.AiEnrichmentSettled.Should().Contain(sut.Current!.Enrichments.Keys);
+    }
+
+    [Fact]
+    public async Task OnInboxEnrichmentsReady_AllChipless_StillSetsSettledAndPublishesEvent()
+    {
+        // A batch whose results are ALL chip-less but live + token-matched must still commit
+        // a snapshot with the PRs in AiEnrichmentSettled AND publish InboxUpdated.
+        // Previously: if (applied == 0) return; — this test verifies that bug is fixed.
+        var bus = new ReviewEventBus();
+        var published = new List<IReviewEvent>();
+        bus.Subscribe<InboxUpdated>(e => published.Add(e));
+
+        using var orch = BuildOrchestrator(bus: bus, openItems: new[] { RawOpen(1, title: "Add X", desc: "d") });
+        await orch.RefreshAsync(default);
+        published.Clear();
+
+        var liveToken = InboxEnrichmentContent.Token("Add X", "d");
+        // Publish a result with null chip (chip-less but settled)
+        bus.Publish(new InboxEnrichmentsReady(new[]
+        {
+            new InboxEnrichmentResult("octo/repo#1", null, liveToken), // chip-less but live + token-matched
+        }));
+
+        // PR should be settled even though no chip landed
+        orch.Current!.AiEnrichmentSettled.Should().Contain("octo/repo#1",
+            "a chip-less result against a live, token-matched PR must settle that PR");
+        // No chip in Enrichments
+        orch.Current!.Enrichments.Should().NotContainKey("octo/repo#1",
+            "Enrichments stays chip-only; chip-less results don't add an entry");
+        // InboxUpdated must fire so the FE clears its working markers
+        published.OfType<InboxUpdated>().Should().NotBeEmpty(
+            "publishing InboxUpdated is required even when no chip landed");
+    }
 }

@@ -66,7 +66,8 @@ internal static class InboxEndpoints
                 .ToList();
             return Results.Ok(new InboxResponse(
                 sections, snap.Enrichments, snap.LastRefreshedAt,
-                config.Current.Inbox.ShowHiddenScopeFooter, snap.CiProbeComplete));
+                config.Current.Inbox.ShowHiddenScopeFooter, snap.CiProbeComplete,
+                snap.AiEnrichmentSettled.ToArray()));
         });
 
         // #311 — manual "Refresh now". Calls the orchestrator directly and AWAITS the pull

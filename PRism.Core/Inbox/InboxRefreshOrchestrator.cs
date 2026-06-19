@@ -254,8 +254,14 @@ public sealed partial class InboxRefreshOrchestrator : IInboxRefreshOrchestrator
             var enrichmentMap = enrichments.ToDictionary(e => e.PrId);
             Log.AiEnrichmentComplete(_log, enricher.GetType().Name, allItems.Count, enrichments.Count);
 
+            // Every PR the enricher resolved synchronously (cache hits) is settled —
+            // chip or not. Misses are still in flight; they arrive later via
+            // OnInboxEnrichmentsReady, which extends this set. (The cache is the durable
+            // store, so a later refresh re-derives the same settled set from enrichmentMap.)
+            var aiSettled = enrichmentMap.Keys.ToHashSet(StringComparer.Ordinal);
+
             // Build snapshot + diff
-            var newSnap = new InboxSnapshot(sectionsFinal, enrichmentMap, DateTimeOffset.UtcNow, ciProbeComplete);
+            var newSnap = new InboxSnapshot(sectionsFinal, enrichmentMap, DateTimeOffset.UtcNow, ciProbeComplete, aiSettled);
             var diff = ComputeDiff(_current, newSnap);
             Volatile.Write(ref _current, newSnap);
 
@@ -395,25 +401,29 @@ public sealed partial class InboxRefreshOrchestrator : IInboxRefreshOrchestrator
                 .ToDictionary(g => g.Key, g => g.First(), StringComparer.Ordinal);
 
             var merged = new Dictionary<string, InboxItemEnrichment>(current.Enrichments, StringComparer.Ordinal);
+            var settled = new HashSet<string>(current.AiEnrichmentSettled, StringComparer.Ordinal);
             var changedSections = new HashSet<string>(StringComparer.Ordinal);
             var applied = 0;
+            var newlySettled = 0;
             foreach (var r in evt.Results)
             {
-                if (r.CategoryChip is null) continue;
                 if (!liveByPrId.TryGetValue(r.PrId, out var live)) continue;      // PR gone since batch started
-                if (InboxEnrichmentContent.Token(live.Title, live.Description) != r.ContentToken) continue; // stale
-                merged[r.PrId] = new InboxItemEnrichment(r.PrId, r.CategoryChip, HoverSummary: null);
-                applied++;
+                if (InboxEnrichmentContent.Token(live.Title, live.Description) != r.ContentToken) continue; // stale edit-during-batch (#410 guard)
+                if (settled.Add(r.PrId)) newlySettled++;                          // resolved against the live PR → settled, chip or not
+                if (r.CategoryChip is not null)                                   // Enrichments stays chip-only on this path
+                {
+                    merged[r.PrId] = new InboxItemEnrichment(r.PrId, r.CategoryChip, HoverSummary: null);
+                    applied++;
+                }
                 foreach (var kv in current.Sections)
                     if (kv.Value.Any(p => p.Reference.PrId == r.PrId)) changedSections.Add(kv.Key);
             }
-            if (applied == 0) return;
+            // Commit if a chip landed OR a PR newly settled — an all-"Other" batch must
+            // still clear the FE's working markers. A no-op batch (all stale/gone) → both 0 → return.
+            if (applied == 0 && newlySettled == 0) return;
 
-            Volatile.Write(ref _current, current with { Enrichments = merged });
-
-            // Unconditional publish: ComputeDiff is blind to enrichment changes, so we must NOT gate
-            // this on diff.Changed (false for a pure-enrichment update).
-            _events.Publish(new InboxUpdated(changedSections.ToArray(), applied));
+            Volatile.Write(ref _current, current with { Enrichments = merged, AiEnrichmentSettled = settled });
+            _events.Publish(new InboxUpdated(changedSections.ToArray(), applied)); // unconditional (ComputeDiff is enrichment-blind)
         }
         finally
         {
