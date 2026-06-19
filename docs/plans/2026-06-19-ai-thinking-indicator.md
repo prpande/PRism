@@ -42,44 +42,46 @@
 export type AiLoadState = 'loading' | 'ready' | 'empty' | 'error';
 ```
 
-- [ ] **Step 2: Write the failing test.** Replace the body of `frontend/src/hooks/useAiHunkAnnotations.test.tsx` assertions to assert the new shape. Add these cases (keep existing imports/harness; adapt the render to read `.state`/`.annotations`):
+- [ ] **Step 2: Write the failing test.** The existing harness (`frontend/src/hooks/useAiHunkAnnotations.test.tsx`) renders `() => ({ e: useAiHunkAnnotations(PR, true), f: useAiFailure() })` and asserts via `result.current.e` (the hook value) and `result.current.f.activeFailedSeams` (the failure bus), mocking the API with `vi.spyOn(api, 'getAiHunkAnnotations')` (`import * as api from '../api/aiHunkAnnotations'`), with `const PR: PrReference = { owner: 'o', repo: 'r', number: 1 }`. Keep the three existing tests (503-reports, 401-no-report, 204→null-clears) but extend their assertions to `.e.state`, and add these cases in that exact harness style:
 
 ```tsx
-it('reports loading then ready when annotations arrive', async () => {
-  getAiHunkAnnotations.mockResolvedValueOnce([{ path: 'a.ts', hunkIndex: 0, body: 'x', tone: 'calm' }]);
-  const { result } = renderHook(() => useAiHunkAnnotations(prRef, true), { wrapper });
-  expect(result.current.state).toBe('loading');
-  await waitFor(() => expect(result.current.state).toBe('ready'));
-  expect(result.current.annotations).toHaveLength(1);
+it('is loading then ready when annotations arrive', async () => {
+  vi.spyOn(api, 'getAiHunkAnnotations').mockResolvedValue([{ path: 'a.ts', hunkIndex: 0, body: 'x', tone: 'calm' }]);
+  const { result } = renderHook(() => ({ e: useAiHunkAnnotations(PR, true), f: useAiFailure() }), { wrapper });
+  expect(result.current.e.state).toBe('loading');
+  await waitFor(() => expect(result.current.e.state).toBe('ready'));
+  expect(result.current.e.annotations).toHaveLength(1);
 });
 
-it('reports empty when the fetch returns no annotations', async () => {
-  getAiHunkAnnotations.mockResolvedValueOnce([]);
-  const { result } = renderHook(() => useAiHunkAnnotations(prRef, true), { wrapper });
-  await waitFor(() => expect(result.current.state).toBe('empty'));
-  expect(result.current.annotations).toEqual([]);
+it('maps 204→null to empty, not error, and does not report', async () => {
+  vi.spyOn(api, 'getAiHunkAnnotations').mockResolvedValue(null);
+  const { result } = renderHook(() => ({ e: useAiHunkAnnotations(PR, true), f: useAiFailure() }), { wrapper });
+  await waitFor(() => expect(result.current.e.state).toBe('empty'));
+  expect(result.current.f.activeFailedSeams).not.toContain('hunk-annotations');
 });
 
-it('reports error and notifies the failure bus on a non-401 throw', async () => {
-  getAiHunkAnnotations.mockRejectedValueOnce(new Error('boom'));
-  const { result } = renderHook(() => useAiHunkAnnotations(prRef, true), { wrapper });
-  await waitFor(() => expect(result.current.state).toBe('error'));
-  expect(report).toHaveBeenCalledWith(prRef, 'hunk-annotations', expect.objectContaining({ reason: expect.any(String) }));
+it('is error and reports the bus on a non-401 throw', async () => {
+  vi.spyOn(api, 'getAiHunkAnnotations').mockRejectedValue(new ApiError(503, null, ''));
+  const { result } = renderHook(() => ({ e: useAiHunkAnnotations(PR, true), f: useAiFailure() }), { wrapper });
+  await waitFor(() => expect(result.current.e.state).toBe('error'));
+  expect(result.current.f.activeFailedSeams).toContain('hunk-annotations');
 });
 
-it('reports empty (not error) on a 401 and clears the bus', async () => {
-  getAiHunkAnnotations.mockRejectedValueOnce(new ApiError('unauth', 401));
-  const { result } = renderHook(() => useAiHunkAnnotations(prRef, true), { wrapper });
-  await waitFor(() => expect(result.current.state).toBe('empty'));
-  expect(clear).toHaveBeenCalledWith(prRef, 'hunk-annotations');
+it('maps 401 to empty and does not report', async () => {
+  vi.spyOn(api, 'getAiHunkAnnotations').mockRejectedValue(new ApiError(401, null, ''));
+  const { result } = renderHook(() => ({ e: useAiHunkAnnotations(PR, true), f: useAiFailure() }), { wrapper });
+  await waitFor(() => expect(result.current.e.state).toBe('empty'));
+  expect(result.current.f.activeFailedSeams).not.toContain('hunk-annotations');
 });
 
-it('reports empty when disabled', () => {
-  const { result } = renderHook(() => useAiHunkAnnotations(prRef, false), { wrapper });
-  expect(result.current.state).toBe('empty');
-  expect(result.current.annotations).toBeNull();
+it('is empty when disabled', () => {
+  const { result } = renderHook(() => ({ e: useAiHunkAnnotations(PR, false), f: useAiFailure() }), { wrapper });
+  expect(result.current.e.state).toBe('empty');
+  expect(result.current.e.annotations).toBeNull();
 });
 ```
+
+Note the `ApiError` constructor is `(status: number, requestId: string | null, body: unknown)` — status is the FIRST arg (`new ApiError(401, null, '')`), as the existing tests already use.
 
 - [ ] **Step 3: Run the test, verify it fails.**
 
@@ -120,7 +122,10 @@ export function useAiHunkAnnotations(
     getAiHunkAnnotations(prRef)
       .then((result) => {
         if (cancelled) return;
-        setValue({ state: result.length > 0 ? 'ready' : 'empty', annotations: result });
+        // getAiHunkAnnotations resolves null on a 204 — guard before .length (else TypeError
+        // rejects into .catch and a legitimate "no annotations" becomes a spurious 'error').
+        const arr = result ?? [];
+        setValue({ state: arr.length > 0 ? 'ready' : 'empty', annotations: result });
         clear(prRef, 'hunk-annotations');
       })
       .catch((err) => {
@@ -158,8 +163,12 @@ to (keeps every later `allAnnotations` reference working, and exposes `.state` f
 
 - [ ] **Step 6: Run tests, verify pass.**
 
-Run: `node_modules/.bin/vitest run src/hooks/useAiHunkAnnotations.test.tsx src/components/PrDetail/FilesTab/DiffPane/`
-Expected: PASS. If any DiffPane test mocked `useAiHunkAnnotations` to return an array, update that mock to `{ state: 'ready', annotations: [...] }` (or `{ state: 'empty', annotations: null }`).
+First enumerate every consumer/mock site so none is missed (spec §1 requires the migration surface be explicit, not failure-discovered):
+
+Run: `node_modules/.bin/rg -l "useAiHunkAnnotations" src` — visit each hit; update any mock that returns a bare array/null to the `{ state, annotations }` shape (e.g. `{ state: 'ready', annotations: [...] }` or `{ state: 'empty', annotations: null }`).
+
+Then: `node_modules/.bin/vitest run src/hooks/useAiHunkAnnotations.test.tsx src/components/PrDetail/FilesTab/DiffPane/`
+Expected: PASS.
 
 - [ ] **Step 7: Typecheck + commit.**
 
@@ -183,28 +192,28 @@ git commit -m "feat(ai): AiLoadState + lift useAiHunkAnnotations to {state,annot
 **Interfaces:**
 - Produces: `useAiDraftSuggestions(prRef, enabled): { state: AiLoadState; suggestions: DraftSuggestion[] | null }`.
 
-- [ ] **Step 1: Write the failing test.** Mirror Task 1's cases in `useAiDraftSuggestions.test.tsx`, asserting `.state` / `.suggestions` and the `'draft-suggestions'` seam:
+- [ ] **Step 1: Write the failing test.** Mirror Task 1's harness in `useAiDraftSuggestions.test.tsx` (`import * as api from '../api/aiDraftSuggestions'`, `vi.spyOn(api, 'getAiDraftSuggestions')`, the `PR` const, render `() => ({ e: useAiDraftSuggestions(PR, true), f: useAiFailure() })`, assert via `result.current.e` / `result.current.f.activeFailedSeams`). Keep the file's existing 503/401/204 tests, extend them to assert `.e.state`, and add:
 
 ```tsx
-it('reports loading then ready when suggestions arrive', async () => {
-  getAiDraftSuggestions.mockResolvedValueOnce([{ filePath: 'a.ts', lineNumber: 3, body: 'x' }]);
-  const { result } = renderHook(() => useAiDraftSuggestions(prRef, true), { wrapper });
-  expect(result.current.state).toBe('loading');
-  await waitFor(() => expect(result.current.state).toBe('ready'));
-  expect(result.current.suggestions).toHaveLength(1);
+it('is loading then ready when suggestions arrive', async () => {
+  vi.spyOn(api, 'getAiDraftSuggestions').mockResolvedValue([{ filePath: 'a.ts', lineNumber: 3, body: 'x' }]);
+  const { result } = renderHook(() => ({ e: useAiDraftSuggestions(PR, true), f: useAiFailure() }), { wrapper });
+  expect(result.current.e.state).toBe('loading');
+  await waitFor(() => expect(result.current.e.state).toBe('ready'));
+  expect(result.current.e.suggestions).toHaveLength(1);
 });
 
-it('reports error and notifies the bus on a non-401 throw', async () => {
-  getAiDraftSuggestions.mockRejectedValueOnce(new Error('boom'));
-  const { result } = renderHook(() => useAiDraftSuggestions(prRef, true), { wrapper });
-  await waitFor(() => expect(result.current.state).toBe('error'));
-  expect(report).toHaveBeenCalledWith(prRef, 'draft-suggestions', expect.objectContaining({ reason: expect.any(String) }));
+it('is error and reports the bus on a non-401 throw', async () => {
+  vi.spyOn(api, 'getAiDraftSuggestions').mockRejectedValue(new ApiError(503, null, ''));
+  const { result } = renderHook(() => ({ e: useAiDraftSuggestions(PR, true), f: useAiFailure() }), { wrapper });
+  await waitFor(() => expect(result.current.e.state).toBe('error'));
+  expect(result.current.f.activeFailedSeams).toContain('draft-suggestions');
 });
 
-it('reports empty when disabled', () => {
-  const { result } = renderHook(() => useAiDraftSuggestions(prRef, false), { wrapper });
-  expect(result.current.state).toBe('empty');
-  expect(result.current.suggestions).toBeNull();
+it('is empty when disabled', () => {
+  const { result } = renderHook(() => ({ e: useAiDraftSuggestions(PR, false), f: useAiFailure() }), { wrapper });
+  expect(result.current.e.state).toBe('empty');
+  expect(result.current.e.suggestions).toBeNull();
 });
 ```
 
@@ -247,7 +256,9 @@ export function useAiDraftSuggestions(
     getAiDraftSuggestions(prRef)
       .then((result) => {
         if (cancelled) return;
-        setValue({ state: result.length > 0 ? 'ready' : 'empty', suggestions: result });
+        // getAiDraftSuggestions resolves null on a 204 — guard before .length (see Task 1).
+        const arr = result ?? [];
+        setValue({ state: arr.length > 0 ? 'ready' : 'empty', suggestions: result });
         clear(prRef, 'draft-suggestions');
       })
       .catch((err) => {
@@ -287,8 +298,10 @@ to:
 
 - [ ] **Step 5: Run tests, verify pass.**
 
-Run: `node_modules/.bin/vitest run src/hooks/useAiDraftSuggestions.test.tsx src/components/PrDetail/Reconciliation/`
-Expected: PASS. Update any reconciliation test that mocked `useAiDraftSuggestions` to return an array → `{ state: 'ready', suggestions: [...] }`.
+First enumerate: `node_modules/.bin/rg -l "useAiDraftSuggestions" src` — update every mock to `{ state, suggestions }`.
+
+Then: `node_modules/.bin/vitest run src/hooks/useAiDraftSuggestions.test.tsx src/components/PrDetail/Reconciliation/`
+Expected: PASS.
 
 - [ ] **Step 6: Typecheck + commit.**
 
@@ -357,13 +370,17 @@ Expected: FAIL — no `working` class, no working label.
      prefers-reduced-motion, where the pulse is dropped and only the hue remains. */
   --ai-idle-color: var(--accent);
   --ai-working-color: oklch(0.62 0.15 230);
+  --ai-idle-opacity: 0.55;
 ```
 
 In the dark-theme accent block (after the dark `--accent-ring:` ~line 206) add:
 
 ```css
   --ai-idle-color: var(--accent);
-  --ai-working-color: oklch(0.78 0.15 230);
+  /* Cyan-shifted (~50° off the 245° dark accent) + higher chroma so working↔idle stays
+     distinguishable under prefers-reduced-motion, where hue is the only signal. B1 tunes. */
+  --ai-working-color: oklch(0.78 0.18 195);
+  --ai-idle-opacity: 0.72; /* lifted vs light so the dimmed idle marker keeps ≥3:1 (WCAG 1.4.11) */
 ```
 
 - [ ] **Step 5: Add the CSS.** In `frontend/src/components/Ai/AiMarker.module.css`, change the base color and append the working rule + keyframes:
@@ -373,6 +390,8 @@ In the dark-theme accent block (after the dark `--accent-ring:` ~line 206) add:
   display: inline-flex;
   align-items: center;
   color: var(--ai-idle-color);
+  /* working→ready hue settle (spec §3). Dropped under reduced-motion below. */
+  transition: color 150ms ease;
 }
 /* Working: AI is in flight. Hue is the load-bearing differentiator (survives
    reduced-motion); the pulse is layered on top and dropped when motion is reduced. */
@@ -383,6 +402,9 @@ In the dark-theme accent block (after the dark `--accent-ring:` ~line 206) add:
 @media (prefers-reduced-motion: reduce) {
   .working {
     animation: none;
+  }
+  .aiMarker {
+    transition: none;
   }
 }
 @keyframes ai-marker-pulse {
@@ -549,8 +571,18 @@ it('keeps a persistent idle marker on empty (AI ran, nothing flagged)', () => {
   expect(screen.getByTestId('file-tree-ai-progress').getAttribute('data-ai-state')).toBe('idle');
 });
 
-it('renders no header marker when AI is off', () => {
+it('keeps a persistent idle marker on fallback (all-medium run)', () => {
+  renderTree({ aiPreview: true, focusStatus: 'fallback' });
+  expect(screen.getByTestId('file-tree-ai-progress').getAttribute('data-ai-state')).toBe('idle');
+});
+
+it('renders no header marker when AI is off (preview false)', () => {
   renderTree({ aiPreview: false, focusStatus: 'no-changes' });
+  expect(screen.queryByTestId('file-tree-ai-progress')).not.toBeInTheDocument();
+});
+
+it('renders no header marker when not subscribed', () => {
+  renderTree({ aiPreview: true, focusStatus: 'not-subscribed' });
   expect(screen.queryByTestId('file-tree-ai-progress')).not.toBeInTheDocument();
 });
 
@@ -607,7 +639,7 @@ Add `focusStatus` to the destructured params (after `focusEntries`) and a derive
         : null;
 ```
 
-Replace the populated header (lines 182-185) with a two-part flex row carrying the marker on the right:
+Replace the populated header (lines 182-185) with a two-part flex row: the label on the left, and (when a marker state is derived) the marker wrapped in a `file-tree-ai-progress` test-seam span on the right. Use **this single block** — the `AiMarker` carries both the base `fileTreeHeaderAi` layout class and, when idle, the `fileTreeHeaderAiIdle` dim class:
 
 ```tsx
       <div className={`file-tree-header ${styles.fileTreeHeader}`}>
@@ -616,29 +648,16 @@ Replace the populated header (lines 182-185) with a two-part flex row carrying t
           {aiPreview && <SampleBadge variant="region" />}
         </span>
         {headerMarkerState && (
-          <AiMarker
-            variant="inline"
-            state={headerMarkerState}
-            decorative
-            className={`${styles.fileTreeHeaderAi}${headerMarkerState === 'idle' ? ` ${styles.fileTreeHeaderAiIdle}` : ''}`}
-          />
-        )}
-      </div>
-```
-
-Wrap the marker host so the test seam exists: the `data-testid` lives on `AiMarker` itself (`ai-marker`), but the test queries `file-tree-ai-progress`. Add that id by wrapping:
-
-```tsx
-        {headerMarkerState && (
           <span data-testid="file-tree-ai-progress" data-ai-state={headerMarkerState}>
             <AiMarker
               variant="inline"
               state={headerMarkerState}
               decorative
-              className={headerMarkerState === 'idle' ? styles.fileTreeHeaderAiIdle : undefined}
+              className={`${styles.fileTreeHeaderAi}${headerMarkerState === 'idle' ? ` ${styles.fileTreeHeaderAiIdle}` : ''}`}
             />
           </span>
         )}
+      </div>
 ```
 
 - [ ] **Step 4: Add the header layout CSS.** In `FileTree.module.css`, replace the `.fileTreeHeader` rule (lines 24-30) and add the new classes:
@@ -659,11 +678,22 @@ Wrap the marker host so the test seam exists: the `data-testid` lives on `AiMark
   display: inline-flex;
   align-items: center;
   gap: var(--s-2);
+  /* Label clips before the marker is lost when the count string is long. */
   min-width: 0;
+  flex-shrink: 1;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
-/* Persistent post-load marker reads as dull/"on here", not active. */
+/* Base layout for the header marker; never shrinks away. */
+.fileTreeHeaderAi {
+  flex: none;
+}
+/* Persistent post-load marker reads as dull/"on here", not active. Opacity is a
+   theme-aware token (--ai-idle-opacity: 0.55 light / 0.72 dark from Task 3) so the
+   dimmed glyph keeps ≥3:1 against the dark surface (WCAG 1.4.11). */
 .fileTreeHeaderAiIdle {
-  opacity: 0.55;
+  opacity: var(--ai-idle-opacity);
 }
 ```
 
@@ -680,8 +710,10 @@ Wrap the marker host so the test seam exists: the `data-testid` lives on `AiMark
 
 - [ ] **Step 6: Run tests, verify pass.**
 
+`focusStatus` is a **required** prop, so every test that renders `<FileTree>` directly must add it. Enumerate first: `node_modules/.bin/rg -l "<FileTree" src` — add `focusStatus="no-changes"` to each render that lacks it.
+
 Run: `node_modules/.bin/vitest run src/components/PrDetail/FilesTab/FileTree.test.tsx src/components/PrDetail/FilesTab/FilesTab.test.tsx`
-Expected: PASS. Update any `<FileTree .../>` render in tests that now misses the required `focusStatus` prop (default to `'no-changes'`).
+Expected: PASS.
 
 - [ ] **Step 7: Typecheck + commit.**
 
@@ -822,7 +854,7 @@ git commit -m "feat(ai): in-flight hunk-annotation skeleton + working marker (#5
 - [ ] **Step 1: Full unit suite.**
 
 Run (from `frontend/`): `node_modules/.bin/vitest run`
-Expected: all green. Fix any remaining mocks that still return the pre-lift `T | null` shape for `useAiHunkAnnotations` / `useAiDraftSuggestions` (grep: `node_modules/.bin/vitest run` failures will name them).
+Expected: all green. The Task 1/2/5 `rg -l` enumerations should already have migrated every mock; this is the backstop that no consumer of the lifted shape or the required `focusStatus` prop was missed.
 
 - [ ] **Step 2: Typecheck + lint.**
 
@@ -846,5 +878,9 @@ Run: `node_modules/.bin/tsc -b` then `node_modules/.bin/eslint src` (use the loc
 - **Deferred to Slice 2 (separate plan):** inbox chip + backend settled-signal; Hotspots tab marker + skeleton regen; draft-suggestion per-draft overlay marker (overlay not yet visually verified); the working→ready cross-fade polish and `aria-busy` host enumeration for the remaining surfaces.
 
 **Placeholder scan:** No TBD/TODO; every code step shows full code. Test steps that reuse an existing harness (DiffPane, FileTree) name the exact mock shape to set rather than restating the harness.
+
+**ce-doc-review dispositions (plan, round 1 — coherence/feasibility/design-lens):**
+- *Applied:* 204→null `.length` crash guard (feasibility, P1); test steps rewritten to the real `vi.spyOn(api,…)`/`result.current.e` harness + `ApiError(401,null,'')` arg order (feasibility, P1/P2); consumer-mock migration enumerated via `rg -l` in Tasks 1/2/5 (coherence, P1); Task 5 duplicate marker code consolidated to one block + `.fileTreeHeaderAi` base class added (coherence+design-lens, P2); dark `--ai-working-color` widened to oklch(0.78 0.18 195) for reduced-motion legibility (design-lens, P1); idle-dim moved to `--ai-idle-opacity` token (0.55/0.72) for dark WCAG-1.4.11 contrast (design-lens, P1); working→ready marker hue `transition: color 150ms` pulled into Slice 1 (design-lens, P2); header label flex-shrink/ellipsis (design-lens, P3); `fallback` + `not-subscribed` FileTree test cases added (coherence, P1).
+- *Deferred / not applied (with reason):* **aria-live inside aria-busy** on the summary loading branch (design-lens, P2) is **pre-existing** shipped behavior (AiSummaryCard.tsx:61-63), not introduced here; moving the live region out is a behavior change to existing code — flagged to owner, out of Slice-1 scope. **Skeleton cross-fade** (design-lens, P2): Slice 1 keeps a skeleton→content *swap*; the marker hue settles via the 150ms transition, which carries the visual continuity. A true opacity cross-fade (both states briefly mounted) is deferred. **Naming `allAnnotations` vs field `annotations`** (coherence, P2): intentional — the variable name is preserved so later references compile unchanged; noted in-step. **`hunkCounter === 1` skeleton placement** (design-lens residual): acceptable for Slice 1 (first rendered hunk → counter 1); whole-file/zero-hunk files simply show no skeleton.
 
 **Type consistency:** `AiLoadState` defined once (Task 1, `api/types.ts`); hooks return `{ state, annotations }` / `{ state, suggestions }`; consumers read `.annotations` / `.suggestions` and `.state`; `AiMarker` `state` prop values `'idle' | 'working'` used consistently across Tasks 3–6; `focusStatus: FileFocusStatus` matches the `useFileFocusResult` `status` field.
