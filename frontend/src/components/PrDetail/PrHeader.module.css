@@ -148,7 +148,8 @@
    FOOTGUN: this is an implicit allowlist — ANY new .prSubtitle child that is not
    .chip-ci / .chip-mergeability / .chip-draft will hide in collapsed mode. Add it to the keep
    list here if a future child must stay visible when collapsed. */
-.prHeader[data-collapsed] .prSubtitle
+.prHeader[data-collapsed]
+  .prSubtitle
   > :not(:global(.chip-ci)):not(:global(.chip-mergeability)):not(:global(.chip-draft)) {
   display: none;
 }

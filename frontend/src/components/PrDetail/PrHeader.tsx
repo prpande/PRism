@@ -27,7 +27,12 @@ import { SubmitDialog } from './SubmitDialog/SubmitDialog';
 import { OpenInGitHubButton } from './OpenInGitHubButton';
 import { ReviewActionButton } from './ReviewActionButton/ReviewActionButton';
 import { RefreshButton } from '../controls/RefreshButton';
-import { PR_GLYPH_PATH, PR_GLYPH_CLASS, PR_GLYPH_LABEL, type GlyphState } from '../shared/prStateGlyph';
+import {
+  PR_GLYPH_PATH,
+  PR_GLYPH_CLASS,
+  PR_GLYPH_LABEL,
+  type GlyphState,
+} from '../shared/prStateGlyph';
 import glyphStyles from '../shared/prStateGlyph.module.css';
 
 // #128/#203 — double-chevron, authored pointing UP (the expanded state, where

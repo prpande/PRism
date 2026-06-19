@@ -6,7 +6,12 @@ import { Avatar } from '../Avatar/Avatar';
 import { AiMarker } from '../Ai/AiMarker';
 import { AI_PROVENANCE_LABEL } from '../Ai/aiStrings';
 import { DiffBar } from './DiffBar';
-import { PR_GLYPH_PATH, PR_GLYPH_CLASS, PR_GLYPH_LABEL, type GlyphState } from '../shared/prStateGlyph';
+import {
+  PR_GLYPH_PATH,
+  PR_GLYPH_CLASS,
+  PR_GLYPH_LABEL,
+  type GlyphState,
+} from '../shared/prStateGlyph';
 import styles from './InboxRow.module.css';
 
 // ---- Leading PR-state octicons (Primer v19, 16-viewBox), every row ----
