@@ -321,4 +321,35 @@ public class PreferencesEndpointsTests
         (await resp.Content.ReadFromJsonAsync<JsonElement>())
             .GetProperty("error").GetString().Should().Be("body must be a JSON object");
     }
+
+    // #536: GET /api/preferences must project all nine feature flags onto ui.features, default true.
+    [Fact]
+    public async Task Get_preferences_projects_all_nine_features_default_true()
+    {
+        using var factory = new PRismWebApplicationFactory();   // the real factory name in this file (capital R)
+        var client = factory.CreateClient();
+
+        var body = await client.GetFromJsonAsync<JsonElement>("/api/preferences");
+        var features = body.GetProperty("ui").GetProperty("features");
+
+        features.GetProperty("summary").GetBoolean().Should().BeTrue();
+        features.GetProperty("fileFocus").GetBoolean().Should().BeTrue();
+        features.GetProperty("inboxRanking").GetBoolean().Should().BeTrue();
+        features.EnumerateObject().Count().Should().Be(9);
+    }
+
+    // #536: POST ui.ai.features.summary=false round-trips through GET ui.features.summary=false.
+    [Fact]
+    public async Task Post_feature_off_round_trips_through_get()
+    {
+        using var factory = new PRismWebApplicationFactory();   // same factory as the sibling test (capital R)
+        var client = factory.CreateClient();
+
+        var resp = await client.PostAsJsonAsync("/api/preferences",
+            new Dictionary<string, object> { ["ui.ai.features.summary"] = false });
+        resp.EnsureSuccessStatusCode();
+
+        var body = await client.GetFromJsonAsync<JsonElement>("/api/preferences");
+        body.GetProperty("ui").GetProperty("features").GetProperty("summary").GetBoolean().Should().BeFalse();
+    }
 }
