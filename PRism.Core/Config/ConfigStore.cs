@@ -409,6 +409,21 @@ public sealed class ConfigStore : IConfigStore, IDisposable
                 }
             }
 
+            // One-time onboarding backfill (spec §8.1). Runs ONLY when the key is absent on disk
+            // (OnboardingSeen is null). Once present, the stored value is authoritative — never
+            // recomputed (a per-load recompute would re-show the overlay forever to a Preview-keeper
+            // whose seen-write didn't persist). Mirrors the Consent/Features key-absence backfills above.
+            if (parsed.Ui.Ai is not null && parsed.Ui.Ai.OnboardingSeen is null)
+            {
+                var ai = parsed.Ui.Ai;
+                var consent = new AiConsentState();
+                consent.Set(ai.Consent ?? AppConfig.Default.Ui.Ai.Consent);
+                var seen = consent.IsConsented(AiProviderIds.Claude, AiDisclosure.CurrentVersion)
+                           || ai.Mode == AiMode.Off;
+                parsed = parsed with { Ui = parsed.Ui with { Ai = ai with { OnboardingSeen = seen } } };
+                rewritten = true;
+            }
+
             _current = parsed;
             LastLoadError = null;
 
