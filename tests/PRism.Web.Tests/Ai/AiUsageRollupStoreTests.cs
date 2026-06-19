@@ -119,6 +119,40 @@ public sealed class AiUsageRollupStoreTests : IDisposable
         store.IsDirty.Should().BeFalse();
     }
 
+    [Fact]
+    public void Fold_suppresses_cost_for_Fallback_even_when_record_carries_cost()
+    {
+        var store = NewStore();
+        store.Fold(Entry("fileFocus", "o/r#1", AiInteractionOutcome.Ok, true, 10, input: 100, cost: 0.02m));
+        store.Fold(Entry("fileFocus", "o/r#1", AiInteractionOutcome.Fallback, true, 10, cost: 0.05m));
+
+        var bucket = store.SnapshotBuckets().Should().ContainSingle().Subject;
+        bucket.EstimatedCostUsd.Should().Be(0.02m); // Fallback's 0.05 must be excluded
+        bucket.ProviderCalls.Should().Be(1);
+    }
+
+    [Fact]
+    public void Reset_marks_IsDirty_true()
+    {
+        var store = NewStore();
+        store.Fold(Entry("summary", "o/r#1", AiInteractionOutcome.Ok, true, 10, input: 100));
+        store.Persist(); // clears dirty
+        store.IsDirty.Should().BeFalse();
+        store.Reset();
+        store.IsDirty.Should().BeTrue();
+    }
+
+    [Fact]
+    public void Advance_with_same_offset_and_sourceLength_does_not_set_IsDirty()
+    {
+        var store = NewStore();
+        store.Fold(Entry("summary", "o/r#1", AiInteractionOutcome.Ok, true, 10, input: 100));
+        store.Persist(); // clears dirty; stored offset = 0, sourceLength = 0 (never advanced)
+        store.IsDirty.Should().BeFalse();
+        store.Advance(0, 0); // same as currently stored — no-op
+        store.IsDirty.Should().BeFalse();
+    }
+
     public void Dispose()
     {
         try { if (Directory.Exists(_dir)) Directory.Delete(_dir, recursive: true); }

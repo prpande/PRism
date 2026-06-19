@@ -88,7 +88,7 @@ internal sealed class AiUsageRollupStore
                 OutputTokens = b.OutputTokens + (r.OutputTokens ?? 0),
                 CacheReadInputTokens = b.CacheReadInputTokens + (r.CacheReadInputTokens ?? 0),
                 CacheCreationInputTokens = b.CacheCreationInputTokens + (r.CacheCreationInputTokens ?? 0),
-                EstimatedCostUsd = b.EstimatedCostUsd + (r.EstimatedCostUsd ?? 0m),
+                EstimatedCostUsd = b.EstimatedCostUsd + (isProviderCall ? (r.EstimatedCostUsd ?? 0m) : 0m),
                 ProviderCalls = b.ProviderCalls + (isProviderCall ? 1 : 0),
                 CacheHits = b.CacheHits + (isCacheHit ? 1 : 0),
             };
