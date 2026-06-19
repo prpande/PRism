@@ -1,0 +1,103 @@
+.lead {
+  margin: 0 0 var(--s-2);
+  line-height: 1.55;
+}
+
+.callout {
+  margin: var(--s-3) 0;
+  padding: var(--s-4);
+  background: var(--surface-2);
+  border: 1px solid var(--border-1);
+  border-left: 3px solid var(--warning);
+  border-radius: var(--radius-3);
+}
+.calloutHead {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s-2);
+  color: var(--text-1);
+  line-height: 1.5;
+}
+.calloutIcon {
+  flex: 0 0 auto;
+  margin-top: 1px;
+  color: var(--warning-fg);
+}
+.recipient {
+  font-weight: 600;
+}
+
+.dataList {
+  list-style: none;
+  margin: var(--s-3) 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1);
+}
+.dataItem {
+  position: relative;
+  padding-left: var(--s-4);
+  color: var(--text-2);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+}
+.dataItem::before {
+  content: '';
+  position: absolute;
+  left: 4px;
+  top: 0.62em;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--text-3);
+}
+
+.errBox {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s-2);
+  /* Symmetric vertical margin: `.modal-actions` has no top margin, so a top-only
+     margin would butt the error box directly against the buttons. */
+  margin: var(--s-3) 0;
+  padding: var(--s-3);
+  background: var(--danger-soft);
+  border: 1px solid var(--danger);
+  border-radius: var(--radius-2);
+  color: var(--danger-fg);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+}
+.errIcon {
+  flex: 0 0 auto;
+  margin-top: 1px;
+}
+
+.skeletonCallout {
+  margin: var(--s-3) 0;
+  padding: var(--s-4);
+  background: var(--surface-2);
+  border: 1px solid var(--border-1);
+  border-left: 3px solid var(--border-2);
+  border-radius: var(--radius-3);
+}
+
+/* Decline: composer-discard semantics — neutral outline at rest, soft-red fill
+   on hover. Mirrors `.composer-frame .composer-discard` without the frame dep. */
+.declineBtn {
+  border: 1px solid var(--border-2);
+  background: var(--surface-1);
+  color: var(--danger-fg);
+}
+.declineBtn:hover:not(:disabled) {
+  background: var(--danger-soft);
+  border-color: var(--danger);
+  color: var(--danger-fg);
+}
+
+/* Reserve width so the at-rest "Enable Live" → submitting "spinner + Enabling…"
+   swap doesn't reflow the button (and shift Decline). 7.5rem comfortably covers
+   both states. */
+.enableBtn {
+  min-width: 7.5rem;
+}
