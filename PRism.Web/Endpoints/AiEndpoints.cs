@@ -4,6 +4,7 @@ using PRism.AI.Contracts.Seams;
 using PRism.Core.Ai;
 using PRism.Core.Contracts;
 using PRism.Core.PrDetail;
+using PRism.Web.Ai;
 
 namespace PRism.Web.Endpoints;
 
@@ -70,6 +71,16 @@ internal static class AiEndpoints
                     .ConfigureAwait(false);
                 return suggestions.Count == 0 ? Results.NoContent() : Results.Ok(suggestions);
             });
+
+        // #517 — aggregated AI usage & spend over the durable rollup. Auth is the GLOBAL
+        // SessionTokenMiddleware (no per-route attribute, like the sibling AI endpoints). Deliberately
+        // NOT gated on AI mode (decision 9): past usage is worth showing even when AI is currently Off.
+        // Always 200 — an empty report (zeros + empty arrays) when no usage has been recorded yet
+        // (incl. before the first tail tick). No log I/O on the request path — reads the in-memory store.
+        app.MapGet("/api/ai/usage",
+            (string? window, AiUsageRollupStore store) =>
+                Results.Ok(AiUsageAggregator.Aggregate(
+                    store.SnapshotBuckets(), window ?? "7d", DateTimeOffset.UtcNow)));
 
         return app;
     }
