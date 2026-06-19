@@ -84,13 +84,11 @@ export function InboxRow({
   // so the AI provenance rides the row aria-label instead.
   const aiSuffix = showCategoryChip && enrichment?.categoryChip ? ` · ${AI_PROVENANCE_LABEL}` : '';
 
-  // For an open draft the state word becomes "draft" (occupies the slot "open" used);
-  // unread / CI suffixes unchanged; AI provenance never applies to drafts.
-  const openStateWord = pr.isDraft ? 'draft' : 'open';
-
+  // On an open row the state word is glyphState ('draft' for an open draft, else
+  // 'open'); merged/closed rows use doneState. Unread / CI suffixes unchanged.
   const ariaLabel = isDone
     ? `${pr.title} · ${pr.repo} · ${doneState}${aiSuffix}`
-    : `${pr.title} · ${pr.repo} · ${openStateWord} · iteration ${pr.iterationNumber}${
+    : `${pr.title} · ${pr.repo} · ${glyphState} · iteration ${pr.iterationNumber}${
         hasUnseenActivity ? ' · unread' : ''
       }${ciSuffix}${aiSuffix}`;
 
