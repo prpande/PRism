@@ -27,6 +27,9 @@ export interface UiPreferences {
   // #525 best-effort summary character cap (500–5000, default 1000). GET clamps for display; fed into
   // the summarizer prompt and stamped onto PrSummary.generatedMaxChars so the card can detect a cap change.
   summaryMaxChars: number;
+  // #536 per-feature AI enablement flags. Backend defaults all nine to true; treat as possibly-absent at
+  // runtime (older configs / test fixtures may omit). All read sites use `preferences.ui.features?.[k] ?? true`.
+  features?: AiFeatures;
 }
 
 export interface InboxSectionsPreferences {
@@ -63,6 +66,21 @@ export interface PreferencesResponse {
 }
 
 export interface AiCapabilities {
+  summary: boolean;
+  fileFocus: boolean;
+  hunkAnnotations: boolean;
+  preSubmitValidators: boolean;
+  composerAssist: boolean;
+  draftSuggestions: boolean;
+  draftReconciliation: boolean;
+  inboxEnrichment: boolean;
+  inboxRanking: boolean;
+}
+
+// Per-feature user-enablement flags (#536). Structurally identical to AiCapabilities
+// but a distinct concept: `features` = what the user turned on/off; `capabilities` =
+// what the AI mode makes available. The gate is capability && feature-enabled.
+export interface AiFeatures {
   summary: boolean;
   fileFocus: boolean;
   hunkAnnotations: boolean;

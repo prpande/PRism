@@ -62,6 +62,13 @@ public sealed class ConfigStore : IConfigStore, IDisposable
             // #525 best-effort summary character cap. Clamped on write (AiConfigBounds.ClampSummaryChars)
             // in the apply switch below; surfaced + read-clamped in PRism.Web and fed hot into the summarizer.
             ["ui.ai.summaryMaxChars"]            = ConfigFieldType.Int,
+            // #536 per-feature AI on/off toggles. Only the four Live-gated seams are settable;
+            // dormant keys (inboxRanking etc.) are intentionally absent so they are rejected here
+            // (unknown field → ConfigPatchException → 400) before reaching the switch.
+            ["ui.ai.features.summary"]           = ConfigFieldType.Bool,
+            ["ui.ai.features.fileFocus"]         = ConfigFieldType.Bool,
+            ["ui.ai.features.hunkAnnotations"]   = ConfigFieldType.Bool,
+            ["ui.ai.features.inboxEnrichment"]   = ConfigFieldType.Bool,
         };
 
     // #262 PR3: inbox.defaultSort is a string-typed key with a CLOSED value set (unlike
@@ -254,6 +261,14 @@ public sealed class ConfigStore : IConfigStore, IDisposable
                     _current with { Ui = ui with { Ai = ui.Ai with { HunkAnnotationCap = AiConfigBounds.ClampCap((int)value!) } } },
                 "ui.ai.summaryMaxChars" =>
                     _current with { Ui = ui with { Ai = ui.Ai with { SummaryMaxChars = AiConfigBounds.ClampSummaryChars((int)value!) } } },
+                "ui.ai.features.summary" =>
+                    _current with { Ui = ui with { Ai = ui.Ai with { Features = ui.Ai.Features.With("summary", (bool)value!) } } },
+                "ui.ai.features.fileFocus" =>
+                    _current with { Ui = ui with { Ai = ui.Ai with { Features = ui.Ai.Features.With("fileFocus", (bool)value!) } } },
+                "ui.ai.features.hunkAnnotations" =>
+                    _current with { Ui = ui with { Ai = ui.Ai with { Features = ui.Ai.Features.With("hunkAnnotations", (bool)value!) } } },
+                "ui.ai.features.inboxEnrichment" =>
+                    _current with { Ui = ui with { Ai = ui.Ai with { Features = ui.Ai.Features.With("inboxEnrichment", (bool)value!) } } },
                 _ => throw new ConfigPatchException($"unknown field: {key}")
             };
             await WriteToDiskAsync(ct).ConfigureAwait(false);

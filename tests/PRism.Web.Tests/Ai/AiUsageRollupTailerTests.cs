@@ -95,6 +95,22 @@ public sealed class AiUsageRollupTailerTests : IDisposable
     }
 
     [Fact]
+    public async Task StopAsync_after_Dispose_does_not_throw()
+    {
+        // Repro of the host-teardown race seen on CI: WebApplicationFactory disposes the
+        // singleton (Dispose() → _cts.Dispose()) BEFORE Host.StopAsync() runs, so StopAsync's
+        // _cts.CancelAsync() hit an already-disposed CancellationTokenSource and threw
+        // ObjectDisposedException out of shutdown. StopAsync must tolerate a prior Dispose().
+        var store = NewStore();
+        var tailer = NewTailer(store);
+        await tailer.StartAsync(default);
+        tailer.Dispose();
+
+        var act = async () => await tailer.StopAsync(default);
+        await act.Should().NotThrowAsync();
+    }
+
+    [Fact]
     public async Task StopAsync_does_not_throw_when_the_final_flush_fails()
     {
         // Arrange: create a FILE at "occupied", then point the store's dir INSIDE that path
