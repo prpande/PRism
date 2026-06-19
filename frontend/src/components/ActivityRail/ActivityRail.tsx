@@ -5,7 +5,6 @@ import { formatAge } from '../../utils/relativeTime';
 import { useActivity } from '../../hooks/useActivity';
 import type { ActivityItem, ActivityVerb, WatchedRepoActivity } from '../../api/types';
 import styles from './ActivityRail.module.css';
-import { SampleBadge } from '../Ai/SampleBadge';
 
 // Verb phrasing for ACTOR rows ("{actor} {verb} #n"). received_events always carry
 // an actor; these read as "alice reviewed #12", "bot commented on #5".
@@ -194,7 +193,6 @@ export function ActivityRail() {
         <header className={styles.head}>
           <span className={styles.titleGroup}>
             <span className={styles.title}>Activity</span>
-            <SampleBadge variant="region" />
           </span>
           <span className={styles.muted}>last 24h</span>
           <button

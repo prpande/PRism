@@ -8,6 +8,9 @@
 
 .aiHunk {
   display: flex;
+  /* Top-align so the (now un-boxed) leading AI marker sits beside the "AI" meta
+     label instead of stretching/centering against multi-line annotation text. */
+  align-items: flex-start;
   gap: var(--s-2);
   margin: var(--s-2) var(--s-4);
   padding: var(--s-2) var(--s-3);

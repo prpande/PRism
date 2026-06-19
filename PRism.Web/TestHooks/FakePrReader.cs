@@ -50,6 +50,7 @@ internal sealed class FakePrReader : IPrReader
                 CiSummary: "none",
                 IsMerged: _store.IsMerged,
                 IsClosed: _store.IsClosed,
+                IsDraft: _store.IsDraftPr,
                 OpenedAt: _store.Now.AddHours(-1),
                 MergedAt: mergedAt,
                 ClosedAt: closedAt,

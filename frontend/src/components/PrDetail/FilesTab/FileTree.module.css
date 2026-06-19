@@ -22,11 +22,36 @@
   overflow: visible;
 }
 .fileTreeHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-2);
   padding: var(--s-3) var(--s-4);
   border-bottom: 1px solid var(--border-1);
   font-size: var(--text-sm);
   font-weight: 500;
   color: var(--text-1);
+}
+.fileTreeHeaderLabel {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+  /* Label clips before the marker is lost when the count string is long. */
+  min-width: 0;
+  flex-shrink: 1;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+/* Base layout for the header marker; never shrinks away. */
+.fileTreeHeaderAi {
+  flex: none;
+}
+/* Persistent post-load marker reads as dull/"on here", not active. Opacity is a
+   theme-aware token (--ai-idle-opacity: 0.55 light / 0.72 dark from Task 3) so the
+   dimmed glyph keeps ≥3:1 against the dark surface (WCAG 1.4.11). */
+.fileTreeHeaderAiIdle {
+  opacity: var(--ai-idle-opacity);
 }
 .fileTreeEmpty {
   /* Composes with .muted global */

@@ -12,8 +12,10 @@ namespace PRism.Web.Tests.TestHooks;
 // plan calls out: /test/* leaking into Production.
 public class TestEndpointsRegistrationTests
 {
-    [Fact]
-    public async Task TestEndpoints_NotLiveInProduction()
+    [Theory]
+    [InlineData("/test/advance-head")]
+    [InlineData("/test/set-draft")]
+    public async Task TestEndpoints_NotLiveInProduction(string route)
     {
         // Boot the host with ASPNETCORE_ENVIRONMENT=Production. MapTestEndpoints
         // must short-circuit at registration and leave both routes unmapped.
@@ -38,9 +40,7 @@ public class TestEndpointsRegistrationTests
         var origin = client.BaseAddress?.GetLeftPart(UriPartial.Authority);
         if (!string.IsNullOrEmpty(origin)) client.DefaultRequestHeaders.Add("Origin", origin);
 
-        var resp = await client.PostAsJsonAsync(
-            "/test/advance-head",
-            new { newHeadSha = "4444444444444444444444444444444444444444", fileChanges = Array.Empty<object>() });
+        var resp = await client.PostAsJsonAsync(route, new { });
 
         // SPA fallback would happily serve index.html for non-/api/* unknown
         // routes. We accept either:
@@ -54,12 +54,12 @@ public class TestEndpointsRegistrationTests
         {
             var contentType = resp.Content.Headers.ContentType?.MediaType;
             contentType.Should().NotBe("application/json",
-                "/test/advance-head must not be live-routed in Production — got JSON response");
+                $"{route} must not be live-routed in Production — got JSON response");
         }
         else
         {
             ((int)resp.StatusCode).Should().BeInRange(400, 499,
-                "Production must reject /test/* with a client error, not register the route");
+                $"Production must reject {route} with a client error, not register the route");
         }
     }
 }

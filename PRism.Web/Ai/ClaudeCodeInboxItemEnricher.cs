@@ -84,7 +84,17 @@ internal sealed partial class ClaudeCodeInboxItemEnricher : IInboxItemEnricher, 
         foreach (var i in items)
         {
             var key = KeyOf(i);
-            if (_cache.TryGetValue(key, out var hit)) cached.Add(hit);
+            if (_cache.TryGetValue(key, out var hit))
+            {
+                cached.Add(hit);
+                // §4.0 — record a CacheHit so the usage rollup's hit-rate covers this seam too.
+                // Per-item PrRef (the enricher's cache is per-item), unlike the batched Ok records
+                // which use PrRef="batch". Mirrors the other three seams' cache-hit emission.
+                _interactionLog.Record(new AiInteractionRecord(
+                    Component: ComponentName, ProviderId: ClaudeProviderId, Model: EnrichmentModel,
+                    PrRef: i.Reference.PrId, HeadSha: null,
+                    Outcome: AiInteractionOutcome.CacheHit, Egressed: false));
+            }
             else if (_inflight.TryAdd(key, 0)) misses.Add(i); // claim the in-flight slot
             // else: already in flight in another batch — it will publish later
         }

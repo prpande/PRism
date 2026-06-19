@@ -252,10 +252,14 @@ describe('AiSummaryCard', () => {
     expect(screen.getByTestId('ai-marker')).toBeInTheDocument();
   });
 
-  it('does NOT render the label/marker on loading or error', () => {
-    const { rerender } = render(<AiSummaryCard summary={null} loading error={false} />);
-    expect(screen.queryByTestId('ai-marker')).toBeNull();
-    rerender(<AiSummaryCard summary={null} loading={false} error />);
+  it('shows a working AI marker while loading', () => {
+    render(<AiSummaryCard summary={null} loading error={false} />);
+    const marker = screen.getByTestId('ai-marker');
+    expect(marker.getAttribute('data-ai-state')).toBe('working');
+  });
+
+  it('does NOT render the label/marker on error', () => {
+    render(<AiSummaryCard summary={null} loading={false} error />);
     expect(screen.queryByTestId('ai-marker')).toBeNull();
   });
 });

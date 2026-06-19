@@ -6,22 +6,17 @@ import { Avatar } from '../Avatar/Avatar';
 import { AiMarker } from '../Ai/AiMarker';
 import { AI_PROVENANCE_LABEL } from '../Ai/aiStrings';
 import { DiffBar } from './DiffBar';
+import {
+  PR_GLYPH_PATH,
+  PR_GLYPH_CLASS,
+  PR_GLYPH_LABEL,
+  type GlyphState,
+} from '../shared/prStateGlyph';
 import styles from './InboxRow.module.css';
 
 // ---- Leading PR-state octicons (Primer v19, 16-viewBox), every row ----
+// Paths/classes/labels are now single-sourced from ../shared/prStateGlyph (Task 3 #501).
 type PrState = 'open' | 'merged' | 'closed';
-const PR_GLYPH_PATH: Record<PrState, string> = {
-  open: 'M1.5 3.25a2.25 2.25 0 1 1 3 2.122v5.256a2.251 2.251 0 1 1-1.5 0V5.372A2.25 2.25 0 0 1 1.5 3.25Zm5.677-.177L9.573.677A.25.25 0 0 1 10 .854V2.5h1A2.5 2.5 0 0 1 13.5 5v5.628a2.251 2.251 0 1 1-1.5 0V5a1 1 0 0 0-1-1h-1v1.646a.25.25 0 0 1-.427.177L7.177 3.427a.25.25 0 0 1 0-.354ZM3.75 2.5a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5Zm0 9.5a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5Zm8.25.75a.75.75 0 1 0 1.5 0 .75.75 0 0 0-1.5 0Z',
-  merged:
-    'M5.45 5.154A4.25 4.25 0 0 0 9.25 7.5h1.378a2.251 2.251 0 1 1 0 1.5H9.25A5.734 5.734 0 0 1 5 7.123v3.505a2.25 2.25 0 1 1-1.5 0V5.372a2.25 2.25 0 1 1 1.95-.218ZM4.25 13.5a.75.75 0 1 0 0-1.5.75.75 0 0 0 0 1.5Zm0-8a.75.75 0 1 0 0-1.5.75.75 0 0 0 0 1.5Zm8.5 4a.75.75 0 1 0 0-1.5.75.75 0 0 0 0 1.5Z',
-  closed:
-    'M10.72 1.227a.75.75 0 0 1 1.06 0l.97.97.97-.97a.75.75 0 1 1 1.06 1.061l-.97.97.97.97a.75.75 0 1 1-1.06 1.06l-.97-.97-.97.97a.75.75 0 1 1-1.06-1.06l.97-.97-.97-.97a.75.75 0 0 1 0-1.06Zm-9.22 2.02a2.25 2.25 0 1 1 3 2.123v5.256a2.251 2.251 0 1 1-1.5 0V5.372A2.25 2.25 0 0 1 1.5 3.25Zm10.5 7.503a2.25 2.25 0 1 1-1.5 0V8.755a.75.75 0 0 1 1.5 0ZM3.75 2.5a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5Zm0 9.5a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5Zm8.25.75a.75.75 0 1 0 1.5 0 .75.75 0 0 0-1.5 0Z',
-};
-const PR_GLYPH_CLASS: Record<PrState, string> = {
-  open: 'prOpen',
-  merged: 'prMerged',
-  closed: 'prClosed',
-};
 
 // ---- CI title-suffix octicons (bare check / cross, no enclosing circle) ----
 type VisibleCi = 'passing' | 'failing' | 'pending';
@@ -80,6 +75,12 @@ export function InboxRow({
 
   const prState: PrState = doneState ?? 'open';
 
+  // #501 — display discriminant for the status glyph. Drafts only matter while open
+  // (merged/closed win via precedence); the PrState type stays open/merged/closed.
+  // Same shape as PrHeader's derivation (prState === 'open' ⟺ !isDone here) so the
+  // two read identically across surfaces.
+  const glyphState: GlyphState = pr.isDraft && prState === 'open' ? 'draft' : prState;
+
   // CI rides the aria-label (glyph is aria-hidden); open rows only. Reuses
   // CI_GLYPH_LABEL so the suffix and the <title> tooltip never drift.
   const ciSuffix = !isDone && pr.ci !== 'none' ? ` · ${CI_GLYPH_LABEL[pr.ci]}` : '';
@@ -88,9 +89,11 @@ export function InboxRow({
   // so the AI provenance rides the row aria-label instead.
   const aiSuffix = showCategoryChip && enrichment?.categoryChip ? ` · ${AI_PROVENANCE_LABEL}` : '';
 
+  // On an open row the state word is glyphState ('draft' for an open draft, else
+  // 'open'); merged/closed rows use doneState. Unread / CI suffixes unchanged.
   const ariaLabel = isDone
     ? `${pr.title} · ${pr.repo} · ${doneState}${aiSuffix}`
-    : `${pr.title} · ${pr.repo} · open · iteration ${pr.iterationNumber}${
+    : `${pr.title} · ${pr.repo} · ${glyphState} · iteration ${pr.iterationNumber}${
         hasUnseenActivity ? ' · unread' : ''
       }${ciSuffix}${aiSuffix}`;
 
@@ -104,16 +107,16 @@ export function InboxRow({
     >
       <span className={styles.status}>
         <svg
-          className={`${styles.prState} ${styles[PR_GLYPH_CLASS[prState]]}`}
-          data-pr-state={prState}
+          className={`${styles.prState} ${styles[PR_GLYPH_CLASS[glyphState]]}`}
+          data-pr-state={glyphState}
           viewBox="0 0 16 16"
           width="14"
           height="14"
           fill="currentColor"
           aria-hidden="true"
         >
-          <title>{`PR ${prState}`}</title>
-          <path d={PR_GLYPH_PATH[prState]} />
+          <title>{PR_GLYPH_LABEL[glyphState]}</title>
+          <path d={PR_GLYPH_PATH[glyphState]} />
         </svg>
       </span>
       <span className={styles.midCol}>

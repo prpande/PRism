@@ -116,7 +116,7 @@ vi.mock('../../hooks/useAiSummary', () => ({
 }));
 
 vi.mock('../../hooks/useAiDraftSuggestions', () => ({
-  useAiDraftSuggestions: () => null,
+  useAiDraftSuggestions: () => ({ state: 'empty', suggestions: null }),
 }));
 
 vi.mock('../../hooks/useFilesTabShortcuts', () => ({

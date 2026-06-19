@@ -87,7 +87,7 @@ afterEach(() => {
 // Default safe values for mocked AI hooks — individual tests override as needed.
 beforeEach(() => {
   vi.mocked(useAiGate).mockReturnValue(false);
-  vi.mocked(useAiDraftSuggestions).mockReturnValue(null);
+  vi.mocked(useAiDraftSuggestions).mockReturnValue({ state: 'empty', suggestions: null });
 });
 
 describe('UnresolvedPanel', () => {
@@ -318,16 +318,17 @@ function buildSessionFixture(): ReviewSessionDto {
 describe('UnresolvedPanel — StaleDraftRow AI suggestion (D48)', () => {
   it('renders no stale-draft-ai-suggestion when gate is off', () => {
     vi.mocked(useAiGate).mockReturnValue(false);
-    vi.mocked(useAiDraftSuggestions).mockReturnValue(null);
+    vi.mocked(useAiDraftSuggestions).mockReturnValue({ state: 'empty', suggestions: null });
     renderPanel(buildSessionFixture());
     expect(screen.queryByTestId('stale-draft-ai-suggestion')).not.toBeInTheDocument();
   });
 
   it('renders .stale-ai with sparkles icon + "AI suggestion" label + body when suggestion matches anchor', () => {
     vi.mocked(useAiGate).mockReturnValue(true);
-    vi.mocked(useAiDraftSuggestions).mockReturnValue([
-      { filePath: 'src/Calc.cs', lineNumber: 3, body: 'Worth a comment here?' },
-    ]);
+    vi.mocked(useAiDraftSuggestions).mockReturnValue({
+      state: 'ready',
+      suggestions: [{ filePath: 'src/Calc.cs', lineNumber: 3, body: 'Worth a comment here?' }],
+    });
     renderPanel(buildSessionFixture());
     const ai = screen.getByTestId('stale-draft-ai-suggestion');
     expect(ai).toBeInTheDocument();
@@ -341,9 +342,10 @@ describe('UnresolvedPanel — StaleDraftRow AI suggestion (D48)', () => {
 
   it('does NOT render stale-draft-ai-suggestion when suggestion does not match the draft anchor', () => {
     vi.mocked(useAiGate).mockReturnValue(true);
-    vi.mocked(useAiDraftSuggestions).mockReturnValue([
-      { filePath: 'src/Other.cs', lineNumber: 99, body: 'Mismatched anchor.' },
-    ]);
+    vi.mocked(useAiDraftSuggestions).mockReturnValue({
+      state: 'ready',
+      suggestions: [{ filePath: 'src/Other.cs', lineNumber: 99, body: 'Mismatched anchor.' }],
+    });
     renderPanel(buildSessionFixture());
     expect(screen.queryByTestId('stale-draft-ai-suggestion')).not.toBeInTheDocument();
   });

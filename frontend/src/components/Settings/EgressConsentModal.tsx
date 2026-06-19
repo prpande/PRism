@@ -1,12 +1,63 @@
 import { useEffect, useRef, useState } from 'react';
 import { Modal } from '../Modal/Modal';
 import { Skeleton } from '../Skeleton/Skeleton';
+import { Spinner } from '../Spinner';
+import { SparkIcon } from '../Ai/SparkIcon';
 import { getEgressDisclosure, postAiConsent, type EgressDisclosure } from '../../api/aiConsent';
+import styles from './EgressConsentModal.module.css';
 
 interface Props {
   open: boolean;
   onAccept: () => void;
   onDecline: () => void;
+}
+
+// Decorative inline glyphs (aria-hidden) — no central icon set in this repo.
+function WarningTriangleIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      width={16}
+      height={16}
+      viewBox="0 0 16 16"
+      fill="none"
+      aria-hidden="true"
+      className={className}
+    >
+      <path
+        d="M8 1.75 14.5 13.5H1.5L8 1.75Z"
+        stroke="currentColor"
+        strokeWidth="1.3"
+        strokeLinejoin="round"
+      />
+      <path d="M8 6.25V9.5" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+      <circle cx="8" cy="11.5" r="0.85" fill="currentColor" />
+    </svg>
+  );
+}
+function CircleAlertIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      width={16}
+      height={16}
+      viewBox="0 0 16 16"
+      fill="none"
+      aria-hidden="true"
+      className={className}
+    >
+      <circle cx="8" cy="8" r="6.25" stroke="currentColor" strokeWidth="1.3" />
+      <path d="M8 4.75V8.5" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+      <circle cx="8" cy="10.75" r="0.85" fill="currentColor" />
+    </svg>
+  );
+}
+
+function ErrorBox({ message }: { message: string }) {
+  return (
+    <div className={styles.errBox} role="alert">
+      <CircleAlertIcon className={styles.errIcon} />
+      <span>{message}</span>
+    </div>
+  );
 }
 
 export function EgressConsentModal({ open, onAccept, onDecline }: Props) {
@@ -60,14 +111,14 @@ export function EgressConsentModal({ open, onAccept, onDecline }: Props) {
     <Modal
       open={open}
       title="Enable Live AI"
+      titleIcon={<SparkIcon />}
+      align="center"
       onClose={onDecline}
       defaultFocus="cancel"
       role="dialog"
     >
       {failed ? (
-        <div role="alert" aria-live="assertive">
-          Couldn&apos;t load the data-sharing disclosure. Close and try again.
-        </div>
+        <ErrorBox message="Couldn't load the data-sharing disclosure. Close and try again." />
       ) : !disclosure ? (
         <div aria-busy="true">
           <span className="sr-only" aria-live="polite">
@@ -75,29 +126,40 @@ export function EgressConsentModal({ open, onAccept, onDecline }: Props) {
           </span>
           <Skeleton height={14} />
           <Skeleton height={14} width="70%" />
+          <div className={styles.skeletonCallout}>
+            <Skeleton height={14} width="55%" />
+            <Skeleton height={12} width="80%" />
+            <Skeleton height={12} width="45%" />
+          </div>
         </div>
       ) : (
         <div>
-          <p>Live AI generates a real, diff-grounded summary of this pull request.</p>
-          <p>
-            To do that, the following leaves your device to <strong>{disclosure.recipient}</strong>:
+          <p className={styles.lead}>
+            Live AI generates a real, diff-grounded summary of this pull request.
           </p>
-          <ul>
-            {disclosure.dataCategories.map((c) => (
-              <li key={c}>{c}</li>
-            ))}
-          </ul>
+          <div className={styles.callout}>
+            <div className={styles.calloutHead}>
+              <WarningTriangleIcon className={styles.calloutIcon} />
+              <span>
+                Sent off your device to{' '}
+                <strong className={styles.recipient}>{disclosure.recipient}</strong>:
+              </span>
+            </div>
+            <ul className={styles.dataList}>
+              {disclosure.dataCategories.map((c) => (
+                <li key={c} className={styles.dataItem}>
+                  {c}
+                </li>
+              ))}
+            </ul>
+          </div>
         </div>
       )}
-      {submitError && (
-        <div role="alert" aria-live="assertive">
-          Couldn&apos;t enable Live AI. Please try again.
-        </div>
-      )}
+      {submitError && <ErrorBox message="Couldn't enable Live AI. Please try again." />}
       <div className="modal-actions row gap-2">
         <button
           type="button"
-          className="btn btn-secondary"
+          className={`btn ${styles.declineBtn}`}
           data-modal-role="cancel"
           onClick={onDecline}
         >
@@ -105,12 +167,19 @@ export function EgressConsentModal({ open, onAccept, onDecline }: Props) {
         </button>
         <button
           type="button"
-          className="btn btn-primary"
+          className={`btn btn-success ${styles.enableBtn}`}
           data-modal-role="primary"
           onClick={() => void accept()}
           disabled={!disclosure || failed || submitting}
         >
-          Enable Live
+          {submitting ? (
+            <>
+              <Spinner size="sm" decorative />
+              Enabling…
+            </>
+          ) : (
+            'Enable Live'
+          )}
         </button>
       </div>
     </Modal>

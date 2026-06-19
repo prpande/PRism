@@ -938,4 +938,30 @@ public sealed class InboxRefreshOrchestratorTests
         orch.Current!.Enrichments.Should().NotContainKey("octo/repo#999");
         published.OfType<InboxUpdated>().Should().NotBeEmpty(); // fired despite ComputeDiff ignoring enrichments
     }
+
+    [Fact]
+    public async Task RefreshAsync_keeps_authored_draft_visible_in_authored_by_me_with_IsDraft_true()
+    {
+        // #501 visibility guard: an authored draft must survive enrichment + dedup +
+        // materialization and remain in the authored-by-me section with IsDraft=true.
+        // Drafts are excluded from AI enrichment INPUT only (RefreshAsync_excludes_...),
+        // never from the snapshot the user sees.
+        var sections = new FakeSectionQueryRunner(
+            _ => new Dictionary<string, IReadOnlyList<RawPrInboxItem>>
+            {
+                ["authored-by-me"] = new[] { RawOpen(1), RawDraft(2) },
+            });
+
+        var configFake = ConfigStoreFake(ConfigWithSections(
+            reviewRequested: false, awaitingAuthor: false, authoredByMe: true,
+            mentioned: false));
+        using var sut = Build(config: configFake, sections: sections);
+
+        await sut.RefreshAsync(CancellationToken.None);
+
+        var authored = sut.Current!.Sections["authored-by-me"];
+        authored.Select(i => i.Reference.Number).Should().BeEquivalentTo(new[] { 1, 2 });
+        authored.Single(i => i.Reference.Number == 2).IsDraft.Should().BeTrue();
+        authored.Single(i => i.Reference.Number == 1).IsDraft.Should().BeFalse();
+    }
 }

@@ -24,4 +24,5 @@ public sealed record Pr(
     DateTimeOffset? MergedAt = null,
     DateTimeOffset? ClosedAt = null,
     string? AvatarUrl = null,
-    string? HtmlUrl = null);
+    string? HtmlUrl = null,
+    bool IsDraft = false);

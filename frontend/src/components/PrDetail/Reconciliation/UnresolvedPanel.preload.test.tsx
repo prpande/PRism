@@ -26,7 +26,7 @@ vi.mock('../../../hooks/useAiGate', () => ({
   useIsSampleMode: () => false,
 }));
 vi.mock('../../../hooks/useAiDraftSuggestions', () => ({
-  useAiDraftSuggestions: () => null,
+  useAiDraftSuggestions: () => ({ state: 'empty', suggestions: null }),
 }));
 
 const PR_REF = { owner: 'acme', repo: 'api', number: 123 };

@@ -12,10 +12,6 @@
   background: color-mix(in oklch, var(--accent-soft) 70%, transparent);
   border: 1px dashed color-mix(in oklch, var(--accent) 45%, transparent);
 }
-/* Region variant: same pill, more separation when it sits on a section header. */
-.region {
-  margin-left: var(--s-2);
-}
 /* Solid variant: drop the dashed border + solid fill so the pill stays legible
    inside an already-dashed container (AiHunkAnnotation). */
 .solid {
