@@ -78,4 +78,19 @@ public class ParseViewerReviewTests
         var pull = Pull($"[{{\"author\":42}},{Review("me", "APPROVED", "2026-01-01T00:00:00Z", "a")}]");
         Assert.Equal(ReviewState.Approved, GitHubPrParser.ParseViewerReview(pull, "me")!.State);
     }
+
+    [Fact]
+    public void Skips_node_with_unparseable_submittedAt_via_catch()
+    {
+        // "not-a-date" is String-kind, so it passes the value-kind gate and reaches
+        // GetDateTimeOffset(), which throws FormatException → InboxJsonGuard catch. This
+        // exercises the catch path (the {"author":42} case above is a clean value-kind skip
+        // that never enters the try body).
+        var pull = Pull($"[{Review("me", "APPROVED", "not-a-date", "bad")}," +
+                        $"{Review("me", "COMMENTED", "2026-01-01T00:00:00Z", "good")}]");
+        var r = GitHubPrParser.ParseViewerReview(pull, "me");
+        Assert.NotNull(r);
+        Assert.Equal(ReviewState.Commented, r!.State);
+        Assert.Equal("good", r.CommitSha);
+    }
 }

@@ -143,6 +143,11 @@ export function ReviewActionButton(props: ReviewActionButtonProps) {
         <span
           className={`${styles.caption}${caption?.stale ? ` ${styles.captionStale}` : ''}`}
           data-testid="review-action-caption"
+          // Spec §3 a11y: announce the caption when it CHANGES (the reviewed→"was"
+          // transition as a draft verdict is picked) so SR users learn the draft
+          // differs from their prior verdict. Initial mount isn't announced by
+          // aria-live; the static "reviewed" status is carried by the main aria-label.
+          aria-live="polite"
         >
           {captionText}
         </span>

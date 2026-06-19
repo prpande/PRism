@@ -203,6 +203,21 @@ describe('ReviewActionButton — submitted-review caption', () => {
     expect(screen.getByTestId('review-action-caption')).toHaveTextContent(/was Approved/);
   });
 
+  it('announces caption changes to screen readers via an aria-live region', () => {
+    render(
+      <ReviewActionButton
+        {...props({
+          viewerReview: {
+            state: 'approved',
+            submittedAt: new Date().toISOString(),
+            commitSha: 'x',
+          },
+        })}
+      />,
+    );
+    expect(screen.getByTestId('review-action-caption')).toHaveAttribute('aria-live', 'polite');
+  });
+
   it('submitted-status main button opens the menu (change)', async () => {
     render(
       <ReviewActionButton
