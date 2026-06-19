@@ -69,20 +69,26 @@ test('fresh user sees onboarding dialog over the inbox; "Maybe later" persists s
 });
 
 test('returning user (onboardingSeen=true) sees no overlay on the inbox', async ({ page }) => {
-  test.setTimeout(60_000);
+  test.setTimeout(90_000);
 
-  // Mark onboardingSeen=true before loading the inbox. The PAT from test 1 in
-  // this serial run persists in the backend's TokenStore, so page.goto('/') below
-  // lands on the inbox (not /welcome or /setup). If this test somehow runs before
-  // test 1 (e.g. standalone --grep), the request will 401 and the expect(resp.ok())
-  // assertion below will surface the dependency clearly.
+  // Authenticate in THIS test's browser context. The session token is a
+  // per-context cookie — page.request.post('/api/preferences') only carries it
+  // once the SPA's /setup flow has run in this same context (page.request shares
+  // the page's cookie jar). Running setup here makes this test self-contained
+  // rather than relying on test 1's session leaking across tests.
+  await setupAndOpenScenarioPr(page);
+
+  // Mark onboardingSeen=true (returning user). With the session established above
+  // this POST authenticates (no 401). The flat dotted-path single-field shape +
+  // loopback Origin match the parity-baselines.spec.ts precedent.
   const resp = await page.request.post(`${BACKEND_ORIGIN}/api/preferences`, {
     data: { 'ui.ai.onboardingSeen': true },
     headers: { 'Content-Type': 'application/json', Origin: BACKEND_ORIGIN },
   });
-  // Non-200 → no auth session (test 1 must run first, or standalone re-auth needed).
   expect(resp.ok(), `POST onboardingSeen=true failed: ${resp.status()}`).toBe(true);
 
+  // Re-mount the SPA so usePreferences refetches and picks up seen=true (it only
+  // refetches on mount or window focus — a bare POST leaves React state stale).
   await page.goto('/');
   await page.waitForURL('/');
 

@@ -219,7 +219,9 @@ test.describe('onboarding dialog — 480px viewport height (short-viewport scrol
     await expect(dialog).toBeVisible({ timeout: 30_000 });
 
     // Both critical elements must be visible (in-viewport) without any scroll.
-    const segmentedControl = dialog.getByRole('group', { name: 'AI mode' });
+    // SegmentedControl renders role="radiogroup" with aria-label="AI mode"
+    // (SegmentedControl.tsx) — NOT role="group".
+    const segmentedControl = dialog.getByRole('radiogroup', { name: 'AI mode' });
     await expect(segmentedControl).toBeVisible({ timeout: 10_000 });
     // The lead is the first <p> inside the dialog.
     const lead = dialog.locator('p').first();
