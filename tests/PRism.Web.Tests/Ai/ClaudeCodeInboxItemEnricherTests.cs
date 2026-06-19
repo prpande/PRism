@@ -108,6 +108,42 @@ public sealed class ClaudeCodeInboxItemEnricherTests
         provider, new FakeTokenUsageTracker(), new FakeAiInteractionLog(), bus,
         consent ?? Consented(), NullLogger<ClaudeCodeInboxItemEnricher>.Instance);
 
+    private static (ClaudeCodeInboxItemEnricher Sut, FakeAiInteractionLog Log) BuildWithLog(
+        ILlmProvider provider)
+    {
+        var log = new FakeAiInteractionLog();
+        var sut = new ClaudeCodeInboxItemEnricher(
+            provider, new FakeTokenUsageTracker(), log, new CapturingBus(),
+            Consented(), NullLogger<ClaudeCodeInboxItemEnricher>.Instance);
+        return (sut, log);
+    }
+
+    [Fact]
+    public async Task EnrichAsync_records_CacheHit_audit_record_on_cache_serve()
+    {
+        var provider = new FakeLlmProvider("""[{"prId":"octo/repo#1","category":"feature"}]""");
+        var (sut, log) = BuildWithLog(provider);
+
+        // First call populates the cache via the background batch.
+        await sut.EnrichAsync(new[] { Item(1, "Add X", "desc") }, default);
+        await sut.DrainPendingAsync();
+        var okCount = log.Records.Count(r => r.Outcome == AiInteractionOutcome.Ok);
+
+        // Second call with identical (Reference, Title, Description) is a cache hit.
+        var second = await sut.EnrichAsync(new[] { Item(1, "Add X", "desc") }, default);
+
+        second.Single().CategoryChip.Should().Be("Feature");
+        provider.CallCount.Should().Be(1); // no extra egress
+        var cacheHits = log.Records
+            .Where(r => r.Outcome == AiInteractionOutcome.CacheHit).ToList();
+        cacheHits.Should().ContainSingle();
+        cacheHits[0].Component.Should().Be("inboxEnrichment");
+        cacheHits[0].PrRef.Should().Be("octo/repo#1"); // per-item PrRef, NOT "batch"
+        cacheHits[0].Egressed.Should().BeFalse();
+        cacheHits[0].EstimatedCostUsd.Should().BeNull();
+        log.Records.Count(r => r.Outcome == AiInteractionOutcome.Ok).Should().Be(okCount); // no new Ok
+    }
+
     [Fact]
     public async Task EnrichBatch_parses_and_normalizes_categories()
     {
