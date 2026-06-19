@@ -16,6 +16,7 @@ import {
 import { DiffTruncationBanner } from './DiffTruncationBanner';
 import { WordDiffOverlay } from './WordDiffOverlay';
 import { AiHunkAnnotation } from './AiHunkAnnotation';
+import { AiHunkSkeleton } from './AiHunkSkeleton';
 import { useAiGate } from '../../../../hooks/useAiGate';
 import { useAiHunkAnnotations } from '../../../../hooks/useAiHunkAnnotations';
 import { useWholeFileContent } from '../../../../hooks/useWholeFileContent';
@@ -190,6 +191,10 @@ export function DiffPane({
     }
     return m;
   }, [allAnnotations, selectedPath]);
+
+  // Annotator's OWN loading state drives the per-file cue (spec §3): robust even when
+  // file-focus errors or flagged zero files. Only while a file is open and enabled.
+  const annotationsLoading = aiAnnotations.state === 'loading' && !!selectedPath;
 
   // Hook ordering rule: isSplit must be computed before the hook call so it
   // can be passed as a parameter.
@@ -432,6 +437,14 @@ export function DiffPane({
                 </tr>,
               );
             }
+          } else if (annotationsLoading && hunkCounter === 0) {
+            rows.push(
+              <tr key={`ann-loading-${idx}`} className={styles.aiHunkRow}>
+                <td colSpan={colSpan}>
+                  <AiHunkSkeleton />
+                </td>
+              </tr>,
+            );
           }
         }
         // Whole-file ok mode: emit nothing for the hunk-header itself.
@@ -542,6 +555,14 @@ export function DiffPane({
                 </tr>,
               );
             }
+          } else if (annotationsLoading && hunkCounter === 0) {
+            rows.push(
+              <tr key={`ann-loading-${idx}`} className={styles.aiHunkRow}>
+                <td colSpan={colSpan}>
+                  <AiHunkSkeleton />
+                </td>
+              </tr>,
+            );
           }
         }
         continue;

@@ -661,6 +661,40 @@ describe('DiffPane', () => {
     const colgroup = diffPane.querySelector('colgroup');
     expect(colgroup).toBeNull();
   });
+
+  it('renders the hunk-annotation skeleton while the annotator is loading for the open file', () => {
+    vi.mocked(useAiGate).mockReturnValue(true);
+    vi.mocked(useAiHunkAnnotations).mockReturnValue({ state: 'loading', annotations: null });
+    render(
+      <DiffPane
+        prRef={samplePrRef}
+        selectedPath="src/main.ts"
+        file={sampleFile}
+        diffMode="unified"
+        truncated={false}
+        reviewThreads={[]}
+        prUrl=""
+      />,
+    );
+    expect(screen.getByTestId('ai-hunk-skeleton')).toBeInTheDocument();
+  });
+
+  it('does not render the hunk-annotation skeleton when annotator state is empty', () => {
+    vi.mocked(useAiGate).mockReturnValue(true);
+    vi.mocked(useAiHunkAnnotations).mockReturnValue({ state: 'empty', annotations: null });
+    render(
+      <DiffPane
+        prRef={samplePrRef}
+        selectedPath="src/main.ts"
+        file={sampleFile}
+        diffMode="unified"
+        truncated={false}
+        reviewThreads={[]}
+        prUrl=""
+      />,
+    );
+    expect(screen.queryByTestId('ai-hunk-skeleton')).not.toBeInTheDocument();
+  });
 });
 
 function makeModifiedFile(hunks: FileChange['hunks']): FileChange {
