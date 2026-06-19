@@ -421,6 +421,7 @@ export function PrDetailView({
         headShaDrift={updates.headShaChanged}
         currentHeadSha={data?.pr.headSha}
         prState={data?.pr.isMerged ? 'merged' : data?.pr.isClosed ? 'closed' : 'open'}
+        isDraft={data?.pr.isDraft ?? false}
         mergedAt={data?.pr.mergedAt}
         closedAt={data?.pr.closedAt}
         readOnly={presence.readOnly}

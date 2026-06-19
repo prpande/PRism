@@ -186,6 +186,7 @@ export interface PrDetailPr {
   ciSummary: string;
   isMerged: boolean;
   isClosed: boolean;
+  isDraft: boolean;
   openedAt: string;
   mergedAt: string | null;
   closedAt: string | null;
