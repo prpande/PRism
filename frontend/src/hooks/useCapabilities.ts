@@ -1,4 +1,4 @@
-import type { AiCapabilities } from '../api/types';
+import type { AiCapabilities, AiFeatures, AiMode } from '../api/types';
 import { usePreferences } from './usePreferences';
 
 // #221 / PR3a: the FE derives AI capabilities LOCALLY from the shared, reactive
@@ -68,6 +68,34 @@ const LIVE_CAPABILITIES: AiCapabilities = {
 // refetch } return shape useAiGate consumes; no current caller invokes it.
 const noopRefetch = async (): Promise<void> => {};
 
+// Pure helper: derive and mask capabilities from mode + per-feature flags.
+// `aiMode === undefined → null` (mirrors the `!preferences?.ui` guard in the hook).
+// `features === undefined` → fail-open: each key defaults to true via `?? true`.
+export function deriveCapabilities(
+  aiMode: AiMode | undefined,
+  features: AiFeatures | undefined,
+): AiCapabilities | null {
+  const base =
+    aiMode === undefined
+      ? null
+      : aiMode === 'off'
+        ? ALL_OFF
+        : aiMode === 'live'
+          ? LIVE_CAPABILITIES
+          : ALL_ON; // preview → every surface shows SAMPLE content (SampleBadge marks it)
+  if (base === null) return null;
+  // Invariant: AiCapabilities and AiFeatures are structurally parallel (the same nine keys).
+  // We iterate the capability keys and mask each by its same-named feature flag. If the two
+  // types ever diverge, a key in one but not the other would silently skip masking — keep them
+  // in lockstep (both mirror AiFeaturesConfig.AllOn).
+  return Object.fromEntries(
+    (Object.keys(base) as (keyof AiCapabilities)[]).map((k) => [
+      k,
+      base[k] && (features?.[k] ?? true),
+    ]),
+  ) as unknown as AiCapabilities;
+}
+
 export function useCapabilities() {
   const { preferences, error } = usePreferences();
   // Guard on `preferences?.ui` (not just `preferences`): until the shared store has
@@ -76,10 +104,6 @@ export function useCapabilities() {
   // pre-#221 loading state.
   const capabilities = !preferences?.ui
     ? null
-    : preferences.ui.aiMode === 'off'
-      ? ALL_OFF
-      : preferences.ui.aiMode === 'live'
-        ? LIVE_CAPABILITIES
-        : ALL_ON; // preview → every surface shows SAMPLE content (SampleBadge marks it)
+    : deriveCapabilities(preferences.ui.aiMode, preferences.ui.features);
   return { capabilities, error, refetch: noopRefetch };
 }

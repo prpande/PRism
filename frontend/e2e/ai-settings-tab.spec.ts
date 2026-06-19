@@ -182,6 +182,12 @@ async function setupSettingsMocks(page: import('@playwright/test').Page) {
           store.ui.summaryMaxChars = value;
         } else if (key === 'ui.ai.mode' && typeof value === 'string') {
           store.ui.aiMode = value as 'off' | 'preview' | 'live';
+        } else if (key.startsWith('ui.ai.features.') && typeof value === 'boolean') {
+          // #536 per-feature toggle: mutate the features sub-object so the post-action
+          // GET re-serves the toggled flag. store.ui.features is guaranteed to exist
+          // (makeAiPreferences → makeDefaultPreferences now always includes all nine keys).
+          const seam = key.slice('ui.ai.features.'.length) as keyof typeof store.ui.features;
+          if (store.ui.features) store.ui.features[seam] = value;
         }
       }
     }
@@ -416,4 +422,308 @@ test('ai-tab: timeout 503 toast deep-links to /settings/ai over the mounted PR',
   // The PR is STILL mounted behind the modal — its header is in the DOM, NOT torn
   // down to the Inbox.
   await expect(page.locator('[data-testid="pr-header"]')).toBeAttached();
+});
+
+// ---------------------------------------------------------------------------
+// #536: AI features accordion — Live toggle, Preview gate, real-wire gate
+// ---------------------------------------------------------------------------
+
+test('ai-tab: Live — expand AI features, toggle Summary off, POST fires + store reflects it', async ({
+  page,
+}) => {
+  test.setTimeout(60_000);
+  const { store } = await setupSettingsMocks(page);
+
+  await page.goto('/settings/ai');
+  const dialog = page.getByRole('dialog', { name: 'Settings' });
+  await expect(dialog).toBeVisible({ timeout: 30_000 });
+
+  // AI pane should be open (navigated directly to /settings/ai).
+  await expect(page.getByRole('heading', { name: 'AI', level: 2 })).toBeVisible();
+
+  // Expand the "AI features" disclosure button (Live-only).
+  const featuresBtn = dialog.getByRole('button', { name: /AI features/i });
+  await expect(featuresBtn).toBeVisible({ timeout: 10_000 });
+  await featuresBtn.click();
+
+  // The AI features group should now be visible.
+  const featuresGroup = dialog.getByRole('group', { name: 'AI features' });
+  await expect(featuresGroup).toBeVisible();
+
+  // Find the "Summary" switch and toggle it off.
+  const summarySwitch = featuresGroup.getByRole('switch', { name: /summary/i });
+  await expect(summarySwitch).toBeVisible();
+  // Default is on (checked). Switch is an <input type="checkbox" role="switch"> so
+  // Playwright's .isChecked() / toBeChecked() reads the native checked property.
+  await expect(summarySwitch).toBeChecked();
+
+  // Wait for the POST that carries { "ui.ai.features.summary": false }.
+  // waitForResponse resolves AFTER the route handler runs (store mutated),
+  // avoiding a race where the store assertion runs before the mutation.
+  const postPromise = page.waitForResponse(
+    (r) => r.url().includes('/api/preferences') && r.request().method() === 'POST',
+  );
+  await summarySwitch.click();
+  const postResponse = await postPromise;
+  expect(JSON.stringify(postResponse.request().postDataJSON())).toBe(
+    JSON.stringify({ 'ui.ai.features.summary': false }),
+  );
+
+  // Switch is now off.
+  await expect(summarySwitch).not.toBeChecked();
+
+  // Persisted store reflects the toggled value so a reload would re-serve false.
+  expect(store.ui.features?.summary).toBe(false);
+});
+
+test('ai-tab: Preview — steppers absent + AI features button is aria-disabled', async ({
+  page,
+}) => {
+  test.setTimeout(60_000);
+
+  // Build a preview-mode preferences store (same shape as makeAiPreferences but aiMode=preview).
+  const basePrefs = makeDefaultPreferences();
+  const previewPrefs = {
+    ...basePrefs,
+    ui: {
+      ...basePrefs.ui,
+      aiMode: 'preview' as const,
+      providerTimeoutSeconds: 240,
+      hunkAnnotationCap: 10,
+      summaryMaxChars: 1000,
+    },
+  };
+
+  await page.route('**/api/auth/state', (route: Route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify(authedAuthState),
+    }),
+  );
+  await page.route('**/api/capabilities', (route: Route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify(allOnCapabilities),
+    }),
+  );
+  await page.route('**/api/events', (route: Route) =>
+    route.fulfill({ status: 200, contentType: 'text/event-stream', body: ':heartbeat\n\n' }),
+  );
+  await page.route('**/api/preferences', (route: Route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify(previewPrefs),
+    }),
+  );
+
+  await page.goto('/settings/ai');
+  const dialog = page.getByRole('dialog', { name: 'Settings' });
+  await expect(dialog).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByRole('heading', { name: 'AI', level: 2 })).toBeVisible();
+
+  // Steppers are Live-only — must not be present in Preview mode (absent from DOM).
+  await expect(page.getByRole('spinbutton', { name: 'Provider timeout' })).not.toBeAttached();
+  await expect(page.getByRole('spinbutton', { name: 'Annotation cap' })).not.toBeAttached();
+  await expect(page.getByRole('spinbutton', { name: 'Summary length' })).not.toBeAttached();
+
+  // The disabled "AI features" button is shown in Preview with aria-disabled="true".
+  const disabledFeaturesBtn = dialog.getByRole('button', { name: /AI features/i });
+  await expect(disabledFeaturesBtn).toBeVisible({ timeout: 10_000 });
+  await expect(disabledFeaturesBtn).toHaveAttribute('aria-disabled', 'true');
+});
+
+test('ai-tab: real-wire gate — features.summary=false masks summary capability, card absent on PR', async ({
+  page,
+}) => {
+  // HARNESS LIMITATION: This spec uses mocked page.route() handlers — there is
+  // no real backend preferences store. This test proves the full FE pipeline:
+  // (1) POST ui.ai.features.summary=false mutates the in-memory store,
+  // (2) the mutable GET re-serves features.summary=false,
+  // (3) deriveCapabilities masks capabilities.summary to false,
+  // (4) useAiGate('summary') returns false,
+  // (5) the AI summary card is not rendered on the PR overview.
+  // A truly "real-serialized-response" gate is deferred to the `real/` suite
+  // which runs against a live backend.
+  test.setTimeout(60_000);
+
+  // Shared mutable store seeded from makeAiPreferences (Live, all features on).
+  // makeDefaultPreferences always populates ui.features (all nine, all on), so the
+  // store is ready to mutate below — no defensive backfill needed.
+  const store = makeAiPreferences();
+
+  // Wire all routes from a single preferences store so the POST mutation is
+  // visible to the subsequent PR-view navigation (same page, no reload needed).
+  await page.route('**/api/auth/state', (route: Route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify(authedAuthState),
+    }),
+  );
+
+  await page.route('**/api/capabilities', (route: Route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify(allOnCapabilities),
+    }),
+  );
+
+  await page.route('**/api/events', (route: Route) => {
+    if (route.request().method() === 'POST') {
+      return route.fulfill({ status: 200 });
+    }
+    return route.fulfill({
+      status: 200,
+      contentType: 'text/event-stream',
+      body: SSE_SUBSCRIBER_ASSIGNED,
+    });
+  });
+
+  await page.route('**/api/events/subscriptions**', (route: Route) =>
+    route.fulfill({ status: 204 }),
+  );
+
+  await page.route('**/api/preferences', async (route: Route) => {
+    if (route.request().method() === 'POST') {
+      const body = (await route.request().postDataJSON()) as Record<string, unknown>;
+      for (const [key, value] of Object.entries(body)) {
+        if (key.startsWith('ui.ai.features.') && typeof value === 'boolean') {
+          const seam = key.slice('ui.ai.features.'.length) as keyof typeof store.ui.features;
+          if (store.ui.features) store.ui.features[seam] = value;
+        }
+      }
+    }
+    return route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify(store),
+    });
+  });
+
+  await page.route('**/api/inbox', (route: Route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        sections: [],
+        enrichments: {},
+        lastRefreshedAt: new Date().toISOString(),
+        tokenScopeFooterEnabled: false,
+      }),
+    }),
+  );
+
+  await page.route('**/api/submit/in-flight', (route: Route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ inFlight: false, prRef: null }),
+    }),
+  );
+
+  await page.route('**/api/ai/egress-disclosure', (route: Route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        recipient: 'Anthropic, via the Claude Code CLI',
+        dataCategories: ['Pull request diff', 'Title', 'Description'],
+        disclosureVersion: '1',
+        alreadyConsented: true,
+      }),
+    }),
+  );
+
+  await page.route(`**/api/pr/${OWNER}/${REPO}/${PR1}`, (route: Route) => {
+    if (route.request().method() !== 'GET') {
+      return route.fulfill({ status: 200, contentType: 'application/json', body: '{}' });
+    }
+    return route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify(makePrDetail(PR1)),
+    });
+  });
+
+  await page.route(`**/api/pr/${OWNER}/${REPO}/${PR1}/draft`, (route: Route) => {
+    if (route.request().method() !== 'GET') {
+      return route.fulfill({ status: 200, contentType: 'application/json', body: '{}' });
+    }
+    return route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify(emptyDraftSession),
+    });
+  });
+
+  await page.route(`**/api/pr/${OWNER}/${REPO}/${PR1}/mark-viewed`, (route: Route) =>
+    route.fulfill({ status: 200, contentType: 'application/json', body: '{}' }),
+  );
+
+  await page.route(`**/api/pr/${OWNER}/${REPO}/${PR1}/diff**`, (route: Route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify(sampleDiff),
+    }),
+  );
+
+  // AI endpoints — registered but the summary gate is off after the toggle,
+  // so /ai/summary is never fetched. Other seams are not asserted here.
+  await page.route(`**/api/pr/${OWNER}/${REPO}/${PR1}/ai/summary`, (route: Route) =>
+    route.fulfill({ status: 204 }),
+  );
+  await page.route(`**/api/pr/${OWNER}/${REPO}/${PR1}/ai/hunk-annotations`, (route: Route) =>
+    route.fulfill({ status: 204 }),
+  );
+  await page.route(`**/api/pr/${OWNER}/${REPO}/${PR1}/ai/file-focus`, (route: Route) =>
+    route.fulfill({ status: 204 }),
+  );
+  await page.route(`**/api/pr/${OWNER}/${REPO}/${PR1}/ai/draft-suggestions`, (route: Route) =>
+    route.fulfill({ status: 204 }),
+  );
+
+  // Step 1: Open /settings/ai, expand AI features, toggle Summary off.
+  await page.goto('/settings/ai');
+  const dialog = page.getByRole('dialog', { name: 'Settings' });
+  await expect(dialog).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByRole('heading', { name: 'AI', level: 2 })).toBeVisible();
+
+  const featuresBtn = dialog.getByRole('button', { name: /AI features/i });
+  await expect(featuresBtn).toBeVisible({ timeout: 10_000 });
+  await featuresBtn.click();
+
+  const featuresGroup = dialog.getByRole('group', { name: 'AI features' });
+  await expect(featuresGroup).toBeVisible();
+
+  const summarySwitch = featuresGroup.getByRole('switch', { name: /summary/i });
+  // Switch is an <input type="checkbox" role="switch">; read via .isChecked().
+  await expect(summarySwitch).toBeChecked();
+
+  // Toggle summary off and wait for the POST to land.
+  const postPromise = page.waitForResponse(
+    (r) => r.url().includes('/api/preferences') && r.request().method() === 'POST',
+  );
+  await summarySwitch.click();
+  await postPromise;
+
+  // Verify the in-memory store now carries summary=false (mock-level assertion).
+  expect(store.ui.features?.summary).toBe(false);
+
+  // Step 2: Navigate to the PR. The preferences GET re-serves features.summary=false,
+  // so deriveCapabilities masks capabilities.summary=false → useAiGate('summary')=false
+  // → useAiSummary runs with enabled=false → AiSummaryCard renders null.
+  await page.goto(`/pr/${OWNER}/${REPO}/${PR1}`);
+  await page.locator('[data-testid="pr-header"]').waitFor({ timeout: 30_000 });
+
+  // The overview tab is default; wait for it to mount.
+  const overviewTab = page.locator('[data-testid="overview-tab"]');
+  await expect(overviewTab).toBeVisible({ timeout: 20_000 });
+
+  // The AI summary card MUST NOT be present — the gate is off.
+  await expect(page.locator('[data-testid="ai-summary-card"]')).not.toBeAttached();
 });

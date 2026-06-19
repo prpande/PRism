@@ -68,6 +68,8 @@ internal static class PreferencesEndpoints
     {
         var ui = config.Current.Ui;
         var sections = config.Current.Inbox.Sections;
+        var feat = ui.Ai.Features.Enabled;
+        bool On(string k) => !feat.TryGetValue(k, out var v) || v;   // fail-open: missing → true
         return new PreferencesResponse(
             Ui: new UiPreferencesDto(
                     ui.Theme,
@@ -86,7 +88,17 @@ internal static class PreferencesEndpoints
                     HunkAnnotationCap: AiConfigBounds.ClampCapForRead(ui.Ai.HunkAnnotationCap),
                     // #525: same read-clamp the summarizer stamps onto PrSummary.GeneratedMaxChars, so the
                     // displayed cap and the card's stale-detection comparison can never disagree (D6).
-                    SummaryMaxChars: AiConfigBounds.ClampSummaryCharsForRead(ui.Ai.SummaryMaxChars)),
+                    SummaryMaxChars: AiConfigBounds.ClampSummaryCharsForRead(ui.Ai.SummaryMaxChars),
+                    Features: new AiFeaturesDto(
+                        Summary:             On("summary"),
+                        FileFocus:           On("fileFocus"),
+                        HunkAnnotations:     On("hunkAnnotations"),
+                        PreSubmitValidators: On("preSubmitValidators"),
+                        ComposerAssist:      On("composerAssist"),
+                        DraftSuggestions:    On("draftSuggestions"),
+                        DraftReconciliation: On("draftReconciliation"),
+                        InboxEnrichment:     On("inboxEnrichment"),
+                        InboxRanking:        On("inboxRanking"))),
             Inbox: new InboxPreferencesDto(
                 new InboxSectionsDto(
                     ReviewRequested: sections.ReviewRequested,
