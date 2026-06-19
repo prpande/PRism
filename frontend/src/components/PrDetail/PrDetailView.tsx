@@ -34,6 +34,7 @@ import { useTabScrollMemory } from '../../hooks/useTabScrollMemory';
 import { LoadingBar } from '../LoadingBar';
 import { useActivationTransition } from '../../hooks/useActivationTransition';
 import { useAiFailure } from '../Ai/aiFailure';
+import { fileFocusStatusToMarkerState } from '../Ai/fileFocusMarkerState';
 import { ErrorModal } from '../ErrorModal';
 import bannerReconcileStyles from './BannerReconcile.module.css';
 
@@ -370,6 +371,14 @@ export function PrDetailView({
     ],
   );
 
+  // Hotspots tab-label cue mirrors the file-tree header reduction (spec §3): working
+  // while focus loads, idle once resolved, hidden on error/no-changes/off. Gate on the
+  // SAME capability flag that drives showHotspots so the tab marker and the tab presence
+  // stay in lockstep (avoid divergence between fileFocusEnabled and showHotspots).
+  const hotspotsAiState = fileFocusEnabled
+    ? fileFocusStatusToMarkerState(fileFocus.status)
+    : null;
+
   // Stable identity for PrHeader's onSessionRefetch — an inline arrow would hand
   // PrHeader a fresh function each render, churning its effect/memo dep hygiene.
   const handleSessionRefetch = useCallback(() => {
@@ -408,6 +417,7 @@ export function PrDetailView({
         activeTab={effectiveSubTab}
         onTabChange={selectSubTab}
         showHotspots={fileFocusEnabled}
+        hotspotsAiState={hotspotsAiState}
         draftsCount={draftsCount}
         hotspotsCount={
           // Only a real (Live) ranking with signal gets a numeric badge. Preview

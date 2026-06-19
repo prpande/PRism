@@ -111,6 +111,9 @@ interface PrHeaderProps {
   // Spec §8 — gate the Hotspots tab on the fileFocus capability (Preview/Live).
   // Threaded from PrDetailView; absent → tab hidden (AI Off).
   showHotspots?: boolean;
+  // Hotspots tab-label marker state (spec §3): threaded from PrDetailView via
+  // fileFocusStatusToMarkerState. Absent / null = no marker.
+  hotspotsAiState?: 'idle' | 'working' | null;
   // S5 — the draft session drives the verdict picker + Submit button + the
   // in-flight-submit recovery badge. Null while the PR detail is loading.
   session?: ReviewSessionDto | null;
@@ -167,6 +170,7 @@ export function PrHeader({
   hotspotsCount,
   draftsCount,
   showHotspots = false,
+  hotspotsAiState,
   session = null,
   headShaDrift = false,
   currentHeadSha = '',
@@ -562,6 +566,7 @@ export function PrHeader({
           hotspotsCount={hotspotsCount}
           draftsCount={draftsCount}
           showHotspots={showHotspots}
+          aiMarkerState={hotspotsAiState ?? null}
         />
         {/* No collapse toggle during cold load — keep buttons out of the loading
             state (there's nothing to collapse yet). */}
