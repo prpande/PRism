@@ -13,6 +13,7 @@ public class GraphQlByteIdentityTests
 {
     private const string ExpectedPrDetail =
         "query($owner:String!,$repo:String!,$number:Int!){" +
+        "viewer{login} " +
         "repository(owner:$owner,name:$repo){pullRequest(number:$number){" +
         "title body url state isDraft mergeable mergeStateStatus " +
         "headRefName baseRefName headRefOid baseRefOid " +
@@ -20,6 +21,7 @@ public class GraphQlByteIdentityTests
         "comments(first:100){pageInfo{hasNextPage endCursor} nodes{databaseId author{login avatarUrl} createdAt body}}" +
         "reviewThreads(first:100){pageInfo{hasNextPage endCursor} nodes{id path line isResolved " +
         "comments(first:100){nodes{id databaseId author{login avatarUrl} createdAt body lastEditedAt}}}}" +
+        "reviews(last:100){nodes{author{login} state submittedAt commit{oid}}}" +
         "timelineItems(first:100,itemTypes:[PULL_REQUEST_COMMIT,HEAD_REF_FORCE_PUSHED_EVENT,PULL_REQUEST_REVIEW]){" +
         "pageInfo{hasNextPage endCursor} nodes{__typename " +
         "... on PullRequestCommit{commit{oid committedDate message additions deletions}} " +

@@ -42,6 +42,7 @@ public sealed partial class GitHubReviewService : IPrDiscovery, IPrReader
         "}}}";
 
     internal const string PrDetailGraphQLQuery = "query($owner:String!,$repo:String!,$number:Int!){" +
+        "viewer{login} " +
         "repository(owner:$owner,name:$repo){pullRequest(number:$number){" +
         "title body url state isDraft mergeable mergeStateStatus " +
         "headRefName baseRefName headRefOid baseRefOid " +
@@ -49,6 +50,7 @@ public sealed partial class GitHubReviewService : IPrDiscovery, IPrReader
         "comments(first:100){pageInfo{hasNextPage endCursor} nodes{databaseId author{login avatarUrl} createdAt body}}" +
         "reviewThreads(first:100){pageInfo{hasNextPage endCursor} nodes{id path line isResolved " +
         "comments(first:100){nodes{id databaseId author{login avatarUrl} createdAt body lastEditedAt}}}}" +
+        "reviews(last:100){nodes{author{login} state submittedAt commit{oid}}}" +
         TimelineItemsArgs + "{pageInfo{hasNextPage endCursor} " + TimelineNodes + "}" +
         "}}}";
 
@@ -130,6 +132,12 @@ public sealed partial class GitHubReviewService : IPrDiscovery, IPrReader
         var timelineCapHit = HasAnyNextPage(pull);
         if (timelineCapHit) Log.TimelineCapHit(_log, reference.Owner, reference.Repo, reference.Number);
 
+        // viewer is a sibling of repository (data.viewer.login), NOT under pull — resolve it
+        // from the root and hand it to the parser (mirrors #367's passed-login pattern).
+        var viewerLogin = TryGetPath(doc.RootElement, out var viewerLoginEl, "data", "viewer", "login")
+            && viewerLoginEl.ValueKind == JsonValueKind.String ? viewerLoginEl.GetString() : null;
+        var viewerReview = GitHubPrParser.ParseViewerReview(pull, viewerLogin);
+
         // Clustering is performed by PrDetailLoader (Task 4); IPrReader returns the
         // GitHub-side facts only and the loader overwrites these fields. Default to
         // ClusteringQuality.Low + Iterations:null so the DTO is internally consistent
@@ -145,7 +153,7 @@ public sealed partial class GitHubReviewService : IPrDiscovery, IPrReader
             RootComments: rootComments,
             ReviewComments: reviewComments,
             TimelineCapHit: timelineCapHit,
-            ViewerReview: null);
+            ViewerReview: viewerReview);
     }
 
     public async Task<DiffDto> GetDiffAsync(PrReference reference, DiffRangeRequest range, CancellationToken ct)
