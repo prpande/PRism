@@ -80,7 +80,8 @@ public sealed class ClaudeCodeFileFocusRankerTests
 
     private sealed class FakeTokenUsageTracker : ITokenUsageTracker
     {
-        public Task RecordAsync(TokenUsageRecord record, CancellationToken ct) => Task.CompletedTask;
+        public List<TokenUsageRecord> Records { get; } = new();
+        public Task RecordAsync(TokenUsageRecord record, CancellationToken ct) { Records.Add(record); return Task.CompletedTask; }
     }
 
     private sealed class FakeAiInteractionLog : IAiInteractionLog
@@ -104,15 +105,17 @@ public sealed class ClaudeCodeFileFocusRankerTests
         string baseSha = "base", string headSha = "head",
         ReviewEventBus? bus = null,            // REAL bus — FakeReviewEventBus.Subscribe is a no-op (won't deliver evictions)
         StubActivePrCache? cache = null,
-        FakeAiInteractionLog? log = null)
+        FakeAiInteractionLog? log = null,
+        FakeTokenUsageTracker? tracker = null)
     {
         bus ??= new ReviewEventBus();
         cache ??= new StubActivePrCache();
         log ??= new FakeAiInteractionLog();
+        tracker ??= new FakeTokenUsageTracker();
         ClaudeCodeFileFocusRanker.DiffResolver resolve = (_, _) =>
             Task.FromResult((diff, baseSha, headSha));
         return new ClaudeCodeFileFocusRanker(
-            provider, new FakeTokenUsageTracker(), resolve,
+            provider, tracker, resolve,
             NullLogger<ClaudeCodeFileFocusRanker>.Instance, log, bus, cache);
     }
 
@@ -133,13 +136,17 @@ public sealed class ClaudeCodeFileFocusRankerTests
     }
 
     [Fact]
-    public async Task Records_cache_creation_input_tokens_on_the_ok_audit_record()
+    public async Task Records_cache_creation_input_tokens_in_tracker_and_audit_log()
     {
-        // #379: the cold-call input volume billed as cache-creation must reach the audit log.
+        // #379: the cold-call input volume billed as cache-creation is mapped into the budget tracker
+        // (TokenUsageRecord) and the audit log (AiInteractionRecord) by two independent literals, so both
+        // sinks are asserted — threading the field to one but dropping it on the other must fail this test.
         var diff = Diff(F("a.cs", FileChangeStatus.Modified, "@@ logic @@"));
         var provider = new FakeLlmProvider("""[{"path":"a.cs","score":"high","rationale":"core"}]""");
         var log = new FakeAiInteractionLog();
-        await Build(provider, diff, log: log).RankAsync(Pr, default);
+        var tracker = new FakeTokenUsageTracker();
+        await Build(provider, diff, log: log, tracker: tracker).RankAsync(Pr, default);
+        tracker.Records.Should().Contain(r => r.CacheCreationInputTokens == 89414);
         log.Records.Should().Contain(r =>
             r.Outcome == AiInteractionOutcome.Ok && r.CacheCreationInputTokens == 89414);
     }

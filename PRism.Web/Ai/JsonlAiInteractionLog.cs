@@ -50,6 +50,9 @@ internal sealed partial class JsonlAiInteractionLog : IAiInteractionLog
             // omitted (WhenWritingNull) and the enum/camelCase options still apply via `Json`.
             var node = JsonSerializer.SerializeToNode(record, Json)!.AsObject();
             node.Insert(0, "timestamp", _clock.GetUtcNow().ToString("O"));
+            // ToJsonString consumes only the JsonWriterOptions slice of `Json` (so we get the
+            // non-indented single-line form); the camelCase naming policy and enum converter were
+            // already applied during SerializeToNode above and are baked into `node`.
             var line = node.ToJsonString(Json);
 
             lock (_gate)

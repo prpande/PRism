@@ -51,7 +51,8 @@ public sealed class ClaudeCodeHunkAnnotatorTests
 
     private sealed class FakeTokenUsageTracker : ITokenUsageTracker
     {
-        public Task RecordAsync(TokenUsageRecord record, CancellationToken ct) => Task.CompletedTask;
+        public List<TokenUsageRecord> Records { get; } = new();
+        public Task RecordAsync(TokenUsageRecord record, CancellationToken ct) { Records.Add(record); return Task.CompletedTask; }
     }
 
     private sealed class FakeAiInteractionLog : IAiInteractionLog
@@ -119,16 +120,19 @@ public sealed class ClaudeCodeHunkAnnotatorTests
         ReviewEventBus? bus = null,
         StubActivePrCache? cache = null,
         FakeAiInteractionLog? log = null,
-        FakeConfigStore? config = null)
+        FakeConfigStore? config = null,
+        FakeTokenUsageTracker? tracker = null)
     {
         bus ??= new ReviewEventBus();
         cache ??= new StubActivePrCache();
         log ??= new FakeAiInteractionLog();
         config ??= new FakeConfigStore();
+        tracker ??= new FakeTokenUsageTracker();
+        // The ranker keeps its own throwaway tracker so the asserted `tracker` sees only the annotator's record.
         var ranker = BuildRanker(diff, focusJson, baseSha, headSha, cache, bus);
         ClaudeCodeHunkAnnotator.DiffResolver resolve = (_, _) => Task.FromResult((diff, baseSha, headSha));
         return new ClaudeCodeHunkAnnotator(
-            provider, new FakeTokenUsageTracker(), resolve,
+            provider, tracker, resolve,
             NullLogger<ClaudeCodeHunkAnnotator>.Instance, log, bus, cache, ranker, config);
     }
 
@@ -149,13 +153,18 @@ public sealed class ClaudeCodeHunkAnnotatorTests
     }
 
     [Fact]
-    public async Task Records_cache_creation_input_tokens_on_the_ok_audit_record()
+    public async Task Records_cache_creation_input_tokens_in_tracker_and_audit_log()
     {
-        // #379: the cold-call input volume billed as cache-creation must reach the audit log.
+        // #379: the cold-call input volume billed as cache-creation is mapped into the budget tracker
+        // (TokenUsageRecord) and the audit log (AiInteractionRecord) by two independent literals, so both
+        // sinks are asserted — threading the field to one but dropping it on the other must fail this test.
         var diff = Diff(F("a.cs", "@@ logic @@"));
         var provider = new FakeLlmProvider("""[{"path":"a.cs","hunkIndex":0,"body":"x","tone":"calm"}]""");
         var log = new FakeAiInteractionLog();
-        await Build(provider, diff, OneHigh, log: log).AnnotateAsync(Pr, string.Empty, 0, default);
+        var tracker = new FakeTokenUsageTracker();
+        await Build(provider, diff, OneHigh, log: log, tracker: tracker).AnnotateAsync(Pr, string.Empty, 0, default);
+        tracker.Records.Should().Contain(r =>
+            r.Feature == "pr-hunk-annotations" && r.CacheCreationInputTokens == 89414);
         log.Records.Should().Contain(r =>
             r.Component == "hunkAnnotations" && r.Outcome == AiInteractionOutcome.Ok
             && r.CacheCreationInputTokens == 89414);
