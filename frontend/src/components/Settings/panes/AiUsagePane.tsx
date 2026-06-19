@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { getAiUsage } from '../../../api/aiUsage';
 import type { AiUsageReport, AiUsageWindow } from '../../../api/types';
-import { formatCost, formatTokens } from '../../../utils/formatUsage';
+import { formatBucketDate, formatCost, formatTokens } from '../../../utils/formatUsage';
 import { SegmentedControl } from '../../controls/SegmentedControl';
 import pane from './Pane.module.css';
 import styles from './AiUsagePane.module.css';
@@ -148,7 +148,7 @@ function Report({ report }: { report: AiUsageReport }) {
       bars: report.trend.map((t) => ({
         key: t.bucketStart,
         cost: t.estimatedCostUsd,
-        title: `${new Date(t.bucketStart).toLocaleDateString()}: ${formatCost(t.estimatedCostUsd)}`,
+        title: `${formatBucketDate(t.bucketStart)}: ${formatCost(t.estimatedCostUsd)}`,
       })),
     };
   }, [report.trend]);
@@ -183,7 +183,7 @@ function Report({ report }: { report: AiUsageReport }) {
           {/* showTrend (trendCostMax > 0) already guarantees peak is the non-null max-cost bucket. */}
           {peak && (
             <p className="sr-only">
-              Highest spend: {new Date(peak.bucketStart).toLocaleDateString()},{' '}
+              Highest spend: {formatBucketDate(peak.bucketStart)},{' '}
               {formatCost(peak.estimatedCostUsd)}.
             </p>
           )}

@@ -15,3 +15,10 @@ export function formatCost(usd: number): string {
 export function formatTokens(count: number): string {
   return count.toLocaleString('en-US');
 }
+
+// Trend bucket labels. Buckets are UTC-anchored server-side (day buckets key on UTC midnight), so
+// the label must name that UTC calendar day — rendering in the viewer's local zone shifts a
+// UTC-negative user's labels back a day on both the decorative bar and the sr-only summary.
+export function formatBucketDate(bucketStartIso: string): string {
+  return new Date(bucketStartIso).toLocaleDateString('en-US', { timeZone: 'UTC' });
+}
