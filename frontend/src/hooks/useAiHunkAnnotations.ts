@@ -9,11 +9,11 @@ export interface AiHunkAnnotationsState {
   annotations: HunkAnnotation[] | null;
 }
 
-export function useAiHunkAnnotations(
-  prRef: PrReference,
-  enabled: boolean,
-): AiHunkAnnotationsState {
-  const [value, setValue] = useState<AiHunkAnnotationsState>({ state: 'loading', annotations: null });
+export function useAiHunkAnnotations(prRef: PrReference, enabled: boolean): AiHunkAnnotationsState {
+  const [value, setValue] = useState<AiHunkAnnotationsState>({
+    state: 'loading',
+    annotations: null,
+  });
   const [retryNonce, setRetryNonce] = useState(0);
   const retry = useCallback(() => setRetryNonce((n) => n + 1), []);
   const { report, clear } = useAiFailure();

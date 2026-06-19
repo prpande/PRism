@@ -57,7 +57,9 @@ vi.mock('../../../hooks/useFileDiff', () => ({
 vi.mock('../../../hooks/useUnionDiff', () => ({
   useUnionDiff: () => currentDiff,
 }));
-vi.mock('../../../hooks/useAiHunkAnnotations', () => ({ useAiHunkAnnotations: () => ({ state: 'empty', annotations: null }) }));
+vi.mock('../../../hooks/useAiHunkAnnotations', () => ({
+  useAiHunkAnnotations: () => ({ state: 'empty', annotations: null }),
+}));
 vi.mock('../../../hooks/useWholeFileContent', () => ({
   useWholeFileContent: () => ({
     fetchStatus: 'idle',

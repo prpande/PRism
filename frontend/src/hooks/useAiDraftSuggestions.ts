@@ -13,7 +13,10 @@ export function useAiDraftSuggestions(
   prRef: PrReference,
   enabled: boolean,
 ): AiDraftSuggestionsState {
-  const [value, setValue] = useState<AiDraftSuggestionsState>({ state: 'loading', suggestions: null });
+  const [value, setValue] = useState<AiDraftSuggestionsState>({
+    state: 'loading',
+    suggestions: null,
+  });
   const [retryNonce, setRetryNonce] = useState(0);
   const retry = useCallback(() => setRetryNonce((n) => n + 1), []);
   const { report, clear } = useAiFailure();
