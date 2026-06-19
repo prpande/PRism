@@ -57,6 +57,10 @@ internal sealed class FakeReviewBackingStore
     public bool IsClosed => string.Equals(PrState, "CLOSED", StringComparison.Ordinal);
     public bool IsMerged => string.Equals(PrState, "MERGED", StringComparison.Ordinal);
 
+    // #501 e2e-only. When true, FakePrReader / FakeSectionQueryRunner emit IsDraft=true,
+    // driving the header glyph+marker and the inbox draft chip in baselines.
+    public bool IsDraftPr { get; private set; }
+
     // (path, sha) → file content. Populated for each (path, sha) the reconciliation
     // pipeline might query. AdvanceHead adds new (path, newHead) entries.
     public Dictionary<(string Path, string Sha), string> FileContent { get; } = new();
@@ -136,6 +140,7 @@ internal sealed class FakeReviewBackingStore
 
             ExtraTreeFiles.Clear();
             InboxSeeded = false;
+            IsDraftPr = false;
         }
     }
 
@@ -206,5 +211,12 @@ internal sealed class FakeReviewBackingStore
         if (normalized is not ("OPEN" or "CLOSED" or "MERGED"))
             throw new ArgumentException($"Unknown PR state '{state}'; expected OPEN | CLOSED | MERGED.", nameof(state));
         lock (Gate) PrState = normalized;
+    }
+
+    // #501 e2e-only. Flags the scenario PR as a draft so FakePrReader / FakeSectionQueryRunner
+    // emit IsDraft=true, driving the header glyph+marker and the inbox draft chip in baselines.
+    public void SetDraft(bool isDraft)
+    {
+        lock (Gate) IsDraftPr = isDraft;
     }
 }

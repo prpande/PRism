@@ -20,7 +20,7 @@ public sealed class ClaudeCodeSummarizerTests
         public int Calls; public LlmRequest? Last;
         public string Response = "CATEGORY: fix\nSummary body.";
         public Task<LlmResult> CompleteAsync(LlmRequest request, CancellationToken ct)
-        { Calls++; Last = request; return Task.FromResult(new LlmResult(Response, 100, 20, 0, 0.01m)); }
+        { Calls++; Last = request; return Task.FromResult(new LlmResult(Response, 100, 20, 0, 89414, 0.01m)); }
     }
     private sealed class ThrowingProvider : ILlmProvider
     {
@@ -47,19 +47,39 @@ public sealed class ClaudeCodeSummarizerTests
 
     private static readonly PrReference Pr = new("o", "r", 1);
 
+    // Mutable IConfigStore fake so a test can change the summary cap mid-life (proves the fresh
+    // per-call read, mirroring ClaudeCodeHunkAnnotatorTests.FakeConfigStore).
+    private sealed class FakeConfigStore : PRism.Core.Config.IConfigStore
+    {
+        public PRism.Core.Config.AppConfig Current { get; set; } = PRism.Core.Config.AppConfig.Default;
+        public string ConfigPath => "/fake/config.json";
+        public Exception? LastLoadError => null;
+#pragma warning disable CS0067 // test double — the summarizer reads Current fresh, never subscribes to Changed
+        public event EventHandler<PRism.Core.Config.ConfigChangedEventArgs>? Changed;
+#pragma warning restore CS0067
+        public Task InitAsync(CancellationToken ct) => Task.CompletedTask;
+        public Task PatchAsync(IReadOnlyDictionary<string, object?> patch, CancellationToken ct) => Task.CompletedTask;
+        public Task SetDefaultAccountLoginAsync(string login, CancellationToken ct) => Task.CompletedTask;
+        public Task RecordAiConsentAsync(string providerId, string disclosureVersion, CancellationToken ct) => Task.CompletedTask;
+        public void SetSummaryMaxChars(int chars) =>
+            Current = Current with { Ui = Current.Ui with { Ai = Current.Ui.Ai with { SummaryMaxChars = chars } } };
+    }
+
     // Test seam: the summarizer takes a Func that yields (diff, title, description, baseSha, headSha) so the
     // test bypasses PrDetailLoader. Production wiring closes over PrDetailLoader (Task 9).
     private static ClaudeCodeSummarizer Build(ILlmProvider p, ITokenUsageTracker t,
         string diff = "+ added line", string title = "Fix poller", string desc = "Body",
         string baseSha = "base1", string headSha = "abc123", IAiInteractionLog? log = null,
-        IReviewEventBus? bus = null, IActivePrCache? activePrCache = null)
+        IReviewEventBus? bus = null, IActivePrCache? activePrCache = null,
+        PRism.Core.Config.IConfigStore? config = null)
         => new(p, t, (_, _) => Task.FromResult((diff, title, desc, baseSha, headSha)),
             NullLogger<ClaudeCodeSummarizer>.Instance, log ?? new FakeAiInteractionLog(),
             bus ?? new ReviewEventBus(),
             activePrCache ?? new StubActivePrCache
             {
                 Snapshot = new ActivePrSnapshot(headSha, null, default, BaseSha: baseSha),
-            });
+            },
+            config ?? new FakeConfigStore());
 
     [Fact]
     public async Task Success_ParsesCategory_RecordsUsage()
@@ -135,6 +155,19 @@ public sealed class ClaudeCodeSummarizerTests
     }
 
     [Fact]
+    public async Task Success_RecordsCacheCreationInputTokens_InTrackerAndAuditLog()
+    {
+        // #379: the cold-call input volume the CLI bills as cache-creation must reach BOTH sinks —
+        // the budget tracker (TokenUsageRecord) and the audit log (AiInteractionRecord) — or the
+        // recorded input is off by orders of magnitude.
+        var t = new FakeTracker(); var log = new FakeAiInteractionLog();
+        await Build(new FakeProvider(), t, log: log).SummarizeAsync(Pr, CancellationToken.None);
+
+        t.Last!.CacheCreationInputTokens.Should().Be(89414);
+        log.Records[0].CacheCreationInputTokens.Should().Be(89414);
+    }
+
+    [Fact]
     public async Task CacheHit_LogsCacheHitInteraction_NoEgress()
     {
         var log = new FakeAiInteractionLog();
@@ -196,7 +229,7 @@ public sealed class ClaudeCodeSummarizerTests
             provider, new FakeTracker(),
             (_, _) => Task.FromResult(("+ added line", "Fix poller", "Body", bases.Dequeue(), "h1")),
             NullLogger<ClaudeCodeSummarizer>.Instance, new FakeAiInteractionLog(),
-            new ReviewEventBus(), new StubActivePrCache()); // null snapshot → R7 store proceeds both times
+            new ReviewEventBus(), new StubActivePrCache(), new FakeConfigStore()); // null snapshot → R7 store proceeds both times
 
         await summarizer.SummarizeAsync(Pr, CancellationToken.None); // (Pr,b1,h1) MISS → provider call 1
         await summarizer.SummarizeAsync(Pr, CancellationToken.None); // (Pr,b2,h1) MISS → provider call 2
@@ -261,6 +294,66 @@ public sealed class ClaudeCodeSummarizerTests
         await summarizer.SummarizeAsync(Pr, CancellationToken.None);
 
         provider.Calls.Should().Be(1, "a quiet hydration event must not drop a just-cached summary");
+    }
+
+    // --- #525 summary character cap ---
+
+    [Fact]
+    public async Task System_prompt_carries_the_configured_cap_and_the_bulleted_subheading_instruction()
+    {
+        var p = new FakeProvider();
+        var config = new FakeConfigStore();
+        config.SetSummaryMaxChars(2500);
+        await Build(p, new FakeTracker(), config: config).SummarizeAsync(Pr, CancellationToken.None);
+
+        var prompt = p.Last!.SystemPrompt;
+        prompt.Should().Contain("2500", "the configured cap is injected into the system prompt");
+        prompt.Should().ContainEquivalentOf("bullet", "the prompt asks for a bulleted summary");
+        prompt.Should().ContainEquivalentOf("subheading", "the prompt asks bullets be grouped under subheadings");
+    }
+
+    [Fact]
+    public async Task Cap_is_read_fresh_per_call_not_baked_at_construction()
+    {
+        var p = new FakeProvider();
+        var config = new FakeConfigStore();
+        config.SetSummaryMaxChars(1500);
+        var s = Build(p, new FakeTracker(), config: config);
+
+        await s.SummarizeAsync(Pr, CancellationToken.None);
+        p.Last!.SystemPrompt.Should().Contain("1500");
+
+        // Change the cap and force a fresh provider call (Regenerate evicts the cache).
+        config.SetSummaryMaxChars(3000);
+        await s.RegenerateAsync(Pr, CancellationToken.None);
+        p.Last!.SystemPrompt.Should().Contain("3000", "the cap is read hot per call, not captured once");
+    }
+
+    [Fact]
+    public async Task Stamps_the_returned_summary_with_the_read_clamped_configured_cap()
+    {
+        var config = new FakeConfigStore();
+        config.SetSummaryMaxChars(2500);
+        var summary = await Build(new FakeProvider(), new FakeTracker(), config: config)
+            .SummarizeAsync(Pr, CancellationToken.None);
+        summary!.GeneratedMaxChars.Should().Be(2500);
+    }
+
+    [Fact]
+    public async Task Stamp_matches_the_GET_DTO_read_clamp_for_a_hand_edited_subFloor_config()
+    {
+        // A hand-edited config.json can hold a positive value below the write-min (500). The summarizer
+        // MUST stamp the READ-clamp (ClampSummaryCharsForRead → 100 preserved), the SAME projection the
+        // GET /api/preferences DTO surfaces — NOT the write-clamp (which would floor to 500 and pin the
+        // summary permanently "Out of date" against the displayed 100. #525 D6 stamp pin).
+        var config = new FakeConfigStore();
+        config.SetSummaryMaxChars(100);
+        var summary = await Build(new FakeProvider(), new FakeTracker(), config: config)
+            .SummarizeAsync(Pr, CancellationToken.None);
+
+        summary!.GeneratedMaxChars.Should().Be(100);
+        summary.GeneratedMaxChars.Should().Be(PRism.Core.Config.AiConfigBounds.ClampSummaryCharsForRead(100),
+            "stamp and the GET DTO projection route through the identical read-clamp");
     }
 
     private sealed class StubActivePrCache : IActivePrCache

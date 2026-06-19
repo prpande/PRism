@@ -214,7 +214,9 @@ internal sealed partial class ClaudeCodeFileFocusRanker : IFileFocusRanker, IDis
                 ComponentName, ClaudeProviderId, FileFocusModel, pr.PrId, headSha,
                 AiInteractionOutcome.Ok, Egressed: true, LatencyMs: ElapsedMs(startTimestamp),
                 InputTokens: llm.InputTokens, OutputTokens: llm.OutputTokens,
-                CacheReadInputTokens: llm.CacheReadInputTokens, EstimatedCostUsd: llm.EstimatedCostUsd,
+                CacheReadInputTokens: llm.CacheReadInputTokens,
+                CacheCreationInputTokens: llm.CacheCreationInputTokens,
+                EstimatedCostUsd: llm.EstimatedCostUsd,
                 PromptChars: userContent.Length, ResponseChars: llm.Text.Length));
 
             await RecordUsageAsync(llm, isRetry: attempt > 0, ct).ConfigureAwait(false);
@@ -234,6 +236,7 @@ internal sealed partial class ClaudeCodeFileFocusRanker : IFileFocusRanker, IDis
                 Feature: "pr-file-focus", ProviderId: ClaudeProviderId,
                 InputTokens: llm.InputTokens, OutputTokens: llm.OutputTokens,
                 CacheReadInputTokens: llm.CacheReadInputTokens,
+                CacheCreationInputTokens: llm.CacheCreationInputTokens,
                 EstimatedCostUsd: llm.EstimatedCostUsd, IsRetry: isRetry), ct).ConfigureAwait(false);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)

@@ -34,6 +34,27 @@ public class AiConfigBoundsTests
     public void ClampCapForRead_floors_nonpositive_to_10_and_caps_at_50(int input, int expected) =>
         AiConfigBounds.ClampCapForRead(input).Should().Be(expected);
 
+    [Theory]
+    [InlineData(499, 500)]  // below min → min (write-path floor)
+    [InlineData(500, 500)]
+    [InlineData(1000, 1000)]
+    [InlineData(5000, 5000)]
+    [InlineData(5001, 5000)] // above max → max
+    public void ClampSummaryChars_clamps_to_500_5000(int input, int expected) =>
+        AiConfigBounds.ClampSummaryChars(input).Should().Be(expected);
+
+    [Theory]
+    [InlineData(-1, 1000)]   // legacy/absent → DefaultSummaryChars (NOT the write floor 500)
+    [InlineData(0, 1000)]    // legacy/absent → DefaultSummaryChars
+    [InlineData(100, 100)]   // hand-edited sub-500 positive value is preserved (NOT floored) so the
+                             // displayed value == the value the summarizer stamps (D6 stamp pin)
+    [InlineData(500, 500)]
+    [InlineData(1000, 1000)]
+    [InlineData(5000, 5000)]
+    [InlineData(9999, 5000)] // over-max → max
+    public void ClampSummaryCharsForRead_floors_nonpositive_to_1000_and_caps_at_5000(int input, int expected) =>
+        AiConfigBounds.ClampSummaryCharsForRead(input).Should().Be(expected);
+
     [Fact]
     public void Constants_expose_the_documented_bounds()
     {
@@ -42,5 +63,8 @@ public class AiConfigBoundsTests
         AiConfigBounds.MinCap.Should().Be(1);
         AiConfigBounds.MaxCap.Should().Be(50);
         AiConfigBounds.DefaultCap.Should().Be(10);
+        AiConfigBounds.MinSummaryChars.Should().Be(500);
+        AiConfigBounds.MaxSummaryChars.Should().Be(5000);
+        AiConfigBounds.DefaultSummaryChars.Should().Be(1000);
     }
 }

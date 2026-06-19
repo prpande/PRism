@@ -37,6 +37,22 @@ internal sealed class NullInnerActivePrCache : IActivePrCache
     public void Clear() { }
 }
 
+// Minimal IConfigStore for the stub summarizer's #525 hot-read cap. Gate/regenerate tests assert
+// HTTP status, not the cap value, so AppConfig.Default (summaryMaxChars=1000) is sufficient.
+internal sealed class NullConfigStore : IConfigStore
+{
+    public AppConfig Current => AppConfig.Default;
+    public string ConfigPath => "/fake/config.json";
+    public Exception? LastLoadError => null;
+#pragma warning disable CS0067 // test double — the summarizer reads Current fresh, never subscribes
+    public event EventHandler<ConfigChangedEventArgs>? Changed;
+#pragma warning restore CS0067
+    public Task InitAsync(CancellationToken ct) => Task.CompletedTask;
+    public Task PatchAsync(IReadOnlyDictionary<string, object?> patch, CancellationToken ct) => Task.CompletedTask;
+    public Task SetDefaultAccountLoginAsync(string login, CancellationToken ct) => Task.CompletedTask;
+    public Task RecordAiConsentAsync(string providerId, string disclosureVersion, CancellationToken ct) => Task.CompletedTask;
+}
+
 /// <summary>
 /// Per-test harness. Wires a stubbed ClaudeCodeSummarizer (no PrDetailLoader dependency)
 /// and a ConfigurableActivePrCache. Shared by AiSummaryGateTests and AiSummaryRegenerateTests.
@@ -56,7 +72,8 @@ internal sealed class AiSummaryTestContext : IDisposable
             (_, _) => Task.FromResult(("+ added", "Title", "Desc", "base1", "sha1")),
             NullLogger<ClaudeCodeSummarizer>.Instance, new NullAiAuditLog(),
             new PRism.Core.Events.ReviewEventBus(), // fresh bus — see note
-            new NullInnerActivePrCache());
+            new NullInnerActivePrCache(),
+            new NullConfigStore());
 
         _base = new PRismWebApplicationFactory();
         _derived = _base.WithWebHostBuilder(b => b.ConfigureServices(s =>

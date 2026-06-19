@@ -85,13 +85,16 @@ public sealed record UiConfig(string Theme, string Accent, AiConfig Ai, string D
 /// <c>new AiConfig(Mode, Consent, Features)</c> call sites (AppConfig.Default + test fixtures) keep
 /// compiling. STJ-net10 honors the constructor default for a missing key (proven by
 /// ConfigStoreHunkAnnotationCapTests.Missing_cap_key_binds_to_the_constructor_default). The annotator
-/// clamps a non-positive cap to 10 on read.</summary>
+/// clamps a non-positive cap to 10 on read. <paramref name="SummaryMaxChars"/> (#525) is the
+/// best-effort summary character cap fed into the summarizer prompt, read hot per call and clamped to
+/// <see cref="AiConfigBounds"/> (default 1000).</summary>
 public sealed record AiConfig(
     AiMode Mode,
     AiConsentConfig Consent,
     AiFeaturesConfig Features,
     int HunkAnnotationCap = 10,
-    int ProviderTimeoutSeconds = 240);
+    int ProviderTimeoutSeconds = 240,
+    int SummaryMaxChars = 1000);
 
 public sealed record GithubConfig(IReadOnlyList<GithubAccountConfig> Accounts)
 {

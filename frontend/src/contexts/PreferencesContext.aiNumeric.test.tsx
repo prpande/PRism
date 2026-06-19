@@ -12,6 +12,7 @@ function base(): PreferencesResponse {
       contentScale: 'm',
       providerTimeoutSeconds: 240,
       hunkAnnotationCap: 10,
+      summaryMaxChars: 1000,
     },
     inbox: {
       sections: {
@@ -31,9 +32,10 @@ function base(): PreferencesResponse {
 }
 
 describe('PreferencesContext AI numeric keys', () => {
-  it('readKey returns the two AI numeric values', () => {
+  it('readKey returns the AI numeric values', () => {
     expect(readKey(base(), 'ui.ai.providerTimeoutSeconds')).toBe(240);
     expect(readKey(base(), 'ui.ai.hunkAnnotationCap')).toBe(10);
+    expect(readKey(base(), 'ui.ai.summaryMaxChars')).toBe(1000);
   });
 
   it('writeKey updates providerTimeoutSeconds without touching inbox sections', () => {
@@ -45,5 +47,11 @@ describe('PreferencesContext AI numeric keys', () => {
   it('writeKey updates hunkAnnotationCap', () => {
     const next = writeKey(base(), 'ui.ai.hunkAnnotationCap', 25);
     expect(next.ui.hunkAnnotationCap).toBe(25);
+  });
+
+  it('writeKey updates summaryMaxChars without touching inbox sections', () => {
+    const next = writeKey(base(), 'ui.ai.summaryMaxChars', 2500);
+    expect(next.ui.summaryMaxChars).toBe(2500);
+    expect(next.inbox.sections['review-requested']).toBe(true); // not corrupted by the fall-through
   });
 });

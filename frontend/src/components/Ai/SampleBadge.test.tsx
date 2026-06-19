@@ -29,10 +29,6 @@ describe('SampleBadge', () => {
     render(<SampleBadge />);
     expect(screen.queryByTestId('sample-badge')).toBeNull();
   });
-  it('applies the region class for the region variant', () => {
-    render(<SampleBadge variant="region" />);
-    expect(screen.getByTestId('sample-badge').className).toMatch(/region/);
-  });
   it('applies the solid class for the solid variant', () => {
     render(<SampleBadge solid />);
     expect(screen.getByTestId('sample-badge').className).toMatch(/solid/);

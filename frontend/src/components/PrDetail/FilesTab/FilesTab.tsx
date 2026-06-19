@@ -94,7 +94,7 @@ export function FilesTab() {
   // (spec §8), owned by PrDetailView and carried in context — no second GET.
   // The dot only renders for high/medium (FileTree's own logic), so empty /
   // fallback cases (no high/medium entries) naturally show no dots. The column
-  // (its data-on flag + the region SampleBadge) is visible only when AI is
+  // (its data-on flag) is visible only when AI is
   // genuinely active for this PR: `not-subscribed` is Live-without-subscription,
   // and `no-changes` is ALSO what useFileFocusResult returns when the fileFocus
   // capability is OFF entirely (AI off) — both mean "AI not active here", so the

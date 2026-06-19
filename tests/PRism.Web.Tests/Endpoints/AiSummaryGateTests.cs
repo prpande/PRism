@@ -32,7 +32,7 @@ public sealed class AiSummaryGateTests
         public Task<LlmResult> CompleteAsync(LlmRequest request, CancellationToken ct)
         {
             Calls++;
-            return Task.FromResult(new LlmResult("CATEGORY: fix\nThis PR fixes the poller.", 10, 5, 0, 0m));
+            return Task.FromResult(new LlmResult("CATEGORY: fix\nThis PR fixes the poller.", 10, 5, 0, 0, 0m));
         }
     }
 

@@ -27,9 +27,11 @@
 // emits that JSON body directly in its own file-focus route. There is no shared
 // seam-stub fixture to extend — the #484 harness is per-spec page.route mocks.
 //
-// Visual baselines: this spec makes NO toHaveScreenshot calls. All assertions
-// are DOM/functional. Per repo convention win32 baselines are not hand-authored;
-// the AI pane + changed Appearance pane baselines are regenerated in CI (Linux).
+// Visual baselines: this spec makes NO toHaveScreenshot calls — all assertions
+// are DOM/functional. The AI pane has NO visual baseline (settings-modal-visual.spec.ts
+// only screenshots the Appearance / GitHub / narrow views, never the AI pane), so the
+// #525 "Summary length" row adds nothing to regenerate. No nav tab was added either, so
+// the nav sidebar shown in the Appearance/GitHub screenshots is unchanged.
 
 import { test, expect, type Route } from '@playwright/test';
 import { authedAuthState, makeDefaultPreferences } from './fixtures/preferences';
@@ -59,10 +61,10 @@ const PR1 = 1;
 const SSE_SUBSCRIBER_ASSIGNED =
   'event: subscriber-assigned\ndata: {"subscriberId":"mock-sub-1"}\n\n';
 
-// The shared makeDefaultPreferences() fixture predates the #496 numeric AI knobs;
+// The shared makeDefaultPreferences() fixture predates the #496/#525 numeric AI knobs;
 // the real GET /api/preferences always emits them and AiPane reads them, so add
 // them to the mock store. Defaults mirror AiConfig (providerTimeoutSeconds=240,
-// hunkAnnotationCap=10).
+// hunkAnnotationCap=10, summaryMaxChars=1000).
 function makeAiPreferences() {
   const prefs = makeDefaultPreferences();
   return {
@@ -72,6 +74,7 @@ function makeAiPreferences() {
       aiMode: 'live' as const,
       providerTimeoutSeconds: 240,
       hunkAnnotationCap: 10,
+      summaryMaxChars: 1000,
     },
   };
 }
@@ -175,6 +178,8 @@ async function setupSettingsMocks(page: import('@playwright/test').Page) {
           store.ui.providerTimeoutSeconds = value;
         } else if (key === 'ui.ai.hunkAnnotationCap' && typeof value === 'number') {
           store.ui.hunkAnnotationCap = value;
+        } else if (key === 'ui.ai.summaryMaxChars' && typeof value === 'number') {
+          store.ui.summaryMaxChars = value;
         } else if (key === 'ui.ai.mode' && typeof value === 'string') {
           store.ui.aiMode = value as 'off' | 'preview' | 'live';
         }
@@ -331,11 +336,23 @@ test('ai-tab: AI pane renders; Provider timeout step persists across reload', as
   await expect(page.getByRole('heading', { name: 'AI', level: 2 })).toBeVisible();
   const timeout = page.getByRole('spinbutton', { name: 'Provider timeout' });
   const cap = page.getByRole('spinbutton', { name: 'Annotation cap' });
+  const summaryLen = page.getByRole('spinbutton', { name: 'Summary length' });
   await expect(timeout).toBeVisible();
   await expect(cap).toBeVisible();
+  await expect(summaryLen).toBeVisible();
 
   // Baseline value (default 240).
   await expect(timeout).toHaveAttribute('aria-valuenow', '240');
+
+  // #525 Summary length: default 1000, step 100 → 1100, and the PATCH is mutable.
+  await expect(summaryLen).toHaveAttribute('aria-valuenow', '1000');
+  const summaryPost = page.waitForResponse(
+    (r) => r.url().includes('/api/preferences') && r.request().method() === 'POST',
+  );
+  await summaryLen.focus();
+  await summaryLen.press('ArrowUp');
+  await summaryPost;
+  await expect(summaryLen).toHaveAttribute('aria-valuenow', '1100');
 
   // Step UP: focus the spinbutton, press ArrowUp (step=30 → 270). Wait for the
   // PATCH to land before reloading so the store is mutated before the reload GET

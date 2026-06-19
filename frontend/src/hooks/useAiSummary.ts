@@ -18,6 +18,10 @@ export function useAiSummary(
   enabled: boolean,
   subscribed: boolean,
   baseShaChanged: boolean,
+  // #525 the live configured summary cap (null while preferences load). Compared against the displayed
+  // summary's stamped generatedMaxChars to offer Regenerate when the cap changed. Render-time only —
+  // deliberately NOT a fetch trigger (see isStale below); a cap change must not auto-refetch every PR.
+  configuredMaxChars: number | null = null,
 ): AiSummaryState {
   const [summary, setSummary] = useState<PrSummary | null>(null);
   const [loading, setLoading] = useState(false);
@@ -133,7 +137,17 @@ export function useAiSummary(
     if (baseShaChanged) setStaleCleared(false);
   }, [baseShaChanged]);
 
-  const isStale = baseShaChanged && !staleCleared;
+  // #525 cap-change staleness, ORed onto base-SHA drift. A pure render-time comparison (NOT in the
+  // fetch-effect deps): both the summary's stamped cap and configuredMaxChars must be present and differ.
+  // The configuredMaxChars != null guard suppresses a false-stale flicker while preferences are loading
+  // (the summary GET can resolve before the preferences GET); a null generatedMaxChars (legacy) is never
+  // stale. Self-clearing: a Regenerate restamps the live cap → generatedMaxChars === configuredMaxChars.
+  const capChanged =
+    summary?.generatedMaxChars != null &&
+    configuredMaxChars != null &&
+    summary.generatedMaxChars !== configuredMaxChars;
+
+  const isStale = (baseShaChanged && !staleCleared) || capChanged;
 
   return { summary, loading, error, isStale, regenerating, regenerateError, regenerate };
 }

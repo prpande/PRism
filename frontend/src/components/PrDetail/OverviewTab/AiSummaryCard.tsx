@@ -52,6 +52,24 @@ export function AiSummaryCard({
     return () => clearTimeout(t);
   }, [regenerating, regenerateError]);
 
+  // #525 D6 — stale-on-MOUNT announce. The primary cap-change flow is cross-page (change the cap in
+  // Settings → return to the PR): the card remounts with the "Out of date" chip already present, so the
+  // polite live region is silent (initial content isn't announced; only later mutations are). A later
+  // false→true flip while mounted DOES insert the chip → announced naturally, so this runs ONCE on mount
+  // for the already-stale case only. Also covers pre-existing base-SHA drift detected before mount.
+  // Live-only (the chip is Live-only). The announce text avoids the literal "out of date" so it doesn't
+  // collide with the chip when both sit in the region.
+  const didMountStaleAnnounce = useRef(false);
+  useEffect(() => {
+    if (didMountStaleAnnounce.current) return;
+    didMountStaleAnnounce.current = true; // mount-only: a later isStale flip is announced via chip insertion
+    if (!(live && isStale)) return;
+    setAnnounce('Summary is no longer up to date.');
+    const t = setTimeout(() => setAnnounce(''), 1500);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- mount-only snapshot of live/isStale by design
+  }, []);
+
   if (loading) {
     return (
       <section

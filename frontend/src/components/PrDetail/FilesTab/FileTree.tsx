@@ -10,7 +10,6 @@ import { AiMarker } from '../../Ai/AiMarker';
 import { buildTree, type TreeNode, type FileTreeNode, type DirectoryTreeNode } from './treeBuilder';
 import { useTreeHScroll } from '../../../hooks/useTreeHScroll';
 import styles from './FileTree.module.css';
-import { SampleBadge } from '../../Ai/SampleBadge';
 
 export interface FileTreeProps {
   files: FileChange[];
@@ -215,7 +214,6 @@ export function FileTree({
       <div className={`file-tree-header ${styles.fileTreeHeader}`}>
         <span className={styles.fileTreeHeaderLabel}>
           Files · {viewedCount}/{files.length} viewed
-          {aiPreview && <SampleBadge variant="region" />}
         </span>
         {headerMarkerState && (
           <span data-testid="file-tree-ai-progress" data-ai-state={headerMarkerState}>
