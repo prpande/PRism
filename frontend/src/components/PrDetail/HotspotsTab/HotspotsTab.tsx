@@ -145,9 +145,12 @@ function Row({
   onOpen: (path: string) => void;
 }) {
   const isBackfill = entry.rationale === BACKFILL_RATIONALE;
-  const { headline, body } = splitRationale(entry.rationale);
   // Backfill rows carry a boilerplate sentence — keep the path as the headline
-  // so the real identifier stays primary (#520 D9). They are never expandable.
+  // so the real identifier stays primary (#520 D9). They are never expandable, so
+  // the split output goes unused for them; skip the call rather than discard it.
+  const { headline, body } = isBackfill
+    ? { headline: '', body: '' }
+    : splitRationale(entry.rationale);
   const expandable = !isBackfill && body.length > 0;
   // Path-stable id (survives reorder/filter so aria-controls never mis-wires);
   // the parser's last-wins dedup guarantees a path appears at exactly one level.
