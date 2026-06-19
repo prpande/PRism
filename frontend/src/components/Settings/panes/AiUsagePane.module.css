@@ -78,3 +78,11 @@
     opacity: 0.5;
   }
 }
+/* Respect reduced-motion: hold the skeleton steady rather than pulsing. (The shared
+   <Skeleton> swap is a tracked follow-up; this closes the a11y gap in the meantime.) */
+@media (prefers-reduced-motion: reduce) {
+  .skeletonBar,
+  .skeletonRow {
+    animation: none;
+  }
+}

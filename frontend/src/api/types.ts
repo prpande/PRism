@@ -706,7 +706,7 @@ export interface AiUsageTrendBucket {
 }
 
 export interface AiUsageReport {
-  window: string;
+  window: AiUsageWindow;
   generatedAt: string;
   totals: AiUsageTotals;
   byFeature: AiUsageFeatureRow[];

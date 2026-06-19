@@ -51,7 +51,18 @@ describe('SettingsNav AI nesting', () => {
   it('marks Usage as current when on /settings/ai/usage', () => {
     renderAt('/settings/ai/usage');
     expect(screen.getByRole('link', { name: 'Usage' })).toHaveAttribute('aria-current', 'page');
-    // The AI parent reflects the active section too.
+    // The AI parent is the active *section* but NOT the current page (a child is) —
+    // so it carries aria-current="true" (ancestor), not "page".
+    expect(screen.getByRole('link', { name: /^AI/ })).toHaveAttribute('aria-current', 'true');
+  });
+
+  it('marks the AI parent as the current page when on /settings/ai exactly', () => {
+    renderAt('/settings/ai');
     expect(screen.getByRole('link', { name: /^AI/ })).toHaveAttribute('aria-current', 'page');
+    // Configuration is the child at the exact /settings/ai path.
+    expect(screen.getByRole('link', { name: 'Configuration' })).toHaveAttribute(
+      'aria-current',
+      'page',
+    );
   });
 });

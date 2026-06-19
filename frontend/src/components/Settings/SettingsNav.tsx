@@ -24,12 +24,17 @@ const AI_CHILDREN: { path: string; label: string }[] = [
   { path: '/settings/ai/usage', label: 'Usage' },
 ];
 
-function Item({ section, label, active }: NavItem & { active: boolean }) {
+function Item({
+  section,
+  label,
+  active,
+  ariaCurrent,
+}: NavItem & { active: boolean; ariaCurrent?: 'page' | 'true' }) {
   return (
     <SettingsLink
       to={`/settings/${section}`}
       className={active ? `${styles.navItem} ${styles.navItemOn}` : styles.navItem}
-      aria-current={active ? 'page' : undefined}
+      aria-current={ariaCurrent}
     >
       {label}
       {section === 'ai' && <AiMarker variant="inline" decorative />}
@@ -50,9 +55,17 @@ export function SettingsNav() {
     <nav className={styles.nav} aria-label="Settings sections">
       {PRIMARY.map((i) => {
         const active = i.section === 'ai' ? aiActive : current === i.section;
+        // aria-current="page" only when this link's own target IS the current route. The AI parent
+        // stays styled-active for any /settings/ai* route, but when a child is current it points at an
+        // ancestor → aria-current="true", not "page".
+        const ariaCurrent: 'page' | 'true' | undefined = !active
+          ? undefined
+          : i.section === 'ai' && current !== 'ai'
+            ? 'true'
+            : 'page';
         return (
           <div key={i.section}>
-            <Item {...i} active={active} />
+            <Item {...i} active={active} ariaCurrent={ariaCurrent} />
             {i.section === 'ai' && aiActive && (
               <div className={styles.navChildren}>
                 {AI_CHILDREN.map((c) => (
@@ -80,7 +93,12 @@ export function SettingsNav() {
           System
         </div>
         {SYSTEM.map((i) => (
-          <Item key={i.section} {...i} active={current === i.section} />
+          <Item
+            key={i.section}
+            {...i}
+            active={current === i.section}
+            ariaCurrent={current === i.section ? 'page' : undefined}
+          />
         ))}
       </div>
     </nav>
