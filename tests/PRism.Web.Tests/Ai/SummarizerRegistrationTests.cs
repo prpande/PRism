@@ -26,7 +26,7 @@ public sealed class SummarizerRegistrationTests : IDisposable
     private sealed class StubLlmProvider : ILlmProvider
     {
         public Task<LlmResult> CompleteAsync(LlmRequest request, CancellationToken ct)
-            => Task.FromResult(new LlmResult("stub", 0, 0, 0, 0m));
+            => Task.FromResult(new LlmResult("stub", 0, 0, 0, 0, 0m));
     }
 
     private readonly PRismWebApplicationFactory _factory = new()

@@ -54,7 +54,7 @@ public sealed class ClaudeCodeInboxItemEnricherTests
             if (CallCount > _responses.Length)
                 throw new InvalidOperationException(
                     $"FakeLlmProvider called {CallCount} times but only {_responses.Length} response(s) configured.");
-            return Task.FromResult(new LlmResult(_responses[CallCount - 1], 100, 20, 0, 0.01m));
+            return Task.FromResult(new LlmResult(_responses[CallCount - 1], 100, 20, 0, 89414, 0.01m));
         }
     }
     private sealed class FakeTokenUsageTracker : ITokenUsageTracker
@@ -95,7 +95,7 @@ public sealed class ClaudeCodeInboxItemEnricherTests
         {
             _entered.TrySetResult();
             var json = await _gate.Task.ConfigureAwait(false);
-            return new LlmResult(json, 100, 20, 0, 0.01m);
+            return new LlmResult(json, 100, 20, 0, 89414, 0.01m);
         }
     }
 
@@ -120,6 +120,25 @@ public sealed class ClaudeCodeInboxItemEnricherTests
         result.Single(e => e.PrId == "octo/repo#1").CategoryChip.Should().Be("Feature");
         result.Single(e => e.PrId == "octo/repo#2").CategoryChip.Should().BeNull();
         provider.CallCount.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task EnrichBatch_records_cache_creation_input_tokens_in_both_sinks()
+    {
+        // #379: the cold-call input volume billed as cache-creation must reach BOTH the budget tracker
+        // and the audit log for the batch enrichment call.
+        var provider = new FakeLlmProvider("""[{"prId":"octo/repo#1","category":"fix"}]""");
+        var tracker = new FakeTokenUsageTracker();
+        var log = new FakeAiInteractionLog();
+        var sut = new ClaudeCodeInboxItemEnricher(
+            provider, tracker, log, new CapturingBus(),
+            Consented(), NullLogger<ClaudeCodeInboxItemEnricher>.Instance);
+
+        await sut.EnrichBatchAsync(new[] { Item(1, "Fix crash", "x") }, default);
+
+        tracker.Records.Should().ContainSingle().Which.CacheCreationInputTokens.Should().Be(89414);
+        log.Records.Should().Contain(r =>
+            r.Outcome == AiInteractionOutcome.Ok && r.CacheCreationInputTokens == 89414);
     }
 
     [Fact]

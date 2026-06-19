@@ -208,6 +208,7 @@ internal sealed partial class ClaudeCodeInboxItemEnricher : IInboxItemEnricher, 
             Feature: FeatureName, ProviderId: ClaudeProviderId,
             InputTokens: r.InputTokens, OutputTokens: r.OutputTokens,
             CacheReadInputTokens: r.CacheReadInputTokens,
+            CacheCreationInputTokens: r.CacheCreationInputTokens,
             EstimatedCostUsd: r.EstimatedCostUsd, IsRetry: isRetry), ct).ConfigureAwait(false);
 
         // Mirror ClaudeCodeFileFocusRanker's _interactionLog.Record(new AiInteractionRecord(...))
@@ -218,7 +219,9 @@ internal sealed partial class ClaudeCodeInboxItemEnricher : IInboxItemEnricher, 
             PrRef: "batch", HeadSha: null,
             Outcome: AiInteractionOutcome.Ok, Egressed: true,
             InputTokens: r.InputTokens, OutputTokens: r.OutputTokens,
-            CacheReadInputTokens: r.CacheReadInputTokens, EstimatedCostUsd: r.EstimatedCostUsd,
+            CacheReadInputTokens: r.CacheReadInputTokens,
+            CacheCreationInputTokens: r.CacheCreationInputTokens,
+            EstimatedCostUsd: r.EstimatedCostUsd,
             ResponseChars: r.Text.Length));
     }
 

@@ -73,9 +73,10 @@ builder.Services.AddPrismGitHub();
 var llmCwd = Path.Combine(dataDir, "llm-cwd");      // stable, NON-git working dir
 var llmUsageDir = Path.Combine(dataDir, "llm-usage");
 Directory.CreateDirectory(llmCwd);                  // probe needs a stable cwd to exist before it can spawn; idempotent, owner-scoped
-// Do NOT eagerly create llmUsageDir — JsonlTokenUsageTracker creates AND owner-chmods it in its CONSTRUCTOR,
-// but the tracker is a singleton factory that nothing resolves in P0 (no seam calls RecordAsync), so the ctor
-// never runs and the dir is never materialized. Eager-creating it here would litter an empty owner-scoped dir.
+// Do NOT eagerly create llmUsageDir — JsonlTokenUsageTracker creates AND owner-chmods it in its CONSTRUCTOR.
+// The tracker is a singleton whose factory runs on FIRST resolution, which happens when an AI seam is first
+// invoked (the seams resolve ITokenUsageTracker and call RecordAsync). So the dir is materialized lazily on
+// first AI use; eager-creating it here would litter an empty owner-scoped dir on installs that never use AI.
 builder.Services.AddPrismClaudeCode(
     // Hard wall-clock ceiling per provider call. The 60s default was too tight for the hunk-annotation
     // seam (owner live-validation 2026-06-14: it consistently timed out at 60s → 503, dark in Live, while

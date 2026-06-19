@@ -110,6 +110,21 @@ public sealed class ClaudeCodeLlmProviderTests
     }
 
     [Fact]
+    public async Task Maps_cache_creation_input_tokens_from_envelope()
+    {
+        // #379: on a cold call the claude-code CLI prompt-caches the bulk of the prompt, so almost all
+        // input volume is billed as cache_creation_input_tokens while input_tokens is a rounding-error.
+        // Shape is a real captured payload (89,414 cache-creation tokens for an ~80KB prompt, input_tokens 9).
+        var (provider, _) = Build(new ProcessResult(0,
+            """{ "result": "done", "session_id": "s", "total_cost_usd": 0.18, "usage": { "input_tokens": 9, "cache_creation_input_tokens": 89414, "cache_read_input_tokens": 0, "output_tokens": 301 } }""",
+            "", false));
+        var result = await provider.CompleteAsync(Req(), CancellationToken.None);
+        result.InputTokens.Should().Be(9);
+        result.CacheCreationInputTokens.Should().Be(89414);
+        result.CacheReadInputTokens.Should().Be(0);
+    }
+
+    [Fact]
     public async Task Nonzero_exit_throws_LlmProviderException_with_stderr()
     {
         var (provider, _) = Build(new ProcessResult(1, "", "Not logged in · Please run /login", false));

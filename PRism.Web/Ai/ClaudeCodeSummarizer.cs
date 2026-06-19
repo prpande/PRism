@@ -133,7 +133,9 @@ internal sealed partial class ClaudeCodeSummarizer : IPrSummarizer, IDisposable
             AiInteractionOutcome.Ok, Egressed: true,
             LatencyMs: ElapsedMs(startTimestamp),
             InputTokens: result.InputTokens, OutputTokens: result.OutputTokens,
-            CacheReadInputTokens: result.CacheReadInputTokens, EstimatedCostUsd: result.EstimatedCostUsd,
+            CacheReadInputTokens: result.CacheReadInputTokens,
+            CacheCreationInputTokens: result.CacheCreationInputTokens,
+            EstimatedCostUsd: result.EstimatedCostUsd,
             PromptChars: userContent.Length, ResponseChars: result.Text.Length));
 
 #pragma warning disable CA1031 // deliberate broad catch: budget-visibility tracking is non-fatal (spec §9). Cancellation is excluded so request aborts still propagate.
@@ -143,6 +145,7 @@ internal sealed partial class ClaudeCodeSummarizer : IPrSummarizer, IDisposable
                 Feature: "pr-summary", ProviderId: ClaudeProviderId,
                 InputTokens: result.InputTokens, OutputTokens: result.OutputTokens,
                 CacheReadInputTokens: result.CacheReadInputTokens,
+                CacheCreationInputTokens: result.CacheCreationInputTokens,
                 EstimatedCostUsd: result.EstimatedCostUsd, IsRetry: isRetry), ct).ConfigureAwait(false);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
