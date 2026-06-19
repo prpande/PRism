@@ -7,4 +7,5 @@ public sealed record PrDetailDto(
     IReadOnlyList<CommitDto> Commits,
     IReadOnlyList<IssueCommentDto> RootComments,
     IReadOnlyList<ReviewThreadDto> ReviewComments,
-    bool TimelineCapHit);
+    bool TimelineCapHit,
+    ViewerReview? ViewerReview);

@@ -1,3 +1,18 @@
+.wrap {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 3px;
+}
+.caption {
+  font-size: var(--text-2xs);
+  color: var(--text-3);
+  white-space: nowrap;
+}
+.captionStale {
+  color: var(--warning-fg);
+}
+
 .root {
   position: relative;
   display: inline-flex;

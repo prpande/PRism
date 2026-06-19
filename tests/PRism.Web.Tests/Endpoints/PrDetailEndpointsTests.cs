@@ -40,7 +40,8 @@ public class PrDetailEndpointsTests
             Commits: Array.Empty<CommitDto>(),
             RootComments: Array.Empty<IssueCommentDto>(),
             ReviewComments: Array.Empty<ReviewThreadDto>(),
-            TimelineCapHit: false);
+            TimelineCapHit: false,
+            ViewerReview: null);
 
     private static ClusteringInput MakeTimeline(int commitCount, string shaPrefix = "c") =>
         new(

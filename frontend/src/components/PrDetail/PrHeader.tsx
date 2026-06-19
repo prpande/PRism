@@ -1,5 +1,11 @@
 import { useEffect, useId, useState } from 'react';
-import type { DraftVerdict, PrReference, ReviewSessionDto, ValidatorResult } from '../../api/types';
+import type {
+  DraftVerdict,
+  PrReference,
+  ReviewSessionDto,
+  ValidatorResult,
+  ViewerReview,
+} from '../../api/types';
 import { prRefKey } from '../../api/types';
 import { usePrHeaderCollapsed } from '../../hooks/usePrHeaderCollapsed';
 import type { ComposerOwnerKey } from '../../hooks/useDraftSession';
@@ -136,6 +142,8 @@ interface PrHeaderProps {
   onRefresh?: () => void;
   isRefreshing?: boolean;
   justRefreshed?: boolean;
+  // #512 — the viewer's most-recent submitted review on this PR (null = none).
+  viewerReview?: ViewerReview | null;
 }
 
 export function PrHeader({
@@ -166,6 +174,7 @@ export function PrHeader({
   onRefresh,
   isRefreshing = false,
   justRefreshed = false,
+  viewerReview,
 }: PrHeaderProps) {
   const validatorResults: ValidatorResult[] = useAiGate('preSubmitValidators')
     ? CANNED_PRESUBMIT_VALIDATOR_RESULTS
@@ -394,6 +403,9 @@ export function PrHeader({
     show({ kind: 'info', message: 'Pending review discarded' });
   };
 
+  const submittedReviewStale =
+    viewerReview?.commitSha != null && viewerReview.commitSha !== currentHeadSha;
+
   return (
     <div
       className={styles.prHeader}
@@ -502,6 +514,8 @@ export function PrHeader({
               validatorResults={validatorResults}
               inSubmitFlow={inSubmitFlow}
               dialogOpen={dialogOpen}
+              viewerReview={viewerReview ?? null}
+              submittedReviewStale={submittedReviewStale}
               onPatchVerdict={patchVerdict}
               onOpenSubmit={() => setDialogOpen(true)}
               onResume={onResume}

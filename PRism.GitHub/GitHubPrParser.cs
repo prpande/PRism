@@ -1,6 +1,7 @@
 using System.Text.Json;
 using PRism.Core.Contracts;
 using PRism.Core.Iterations;
+using PRism.GitHub.Inbox;
 
 namespace PRism.GitHub;
 
@@ -222,6 +223,76 @@ internal static class GitHubPrParser
         }
         return result;
     }
+
+    // Viewer's latest effective submitted review (spec #512). Selection mirrors #367 (max
+    // submittedAt among the viewer's submitted reviews) but is DECOUPLED from staleness:
+    // DISMISSED/PENDING are excluded (MapReviewState → null), commit.oid is NOT required —
+    // a review with no commit is still selected with CommitSha = null (staleness unknown).
+    // viewerLogin is resolved by the caller from data.viewer.login (a sibling of
+    // data.repository, unreachable from `pull` = data.repository.pullRequest).
+    //
+    // The query caps reviews at `reviews(last:100)` with no pageInfo (consistent with the
+    // comments/reviewThreads first:100 caps). The cap is safe for this read: `last:100`
+    // returns the 100 MOST-RECENT reviews, and we select by max submittedAt, so the latest
+    // review is always within the window even on a PR with >100 reviews. A viewer dropped
+    // here would only be one of their own older, superseded reviews.
+    internal static ViewerReview? ParseViewerReview(JsonElement pull, string? viewerLogin)
+    {
+        if (string.IsNullOrEmpty(viewerLogin)) return null;
+        if (!pull.TryGetProperty("reviews", out var reviews) ||
+            !reviews.TryGetProperty("nodes", out var nodes) ||
+            nodes.ValueKind != JsonValueKind.Array)
+            return null;
+
+        ReviewState? bestState = null;
+        DateTimeOffset? bestAt = null;
+        string? bestCommit = null;
+
+        foreach (var review in nodes.EnumerateArray())
+        {
+            try
+            {
+                var login = review.TryGetProperty("author", out var a) && a.ValueKind == JsonValueKind.Object
+                    && a.TryGetProperty("login", out var l) ? l.GetString() : null;
+                if (!string.Equals(login, viewerLogin, StringComparison.OrdinalIgnoreCase)) continue;
+
+                if (!review.TryGetProperty("state", out var st) || st.ValueKind != JsonValueKind.String) continue;
+                var state = MapReviewState(st.GetString());
+                if (state is null) continue; // DISMISSED / PENDING / unknown → excluded
+
+                // submittedAt is JSON null for PENDING; gate on String-kind so a null is a clean
+                // skip, not a GetDateTimeOffset() throw (mirrors GitHubAwaitingAuthorFilter).
+                if (!review.TryGetProperty("submittedAt", out var sa) ||
+                    sa.ValueKind != JsonValueKind.String) continue;
+                var submittedAt = sa.GetDateTimeOffset();
+
+                if (bestAt is null || submittedAt > bestAt.Value)
+                {
+                    bestAt = submittedAt;
+                    bestState = state;
+                    var oid = review.TryGetProperty("commit", out var c) && c.ValueKind == JsonValueKind.Object
+                        && c.TryGetProperty("oid", out var o) ? o.GetString() : null;
+                    bestCommit = string.IsNullOrEmpty(oid) ? null : oid;
+                }
+            }
+            catch (Exception ex) when (InboxJsonGuard.IsMalformedItem(ex))
+            {
+                // one malformed review node is skipped, not the whole parse
+            }
+        }
+
+        return bestState is null || bestAt is null
+            ? null
+            : new ViewerReview(bestState.Value, bestAt.Value, bestCommit);
+    }
+
+    private static ReviewState? MapReviewState(string? wire) => wire switch
+    {
+        "APPROVED" => ReviewState.Approved,
+        "CHANGES_REQUESTED" => ReviewState.ChangesRequested,
+        "COMMENTED" => ReviewState.Commented,
+        _ => null, // DISMISSED, PENDING, or unknown → excluded from selection
+    };
 
     private static bool IsTypeName(JsonElement node, string expected)
     {

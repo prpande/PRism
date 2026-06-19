@@ -61,7 +61,8 @@ internal sealed class FakePrReader : IPrReader
                 Commits: _store.Commits.ToList(),
                 RootComments: Array.Empty<IssueCommentDto>(),
                 ReviewComments: Array.Empty<ReviewThreadDto>(),
-                TimelineCapHit: false);
+                TimelineCapHit: false,
+                ViewerReview: null);
             return Task.FromResult<PrDetailDto?>(detail);
         }
     }

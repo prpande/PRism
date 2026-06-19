@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { deriveFace } from './reviewActionState';
-import type { ReviewSessionDto } from '../../../api/types';
+import { deriveFace, PRIOR_VERDICT_LABEL } from './reviewActionState';
+import type { ReviewSessionDto, ViewerReview } from '../../../api/types';
 
 const baseSession: ReviewSessionDto = {
   draftVerdict: null,
@@ -13,7 +13,7 @@ const baseSession: ReviewSessionDto = {
   fileViewState: { viewedFiles: {} },
 };
 
-const inputs = (over: Partial<ReviewSessionDto> = {}, rest = {}) => ({
+const inputs = (over: Partial<ReviewSessionDto> = {}, rest: Record<string, unknown> = {}) => ({
   session: { ...baseSession, ...over },
   prState: 'open' as const,
   headShaDrift: false,
@@ -21,6 +21,8 @@ const inputs = (over: Partial<ReviewSessionDto> = {}, rest = {}) => ({
   inSubmitFlow: false,
   dialogOpen: false,
   sessionLoaded: true,
+  viewerReview: null,
+  submittedReviewStale: false,
   ...rest,
 });
 
@@ -104,6 +106,73 @@ describe('deriveFace — pending / reconfirm / action / disabled', () => {
     const f = deriveFace({ ...inputs({ draftVerdict: 'approve' }), sessionLoaded: false });
     expect(f.frozen).toBe(true);
     expect(f.mainDisabled).toBe(true);
+  });
+});
+
+const reviewed = (over: Partial<ViewerReview> = {}): ViewerReview => ({
+  state: 'approved',
+  submittedAt: '2026-02-01T00:00:00Z',
+  commitSha: 'sha',
+  ...over,
+});
+
+describe('deriveFace — submitted review status', () => {
+  it('shows submitted verdict when no draft (fill + past-tense label + change action)', () => {
+    const f = deriveFace(inputs({}, { viewerReview: reviewed() }));
+    expect(f.fill).toBe('approve');
+    expect(f.label).toBe('Approved');
+    expect(f.mainAction).toBe('change');
+    expect(f.mainDisabled).toBe(false);
+    expect(f.caption).toEqual({
+      mode: 'reviewed',
+      priorState: 'approved',
+      submittedAt: '2026-02-01T00:00:00Z',
+      stale: false,
+    });
+  });
+
+  it('maps changes-requested and commented', () => {
+    expect(
+      deriveFace(inputs({}, { viewerReview: reviewed({ state: 'changes-requested' }) })).fill,
+    ).toBe('request-changes');
+    expect(
+      deriveFace(inputs({}, { viewerReview: reviewed({ state: 'changes-requested' }) })).label,
+    ).toBe('Changes requested');
+    expect(deriveFace(inputs({}, { viewerReview: reviewed({ state: 'commented' }) })).fill).toBe(
+      'comment',
+    );
+  });
+
+  it('flags stale in the caption', () => {
+    const f = deriveFace(inputs({}, { viewerReview: reviewed(), submittedReviewStale: true }));
+    expect(f.caption).toMatchObject({ mode: 'reviewed', stale: true });
+  });
+
+  it('draft wins the face; prior review demotes to a "was" caption', () => {
+    const f = deriveFace(inputs({ draftVerdict: 'request-changes' }, { viewerReview: reviewed() }));
+    expect(f.fill).toBe('request-changes');
+    expect(f.label).toBe('Request changes'); // action label, not past-tense
+    expect(f.pending).toBe(false);
+    expect(f.caption).toEqual({
+      mode: 'was',
+      priorState: 'approved',
+      submittedAt: '2026-02-01T00:00:00Z',
+      stale: false,
+    });
+  });
+
+  it('no submitted review and no draft → Submit review, no caption', () => {
+    const f = deriveFace(inputs());
+    expect(f.label).toBe('Submit review');
+    expect(f.caption).toBeNull();
+  });
+
+  it('PRIOR_VERDICT_LABEL is past-tense', () => {
+    expect(PRIOR_VERDICT_LABEL).toEqual({
+      approved: 'Approved',
+      'changes-requested': 'Changes requested',
+      commented: 'Commented',
+    });
   });
 });
 

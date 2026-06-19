@@ -33,7 +33,7 @@ public static class FixtureStripAllowlist
     private static readonly HashSet<string> AllowedFieldNames = new(StringComparer.Ordinal)
     {
         // Container/envelope fields — must survive so the differ can walk into them
-        "data", "repository", "pullRequest", "comments", "reviews", "reviewThreads", "commits",
+        "data", "repository", "pullRequest", "viewer", "comments", "reviews", "reviewThreads", "commits",
         "timelineItems", "nodes", "edges", "node", "commit", "pageInfo",
         // Identifier fields that carry structural meaning (SHAs, type discriminators)
         "__typename", "oid", "headRefOid", "baseRefOid", "beforeCommit", "afterCommit",
