@@ -394,6 +394,43 @@ describe('InboxRow unread bar, New-badge removal, and age', () => {
   });
 });
 
+describe('InboxRow draft treatment (#501)', () => {
+  it('renders the draft glyph and draft aria-label for an open draft row', () => {
+    const { container } = renderInboxRow({ ...PR, isDraft: true });
+    // status glyph switches to the draft discriminant
+    expect(container.querySelector('[data-pr-state="draft"]')).not.toBeNull();
+    // aria-label carries "· draft" in the state slot (replacing "· open")
+    const row = screen.getByRole('button', { name: /Add user pagination/i });
+    expect(row.getAttribute('aria-label')).toContain('· draft ·');
+    expect(row.getAttribute('aria-label')).not.toContain('· open ·');
+  });
+
+  it('renders the info draft chip for an open draft row', () => {
+    const { container } = renderInboxRow({ ...PR, isDraft: true });
+    expect(container.querySelector(`.${'draftChip'}`) ?? screen.getByText('Draft')).toBeTruthy();
+    expect(screen.getByText('Draft')).toBeInTheDocument();
+  });
+
+  it('a merged draft renders as merged (precedence), not draft', () => {
+    const { container } = renderInboxRow({
+      ...PR,
+      isDraft: true,
+      mergedAt: new Date().toISOString(),
+    });
+    expect(container.querySelector('[data-pr-state="merged"]')).not.toBeNull();
+    expect(container.querySelector('[data-pr-state="draft"]')).toBeNull();
+    expect(screen.queryByText('Draft')).toBeNull();
+  });
+
+  it('a non-draft open row is unchanged (open glyph, open aria, no Draft chip)', () => {
+    const { container } = renderInboxRow({ ...PR, isDraft: false });
+    expect(container.querySelector('[data-pr-state="open"]')).not.toBeNull();
+    expect(screen.queryByText('Draft')).toBeNull();
+    const row = screen.getByRole('button', { name: /Add user pagination/i });
+    expect(row.getAttribute('aria-label')).toContain('· open ·');
+  });
+});
+
 describe('InboxRow AI chip: provenance in aria-label', () => {
   it('AI category chip: icon replaces the "AI" text and provenance rides the row aria-label', () => {
     renderInboxRow(PR, {

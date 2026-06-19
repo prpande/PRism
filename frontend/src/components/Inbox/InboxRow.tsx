@@ -6,7 +6,7 @@ import { Avatar } from '../Avatar/Avatar';
 import { AiMarker } from '../Ai/AiMarker';
 import { AI_PROVENANCE_LABEL } from '../Ai/aiStrings';
 import { DiffBar } from './DiffBar';
-import { PR_GLYPH_PATH, PR_GLYPH_CLASS, PR_GLYPH_LABEL } from '../shared/prStateGlyph';
+import { PR_GLYPH_PATH, PR_GLYPH_CLASS, PR_GLYPH_LABEL, type GlyphState } from '../shared/prStateGlyph';
 import styles from './InboxRow.module.css';
 
 // ---- Leading PR-state octicons (Primer v19, 16-viewBox), every row ----
@@ -70,6 +70,12 @@ export function InboxRow({
 
   const prState: PrState = doneState ?? 'open';
 
+  // #501 — display discriminant for the status glyph. Drafts only matter while open
+  // (merged/closed win via precedence); the PrState type stays open/merged/closed.
+  // Same shape as PrHeader's derivation (prState === 'open' ⟺ !isDone here) so the
+  // two read identically across surfaces.
+  const glyphState: GlyphState = pr.isDraft && prState === 'open' ? 'draft' : prState;
+
   // CI rides the aria-label (glyph is aria-hidden); open rows only. Reuses
   // CI_GLYPH_LABEL so the suffix and the <title> tooltip never drift.
   const ciSuffix = !isDone && pr.ci !== 'none' ? ` · ${CI_GLYPH_LABEL[pr.ci]}` : '';
@@ -78,9 +84,13 @@ export function InboxRow({
   // so the AI provenance rides the row aria-label instead.
   const aiSuffix = showCategoryChip && enrichment?.categoryChip ? ` · ${AI_PROVENANCE_LABEL}` : '';
 
+  // For an open draft the state word becomes "draft" (occupies the slot "open" used);
+  // unread / CI suffixes unchanged; AI provenance never applies to drafts.
+  const openStateWord = pr.isDraft ? 'draft' : 'open';
+
   const ariaLabel = isDone
     ? `${pr.title} · ${pr.repo} · ${doneState}${aiSuffix}`
-    : `${pr.title} · ${pr.repo} · open · iteration ${pr.iterationNumber}${
+    : `${pr.title} · ${pr.repo} · ${openStateWord} · iteration ${pr.iterationNumber}${
         hasUnseenActivity ? ' · unread' : ''
       }${ciSuffix}${aiSuffix}`;
 
@@ -94,16 +104,16 @@ export function InboxRow({
     >
       <span className={styles.status}>
         <svg
-          className={`${styles.prState} ${styles[PR_GLYPH_CLASS[prState]]}`}
-          data-pr-state={prState}
+          className={`${styles.prState} ${styles[PR_GLYPH_CLASS[glyphState]]}`}
+          data-pr-state={glyphState}
           viewBox="0 0 16 16"
           width="14"
           height="14"
           fill="currentColor"
           aria-hidden="true"
         >
-          <title>{PR_GLYPH_LABEL[prState]}</title>
-          <path d={PR_GLYPH_PATH[prState]} />
+          <title>{PR_GLYPH_LABEL[glyphState]}</title>
+          <path d={PR_GLYPH_PATH[glyphState]} />
         </svg>
       </span>
       <span className={styles.midCol}>
