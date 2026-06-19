@@ -157,10 +157,11 @@ export function AiOnboardingDialog({ onDismiss }: { onDismiss: () => void }) {
 
   const btn = BUTTON[pending];
 
-  // Primary button disabled: while loading disclosure, or while submitting, or no disclosure yet
-  // (and no fetch error — fetch error state re-enables via the retry path where disclosure is null).
-  const primaryDisabled =
-    pending === 'live' && (liveLoading || submitting || (!disclosure && !fetchError));
+  // Primary button disabled whenever there is no disclosure to act on: while it loads, while
+  // submitting, or after a fetch error. (Leaving it enabled on fetchError rendered an "Enable
+  // Live AI" button whose onCommit short-circuits on `!disclosure` — an enabled-but-no-op trap.)
+  // The fetch-error retry is to select another mode and Live again, which re-fires onSelect.
+  const primaryDisabled = pending === 'live' && (liveLoading || submitting || !disclosure);
 
   return (
     <Modal
@@ -170,7 +171,6 @@ export function AiOnboardingDialog({ onDismiss }: { onDismiss: () => void }) {
       align="center"
       onClose={onEsc}
       defaultFocus="cancel"
-      role="dialog"
     >
       <p className={styles.lead}>
         {pending === 'live'
@@ -201,7 +201,8 @@ export function AiOnboardingDialog({ onDismiss }: { onDismiss: () => void }) {
         {pending === 'live' ? (
           fetchError ? (
             <div role="alert" className={styles.legend}>
-              Couldn&apos;t load the data-sharing disclosure. Try again.
+              Couldn&apos;t load the data-sharing disclosure. Select another mode, then Live again,
+              to retry.
             </div>
           ) : liveLoading || !disclosure ? (
             <EgressDisclosureSkeleton />

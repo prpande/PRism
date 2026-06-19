@@ -12,11 +12,13 @@ public class ConfigStoreOnboardingSeenTests
 {
     private static async Task<ConfigStore> LoadAsync(string json)
     {
-        var dir = new TempDataDir();
+        using var dir = new TempDataDir();
         await File.WriteAllTextAsync(Path.Combine(dir.Path, "config.json"), json);
         var store = new ConfigStore(dir.Path);
         await store.InitAsync(CancellationToken.None);
-        return store; // TempDataDir is intentionally leaked to the test process lifetime; mirror the sibling tests' disposal pattern if they dispose.
+        // Safe to delete the temp dir now: InitAsync has materialized Current in memory, and
+        // ConfigStore.Dispose only tears down the watcher/gate (no disk write on dispose).
+        return store;
     }
 
     [Fact]

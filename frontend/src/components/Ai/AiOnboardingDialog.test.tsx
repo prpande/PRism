@@ -123,6 +123,17 @@ describe('AiOnboardingDialog Live path', () => {
     expect(modeOrder).toBeLessThan(seenOrder);
   });
 
+  it('keeps the primary button disabled when the disclosure fetch fails (no enabled no-op)', async () => {
+    vi.mocked(consentApi.getEgressDisclosure).mockRejectedValue(new Error('503'));
+    const user = userEvent.setup();
+    render(<AiOnboardingDialog onDismiss={onDismiss} />);
+    await user.click(screen.getByRole('radio', { name: /Live/ }));
+    // Error state renders, but the button must NOT be an enabled no-op — onCommit
+    // short-circuits on !disclosure, so the affordance has to stay disabled.
+    await screen.findByText(/Couldn't load the data-sharing disclosure/);
+    expect(screen.getByRole('button', { name: 'Enable Live AI' })).toBeDisabled();
+  });
+
   it('alreadyConsented short-circuits the POST', async () => {
     vi.mocked(consentApi.getEgressDisclosure).mockResolvedValue(disclosure(true));
     const user = userEvent.setup();
