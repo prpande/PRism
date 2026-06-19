@@ -178,6 +178,40 @@ describe('AiUsagePane', () => {
     expect(screen.getByText(/showing 21 of 26 PRs/i)).toBeInTheDocument();
   });
 
+  it('retains displayed numbers during a refresh-failure retry (no skeleton flash)', async () => {
+    let resolveThird: (r: AiUsageReport) => void = () => {};
+    const spy = vi
+      .spyOn(api, 'getAiUsage')
+      .mockResolvedValueOnce(report()) // 1st fetch: initial 7d loads
+      .mockRejectedValueOnce(new Error('boom')) // 2nd fetch: switch to 30d fails
+      .mockImplementationOnce(
+        () =>
+          new Promise<AiUsageReport>((res) => {
+            resolveThird = res;
+          }),
+      ); // 3rd fetch: retry is in-flight
+
+    render(<AiUsagePane />);
+    const summary = await findHeadlineSummary();
+
+    // Step 1: switch to 30d — it fails, inline notice appears, data retained
+    await userEvent.click(screen.getByRole('radio', { name: '30d' }));
+    expect(await screen.findByText(/could not refresh/i)).toBeInTheDocument();
+    expect(within(summary).getByText('$0.0012')).toBeInTheDocument();
+
+    // Step 2: click inline Try again — third fetch is in-flight (deferred)
+    await userEvent.click(screen.getByRole('button', { name: /try again/i }));
+
+    // Core assertion: no skeleton while the retry is in-flight, old value still present
+    expect(document.querySelector('[class*="skeletonRow"]')).toBeNull();
+    expect(within(summary).getByText('$0.0012')).toBeInTheDocument();
+
+    // Step 3: resolve with new data → swaps in
+    resolveThird(report({ window: '30d', totals: { ...report().totals, estimatedCostUsd: 5.5 } }));
+    await waitFor(() => expect(within(summary).getByText('$5.50')).toBeInTheDocument());
+    expect(spy).toHaveBeenCalledTimes(3);
+  });
+
   it('shows the cache stat (not the empty state) for a cache-only window', async () => {
     vi.spyOn(api, 'getAiUsage').mockResolvedValue(
       report({

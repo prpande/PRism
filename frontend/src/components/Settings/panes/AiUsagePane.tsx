@@ -16,18 +16,21 @@ const WINDOWS: { value: AiUsageWindow; label: string }[] = [
 type Status = 'cold' | 'loading' | 'ready' | 'error';
 
 export function AiUsagePane() {
-  const [window, setWindow] = useState<AiUsageWindow>('7d');
+  const [selectedWindow, setSelectedWindow] = useState<AiUsageWindow>('7d');
   const [report, setReport] = useState<AiUsageReport | null>(null);
   const [status, setStatus] = useState<Status>('cold');
   const reqId = useRef(0);
+  const reportRef = useRef<AiUsageReport | null>(null);
 
   const load = useCallback((w: AiUsageWindow) => {
     const id = ++reqId.current;
-    // Already showing data → keep it visible with a loading cue on switch; otherwise cold skeleton.
-    setStatus((prev) => (prev === 'ready' || prev === 'loading' ? 'loading' : 'cold'));
+    // Base the cold-vs-loading decision on whether data exists, not on prior status.
+    // This prevents a post-error retry from wiping retained numbers back to the skeleton.
+    setStatus(() => (reportRef.current !== null ? 'loading' : 'cold'));
     getAiUsage(w)
       .then((r) => {
         if (id !== reqId.current) return; // a newer request superseded this one
+        reportRef.current = r;
         setReport(r);
         setStatus('ready');
       })
@@ -38,11 +41,11 @@ export function AiUsagePane() {
   }, []); // stable — no `report` dependency, so no stale closure on the retry path
 
   useEffect(() => {
-    load(window);
-  }, [window, load]);
+    load(selectedWindow);
+  }, [selectedWindow, load]);
 
   const onWindow = (w: AiUsageWindow) => {
-    if (w !== window) setWindow(w);
+    if (w !== selectedWindow) setSelectedWindow(w);
   };
 
   // A cache-only window (cacheHits > 0, no tokens, no provider calls) is NOT empty — it must show
@@ -67,7 +70,7 @@ export function AiUsagePane() {
       <div className={status === 'loading' ? styles.loadingControl : undefined}>
         <SegmentedControl
           label="Usage window"
-          value={window}
+          value={selectedWindow}
           options={WINDOWS}
           disabled={status === 'loading'}
           onChange={(v) => onWindow(v as AiUsageWindow)}
@@ -79,33 +82,34 @@ export function AiUsagePane() {
       {status === 'error' && report === null && (
         <div className={styles.card} role="alert">
           <p>Could not load usage data.</p>
-          <button type="button" onClick={() => load(window)}>
+          <button type="button" onClick={() => load(selectedWindow)}>
             Try again
           </button>
         </div>
       )}
       {/* We have data → keep it visible. §5.3 promises a window switch keeps the previous numbers
           on screen — and a *refresh* error must not wipe them either. A refresh failure shows a
-          non-blocking inline notice ABOVE the retained report rather than replacing the pane. */}
-      {report !== null &&
-        status !== 'cold' &&
-        (isEmpty ? (
-          <div className={styles.card}>
-            <p>No AI usage recorded yet.</p>
-          </div>
-        ) : (
-          <>
-            {status === 'error' && (
-              <div className={styles.card} role="alert">
-                <p>Could not refresh usage data — showing the last loaded numbers.</p>
-                <button type="button" onClick={() => load(window)}>
-                  Try again
-                </button>
-              </div>
-            )}
+          non-blocking inline notice ABOVE the retained report rather than replacing the pane.
+          The error notice is shared across both the empty and non-empty retained-data branches. */}
+      {report !== null && status !== 'cold' && (
+        <>
+          {status === 'error' && (
+            <div className={styles.card} role="alert">
+              <p>Could not refresh usage data — showing the last loaded numbers.</p>
+              <button type="button" onClick={() => load(selectedWindow)}>
+                Try again
+              </button>
+            </div>
+          )}
+          {isEmpty ? (
+            <div className={styles.card}>
+              <p>No AI usage recorded yet.</p>
+            </div>
+          ) : (
             <Report report={report} />
-          </>
-        ))}
+          )}
+        </>
+      )}
     </section>
   );
 }
