@@ -28,6 +28,7 @@ export type PreferenceKey =
   | 'inbox.sectionOrder'
   | 'inbox.showActivityRail'
   | 'inbox.groupByRepo'
+  | 'ui.ai.onboardingSeen'
   | `inbox.sections.${
       | 'review-requested'
       | 'awaiting-author'
@@ -43,6 +44,7 @@ type InboxSectionKey = Exclude<
   | 'ui.ai.providerTimeoutSeconds'
   | 'ui.ai.hunkAnnotationCap'
   | 'ui.ai.summaryMaxChars'
+  | 'ui.ai.onboardingSeen'
   | 'density'
   | 'contentScale'
   | 'inbox.defaultSort'
@@ -58,6 +60,7 @@ export function readKey(prefs: PreferencesResponse, key: PreferenceKey): unknown
   if (key === 'ui.ai.providerTimeoutSeconds') return prefs.ui.providerTimeoutSeconds;
   if (key === 'ui.ai.hunkAnnotationCap') return prefs.ui.hunkAnnotationCap;
   if (key === 'ui.ai.summaryMaxChars') return prefs.ui.summaryMaxChars;
+  if (key === 'ui.ai.onboardingSeen') return prefs.ui.onboardingSeen;
   if (key === 'density') return prefs.ui.density;
   if (key === 'contentScale') return prefs.ui.contentScale;
   if (key === 'inbox.defaultSort') return prefs.inbox.defaultSort;
@@ -84,6 +87,8 @@ export function writeKey(
     return { ...prefs, ui: { ...prefs.ui, hunkAnnotationCap: value as number } };
   if (key === 'ui.ai.summaryMaxChars')
     return { ...prefs, ui: { ...prefs.ui, summaryMaxChars: value as number } };
+  if (key === 'ui.ai.onboardingSeen')
+    return { ...prefs, ui: { ...prefs.ui, onboardingSeen: value as boolean } };
   if (key === 'density')
     return {
       ...prefs,
