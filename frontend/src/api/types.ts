@@ -661,3 +661,57 @@ export interface ActivityResponse {
   degraded: ActivityDegradation;
   watching: WatchedRepoActivity[];
 }
+
+// #517 — AI usage & spend. Mirrors PRism.Web/Ai/AiUsageReport.cs (camelCase wire shape).
+export type AiUsageWindow = '24h' | '7d' | '30d' | 'all';
+
+export interface AiUsageTotals {
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadInputTokens: number;
+  cacheCreationInputTokens: number;
+  totalTokens: number;
+  estimatedCostUsd: number;
+  providerCalls: number;
+  cacheHits: number;
+}
+
+export interface AiUsageFeatureRow {
+  component: string;
+  displayName: string;
+  totalTokens: number;
+  estimatedCostUsd: number;
+  providerCalls: number;
+}
+
+export interface AiUsagePrRow {
+  prRef: string;
+  displayLabel: string;
+  totalTokens: number;
+  estimatedCostUsd: number;
+  providerCalls: number;
+}
+
+export interface AiCacheStats {
+  cacheHits: number;
+  providerCalls: number;
+  hitRate: number;
+}
+
+export interface AiUsageTrendBucket {
+  bucketStart: string;
+  granularity: string;
+  estimatedCostUsd: number;
+  totalTokens: number;
+}
+
+export interface AiUsageReport {
+  window: AiUsageWindow;
+  generatedAt: string;
+  totals: AiUsageTotals;
+  byFeature: AiUsageFeatureRow[];
+  byPr: AiUsagePrRow[];
+  totalPrCount: number;
+  cache: AiCacheStats;
+  trend: AiUsageTrendBucket[];
+}
