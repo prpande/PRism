@@ -23,7 +23,7 @@ internal sealed record PreferencesResponse(
 
 internal sealed record UiPreferencesDto(
     string Theme, string Accent, bool AiPreview, string AiMode, string Density, string ContentScale,
-    int ProviderTimeoutSeconds, int HunkAnnotationCap, int SummaryMaxChars);
+    int ProviderTimeoutSeconds, int HunkAnnotationCap, int SummaryMaxChars, bool OnboardingSeen);
 
 // #283 ShowActivityRail serializes as `showActivityRail` natively under the camelCase
 // policy — no [JsonPropertyName] needed. Default false; gates the activity rail (#137

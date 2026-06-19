@@ -86,7 +86,10 @@ internal static class PreferencesEndpoints
                     HunkAnnotationCap: AiConfigBounds.ClampCapForRead(ui.Ai.HunkAnnotationCap),
                     // #525: same read-clamp the summarizer stamps onto PrSummary.GeneratedMaxChars, so the
                     // displayed cap and the card's stale-detection comparison can never disagree (D6).
-                    SummaryMaxChars: AiConfigBounds.ClampSummaryCharsForRead(ui.Ai.SummaryMaxChars)),
+                    SummaryMaxChars: AiConfigBounds.ClampSummaryCharsForRead(ui.Ai.SummaryMaxChars),
+                    // #485: null (key absent on disk / pre-feature) projects as false so the FE always
+                    // gets a concrete bool; Task-2 backfill computes and persists the real value on first load.
+                    OnboardingSeen: ui.Ai.OnboardingSeen ?? false),
             Inbox: new InboxPreferencesDto(
                 new InboxSectionsDto(
                     ReviewRequested: sections.ReviewRequested,

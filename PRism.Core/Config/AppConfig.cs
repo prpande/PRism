@@ -94,7 +94,12 @@ public sealed record AiConfig(
     AiFeaturesConfig Features,
     int HunkAnnotationCap = 10,
     int ProviderTimeoutSeconds = 240,
-    int SummaryMaxChars = 1000);
+    int SummaryMaxChars = 1000,
+    // UX-suppression flag for the first-run AI onboarding overlay ONLY.
+    // null = key absent on disk (pre-feature config) → Task-2 backfill computes it once.
+    // MUST NOT be read by any AI seam, capability resolver, or egress gate.
+    // AiConsentState.IsConsented(...) remains the sole authoritative egress gate.
+    bool? OnboardingSeen = null);
 
 public sealed record GithubConfig(IReadOnlyList<GithubAccountConfig> Accounts)
 {
