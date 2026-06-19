@@ -1,3 +1,5 @@
+using System;
+using System.Collections.Generic;
 using System.Collections.Frozen;
 
 namespace PRism.Core.Config;
@@ -20,4 +22,13 @@ public sealed record AiFeaturesConfig(IReadOnlyDictionary<string, bool> Enabled)
         ["inboxEnrichment"] = true,
         ["inboxRanking"] = true,
     }.ToFrozenDictionary(StringComparer.Ordinal));
+
+    /// <summary>Returns a new config with <paramref name="key"/> set to <paramref name="value"/>,
+    /// all other keys preserved. Rebuilds the frozen dict with <see cref="StringComparer.Ordinal"/>
+    /// (matching the stored comparer) so a casing drift cannot silently no-op the update.</summary>
+    public AiFeaturesConfig With(string key, bool value)
+    {
+        var next = new Dictionary<string, bool>(Enabled, StringComparer.Ordinal) { [key] = value };
+        return new AiFeaturesConfig(next.ToFrozenDictionary(StringComparer.Ordinal));
+    }
 }
