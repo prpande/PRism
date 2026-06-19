@@ -116,6 +116,13 @@
   --accent-soft: oklch(0.94 calc(var(--accent-c) * 0.5) var(--accent-h));
   --accent-text: oklch(0.99 0 0);
   --accent-ring: oklch(0.55 var(--accent-c) var(--accent-h) / 0.35);
+  /* AI marker states (#508). Idle = the existing accent (no visual change to
+     existing #489 markers). Working = a distinct hue so "AI is thinking" never
+     reads identical to "AI content present" — and the distinction survives
+     prefers-reduced-motion, where the pulse is dropped and only the hue remains. */
+  --ai-idle-color: var(--accent);
+  --ai-working-color: oklch(0.62 0.15 230);
+  --ai-idle-opacity: 0.55;
 
   /* state */
   --success: oklch(0.55 0.10 150);
@@ -204,6 +211,11 @@
   --accent-soft: oklch(0.30 calc(var(--accent-c) * 0.7) var(--accent-h));
   --accent-text: oklch(0.15 0 0);
   --accent-ring: oklch(0.72 var(--accent-c) var(--accent-h) / 0.45);
+  --ai-idle-color: var(--accent);
+  /* Cyan-shifted (~50° off the 245° dark accent) + higher chroma so working↔idle stays
+     distinguishable under prefers-reduced-motion, where hue is the only signal. B1 tunes. */
+  --ai-working-color: oklch(0.78 0.18 195);
+  --ai-idle-opacity: 0.72; /* lifted vs light so the dimmed idle marker keeps ≥3:1 (WCAG 1.4.11) */
 
   --success: oklch(0.72 0.13 150);
   --success-soft: oklch(0.30 0.06 150);

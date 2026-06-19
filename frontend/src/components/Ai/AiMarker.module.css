@@ -1,7 +1,32 @@
 .aiMarker {
   display: inline-flex;
   align-items: center;
-  color: var(--accent);
+  color: var(--ai-idle-color);
+  /* working→ready hue settle (spec §3). Dropped under reduced-motion below. */
+  transition: color 150ms ease;
+}
+/* Working: AI is in flight. Hue is the load-bearing differentiator (survives
+   reduced-motion); the pulse is layered on top and dropped when motion is reduced. */
+.working {
+  color: var(--ai-working-color);
+  animation: ai-marker-pulse 1.4s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .working {
+    animation: none;
+  }
+  .aiMarker {
+    transition: none;
+  }
+}
+@keyframes ai-marker-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
 }
 .glyph {
   width: 1em;

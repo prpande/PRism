@@ -30,3 +30,20 @@ describe('AiMarker', () => {
     expect(screen.getByTestId('ai-marker').className).toMatch(/lead/);
   });
 });
+
+it('renders the working class and sr-only working label when state=working', () => {
+  render(<AiMarker state="working" />);
+  const marker = screen.getByTestId('ai-marker');
+  expect(marker.className).toMatch(/working/);
+  expect(screen.getByText('AI is working…')).toBeInTheDocument();
+});
+
+it('omits the sr-only label when working and decorative', () => {
+  render(<AiMarker state="working" decorative />);
+  expect(screen.queryByText('AI is working…')).not.toBeInTheDocument();
+});
+
+it('defaults to idle with no working class', () => {
+  render(<AiMarker />);
+  expect(screen.getByTestId('ai-marker').className).not.toMatch(/working/);
+});
