@@ -6,8 +6,10 @@ import { splitRationale } from './splitRationale';
 import { LevelGlyph } from './LevelGlyph';
 import styles from './HotspotsTab.module.css';
 
-// Collapses every non-alphanumeric run in a path to '-' so it is safe inside an
-// id attribute. Module-scope so it compiles once, not per row per render.
+// Matches every char that is unsafe inside an id attribute (anything non-
+// alphanumeric). Module-scope so it compiles once, not per row per render. Used
+// with a callback that encodes each match to its code point — collapsing all to a
+// single '-' would let distinct paths collide (see panelId).
 const PANEL_ID_UNSAFE_CHARS = /[^a-z0-9]/gi;
 
 // Rationale strings the parser assigns BY RULE (not model-authored). Kept in
@@ -152,9 +154,16 @@ function Row({
     ? { headline: '', body: '' }
     : splitRationale(entry.rationale);
   const expandable = !isBackfill && body.length > 0;
-  // Path-stable id (survives reorder/filter so aria-controls never mis-wires);
-  // the parser's last-wins dedup guarantees a path appears at exactly one level.
-  const panelId = `hotspot-panel-${entry.path.replace(PANEL_ID_UNSAFE_CHARS, '-')}`;
+  // Path-stable id (survives reorder/filter so aria-controls never mis-wires).
+  // Encode each unsafe char to its code point rather than collapsing every run to
+  // '-', so two distinct paths differing only in punctuation (e.g. src/Foo.cs vs
+  // src/Foo_cs) can never sanitize to the same id and cross-wire panels — a real
+  // case the parser's last-wins dedup (one level per PATH) does not cover, since
+  // these are two different paths (claude[bot]).
+  const panelId = `hotspot-panel-${entry.path.replace(
+    PANEL_ID_UNSAFE_CHARS,
+    (c) => `-${c.charCodeAt(0)}-`,
+  )}`;
 
   const lead = (
     <>

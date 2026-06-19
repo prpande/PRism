@@ -33,6 +33,16 @@ describe('splitRationale', () => {
     expect(body).toContain('second bullet');
   });
 
+  it('non-conforming fence-first: keeps the FULL rationale in the body (no content loss)', () => {
+    // The first line is a code fence that strips to '', so the function takes the
+    // non-conforming path and the headline is the first SURVIVING stripped line
+    // (not empty). The fenced content must remain in the body.
+    const { headline, body } = splitRationale('```cs\nSomeCode();\n```\n- bullet');
+    expect(headline.length).toBeGreaterThan(0);
+    expect(body).toContain('SomeCode()');
+    expect(body).toContain('- bullet');
+  });
+
   it('empty input yields empty headline and body', () => {
     expect(splitRationale('')).toEqual({ headline: '', body: '' });
   });

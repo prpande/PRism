@@ -51,6 +51,11 @@
   border: none;
   cursor: pointer;
 }
+/* .item is rounded but NOT overflow:hidden, so the hover fill must round its own
+   corners to sit inside .item's radius. These two rules cover all leading-edge
+   corners: top-left always; bottom-left only when collapsed (an expanded row has
+   the .panel below, which owns the bottom corners). Keep the three corner rules in
+   sync if the expanded structure changes (claude[bot]). */
 .rowToggle:hover {
   background: var(--surface-3);
   border-top-left-radius: var(--radius-2);
