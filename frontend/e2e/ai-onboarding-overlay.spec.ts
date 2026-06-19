@@ -6,12 +6,13 @@
 //   1. fresh user: setupAndOpenScenarioPr yields onboardingSeen=false (backfill:
 //      mode=Preview + no consent → false). Dialog appears over the inbox.
 //      User clicks "Maybe later" → dialog closes → inbox visible → reload →
-//      dialog gone (seen persisted). This test sets onboardingSeen=true on the
-//      shared backend state, so test 2 finds onboardingSeen=true without an
-//      explicit reset.
+//      dialog gone (seen persisted).
 //   2. returning user: POST ui.ai.onboardingSeen=true before navigating.
-//      No dialog appears on inbox load. Explicit POST is idempotent (safe whether
-//      test 1 ran first or not in serial order).
+//      No dialog appears on inbox load.
+//
+// Both tests are self-contained and idempotent: each runs its own setup and owns
+// its own preference state, so neither depends on the other's ordering or
+// side-effects (test 2 POSTs seen=true explicitly rather than inheriting test 1's).
 //
 // IMPORTANT — no resetBackendState in beforeEach:
 //   resetBackendState patches onboardingSeen=true as one of its four preference
@@ -64,8 +65,13 @@ test('fresh user sees onboarding dialog over the inbox; "Maybe later" persists s
   // Reload: preferences are re-fetched from the backend; seen=true → dialog must
   // NOT remount. This verifies the preference write persisted server-side.
   await page.reload();
-  await expect(page.getByRole('dialog', { name: 'Set up AI for your reviews' })).toHaveCount(0);
+  // Confirm the SPA has finished loading (inbox rendered ⇒ preferences fetched ⇒
+  // the dialog mount decision has been made) BEFORE asserting the dialog is absent.
+  // toHaveCount(0) short-circuits the instant zero dialogs exist — including on the
+  // blank post-reload DOM before the SPA remounts — so it must come second or it
+  // can pass trivially without proving the persisted seen flag suppressed the dialog.
   await expect(page.getByTestId('inbox-page')).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByRole('dialog', { name: 'Set up AI for your reviews' })).toHaveCount(0);
 });
 
 test('returning user (onboardingSeen=true) sees no overlay on the inbox', async ({ page }) => {
@@ -92,9 +98,12 @@ test('returning user (onboardingSeen=true) sees no overlay on the inbox', async 
   await page.goto('/');
   await page.waitForURL('/');
 
+  // Confirm the inbox rendered (⇒ preferences fetched ⇒ mount decision made) BEFORE
+  // asserting the dialog is absent. waitForURL only settles the URL, not the
+  // preferences fetch; toHaveCount(0) would otherwise short-circuit on the still-
+  // loading DOM and pass before the overlay has had its chance to (not) mount.
+  await expect(page.getByTestId('inbox-page')).toBeVisible({ timeout: 30_000 });
+
   // Dialog must NOT appear.
   await expect(page.getByRole('dialog', { name: 'Set up AI for your reviews' })).toHaveCount(0);
-
-  // Inbox must be visible and functional.
-  await expect(page.getByTestId('inbox-page')).toBeVisible({ timeout: 30_000 });
 });

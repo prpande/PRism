@@ -123,7 +123,11 @@ test.describe('onboarding dialog — Off state', () => {
     await page.goto('/');
     const dialog = page.getByRole('dialog', { name: 'Set up AI for your reviews' });
     await expect(dialog).toBeVisible({ timeout: 30_000 });
-    await dialog.getByRole('radio', { name: 'Off' }).click();
+    const offRadioLight = dialog.getByRole('radio', { name: 'Off' });
+    await offRadioLight.click();
+    // Wait for the selection to settle (aria-checked flips) before capturing, so the
+    // screenshot can't race the click's state/style transition.
+    await expect(offRadioLight).toHaveAttribute('aria-checked', 'true');
     await page.addStyleTag({ content: KILL_ANIMATIONS_CSS });
     await expect(dialog).toHaveScreenshot('onboarding-dialog-off-light.png', SCREENSHOT_OPTS);
   });
@@ -134,7 +138,11 @@ test.describe('onboarding dialog — Off state', () => {
     await page.goto('/');
     const dialog = page.getByRole('dialog', { name: 'Set up AI for your reviews' });
     await expect(dialog).toBeVisible({ timeout: 30_000 });
-    await dialog.getByRole('radio', { name: 'Off' }).click();
+    const offRadioDark = dialog.getByRole('radio', { name: 'Off' });
+    await offRadioDark.click();
+    // Wait for the selection to settle (aria-checked flips) before capturing, so the
+    // screenshot can't race the click's state/style transition.
+    await expect(offRadioDark).toHaveAttribute('aria-checked', 'true');
     await page.addStyleTag({ content: KILL_ANIMATIONS_CSS });
     await expect(dialog).toHaveScreenshot('onboarding-dialog-off-dark.png', SCREENSHOT_OPTS);
   });
