@@ -1328,7 +1328,8 @@ internal static class AiUsageAggregator
         {
             "hour" => b.GroupBy(x => HourStart(x.HourEpoch)),
             "week" => b.GroupBy(x => WeekStart(HourStart(x.HourEpoch))),
-            _ => b.GroupBy(x => HourStart(x.HourEpoch).Date.ToDateTimeOffset()), // day
+            _ => b.GroupBy(x => new DateTimeOffset(
+                DateTime.SpecifyKind(HourStart(x.HourEpoch).UtcDateTime.Date, DateTimeKind.Utc), TimeSpan.Zero)), // day
         };
 
         return groups
@@ -1351,14 +1352,8 @@ internal static class AiUsageAggregator
     {
         var date = when.UtcDateTime.Date;
         var delta = (7 + (int)date.DayOfWeek - (int)DayOfWeek.Monday) % 7;
-        return new DateTimeOffset(date.AddDays(-delta), TimeSpan.Zero);
+        return new DateTimeOffset(DateTime.SpecifyKind(date.AddDays(-delta), DateTimeKind.Utc), TimeSpan.Zero);
     }
-}
-
-internal static class TrendDateExtensions
-{
-    public static DateTimeOffset ToDateTimeOffset(this DateTime date) =>
-        new(DateTime.SpecifyKind(date, DateTimeKind.Utc), TimeSpan.Zero);
 }
 ```
 
@@ -1783,6 +1778,18 @@ describe('AiUsagePane', () => {
     expect(spy).toHaveBeenCalledTimes(2);
   });
 
+  it('keeps the last loaded numbers visible when a window switch fails (no full-pane error)', async () => {
+    vi.spyOn(api, 'getAiUsage')
+      .mockResolvedValueOnce(report())              // initial 7d loads
+      .mockRejectedValueOnce(new Error('boom'));     // 30d switch fails
+    render(<AiUsagePane />);
+    await screen.findByText('$0.0012');
+
+    await userEvent.click(screen.getByRole('radio', { name: '30d' }));
+    expect(await screen.findByText(/could not refresh/i)).toBeInTheDocument();
+    expect(screen.getByText('$0.0012')).toBeInTheDocument(); // stale data retained, not wiped
+  });
+
   it('keeps the previous data visible while a window switch loads (stale-while-loading)', async () => {
     let resolveSecond: (r: AiUsageReport) => void = () => {};
     const spy = vi.spyOn(api, 'getAiUsage')
@@ -1991,17 +1998,29 @@ export function AiUsagePane() {
       </div>
 
       {status === 'cold' && <Skeleton />}
-      {status === 'error' && (
+      {/* Cold error — no data to fall back to → full error card. */}
+      {status === 'error' && report === null && (
         <div className={styles.card} role="alert">
           <p>Could not load usage data.</p>
           <button type="button" onClick={() => load(window)}>Try again</button>
         </div>
       )}
-      {report !== null && (status === 'ready' || status === 'loading') && (
+      {/* We have data → keep it visible. §5.3 promises a window switch keeps the previous numbers
+          on screen — and a *refresh* error must not wipe them either. A refresh failure shows a
+          non-blocking inline notice ABOVE the retained report rather than replacing the pane. */}
+      {report !== null && status !== 'cold' && (
         isEmpty ? (
           <div className={styles.card}><p>No AI usage recorded yet.</p></div>
         ) : (
-          <Report report={report} />
+          <>
+            {status === 'error' && (
+              <div className={styles.card} role="alert">
+                <p>Could not refresh usage data — showing the last loaded numbers.</p>
+                <button type="button" onClick={() => load(window)}>Try again</button>
+              </div>
+            )}
+            <Report report={report} />
+          </>
         )
       )}
     </section>
@@ -2024,10 +2043,11 @@ function Skeleton() {
 
 function Report({ report }: { report: AiUsageReport }) {
   const [showPrs, setShowPrs] = useState(false);
+  const prTableRef = useRef<HTMLTableElement>(null);
   // Bar height, tooltip, and the SR summary ALL track cost so the tallest bar IS the highest-spend
-  // bucket. Scaling height to tokens while the tooltip/summary report cost would let the tallest bar
-  // disagree with "highest spend" (cache-read tokens are cheap; output costs more than input).
-  const max = Math.max(0.0001, ...report.trend.map((t) => t.estimatedCostUsd));
+  // bucket (cache-read tokens are cheap; output costs more than input — token volume ≠ cost).
+  const trendCostMax = report.trend.reduce((m, t) => Math.max(m, t.estimatedCostUsd), 0);
+  const showTrend = trendCostMax > 0; // a spend trend — omit entirely when there's no cost to chart
   const peak = report.trend.reduce<AiUsageReport['trend'][number] | null>(
     (a, b) => (a === null || b.estimatedCostUsd > a.estimatedCostUsd ? b : a), null);
   const fmtDate = (iso: string) => new Date(iso).toLocaleDateString();
@@ -2043,20 +2063,25 @@ function Report({ report }: { report: AiUsageReport }) {
         </div>
       </div>
 
-      {/* Decorative bars; the precise data lives in the tables below. Height tracks cost. */}
-      <div className={styles.trend} aria-hidden="true">
-        {report.trend.map((t) => (
-          <div
-            key={t.bucketStart}
-            className={styles.bar}
-            style={{ height: `${Math.round((t.estimatedCostUsd / max) * 100)}%` }}
-            title={`${fmtDate(t.bucketStart)}: ${formatCost(t.estimatedCostUsd)}`}
-          />
-        ))}
-      </div>
-      {/* Omit the SR summary when there is no spend to announce (e.g. a cache-only window). */}
-      {peak && peak.estimatedCostUsd > 0 && (
-        <p className="sr-only">Highest spend: {fmtDate(peak.bucketStart)}, {formatCost(peak.estimatedCostUsd)}.</p>
+      {/* A *spend* trend — rendered only when there's nonzero cost to chart, so a cache-only or
+          all-zero-cost window shows neither an empty 64px gap nor flat bars that contradict the
+          tables below. Decorative; the precise data lives in the tables. Height tracks cost. */}
+      {showTrend && (
+        <>
+          <div className={styles.trend} aria-hidden="true">
+            {report.trend.map((t) => (
+              <div
+                key={t.bucketStart}
+                className={styles.bar}
+                style={{ height: `${Math.round((t.estimatedCostUsd / trendCostMax) * 100)}%` }}
+                title={`${fmtDate(t.bucketStart)}: ${formatCost(t.estimatedCostUsd)}`}
+              />
+            ))}
+          </div>
+          {peak && peak.estimatedCostUsd > 0 && (
+            <p className="sr-only">Highest spend: {fmtDate(peak.bucketStart)}, {formatCost(peak.estimatedCostUsd)}.</p>
+          )}
+        </>
       )}
 
       <table className={styles.table} aria-label="Usage by feature">
@@ -2081,7 +2106,17 @@ function Report({ report }: { report: AiUsageReport }) {
       </div>
 
       <div className={styles.card}>
-        <button type="button" aria-expanded={showPrs} onClick={() => setShowPrs((v) => !v)}>
+        <button
+          type="button"
+          aria-expanded={showPrs}
+          onClick={() => {
+            const next = !showPrs;
+            setShowPrs(next);
+            // Move focus into the revealed table so keyboard users land on the new content
+            // instead of tabbing from the button through it. rAF: the table mounts this render.
+            if (next) requestAnimationFrame(() => prTableRef.current?.focus());
+          }}
+        >
           By PR ({report.totalPrCount})
         </button>
         {showPrs && (
@@ -2089,7 +2124,7 @@ function Report({ report }: { report: AiUsageReport }) {
             {/* Render report.byPr VERBATIM — the backend already capped at top-20-by-cost AND appended
                 the "batch" row past the cap (§4.4). Re-slicing here (e.g. .slice(0, 20)) would drop
                 exactly that appended "Inbox (batched)" row, violating AC §10. */}
-            <table className={styles.table} aria-label="Usage by PR">
+            <table ref={prTableRef} tabIndex={-1} className={styles.table} aria-label="Usage by PR">
               <thead>
                 <tr><th>PR</th><th className={styles.num}>Tokens</th><th className={styles.num}>Est. cost</th></tr>
               </thead>
@@ -2118,7 +2153,7 @@ function Report({ report }: { report: AiUsageReport }) {
 }
 ```
 
-> **Implementer notes (verified against the codebase):** (1) `SegmentedControl` (`frontend/src/components/controls/SegmentedControl.tsx`) takes `label: string` (wired internally to the radiogroup's `aria-label`), `options: readonly {value,label}[]`, `value`, `onChange`, and `disabled?` — the props above match exactly; it renders `radio` roles, so `getByRole('radio', { name: '30d' })` resolves. Do **not** pass `aria-label` (not a prop). (2) `.sr-only` is defined in `frontend/src/styles/tokens.css` as `position:absolute; top:0; left:0; …` — that is why `.pane` adds `position: relative` (above), so the SR summary's containing block is the pane rather than `<html>` (memory: `reference_sr_only_abspos_page_scroll`). (3) When expanding **By PR**, move keyboard focus to the revealed table (add a `ref` + `tabIndex={-1}` on the `<table>` and `.focus()` it on expand) so a keyboard user lands on the new content instead of tabbing from the button through it.
+> **Implementer notes (verified against the codebase):** (1) `SegmentedControl` (`frontend/src/components/controls/SegmentedControl.tsx`) takes `label: string` (wired internally to the radiogroup's `aria-label`), `options: readonly {value,label}[]`, `value`, `onChange`, and `disabled?` — the props above match exactly; it renders `radio` roles, so `getByRole('radio', { name: '30d' })` resolves. Do **not** pass `aria-label` (not a prop). (2) `.sr-only` is defined in `frontend/src/styles/tokens.css` as `position:absolute; top:0; left:0; …` — that is why `.pane` adds `position: relative` (above), so the SR summary's containing block is the pane rather than `<html>` (memory: `reference_sr_only_abspos_page_scroll`). (3) The By-PR expand moves focus into the revealed table (`prTableRef` + `tabIndex={-1}`, focused via `requestAnimationFrame` on expand) — implemented in the code above, so keyboard users land on the new content.
 
 - [ ] **Step 5: Run test to verify it passes**
 
@@ -2349,38 +2384,32 @@ git commit -m "feat(ai): nest Usage under the AI settings nav item (#517 §5.1)"
 ### Task C5: e2e — AI nav auto-expand + Usage pane render (§7 frontend)
 
 **Files:**
-- Create: `frontend/e2e/helpers/settings.ts` (extract the shared mock helper — see Step 0)
-- Modify: `frontend/e2e/ai-settings-tab.spec.ts`, `frontend/e2e/settings-flow.spec.ts` (import the extracted helper instead of their local copies)
 - Create: `frontend/e2e/ai-usage.spec.ts`
 - (Expect) settings screenshot baselines rebaseline ×2 platforms — mechanical (§7).
 
 **Interfaces:**
-- Consumes: the extracted `setupSettingsMocks(page)` helper (Step 0), plus a new `/api/ai/usage` route mock added inline in this spec.
+- Consumes: the `./fixtures/preferences` helpers the existing specs use (`authedAuthState`, `makeDefaultPreferences`), via a **spec-local** `setupSettingsMocks` (the repo's established per-spec pattern), plus a new `/api/ai/usage` route mock.
 
-> **Why Step 0:** `setupSettingsMocks` does **not** exist as a shared module today — it is a non-exported `async function` defined *locally and independently* inside both `ai-settings-tab.spec.ts` and `settings-flow.spec.ts` (verified). Importing `from './helpers/settings'` would fail to resolve. Step 0 lifts the one in `ai-settings-tab.spec.ts` into a shared, exported helper and repoints both existing specs at it (DRY), so this spec can import it for real.
-
-- [ ] **Step 0: Extract the shared settings-mock helper**
-
-Move the `setupSettingsMocks` function body out of `ai-settings-tab.spec.ts` into a new `frontend/e2e/helpers/settings.ts` as an `export async function setupSettingsMocks(page: import('@playwright/test').Page)` (carry over the `./fixtures/preferences` imports it depends on — e.g. `authedAuthState`, `makeDefaultPreferences`). Replace the local definitions in both `ai-settings-tab.spec.ts` and `settings-flow.spec.ts` with `import { setupSettingsMocks } from './helpers/settings';`.
-
-- [ ] **Step 0 verification: existing settings e2e still pass**
-
-Run: `cd frontend && npx playwright test e2e/ai-settings-tab.spec.ts e2e/settings-flow.spec.ts --project=prod`
-Expected: PASS (pure extraction — no behavior change). Commit this extraction separately:
-
-```bash
-cd frontend && npx prettier --write e2e/helpers/settings.ts e2e/ai-settings-tab.spec.ts e2e/settings-flow.spec.ts
-git add frontend/e2e/helpers/settings.ts frontend/e2e/ai-settings-tab.spec.ts frontend/e2e/settings-flow.spec.ts
-git commit -m "refactor(e2e): extract shared setupSettingsMocks helper (#517 prep)"
-```
+> **No shared extraction (round-2 correction):** the two existing settings specs each define their OWN local `setupSettingsMocks`, and the two are **not** interchangeable — `ai-settings-tab.spec.ts` persists only the AI knobs and serves `allOnCapabilities` (seeding `aiMode:'live'`), while `settings-flow.spec.ts` persists theme/density/inbox-sections and serves `allOffCapabilities`. Lifting one into a shared module and repointing both would break `settings-flow`'s persistence assertions. Follow the repo pattern: give `ai-usage.spec.ts` its OWN local mock setup; do **not** touch the existing specs.
 
 - [ ] **Step 1: Write the spec**
 
-Create `ai-usage.spec.ts` (mirror the nav-click + mock pattern in `ai-settings-tab.spec.ts`):
+Create `ai-usage.spec.ts`. Define a **spec-local** `setupSettingsMocks(page)` by copying the structure of the one in `ai-settings-tab.spec.ts` — stub `GET /api/auth/state`, `GET /api/preferences`, and `GET /api/capabilities` (copy that spec's exact capabilities body so the real `AiMarker` renders), then add the `/api/ai/usage` route in the test. Self-contained skeleton:
 
 ```ts
 import { test, expect } from '@playwright/test';
-import { setupSettingsMocks } from './helpers/settings'; // the helper extracted in Step 0
+import { authedAuthState, makeDefaultPreferences } from './fixtures/preferences';
+
+// Spec-local mocks, mirroring ai-settings-tab.spec.ts's own local helper (repo pattern: each spec
+// owns its setup). Copy ai-settings-tab's capabilities body verbatim if AiMarker needs a specific shape.
+async function setupSettingsMocks(page: import('@playwright/test').Page) {
+  await page.route('**/api/auth/state', (r) =>
+    r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(authedAuthState) }));
+  await page.route('**/api/preferences', (r) =>
+    r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(makeDefaultPreferences()) }));
+  await page.route('**/api/capabilities', (r) =>
+    r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({}) }));
+}
 
 const USAGE = {
   window: '7d',
@@ -2487,6 +2516,19 @@ A 6-persona machine review (coherence, feasibility, design-lens, security-lens, 
 - **Discarded — scope-guardian's findings**: that reviewer hallucinated a different plan (cited "U-A1–U-A5", "top-5 PR contributors", "(day,model)/(week,model)" buckets, "52-week/2-year retention" — none in this document). Its evidence quotes do not appear in the plan, so all findings fail the evidence gate. Its two incidental technical points (reader re-read I/O; Windows `File.Move` atomicity) were independently checked by feasibility/adversarial and confirmed non-issues.
 
 **Resolved — Windows ACL (security-lens, P2, conf 75 → owner-decided 2026-06-19, option a):** the spec §4.1 wording overstated what the sibling `JsonlTokenUsageTracker` does (it sets no explicit Windows ACL). Spec §4.1 has been amended to describe the actual behavior — POSIX `chmod 700`; Windows relies on the OS-default per-user `dataDir` ACL — so spec and plan now agree and Task A3 introduces no Windows ACL code. The rollup is no less protected than the existing `token-usage.jsonl`; adding ACL code to both was ruled out of scope for #517.
+
+### Round 2 (re-review at owner request — dispositions)
+
+A second 6-persona pass ran after the round-1 edits. It converged (security-lens clean; scope-guardian read correctly this time). It caught defects the **round-1 edits themselves introduced**, all applied:
+
+- **Applied — C5 extraction over-reached** (feasibility P2/100 + scope-guardian P2/75, convergent). The round-1 fix proposed extracting `setupSettingsMocks` into a shared module and repointing both existing specs — but the two specs' local helpers are materially different (`ai-settings-tab` persists AI knobs + `allOnCapabilities`; `settings-flow` persists theme/inbox-sections + `allOffCapabilities`), so repointing would break `settings-flow`'s persistence tests. Reverted to the **leaner, repo-native** fix: `ai-usage.spec.ts` gets its **own** spec-local `setupSettingsMocks`; the existing specs are untouched.
+- **Applied — window-switch-then-error wiped the retained data** (adversarial P2/75). The round-1 render gating was mutually exclusive on status, so an error on a *new* window replaced the prior window's numbers with the error card — contradicting §5.3. Now: cold error → full card; refresh error → a non-blocking inline notice **above** the retained report; added a regression test.
+- **Applied — cache-only / all-zero-cost window rendered an empty 64px trend gap or flat bars** (adversarial P3). The trend (a *spend* trend) now renders only when `trendCostMax > 0`.
+- **Applied — By-PR focus management was prose-only, not code** (design-lens P2/100). Moved into the `Report` code: `prTableRef` + `tabIndex={-1}`, focused on expand.
+- **Applied — single-consumer `TrendDateExtensions`** (scope-guardian P3/75). Inlined at its one call site; class removed.
+- **Applied — spec/plan drift on the by-PR disclosure** (coherence P1/100). Spec §5.2 + §7 still said interactive "Show all"; amended to the static "Showing N of M PRs" note (matches the plan and the §4.6 "+N more" intent).
+
+Round-2 falsified-as-sound (no action): the "Showing N of M" count arithmetic across batch-in-cap / batch-appended / exactly-21 cases; the `disabled` SegmentedControl not blocking the stale-while-loading click; a Fallback-only window through `isEmpty` (Fallback never occurs without its accompanying `Ok` attempts → providerCalls ≥ 2). No round-3 pass was run (avoiding silent iteration).
 
 ---
 

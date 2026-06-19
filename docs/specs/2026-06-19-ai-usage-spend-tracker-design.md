@@ -168,7 +168,7 @@ Layout, top to bottom:
 3. **Trend** — small per-bucket bars (plain CSS, scaled to the window max; no chart library). Hourly bars for 24h, daily for 7d/30d/All (weekly for All beyond 90 days). Each bar exposes its bucket label + value on hover (title/tooltip). The bar **container** is `aria-hidden` (decorative); a visually-hidden summary sentence ("Highest spend: {bucket}, {cost}") gives screen-reader users the signal — the precise data lives in the tables below.
 4. **By-feature table** — feature · provider calls · tokens · est. cost, sorted by cost desc (the primary actionable lens). Headers are **static**, not interactive sort controls (feature count is ≤ 4).
 5. **Cache stat** — hit-rate + "N calls served from cache." (Phrase as "served from cache," not "no spend" — a cache *read* still has a small token cost; only the full re-egress is avoided.)
-6. **By-PR drill-down** — secondary, **collapsed by default**; when expanded shows the top 20 rows by cost with a "Show all {TotalPrCount} PRs" disclosure when more exist; the "Inbox (batched)" row is always shown when present.
+6. **By-PR drill-down** — secondary, **collapsed by default**; when expanded shows the rows the endpoint returned (top 20 by cost + the always-included "Inbox (batched)" row when present) plus a **static "Showing N of {TotalPrCount} PRs (top by cost)" note** when the window has more PRs than were returned. (Not an interactive "show all": the payload is capped server-side at top-20, so there is nothing further to fetch — matching the §4.6 DTO's `TotalPrCount` "for +N more" intent. Owner-confirmed 2026-06-19.)
 
 **Number formatting (shared helpers):** token counts use locale thousands separators, no abbreviation (counts here stay well under 10M). Costs render to **4 decimal places when below $0.01** (e.g. `$0.0012`) and 2 decimals otherwise — a naive 2-dp format would show real sub-cent costs as `$0.00` and read as "AI is free." The headline cost uses the same adaptive precision.
 
@@ -204,7 +204,7 @@ Layout, top to bottom:
 - Endpoint: window validation + default; empty report when no data / before first tick; always 200 (not gated on AI mode); session auth enforced.
 
 **Frontend:**
-- Pane renders a populated report (headline, trend bars, by-feature, cache, by-PR); window switch shows stale-while-loading then swaps; cold skeleton; empty + error (Try again) states; sub-cent cost formats as `$0.00xx` not `$0.00`; by-PR collapsed default + "Show all" disclosure + "Inbox (batched)" label.
+- Pane renders a populated report (headline, trend bars, by-feature, cache, by-PR); window switch shows stale-while-loading then swaps; cold skeleton; empty + error (Try again) states; sub-cent cost formats as `$0.00xx` not `$0.00`; by-PR collapsed default + static "Showing N of M PRs" truncation note (no interactive "show all") + "Inbox (batched)" label always present.
 - e2e: mock `/api/ai/usage`; AI nav auto-expands its children and routes to `/settings/ai/usage`.
 - New settings nav child rebaselines settings screenshots (×2 platforms) — expected, mechanical.
 
