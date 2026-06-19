@@ -53,7 +53,20 @@ internal sealed partial class AiUsageRollupTailer : IHostedService, IDisposable
         try { await TickAsync(cancellationToken).ConfigureAwait(false); } // best-effort final flush; must never crash shutdown
         catch (OperationCanceledException) { }
 #pragma warning disable CA1031 // a shutdown-flush failure is logged, never propagated out of StopAsync
-        catch (Exception ex) { Log.TickFailed(_logger, ex); }
+        catch (Exception ex) { LogTickFailedSafely(ex); }
+#pragma warning restore CA1031
+    }
+
+    // Logging a tick failure must itself never throw. During host teardown the logger's sink
+    // (e.g. an EventLog provider) can already be disposed — the framework then wraps the write
+    // fault in an AggregateException, which would propagate out of StopAsync/the loop and fail
+    // shutdown (#550). The tick failure is already best-effort, so dropping its one log line on
+    // a disposed sink is acceptable.
+    private void LogTickFailedSafely(Exception ex)
+    {
+#pragma warning disable CA1031 // logging-sink faults during teardown have nothing safe to fall back to
+        try { Log.TickFailed(_logger, ex); }
+        catch { /* logger sink disposed during teardown */ }
 #pragma warning restore CA1031
     }
 
@@ -65,7 +78,7 @@ internal sealed partial class AiUsageRollupTailer : IHostedService, IDisposable
             try { await TickAsync(ct).ConfigureAwait(false); }
             catch (OperationCanceledException) { throw; }
 #pragma warning disable CA1031 // never let the loop die on a transient IO error; observe + retry next tick
-            catch (Exception ex) { Log.TickFailed(_logger, ex); }
+            catch (Exception ex) { LogTickFailedSafely(ex); }
 #pragma warning restore CA1031
         }
         while (await timer.WaitForNextTickAsync(ct).ConfigureAwait(false));
