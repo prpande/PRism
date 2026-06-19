@@ -29,6 +29,14 @@ internal static class PlaceholderData
 
     public const string SummaryCategory = "Refactor";
 
+    // Inbox Preview chip category. Deliberately a generic, non-taxonomy word so the Preview chip
+    // reads as a SAMPLE rather than a plausible real categorisation (owner B1 2026-06-19). Kept
+    // SEPARATE from SummaryCategory on purpose: the PR-detail summary card maps its category through
+    // a fixed taxonomy (AiSummaryCard.CATEGORY_LABELS) and DROPS the chip for out-of-taxonomy values,
+    // so the summarizer must keep a canonical label ("Refactor"). The inbox enricher emits its
+    // category verbatim (it bypasses InboxCategory.Normalize), so "Category" renders as-is.
+    public const string InboxSampleCategory = "Category";
+
     public static IReadOnlyList<FileFocus> FileFocus { get; } = new[]
     {
         new FileFocus("src/Calc.cs", FocusLevel.High,

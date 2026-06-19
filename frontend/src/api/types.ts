@@ -176,6 +176,7 @@ export interface InboxResponse {
   lastRefreshedAt: string;
   tokenScopeFooterEnabled: boolean;
   ciProbeComplete: boolean;
+  aiEnrichmentSettled: string[];
 }
 
 export interface ParsePrUrlResponse {

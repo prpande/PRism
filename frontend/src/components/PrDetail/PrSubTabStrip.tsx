@@ -15,6 +15,11 @@ interface PrSubTabStripProps {
   // display:none / aria-hidden), so the tablist carries no inert tab. Defaults to
   // false: a consumer that doesn't thread capability state never shows the tab.
   showHotspots?: boolean;
+  // Drives the Hotspots tab-label marker; replaces the former boolean `aiMarker`.
+  // 'working' = AI in flight (non-decorative, sr-only "AI is working…" enters the
+  // tab's accessible name); 'idle' = AI resolved (decorative provenance glyph);
+  // null / omitted = no marker (AI off or error/no-changes/not-subscribed).
+  aiMarkerState?: 'idle' | 'working' | null;
 }
 
 export function PrSubTabStrip({
@@ -24,6 +29,7 @@ export function PrSubTabStrip({
   hotspotsCount,
   draftsCount,
   showHotspots = false,
+  aiMarkerState = null,
 }: PrSubTabStripProps) {
   return (
     <div role="tablist" className={styles.prTabs}>
@@ -47,7 +53,7 @@ export function PrSubTabStrip({
           active={activeTab === 'hotspots'}
           onSelect={onTabChange}
           count={hotspotsCount}
-          aiMarker
+          aiMarkerState={aiMarkerState ?? null}
           // Spec § 6.1 — the hotspots badge announces "N files need attention"
           // rather than the generic "N items". Built at the call site (single
           // consumer) so the generic Tab keeps its default wording.
@@ -80,13 +86,23 @@ interface TabProps {
   // visible numeric badge is unchanged). Single consumer = Hotspots; not worth
   // a function-valued prop on the generic Tab.
   srCountSuffix?: string;
-  // When true, renders a larger leading AiMarker (decorative) immediately before
-  // the label text. The tab's accessible name is unaffected (decorative=true means
-  // no sr-only label inside the marker). Single consumer = Hotspots tab.
-  aiMarker?: boolean;
+  // When provided, renders a larger leading AiMarker immediately before the label
+  // text. 'working' = non-decorative (sr-only "AI is working…" enters accessible
+  // name); 'idle' = decorative provenance glyph (no sr-only label); null = no
+  // marker. Single consumer = Hotspots tab.
+  aiMarkerState?: 'idle' | 'working' | null;
 }
 
-function Tab({ id, label, active, onSelect, disabled, count, srCountSuffix, aiMarker }: TabProps) {
+function Tab({
+  id,
+  label,
+  active,
+  onSelect,
+  disabled,
+  count,
+  srCountSuffix,
+  aiMarkerState,
+}: TabProps) {
   // D11/D103 — the handoff (design/handoff/pr-detail.jsx:124 + :134) applies
   // `.pr-tab-count-warn` drafts-only, never on files. The base `.pr-tab-count`
   // class is shared. Conditional-render of the span (count > 0) already covers
@@ -107,7 +123,9 @@ function Tab({ id, label, active, onSelect, disabled, count, srCountSuffix, aiMa
         if (!disabled) onSelect(id);
       }}
     >
-      {aiMarker && <AiMarker variant="lead" decorative />}
+      {aiMarkerState && (
+        <AiMarker variant="lead" state={aiMarkerState} decorative={aiMarkerState === 'idle'} />
+      )}
       {label}
       {count !== undefined && count > 0 && (
         <>

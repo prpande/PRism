@@ -124,6 +124,13 @@ test('inbox shows AI category chip, Draft chip, and no chip for null category', 
         lastRefreshedAt: new Date(0).toISOString(),
         tokenScopeFooterEnabled: false,
         ciProbeComplete: true,
+        // Both non-draft PRs have settled enrichment (#1 with a chip → ready;
+        // #3 with categoryChip:null → empty/no-chip). Without this the new
+        // per-PR settled gate (#508 Slice 2) leaves every chip-eligible row in
+        // the 'loading' state, so #1's "Feature" chip never resolves and #3
+        // renders a loading marker instead of nothing. #2 is a draft (chip slot
+        // short-circuits to the Draft chip), so it needs no settled entry.
+        aiEnrichmentSettled: ['octo/repo#1', 'octo/repo#3'],
       }),
     }),
   );

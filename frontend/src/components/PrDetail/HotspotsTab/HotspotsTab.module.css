@@ -183,14 +183,49 @@
   outline-offset: 1px;
 }
 .skeletonRow {
-  height: 44px;
-  border-radius: var(--radius-2);
-  background: var(--surface-2);
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  padding: var(--space-2) 0;
+}
+.skeletonGlyph {
+  width: 16px;
+  height: 16px;
+  border-radius: 3px;
+  flex: 0 0 auto;
+  background: var(--surface-3);
+  animation: pulse 1.2s ease-in-out infinite;
+}
+.skeletonStack {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1 1 auto;
+}
+.skeletonHeadline {
+  height: 14px;
+  width: 70%;
+  border-radius: 3px;
+  background: var(--surface-3);
+  animation: pulse 1.2s ease-in-out infinite;
+}
+.skeletonPath {
+  height: 11px;
+  width: 45%;
+  border-radius: 3px;
+  background: var(--surface-3);
   animation: pulse 1.2s ease-in-out infinite;
 }
 @keyframes pulse {
   50% {
     opacity: 0.5;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .skeletonGlyph,
+  .skeletonHeadline,
+  .skeletonPath {
+    animation: none;
   }
 }
 /* Signal-bars level glyph (#520). Active bars take the level hue (via the

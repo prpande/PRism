@@ -52,6 +52,27 @@ public class PlaceholderSeamTests
         await regenerate.Should().ThrowAsync<ArgumentNullException>();
     }
 
+    // Owner B1 2026-06-19: the inbox Preview chip uses a generic, non-taxonomy sample word
+    // ("Category") so it reads as a sample, distinct from the PR-detail summarizer's canonical
+    // "Refactor" (which the summary card's taxonomy needs to render its chip). One enrichment is
+    // emitted per input PR, keyed by PrId.
+    [Fact]
+    public async Task InboxItemEnricher_emits_generic_sample_category_per_item()
+    {
+        IInboxItemEnricher s = new PlaceholderInboxItemEnricher();
+        var input = new[]
+        {
+            new PrInboxItem(
+                Ref, "Title", "author", "acme/api",
+                DateTimeOffset.UtcNow, DateTimeOffset.UtcNow,
+                1, 0, 0, 0, "abc", CiStatus.None, null, null),
+        };
+        var result = await s.EnrichAsync(input, CancellationToken.None);
+        result.Should().ContainSingle();
+        result[0].PrId.Should().Be(Ref.PrId);
+        result[0].CategoryChip.Should().Be("Category");
+    }
+
     [Fact]
     public async Task FileFocusRanker_returns_at_least_one_file()
     {

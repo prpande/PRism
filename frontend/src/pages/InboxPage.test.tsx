@@ -159,6 +159,7 @@ const sampleData: InboxResponse = {
   lastRefreshedAt: new Date().toISOString(),
   tokenScopeFooterEnabled: true,
   ciProbeComplete: true,
+  aiEnrichmentSettled: [],
 };
 
 const emptyData: InboxResponse = {
@@ -338,6 +339,7 @@ describe('InboxPage', () => {
         lastRefreshedAt: '',
         tokenScopeFooterEnabled: false,
         ciProbeComplete: true,
+        aiEnrichmentSettled: [],
       },
       // awaiting-author is in the saved order but absent from `sections` — exercises
       // orderInboxSections' "saved id matching no live section is harmlessly ignored".
@@ -377,6 +379,7 @@ describe('InboxPage — useAiGate migrations', () => {
         lastRefreshedAt: '2026-01-01T00:00:00Z',
         tokenScopeFooterEnabled: false,
         ciProbeComplete: true,
+        aiEnrichmentSettled: [],
       } as InboxResponse,
       isLoading: false,
       error: null,
@@ -568,6 +571,7 @@ describe('InboxPage — onboarding overlay gate (#485)', () => {
       data: {
         sections: [],
         enrichments: {},
+        aiEnrichmentSettled: [],
         lastRefreshedAt: new Date().toISOString(),
         tokenScopeFooterEnabled: false,
         ciProbeComplete: true,

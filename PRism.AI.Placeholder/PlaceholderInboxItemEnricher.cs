@@ -12,7 +12,7 @@ public sealed class PlaceholderInboxItemEnricher : IInboxItemEnricher
         var result = items
             .Select(i => new InboxItemEnrichment(
                 i.Reference.PrId,
-                PlaceholderData.SummaryCategory,
+                PlaceholderData.InboxSampleCategory,
                 PlaceholderData.SummaryBody))
             .ToArray();
         return Task.FromResult<IReadOnlyList<InboxItemEnrichment>>(result);
