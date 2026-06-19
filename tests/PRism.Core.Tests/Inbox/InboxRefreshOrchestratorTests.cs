@@ -216,6 +216,29 @@ public sealed class InboxRefreshOrchestratorTests
             ciDetector: ciDetector,
             events: events);
 
+    // Open, non-draft PR (no terminal timestamps, IsDraft=false — default)
+    private static RawPrInboxItem RawOpen(int n) => RawPr(n, "sha" + n);
+
+    // Open, non-draft PR with explicit title and description (for content-token tests)
+    private static RawPrInboxItem RawOpen(int n, string title, string desc, string owner = "octo", string repo = "repo")
+        => new(Ref(n, owner, repo), title, "author", $"{owner}/{repo}",
+            DateTimeOffset.UtcNow, DateTimeOffset.UtcNow, 0, 0, 0, "sha" + n, 1, 0,
+            Description: desc);
+
+    // Draft PR (open, but IsDraft=true)
+    private static RawPrInboxItem RawDraft(int n) => RawPr(n, "sha" + n) with { IsDraft = true };
+
+    // Capturing inbox-item enricher — records the list passed to EnrichAsync
+    private sealed class CapturingEnricher : IInboxItemEnricher
+    {
+        public IReadOnlyList<PrInboxItem> LastInput { get; private set; } = Array.Empty<PrInboxItem>();
+        public Task<IReadOnlyList<InboxItemEnrichment>> EnrichAsync(IReadOnlyList<PrInboxItem> items, CancellationToken ct)
+        {
+            LastInput = items;
+            return Task.FromResult<IReadOnlyList<InboxItemEnrichment>>(Array.Empty<InboxItemEnrichment>());
+        }
+    }
+
     // ── Tests ──────────────────────────────────────────────────────────────────
 
     [Fact]
@@ -840,5 +863,270 @@ public sealed class InboxRefreshOrchestratorTests
         await sut.RefreshAsync(CancellationToken.None);
 
         sections.LastClosedWindowDays.Should().Be(30);
+    }
+
+    // Build overload for enrichments-ready tests: accepts an explicit bus and a section
+    // seeded with the given open items in "review-requested".
+    private static InboxRefreshOrchestrator BuildOrchestrator(
+        IReviewEventBus bus,
+        RawPrInboxItem[] openItems)
+        => Build(
+            config: ConfigStoreFake(ConfigWithSections(
+                reviewRequested: true, awaitingAuthor: false, authoredByMe: false, mentioned: false)),
+            sections: new FakeSectionQueryRunner(_ =>
+                new Dictionary<string, IReadOnlyList<RawPrInboxItem>>
+                {
+                    ["review-requested"] = openItems
+                }),
+            events: bus);
+
+    [Fact]
+    public async Task RefreshAsync_excludes_closed_merged_and_draft_PRs_from_enrichment()
+    {
+        // Only open, non-draft PRs should reach IInboxItemEnricher.EnrichAsync.
+        // Draft (#2) and recently-closed (#3) PRs must be excluded from the enricher
+        // input even though they still appear in the snapshot sections shown to the user.
+        var enricher = new CapturingEnricher();
+        var when = DateTimeOffset.UtcNow.AddDays(-1);
+        var sections = new FakeSectionQueryRunner(
+            _ => new Dictionary<string, IReadOnlyList<RawPrInboxItem>>
+            {
+                ["review-requested"] = new[] { RawOpen(1), RawDraft(2) },
+            },
+            closed: new[] { RawClosed(3, merged: null, closed: when) });
+
+        var configFake = ConfigStoreFake(ConfigWithSections(
+            reviewRequested: true, awaitingAuthor: false, authoredByMe: false,
+            mentioned: false, recentlyClosed: true));
+        using var sut = Build(
+            config: configFake,
+            sections: sections,
+            aiSelector: new FakeAiSeamSelector(enricher));
+
+        await sut.RefreshAsync(CancellationToken.None);
+
+        // Only PR #1 (open, non-draft) should reach the enricher
+        enricher.LastInput.Select(i => i.Reference.Number).Should().BeEquivalentTo(new[] { 1 });
+        // Snapshot still contains all three PRs (draft and closed still visible in UI)
+        sut.Current!.Sections["review-requested"].Select(i => i.Reference.Number)
+            .Should().BeEquivalentTo(new[] { 1, 2 });
+        sut.Current.Sections[InboxHistoryConstants.SectionId].Select(i => i.Reference.Number)
+            .Should().Contain(3);
+    }
+
+    [Fact]
+    public async Task InboxEnrichmentsReady_merges_into_current_snapshot_and_publishes_InboxUpdated()
+    {
+        var bus = new ReviewEventBus();
+        var published = new List<IReviewEvent>();
+        bus.Subscribe<InboxUpdated>(e => published.Add(e));
+
+        using var orch = BuildOrchestrator(bus: bus, openItems: new[] { RawOpen(1, title: "Add X", desc: "d") });
+        await orch.RefreshAsync(default);
+        published.Clear();
+
+        var liveToken = InboxEnrichmentContent.Token("Add X", "d");
+        bus.Publish(new InboxEnrichmentsReady(new[]
+        {
+            new InboxEnrichmentResult("octo/repo#1", "Feature", liveToken),        // applies
+            new InboxEnrichmentResult("octo/repo#999", "Docs", liveToken),         // not in snapshot → ignored
+            new InboxEnrichmentResult("octo/repo#1", "Refactor", "STALE_TOKEN"),   // token mismatch → ignored
+            new InboxEnrichmentResult("octo/repo#1", null, liveToken),             // null chip → ignored
+        }));
+
+        orch.Current!.Enrichments["octo/repo#1"].CategoryChip.Should().Be("Feature");
+        orch.Current!.Enrichments.Should().NotContainKey("octo/repo#999");
+        published.OfType<InboxUpdated>().Should().NotBeEmpty(); // fired despite ComputeDiff ignoring enrichments
+    }
+
+    [Fact]
+    public async Task RefreshAsync_keeps_authored_draft_visible_in_authored_by_me_with_IsDraft_true()
+    {
+        // #501 visibility guard: an authored draft must survive enrichment + dedup +
+        // materialization and remain in the authored-by-me section with IsDraft=true.
+        // Drafts are excluded from AI enrichment INPUT only (RefreshAsync_excludes_...),
+        // never from the snapshot the user sees.
+        var sections = new FakeSectionQueryRunner(
+            _ => new Dictionary<string, IReadOnlyList<RawPrInboxItem>>
+            {
+                ["authored-by-me"] = new[] { RawOpen(1), RawDraft(2) },
+            });
+
+        var configFake = ConfigStoreFake(ConfigWithSections(
+            reviewRequested: false, awaitingAuthor: false, authoredByMe: true,
+            mentioned: false));
+        using var sut = Build(config: configFake, sections: sections);
+
+        await sut.RefreshAsync(CancellationToken.None);
+
+        var authored = sut.Current!.Sections["authored-by-me"];
+        authored.Select(i => i.Reference.Number).Should().BeEquivalentTo(new[] { 1, 2 });
+        authored.Single(i => i.Reference.Number == 2).IsDraft.Should().BeTrue();
+        authored.Single(i => i.Reference.Number == 1).IsDraft.Should().BeFalse();
+    }
+
+    // ── AiEnrichmentSettled ───────────────────────────────────────────────────
+
+    [Fact]
+    public void InboxSnapshot_AiEnrichmentSettled_DefaultsToEmptyNonNull()
+    {
+        var snap = new InboxSnapshot(new Dictionary<string, IReadOnlyList<PrInboxItem>>(),
+            new Dictionary<string, InboxItemEnrichment>(), DateTimeOffset.UtcNow);
+        Assert.NotNull(snap.AiEnrichmentSettled);
+        Assert.Empty(snap.AiEnrichmentSettled);
+        Assert.NotNull(InboxSnapshot.Empty.AiEnrichmentSettled); // the static Empty must also normalize
+        Assert.Empty(InboxSnapshot.Empty.AiEnrichmentSettled);
+        var withSet = snap with { AiEnrichmentSettled = new HashSet<string>(StringComparer.Ordinal) { "o/r#1" } };
+        Assert.Contains("o/r#1", withSet.AiEnrichmentSettled);
+    }
+
+    [Fact]
+    public async Task RefreshAsync_AiEnrichmentSettled_ContainsPrIds_OfEnrichedItems()
+    {
+        // Main path: enricher returns N results (cache hits) → committed snapshot's
+        // AiEnrichmentSettled == those N PR-IDs.
+        // Use PlaceholderInboxItemEnricher which returns one enrichment per open item.
+        var sections = new FakeSectionQueryRunner(_ => new Dictionary<string, IReadOnlyList<RawPrInboxItem>>
+        {
+            ["review-requested"] = new[] { RawOpen(1, "Add X", "d"), RawOpen(2, "Fix Y", "e") },
+        });
+
+        var configFake = ConfigStoreFake(ConfigWithSections(
+            reviewRequested: true, awaitingAuthor: false, authoredByMe: false, mentioned: false));
+        using var sut = Build(
+            config: configFake,
+            sections: sections,
+            aiSelector: new FakeAiSeamSelector(new PlaceholderInboxItemEnricher()));
+
+        await sut.RefreshAsync(CancellationToken.None);
+
+        sut.Current!.AiEnrichmentSettled.Should().NotBeNull();
+        // The two PRs' PrIds should be settled (PlaceholderInboxItemEnricher returns chips for both)
+        sut.Current!.AiEnrichmentSettled.Should().HaveCount(2);
+        sut.Current!.AiEnrichmentSettled.Should().Contain(sut.Current!.Enrichments.Keys);
+    }
+
+    [Fact]
+    public async Task OnInboxEnrichmentsReady_AllChipless_StillSetsSettledAndPublishesEvent()
+    {
+        // A batch whose results are ALL chip-less but live + token-matched must still commit
+        // a snapshot with the PRs in AiEnrichmentSettled AND publish InboxUpdated.
+        // Previously: if (applied == 0) return; — this test verifies that bug is fixed.
+        var bus = new ReviewEventBus();
+        var published = new List<IReviewEvent>();
+        bus.Subscribe<InboxUpdated>(e => published.Add(e));
+
+        using var orch = BuildOrchestrator(bus: bus, openItems: new[] { RawOpen(1, title: "Add X", desc: "d") });
+        await orch.RefreshAsync(default);
+        published.Clear();
+
+        var liveToken = InboxEnrichmentContent.Token("Add X", "d");
+        // Publish a result with null chip (chip-less but settled)
+        bus.Publish(new InboxEnrichmentsReady(new[]
+        {
+            new InboxEnrichmentResult("octo/repo#1", null, liveToken), // chip-less but live + token-matched
+        }));
+
+        // PR should be settled even though no chip landed
+        orch.Current!.AiEnrichmentSettled.Should().Contain("octo/repo#1",
+            "a chip-less result against a live, token-matched PR must settle that PR");
+        // No chip in Enrichments
+        orch.Current!.Enrichments.Should().NotContainKey("octo/repo#1",
+            "Enrichments stays chip-only; chip-less results don't add an entry");
+        // InboxUpdated must fire so the FE clears its working markers
+        published.OfType<InboxUpdated>().Should().NotBeEmpty(
+            "publishing InboxUpdated is required even when no chip landed");
+        // The published event must include the section containing the chip-less PR so the FE
+        // knows which rail entry to clear its working marker on.
+        published.OfType<InboxUpdated>().Single().ChangedSectionIds.Should().Contain("review-requested",
+            "the section holding the chip-less PR must appear in ChangedSectionIds so the FE can clear its working marker");
+    }
+
+    // ── #548: AI-mode change invalidates stale enrichments ────────────────────
+
+    // Mode-aware seam selector mirroring the real AiSeamSelector: Preview resolves the
+    // placeholder enricher (chips for every PR), Off/Live resolve Noop (no chips). The
+    // orchestrator's fire-and-forget RefreshAsync poke after a mode change therefore
+    // re-populates with whatever the NEW mode resolves — so the post-Preview state stays
+    // chip-less regardless of async timing, matching production.
+    private sealed class ModeAwareAiSeamSelector : IAiSeamSelector
+    {
+        private readonly IConfigStore _config;
+        public ModeAwareAiSeamSelector(IConfigStore config) => _config = config;
+        public T Resolve<T>() where T : class
+        {
+            IInboxItemEnricher enricher = _config.Current.Ui.Ai.Mode == AiMode.Preview
+                ? new PlaceholderInboxItemEnricher()
+                : new NoopInboxItemEnricher();
+            return (enricher as T)!;
+        }
+    }
+
+    // Build an orchestrator seeded (via a real refresh with the placeholder enricher) with a
+    // non-empty Enrichments map + AiEnrichmentSettled set, starting from the given AI mode.
+    // Returns the SUT, the (recording) bus, and the FakeConfigStore so the caller can flip the
+    // mode + raise Changed.
+    private static (InboxRefreshOrchestrator Sut, RecordingEventBus Bus, FakeConfigStore Config)
+        BuildSeededForAiModeChange(AiMode startMode)
+    {
+        var bus = new RecordingEventBus();
+        var configFake = ConfigStoreFake(ConfigWithSections(
+            reviewRequested: true, awaitingAuthor: false, authoredByMe: false, mentioned: false)
+            with { Ui = AppConfig.Default.Ui with { Ai = AppConfig.Default.Ui.Ai with { Mode = startMode } } });
+        var sections = new FakeSectionQueryRunner(_ => new Dictionary<string, IReadOnlyList<RawPrInboxItem>>
+        {
+            ["review-requested"] = new[] { RawOpen(1, "Add X", "d"), RawOpen(2, "Fix Y", "e") },
+        });
+        var sut = Build(
+            config: configFake,
+            sections: sections,
+            aiSelector: new ModeAwareAiSeamSelector(configFake),
+            events: bus);
+        return (sut, bus, configFake);
+    }
+
+    [Fact]
+    public async Task OnConfigChanged_AiModeChange_ClearsEnrichmentsAndNotifies()
+    {
+        var (sut, bus, config) = BuildSeededForAiModeChange(AiMode.Preview);
+        using var _ = sut;
+
+        await sut.RefreshAsync(CancellationToken.None);
+        // Seeded: placeholder enricher gives every open PR a chip + settles it.
+        sut.Current!.Enrichments.Should().NotBeEmpty();
+        sut.Current!.AiEnrichmentSettled.Should().NotBeEmpty();
+        bus.Published.Clear();
+
+        // Flip the AI mode and raise Changed (synchronous, mirrors the PUT /api/preferences thread).
+        config.Current = config.Current with
+        {
+            Ui = config.Current.Ui with { Ai = config.Current.Ui.Ai with { Mode = AiMode.Live } }
+        };
+        config.RaiseChanged();
+
+        // The cleared state is the observable post-handler state (RefreshAsync poke is fire-and-forget).
+        sut.Current!.Enrichments.Should().BeEmpty("a stale Preview chip must not survive an AI-mode change");
+        sut.Current!.AiEnrichmentSettled.Should().BeEmpty("the settled set must be cleared so chip-eligible rows show a loading cue");
+        bus.Published.OfType<InboxUpdated>().Should().NotBeEmpty(
+            "the FE must be force-notified to refetch (ComputeDiff is enrichment-blind)");
+    }
+
+    [Fact]
+    public async Task OnConfigChanged_SameAiMode_DoesNotClear()
+    {
+        var (sut, bus, config) = BuildSeededForAiModeChange(AiMode.Preview);
+        using var _ = sut;
+
+        await sut.RefreshAsync(CancellationToken.None);
+        sut.Current!.Enrichments.Should().NotBeEmpty();
+        var enrichmentsBefore = sut.Current!.Enrichments.Count;
+        bus.Published.Clear();
+
+        // Raise Changed with the SAME AI mode (e.g. an unrelated theme/accent change).
+        config.Current = config.Current with { Ui = config.Current.Ui with { Theme = "dark" } };
+        config.RaiseChanged();
+
+        sut.Current!.Enrichments.Should().HaveCount(enrichmentsBefore, "no AI-mode delta means no clear");
+        bus.Published.OfType<InboxUpdated>().Should().BeEmpty("no AI-mode delta means no spurious churn");
     }
 }

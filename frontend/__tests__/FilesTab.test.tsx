@@ -190,7 +190,19 @@ function Wrapper({ prDetail }: { prDetail: PrDetailDto }) {
   const draftSession = useDraftSession(ref);
   return (
     <PrDetailContextProvider
-      value={{ prRef: ref, prDetail, draftSession, readOnly: false, onSelectSubTab: () => {} }}
+      value={{
+        prRef: ref,
+        prDetail,
+        draftSession,
+        readOnly: false,
+        subscribed: false,
+        baseShaChanged: false,
+        onSelectSubTab: () => {},
+        fileFocus: { status: 'no-changes', entries: [], retry: () => {} },
+        pendingFilePath: null,
+        requestFileView: () => {},
+        clearPendingFilePath: () => {},
+      }}
     >
       <Outlet />
     </PrDetailContextProvider>

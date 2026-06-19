@@ -8,7 +8,6 @@ import type { Accent, ContentScale, Density, Theme } from '../../../api/types';
 import { FontSizeSlider, SCALE_ORDER } from '../../controls/FontSizeSlider';
 import { SegmentedControl } from '../../controls/SegmentedControl';
 import { AccentSwatches } from '../../controls/AccentSwatches';
-import { Switch } from '../../controls/Switch';
 import pane from './Pane.module.css';
 
 const THEMES = [
@@ -23,6 +22,7 @@ const DENSITIES = [
 
 export function AppearancePane() {
   const { preferences, set } = usePreferences();
+
   if (!preferences) return null;
 
   const onTheme = (value: Theme) => {
@@ -54,16 +54,6 @@ export function AppearancePane() {
     applyContentScaleToDocument(value);
     void set('contentScale', value).catch(() => applyContentScaleToDocument(prior));
   };
-  // No extra rollback needed (unlike theme/accent/density): those re-apply to
-  // documentElement on failure because they wrote a DOM side-effect optimistically.
-  // aiPreview has no such DOM write — usePreferences.set is apply-on-success (NOT
-  // optimistic), so on a failed POST local state never changed and the controlled
-  // Switch keeps showing the prior value (+ error toast). Nothing to revert.
-  // #221: the AI gates now derive from this shared preference (useCapabilities), so
-  // the toggle propagates reactively — no capabilities refetch to chase.
-  const onAiToggle = (next: boolean) => {
-    void set('aiPreview', next).catch(() => {});
-  };
 
   return (
     <section aria-labelledby="appearance-heading">
@@ -72,7 +62,7 @@ export function AppearancePane() {
           <h2 id="appearance-heading" className={pane.title}>
             Appearance
           </h2>
-          <p className={pane.sub}>Theme, accent color, density, content size, and AI preview</p>
+          <p className={pane.sub}>Theme, accent color, density, and content size</p>
         </div>
       </div>
       <div className={pane.row}>
@@ -119,25 +109,6 @@ export function AppearancePane() {
         </div>
         <div className={pane.spring}>
           <FontSizeSlider value={contentScale} onChange={onContentScale} />
-        </div>
-      </div>
-      <div className={pane.row}>
-        <div>
-          <label className={pane.label} htmlFor="appearance-ai-preview">
-            AI preview
-          </label>
-          <div id="ai-help" className={pane.help}>
-            Show AI-generated PR summaries and hotspots
-          </div>
-        </div>
-        <div className={pane.spring}>
-          <Switch
-            id="appearance-ai-preview"
-            label="AI preview"
-            describedById="ai-help"
-            checked={preferences.ui.aiPreview}
-            onChange={onAiToggle}
-          />
         </div>
       </div>
     </section>

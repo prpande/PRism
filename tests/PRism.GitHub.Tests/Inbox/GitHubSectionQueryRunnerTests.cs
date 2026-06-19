@@ -390,6 +390,30 @@ public sealed class GitHubSectionQueryRunnerTests
         result["review-requested"][0].Reference.Number.Should().Be(9);
     }
 
+    [Fact]
+    public async Task SearchAsync_populates_description_and_isDraft_from_search_item()
+    {
+        var json = """
+        {"items":[{
+          "title":"Add login",
+          "body":"Implements OAuth login flow.",
+          "draft":true,
+          "user":{"login":"octo","avatar_url":"http://a/x.png"},
+          "updated_at":"2026-06-18T00:00:00Z",
+          "comments":2,
+          "pull_request":{"html_url":"https://github.com/octo/repo/pull/7"}
+        }]}
+        """;
+        var handler = new FakeHttpMessageHandler(_ => Respond(HttpStatusCode.OK, json));
+        var sut = BuildSut(handler);
+
+        var result = await sut.QueryAllAsync(new HashSet<string> { "review-requested" }, default);
+
+        var item = result["review-requested"].Single();
+        item.Description.Should().Be("Implements OAuth login flow.");
+        item.IsDraft.Should().BeTrue();
+    }
+
     private static HttpResponseMessage Respond(HttpStatusCode code, string body)
         => JsonHttpResponse.Create(code, body);
 }

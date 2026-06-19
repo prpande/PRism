@@ -1,5 +1,6 @@
 using System.Text.Json;
 using FluentAssertions;
+using PRism.Core.Ai;
 using PRism.Core.Config;
 using PRism.Core.Json;
 using PRism.Core.Tests.TestHelpers;
@@ -243,7 +244,7 @@ public class ConfigStorePatchAsyncDottedPathTests
         store.Current.Ui.Density.Should().Be("comfortable");
         store.Current.Ui.Theme.Should().Be("dark");
         store.Current.Ui.Accent.Should().Be("amber");
-        store.Current.Ui.AiPreview.Should().BeTrue();
+        store.Current.Ui.Ai.Mode.Should().Be(AiMode.Preview);
     }
 
     // #135: contentScale is a string-typed `ui.*` key alongside theme/accent/density.
@@ -286,7 +287,7 @@ public class ConfigStorePatchAsyncDottedPathTests
         store.Current.Ui.ContentScale.Should().Be("m");
         store.Current.Ui.Density.Should().Be("compact");
         store.Current.Ui.Theme.Should().Be("dark");
-        store.Current.Ui.AiPreview.Should().BeTrue();
+        store.Current.Ui.Ai.Mode.Should().Be(AiMode.Preview); // legacy ai-preview:true migrates to mode preview
     }
 
     [Fact]

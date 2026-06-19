@@ -16,8 +16,6 @@ import {
 import { DiffTruncationBanner } from './DiffTruncationBanner';
 import { WordDiffOverlay } from './WordDiffOverlay';
 import { AiHunkAnnotation } from './AiHunkAnnotation';
-import { useAiGate } from '../../../../hooks/useAiGate';
-import { useAiHunkAnnotations } from '../../../../hooks/useAiHunkAnnotations';
 import { useWholeFileContent } from '../../../../hooks/useWholeFileContent';
 import { useLockedPaneScroll } from '../../../../hooks/useLockedPaneScroll';
 import { useDiffViewportWidthVar } from '../../../../hooks/useDiffViewportWidthVar';
@@ -151,6 +149,14 @@ export interface DiffPaneProps {
   // useLockedPaneScroll, so a too-wide line scrolls without the two panes
   // drifting out of column-alignment. Owned by FilesTab's toolbar toggle.
   lineWrap?: boolean;
+
+  // #508 (B1) — resolved hunk annotations for the whole PR, lifted to FilesTab (the
+  // single fetch source) so the file-tree header marker can also reflect the
+  // annotation-loading state. DiffPane just renders the ones for the open file; it no
+  // longer owns the fetch or any per-hunk loading skeleton (a positional skeleton
+  // over-promised — focus level ≠ which hunks the annotator actually annotates). null
+  // when AI is off, still loading, or the annotator returned nothing.
+  annotations?: HunkAnnotation[] | null;
 }
 
 function findAdjacentPair(lines: DiffLine[], idx: number): DiffLine | null {
@@ -184,21 +190,19 @@ export function DiffPane({
   headSha = '',
   baseSha = '',
   lineWrap = false,
+  annotations = null,
 }: DiffPaneProps) {
-  const annotationsEnabled = useAiGate('hunkAnnotations');
-  const allAnnotations = useAiHunkAnnotations(prRef, annotationsEnabled);
-
   const annotationsForFile = useMemo(() => {
-    if (!allAnnotations || !selectedPath) return null;
+    if (!annotations || !selectedPath) return null;
     const m = new Map<number, HunkAnnotation[]>();
-    for (const a of allAnnotations) {
+    for (const a of annotations) {
       if (a.path !== selectedPath) continue;
       const existing = m.get(a.hunkIndex);
       if (existing) existing.push(a);
       else m.set(a.hunkIndex, [a]);
     }
     return m;
-  }, [allAnnotations, selectedPath]);
+  }, [annotations, selectedPath]);
 
   // Hook ordering rule: isSplit must be computed before the hook call so it
   // can be passed as a parameter.

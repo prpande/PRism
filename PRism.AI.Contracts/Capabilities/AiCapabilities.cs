@@ -1,5 +1,6 @@
 namespace PRism.AI.Contracts.Capabilities;
 
+// AllOff / AllOn removed — capabilities are computed per-flag by AiCapabilityResolver.
 public sealed record AiCapabilities(
     bool Summary,
     bool FileFocus,
@@ -9,8 +10,4 @@ public sealed record AiCapabilities(
     bool DraftSuggestions,
     bool DraftReconciliation,
     bool InboxEnrichment,
-    bool InboxRanking)
-{
-    public static AiCapabilities AllOff { get; } = new(false, false, false, false, false, false, false, false, false);
-    public static AiCapabilities AllOn { get; } = new(true, true, true, true, true, true, true, true, true);
-}
+    bool InboxRanking);

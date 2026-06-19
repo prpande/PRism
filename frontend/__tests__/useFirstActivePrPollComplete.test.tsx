@@ -39,6 +39,7 @@ describe('useFirstActivePrPollComplete', () => {
       dispatchPrUpdated({
         prRef: 'octocat/hello/42',
         headShaChanged: false,
+        baseShaChanged: false,
         commentCountDelta: 0,
         isMerged: false,
         isClosed: false,
@@ -59,6 +60,7 @@ describe('useFirstActivePrPollComplete', () => {
       dispatchPrUpdated({
         prRef: 'octocat/hello/42',
         headShaChanged: false,
+        baseShaChanged: false,
         commentCountDelta: 0,
         isMerged: false,
         isClosed: false,
@@ -74,6 +76,7 @@ describe('useFirstActivePrPollComplete', () => {
       dispatchPrUpdated({
         prRef: 'octocat/hello/42',
         headShaChanged: false,
+        baseShaChanged: false,
         commentCountDelta: 0,
         isMerged: false,
         isClosed: false,
@@ -86,6 +89,7 @@ describe('useFirstActivePrPollComplete', () => {
       dispatchPrUpdated({
         prRef: 'octocat/hello/99',
         headShaChanged: false,
+        baseShaChanged: false,
         commentCountDelta: 0,
         isMerged: false,
         isClosed: false,
@@ -102,6 +106,7 @@ describe('useFirstActivePrPollComplete', () => {
       dispatchPrUpdated({
         prRef: 'octocat/hello/99',
         headShaChanged: false,
+        baseShaChanged: false,
         commentCountDelta: 0,
         isMerged: false,
         isClosed: false,
@@ -118,6 +123,7 @@ describe('useFirstActivePrPollComplete', () => {
       dispatchPrUpdated({
         prRef: 'octocat/hello/42',
         headShaChanged: false,
+        baseShaChanged: false,
         commentCountDelta: 0,
         isMerged: false,
         isClosed: false,

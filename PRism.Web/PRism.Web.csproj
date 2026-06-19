@@ -5,6 +5,7 @@
     <ProjectReference Include="..\PRism.GitHub\PRism.GitHub.csproj" />
     <ProjectReference Include="..\PRism.AI.Contracts\PRism.AI.Contracts.csproj" />
     <ProjectReference Include="..\PRism.AI.Placeholder\PRism.AI.Placeholder.csproj" />
+    <ProjectReference Include="..\PRism.AI.ClaudeCode\PRism.AI.ClaudeCode.csproj" />
   </ItemGroup>
 
   <PropertyGroup>

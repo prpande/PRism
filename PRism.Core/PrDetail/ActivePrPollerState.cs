@@ -5,6 +5,7 @@ namespace PRism.Core.PrDetail;
 internal sealed class ActivePrPollerState
 {
     public string? LastHeadSha { get; set; }
+    public string? LastBaseSha { get; set; }
     public int? LastCommentCount { get; set; }
     public string? LastPrState { get; set; }
     public int ConsecutiveErrors { get; set; }

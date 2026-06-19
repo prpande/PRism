@@ -171,3 +171,44 @@
     flex-direction: row;
   }
 }
+
+/* ===== AI nested nav children (Task C4 / §5.1) ===== */
+.navChildren {
+  display: flex;
+  flex-direction: column;
+  margin: 2px 0 2px 12px;
+  padding-left: 8px;
+  border-left: 1px solid var(--border-1);
+}
+.navChild {
+  display: flex;
+  align-items: center;
+  padding: 7px 11px;
+  border-radius: var(--radius-2);
+  color: var(--text-2);
+  font-size: var(--text-sm);
+  margin-bottom: 2px;
+}
+.navChild:hover {
+  background: var(--surface-3);
+  color: var(--text-1);
+}
+.navChild:focus-visible {
+  outline: 2px solid var(--accent-ring);
+  outline-offset: -2px;
+}
+.navChildOn {
+  background: var(--accent-soft);
+  color: var(--text-1);
+  font-weight: 500;
+}
+/* The AI sub-page children are a vertical hierarchy that can't sit inside the
+   horizontal mobile nav without overflowing/colliding. Suppress them here — the
+   AI parent link still navigates to /settings/ai, so the section stays reachable.
+   This override MUST come AFTER the base .navChildren { display: flex } above:
+   media queries add no specificity, so source order decides which wins at ≤720px. */
+@media (max-width: 720px) {
+  .navChildren {
+    display: none;
+  }
+}

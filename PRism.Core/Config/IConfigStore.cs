@@ -28,6 +28,14 @@ public interface IConfigStore
     /// </summary>
     Task SetDefaultAccountLoginAsync(string login, CancellationToken ct);
 
+    /// <summary>
+    /// Records egress-consent for a specific AI provider and disclosure version, persisting
+    /// to disk at <c>ui.ai.consent</c>. Validates both arguments are non-empty; sets
+    /// <c>AcknowledgedAt</c> to <see cref="DateTimeOffset.UtcNow"/>. Thread-safe via the
+    /// same semaphore gate used by all other structured writes.
+    /// </summary>
+    Task RecordAiConsentAsync(string providerId, string disclosureVersion, CancellationToken ct);
+
     event EventHandler<ConfigChangedEventArgs>? Changed;
 }
 

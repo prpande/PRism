@@ -50,6 +50,7 @@ internal sealed class FakePrReader : IPrReader
                 CiSummary: "none",
                 IsMerged: _store.IsMerged,
                 IsClosed: _store.IsClosed,
+                IsDraft: _store.IsDraftPr,
                 OpenedAt: _store.Now.AddHours(-1),
                 MergedAt: mergedAt,
                 ClosedAt: closedAt,
@@ -172,10 +173,10 @@ internal sealed class FakePrReader : IPrReader
     public Task<ActivePrPollSnapshot> PollActivePrAsync(PrReference reference, CancellationToken ct)
     {
         if (reference != FakeReviewBackingStore.Scenario)
-            return Task.FromResult(new ActivePrPollSnapshot("", "UNKNOWN", "OPEN", 0, 0));
+            return Task.FromResult(new ActivePrPollSnapshot("", "", "UNKNOWN", "OPEN", 0, 0));
         lock (_store.Gate)
         {
-            return Task.FromResult(new ActivePrPollSnapshot(_store.CurrentHeadSha, "MERGEABLE", _store.PrState, 0, 0));
+            return Task.FromResult(new ActivePrPollSnapshot(_store.CurrentHeadSha, FakeReviewBackingStore.BaseSha, "MERGEABLE", _store.PrState, 0, 0));
         }
     }
 

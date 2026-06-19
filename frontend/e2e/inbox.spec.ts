@@ -222,11 +222,11 @@ test('activity rail is gated by inbox.showActivityRail, independent of AI previe
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
-      // AI preview stays ON (the new default) the whole time, to prove the rail's
-      // visibility is driven purely by inbox.showActivityRail, not by AI.
+      // AI mode stays ON the whole time, to prove the rail's visibility is driven
+      // purely by inbox.showActivityRail, not by AI.
       body: JSON.stringify({
         ...defaultPreferences,
-        ui: { ...defaultPreferences.ui, aiPreview: true },
+        ui: { ...defaultPreferences.ui, aiMode: 'preview' },
         inbox: { ...defaultPreferences.inbox, showActivityRail },
       }),
     });

@@ -1,8 +1,14 @@
 import { render, waitFor } from '@testing-library/react';
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import type { ReactElement } from 'react';
 import { MarkdownRenderer } from '../src/components/Markdown/MarkdownRenderer';
 import { ComposerMarkdownPreview } from '../src/components/PrDetail/Composer/ComposerMarkdownPreview';
+import { AiSummaryCard } from '../src/components/PrDetail/OverviewTab/AiSummaryCard';
+import { AiHunkAnnotation } from '../src/components/PrDetail/FilesTab/DiffPane/AiHunkAnnotation';
+
+vi.mock('../src/hooks/usePreferences', () => ({
+  usePreferences: () => ({ preferences: { ui: { aiMode: 'preview' } } }),
+}));
 
 // Spec § 5.6: every render site for `bodyMarkdown` (composer preview,
 // DraftListItem body preview, StaleDraftRow body display, DiscardAllStale
@@ -19,6 +25,18 @@ import { ComposerMarkdownPreview } from '../src/components/PrDetail/Composer/Com
 const CONSUMERS: { name: string; render: (md: string) => ReactElement }[] = [
   { name: 'MarkdownRenderer', render: (md) => <MarkdownRenderer source={md} /> },
   { name: 'ComposerMarkdownPreview', render: (md) => <ComposerMarkdownPreview body={md} /> },
+  {
+    name: 'AiSummaryCard',
+    render: (md: string) => (
+      <AiSummaryCard summary={{ body: md, category: 'fix' }} loading={false} error={false} />
+    ),
+  },
+  {
+    name: 'AiHunkAnnotation',
+    render: (md: string) => (
+      <AiHunkAnnotation annotation={{ path: 'x.ts', hunkIndex: 0, body: md, tone: 'calm' }} />
+    ),
+  },
 ];
 
 describe.each(CONSUMERS)('$name — security contract (spec § 5.6)', ({ render: renderConsumer }) => {
@@ -68,6 +86,15 @@ describe.each(CONSUMERS)('$name — security contract (spec § 5.6)', ({ render:
     await getHighlighterAsync();
     const { container } = render(renderConsumer('```js\n</script><script>alert(1)\n```'));
     await waitFor(() => expect(container.querySelector('.codeToken')).not.toBeNull());
+    expect(document.querySelector('script')).toBeNull();
+  });
+
+  it('MermaidFencePayload_RoutesToMermaidBlock_NotRenderedAsRawText', async () => {
+    const { container } = render(renderConsumer('```mermaid\n<script>alert(1)</script>\n```'));
+    // mocked render → inert <svg>; the loading fallback clears once the lazy
+    // chunk + mocked render settle. The fence text is never live markup.
+    await waitFor(() => expect(container.querySelector('.mermaid-loading')).toBeNull());
+    expect(container.querySelector('.mermaid-diagram')).not.toBeNull(); // routed to MermaidBlock
     expect(document.querySelector('script')).toBeNull();
   });
 });

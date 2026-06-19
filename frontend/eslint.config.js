@@ -51,6 +51,23 @@ export default [
       // adoption is a separate, larger decision and out of scope here.
       'react-hooks/rules-of-hooks': 'error',
       'react-hooks/exhaustive-deps': 'error',
+      // #489 — the sparkle AI marker has a single source of truth (components/Ai/AiMarker).
+      // Ban the raw emoji so a future surface can't silently reintroduce per-OS-variant glyphs.
+      'no-restricted-syntax': [
+        'error',
+        {
+          selector: 'Literal[value=/\\u2728/]',
+          message: 'Use <AiMarker /> (components/Ai/AiMarker) instead of the raw ✨ emoji (#489).',
+        },
+        {
+          selector: 'JSXText[value=/\\u2728/]',
+          message: 'Use <AiMarker /> (components/Ai/AiMarker) instead of the raw ✨ emoji (#489).',
+        },
+        {
+          selector: 'TemplateElement[value.raw=/\\u2728/]',
+          message: 'Use <AiMarker /> (components/Ai/AiMarker) instead of the raw ✨ emoji (#489).',
+        },
+      ],
     },
   },
   {
@@ -59,7 +76,10 @@ export default [
     // at error — a conditional/looped hook call in a custom test hook is a real
     // bug class even in tests. Must be the LAST config block: ESLint flat config
     // applies later blocks over earlier ones for matching files.
+    // #489 — also exempt test files from the no-restricted-syntax ✨ guard:
+    // test assertions legitimately contain not.toContain('✨') to verify emoji
+    // was removed from production output.
     files: ['**/*.test.{ts,tsx}', '**/__tests__/**'],
-    rules: { 'react-hooks/exhaustive-deps': 'off' },
+    rules: { 'react-hooks/exhaustive-deps': 'off', 'no-restricted-syntax': 'off' },
   },
 ];

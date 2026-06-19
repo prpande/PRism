@@ -1,4 +1,5 @@
 using System.Text.Json;
+using PRism.Core.Ai;
 using PRism.Core.Config;
 using PRism.Core.Json;
 using PRism.Core.Tests.TestHelpers;
@@ -18,8 +19,8 @@ public class ConfigStoreTests
 
         store.Current.Ui.Theme.Should().Be("system");
         store.Current.Ui.Accent.Should().Be("indigo");
-        store.Current.Ui.AiPreview.Should().BeTrue();   // #283 AI preview ON by default for fresh installs
-        store.Current.Inbox.ShowActivityRail.Should().BeTrue(); // #439 rail defaults ON for fresh installs
+        store.Current.Ui.Ai.Mode.Should().Be(AiMode.Preview); // AI defaults ON (Preview) for fresh installs
+        store.Current.Inbox.ShowActivityRail.Should().BeTrue(); // #439 rail defaults ON for fresh installs (#283 decoupled it from AI)
         store.Current.Github.Host.Should().Be("https://github.com");
         File.Exists(Path.Combine(dir.Path, "config.json")).Should().BeTrue();
     }
@@ -53,6 +54,56 @@ public class ConfigStoreTests
         using var roundTrip = new ConfigStore(dir.Path);
         await roundTrip.InitAsync(CancellationToken.None);
         roundTrip.Current.Ui.Theme.Should().Be("dark");
+    }
+
+    [Fact]
+    public async Task PatchAsync_ui_ai_mode_persists_and_round_trips()
+    {
+        using var dir = new TempDataDir();
+        using var store = new ConfigStore(dir.Path);
+        await store.InitAsync(CancellationToken.None);
+
+        await store.PatchAsync(new Dictionary<string, object?> { ["ui.ai.mode"] = "live" }, CancellationToken.None);
+        store.Current.Ui.Ai.Mode.Should().Be(AiMode.Live);
+
+        using var roundTrip = new ConfigStore(dir.Path);
+        await roundTrip.InitAsync(CancellationToken.None);
+        roundTrip.Current.Ui.Ai.Mode.Should().Be(AiMode.Live);
+    }
+
+    [Fact]
+    public async Task PatchAsync_legacy_aiPreview_true_maps_to_Preview_mode()
+    {
+        using var dir = new TempDataDir();
+        using var store = new ConfigStore(dir.Path);
+        await store.InitAsync(CancellationToken.None);
+
+        await store.PatchAsync(new Dictionary<string, object?> { ["aiPreview"] = true }, CancellationToken.None);
+        store.Current.Ui.Ai.Mode.Should().Be(AiMode.Preview);
+    }
+
+    [Fact]
+    public async Task PatchAsync_ui_ai_mode_rejects_unknown_value()
+    {
+        using var dir = new TempDataDir();
+        using var store = new ConfigStore(dir.Path);
+        await store.InitAsync(CancellationToken.None);
+
+        var act = async () => await store.PatchAsync(
+            new Dictionary<string, object?> { ["ui.ai.mode"] = "bogus" }, CancellationToken.None);
+        await act.Should().ThrowAsync<ConfigPatchException>();
+    }
+
+    [Fact]
+    public async Task PatchAsync_ui_ai_mode_rejects_non_string_value()
+    {
+        using var dir = new TempDataDir();
+        using var store = new ConfigStore(dir.Path);
+        await store.InitAsync(CancellationToken.None);
+
+        var act = async () => await store.PatchAsync(
+            new Dictionary<string, object?> { ["ui.ai.mode"] = 42 }, CancellationToken.None);
+        await act.Should().ThrowAsync<ConfigPatchException>();   // rejected by PatchAsync's pre-switch type gate
     }
 
     [Fact]
@@ -166,10 +217,7 @@ public class ConfigStoreTests
 
         store.Current.Github.Host.Should().Be("https://ghe.acme.com"); // user value preserved
         store.Current.Ui.Should().NotBeNull();
-        // #283: a legacy `ui`-less config inherits AppConfig.Default.Ui, whose AiPreview is
-        // now true. This is the accepted "ui-section-absent flips ON" edge documented in the
-        // spec — such a config predates the ui section and never carried an AI value to preserve.
-        store.Current.Ui.AiPreview.Should().BeTrue();               // from default (now ON)
+        store.Current.Ui.Ai.Mode.Should().Be(AiMode.Preview);      // from default (AI on)
         store.Current.Polling.Should().NotBeNull();
         store.Current.Polling.InboxSeconds.Should().Be(120);        // from default
         store.Current.Review.Should().NotBeNull();
@@ -200,14 +248,14 @@ public class ConfigStoreTests
         using var store = new ConfigStore(dir.Path);
         await store.InitAsync(CancellationToken.None);
 
-        store.Current.Ui.AiPreview.Should().BeFalse(); // saved value wins over the new default
+        store.Current.Ui.Ai.Mode.Should().Be(AiMode.Off); // saved legacy ai-preview:false migrates to mode off
     }
 
-    // #283: a config whose `ui` section is present but lacks the `aiPreview` key deserializes
-    // the non-nullable bool to default(false) — it stays OFF, NOT the new default-on. Documents
-    // the precise preservation boundary (key-present vs ui-section-present-but-key-absent).
+    // A config whose `ui` section is present but lacks the `ai` sub-record (and the legacy
+    // `ai-preview` key) deserializes Ui.Ai to null; ConfigStore backfills it from
+    // AppConfig.Default.Ui.Ai. With AI defaulting ON, that inherited mode is Preview.
     [Fact]
-    public async Task LoadAsync_with_ui_present_but_aiPreview_key_absent_is_off()
+    public async Task LoadAsync_with_ui_present_but_ai_key_absent_inherits_default()
     {
         using var dir = new TempDataDir();
         var json = """
@@ -219,7 +267,7 @@ public class ConfigStoreTests
         await store.InitAsync(CancellationToken.None);
 
         store.Current.Ui.Theme.Should().Be("dark");          // ui section honored
-        store.Current.Ui.AiPreview.Should().BeFalse();       // missing key → default(bool), not new default-on
+        store.Current.Ui.Ai.Mode.Should().Be(AiMode.Preview); // ui present but ai absent → backfilled to default (on)
     }
 
     // #439: a config whose `inbox` section is present (with `sections`, so ConfigStore

@@ -3,11 +3,10 @@ import { render } from '@testing-library/react';
 import { DiffPane } from './DiffPane';
 import type { FileChange, ReviewThreadDto } from '../../../../api/types';
 
-// DiffPane pulls AI + whole-file + syntax hooks that hit context/network; stub
-// them so it renders standalone in jsdom. This harness exists to prove every
-// full-span comment/composer cell is wrapped in `.diffStickyViewport` (#390).
-vi.mock('../../../../hooks/useAiGate', () => ({ useAiGate: () => false }));
-vi.mock('../../../../hooks/useAiHunkAnnotations', () => ({ useAiHunkAnnotations: () => null }));
+// DiffPane pulls whole-file + syntax hooks that hit context/network; stub them
+// so it renders standalone in jsdom. (Annotations are now a prop, not a hook.)
+// This harness exists to prove every full-span comment/composer cell is wrapped
+// in `.diffStickyViewport` (#390).
 vi.mock('../../../../hooks/useWholeFileContent', () => ({
   useWholeFileContent: () => ({
     fetchStatus: 'idle',

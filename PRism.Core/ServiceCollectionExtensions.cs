@@ -18,8 +18,8 @@ public static class ServiceCollectionExtensions
     /// Registers the PRism.Core services that are independent of the GitHub adapter and the AI
     /// seam selection: persistent stores (config, app state, tokens), the inbox refresh
     /// pipeline (orchestrator, deduplicator, subscriber-count, poller), the review event bus,
-    /// the viewer-login cache and its hydrator, and <see cref="AiPreviewState"/> (which mirrors
-    /// the live <c>ui.aiPreview</c> config flag for the selector to read).
+    /// the viewer-login cache and its hydrator, and <see cref="AiModeState"/> (which mirrors
+    /// the live <c>ui.ai.mode</c> config value for the selector to read).
     /// </summary>
     /// <remarks>
     /// <para>
@@ -51,11 +51,26 @@ public static class ServiceCollectionExtensions
         ArgumentException.ThrowIfNullOrEmpty(dataDir);
 
         services.AddSingleton<IConfigStore>(_ => CreateConfigStore(dataDir));
-        services.AddSingleton<AiPreviewState>(sp =>
+        services.AddSingleton<AiModeState>(sp =>
         {
             var config = sp.GetRequiredService<IConfigStore>();
-            var state = new AiPreviewState { IsOn = config.Current.Ui.AiPreview };
-            config.Changed += (_, args) => state.IsOn = args.Config.Ui.AiPreview;
+            var state = new AiModeState { Mode = config.Current.Ui.Ai.Mode };
+            config.Changed += (_, args) => state.Mode = args.Config.Ui.Ai.Mode;
+            return state;
+        });
+        services.AddSingleton<AiConsentState>(sp =>
+        {
+            var config = sp.GetRequiredService<IConfigStore>();
+            var state = new AiConsentState();
+            state.Set(config.Current.Ui.Ai.Consent);
+            config.Changed += (_, args) => state.Set(args.Config.Ui.Ai.Consent);
+            return state;
+        });
+        services.AddSingleton<AiFeatureState>(sp =>
+        {
+            var config = sp.GetRequiredService<IConfigStore>();
+            var state = new AiFeatureState(config.Current.Ui.Ai.Features);
+            config.Changed += (_, args) => state.Set(args.Config.Ui.Ai.Features);
             return state;
         });
         services.AddSingleton<IAppStateStore>(_ => new AppStateStore(dataDir));

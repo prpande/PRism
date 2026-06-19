@@ -1,4 +1,7 @@
 import type { HunkAnnotation, AnnotationTone } from '../../../../api/types';
+import { AiMarker } from '../../../Ai/AiMarker';
+import { SampleBadge } from '../../../Ai/SampleBadge';
+import { MarkdownRenderer } from '../../../Markdown/MarkdownRenderer';
 import styles from './AiHunkAnnotation.module.css';
 
 export interface AiHunkAnnotationProps {
@@ -24,15 +27,14 @@ export function AiHunkAnnotation({ annotation }: AiHunkAnnotationProps) {
   const chip = TONE_CHIP[annotation.tone] ?? { variant: 'info' as const, label: annotation.tone };
   return (
     <div className={`ai-hunk ${styles.aiHunk}`} data-testid="ai-hunk">
-      <span className="ai-icon" aria-hidden="true">
-        ✨
-      </span>
+      <AiMarker variant="inline" decorative />
       <div className={styles.aiHunkBody}>
         <div className={`ai-hunk-meta ${styles.aiHunkMeta}`}>
           <span>AI</span>
+          <SampleBadge solid />
           <span className={`chip chip-${chip.variant}`}>{chip.label}</span>
         </div>
-        <div>{annotation.body}</div>
+        <MarkdownRenderer source={annotation.body} className="ai-markdown ai-markdown--popover" />
       </div>
     </div>
   );

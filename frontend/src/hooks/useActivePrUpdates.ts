@@ -6,15 +6,20 @@ import { useEventSource } from './useEventSource';
 export interface ActivePrUpdates {
   hasUpdate: boolean;
   headShaChanged: boolean;
+  baseShaChanged: boolean;
   commentCountDelta: number;
   isMerged: boolean;
   isClosed: boolean;
+  // true only after the first subscribe POST settles; gates AI fetches that
+  // must not fire before the SSE subscription is established (D111 204 guard).
+  subscribed: boolean;
   clear(): void;
 }
 
 const initial = {
   hasUpdate: false,
   headShaChanged: false,
+  baseShaChanged: false,
   commentCountDelta: 0,
   isMerged: false,
   isClosed: false,
@@ -23,6 +28,7 @@ const initial = {
 export function useActivePrUpdates(prRef: PrReference): ActivePrUpdates {
   const stream = useEventSource();
   const [state, setState] = useState(initial);
+  const [subscribed, setSubscribed] = useState(false);
   const refStr = `${prRef.owner}/${prRef.repo}/${prRef.number}`;
 
   useEffect(() => {
@@ -32,6 +38,8 @@ export function useActivePrUpdates(prRef: PrReference): ActivePrUpdates {
     // this, navigating from PR A (with hasUpdate=true) to PR B inherits A's
     // banner until a new event arrives or clear() is called.
     setState(initial);
+    // Reset subscription gate so AI fetches don't fire stale on the new ref.
+    setSubscribed(false);
     let cancelled = false;
     // Most recent in-flight subscribe POST, so cleanup can chain the DELETE
     // behind it and the server never sees DELETE→POST (which would leave a
@@ -44,6 +52,7 @@ export function useActivePrUpdates(prRef: PrReference): ActivePrUpdates {
       setState((s) => ({
         hasUpdate: true,
         headShaChanged: s.headShaChanged || event.headShaChanged,
+        baseShaChanged: s.baseShaChanged || event.baseShaChanged,
         commentCountDelta: s.commentCountDelta + event.commentCountDelta,
         // Latched (once done, stays done). Backend guarantees isMerged/isClosed are
         // mutually exclusive per Task 15a; if both ever arrive, PrDetailPage prioritizes merged.
@@ -65,6 +74,7 @@ export function useActivePrUpdates(prRef: PrReference): ActivePrUpdates {
           // sees the live POST it must order the DELETE behind.
           lastSubscribePost = apiClient.post('/api/events/subscriptions', { prRef: refStr });
           await lastSubscribePost;
+          if (!cancelled) setSubscribed(true);
         } catch {
           // Subscribe failure is non-fatal: cookie-keyed routing on the server still
           // delivers events. Silent — no observable impact in PoC scope.
@@ -101,5 +111,5 @@ export function useActivePrUpdates(prRef: PrReference): ActivePrUpdates {
 
   const clear = () => setState(initial);
 
-  return { ...state, clear };
+  return { ...state, subscribed, clear };
 }

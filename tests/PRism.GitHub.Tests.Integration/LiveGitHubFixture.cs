@@ -161,6 +161,8 @@ internal sealed class InMemoryConfigStoreForIntegrationTests : IConfigStore
         throw new NotSupportedException("Integration tests do not patch config.");
     public Task SetDefaultAccountLoginAsync(string login, CancellationToken ct) =>
         Task.CompletedTask;
+    public Task RecordAiConsentAsync(string providerId, string disclosureVersion, CancellationToken ct) =>
+        Task.CompletedTask;
 #pragma warning disable CS0067 // Event is never used — the integration fixture never patches config, so the Changed handler is unreachable; PrDetailLoader subscribes to it at construction and we accept the dead handler rather than fire fake events.
     public event EventHandler<ConfigChangedEventArgs>? Changed;
 #pragma warning restore CS0067

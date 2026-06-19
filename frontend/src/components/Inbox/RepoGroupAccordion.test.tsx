@@ -25,6 +25,7 @@ function pr(n: number): PrInboxItem {
     lastSeenCommentId: null,
     mergedAt: null,
     closedAt: null,
+    isDraft: false,
   };
 }
 const group = { repo: 'acme/api', items: [pr(1), pr(2)] };

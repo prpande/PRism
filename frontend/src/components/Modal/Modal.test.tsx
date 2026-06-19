@@ -66,6 +66,21 @@ describe('Modal', () => {
     expect(backdrop).toHaveClass('modal-backdrop--center');
   });
 
+  it('renders a decorative titleIcon without changing the dialog accessible name', () => {
+    render(
+      <Modal open title="Enable Live AI" titleIcon={<span>DECOR</span>} onClose={() => {}}>
+        <p>body</p>
+      </Modal>,
+    );
+    // The icon node is rendered…
+    expect(screen.getByText('DECOR')).toBeInTheDocument();
+    // …inside an aria-hidden wrapper that Modal owns (so callers can't leak the
+    // icon into the dialog name)…
+    expect(screen.getByText('DECOR').parentElement).toHaveAttribute('aria-hidden', 'true');
+    // …and the dialog's accessible name is therefore still exactly the title.
+    expect(screen.getByRole('dialog', { name: 'Enable Live AI' })).toBeInTheDocument();
+  });
+
   it('calls onClose on Escape by default', () => {
     const onClose = vi.fn();
     render(

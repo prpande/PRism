@@ -9,28 +9,150 @@ import {
 } from 'react';
 import { apiClient } from '../api/client';
 import { useToast } from '../components/Toast';
-import type { PreferencesResponse } from '../api/types';
+import type { PreferencesResponse, AiMode } from '../api/types';
 
 // Settings page (spec § 2.6) tightens the dotted-path key set from the bare
-// `string` PR1 ship to the union below. Bare `theme`/`accent`/`aiPreview` keep
-// the back-compat path used by HeaderControls; `inbox.sections.*` are the new
+// `string` PR1 ship to the union below. Bare `theme`/`accent` keep the
+// back-compat path used by HeaderControls; `inbox.sections.*` are the new
 // Settings page keys.
 export type PreferenceKey =
   | 'theme'
   | 'accent'
-  | 'aiPreview'
+  | 'ui.ai.mode'
+  | 'ui.ai.providerTimeoutSeconds'
+  | 'ui.ai.hunkAnnotationCap'
+  | 'ui.ai.summaryMaxChars'
+  | `ui.ai.features.${'summary' | 'fileFocus' | 'hunkAnnotations' | 'inboxEnrichment'}`
   | 'density'
   | 'contentScale'
   | 'inbox.defaultSort'
   | 'inbox.sectionOrder'
   | 'inbox.showActivityRail'
   | 'inbox.groupByRepo'
+  | 'ui.ai.onboardingSeen'
   | `inbox.sections.${
       | 'review-requested'
       | 'awaiting-author'
       | 'authored-by-me'
       | 'mentioned'
       | 'recently-closed'}`;
+
+type InboxSectionKey = Exclude<
+  PreferenceKey,
+  | 'theme'
+  | 'accent'
+  | 'ui.ai.mode'
+  | 'ui.ai.providerTimeoutSeconds'
+  | 'ui.ai.hunkAnnotationCap'
+  | 'ui.ai.summaryMaxChars'
+  | 'ui.ai.onboardingSeen'
+  | `ui.ai.features.${'summary' | 'fileFocus' | 'hunkAnnotations' | 'inboxEnrichment'}`
+  | 'density'
+  | 'contentScale'
+  | 'inbox.defaultSort'
+  | 'inbox.sectionOrder'
+  | 'inbox.showActivityRail'
+  | 'inbox.groupByRepo'
+>;
+
+export function readKey(prefs: PreferencesResponse, key: PreferenceKey): unknown {
+  if (key === 'theme') return prefs.ui.theme;
+  if (key === 'accent') return prefs.ui.accent;
+  if (key === 'ui.ai.mode') return prefs.ui.aiMode;
+  if (key === 'ui.ai.providerTimeoutSeconds') return prefs.ui.providerTimeoutSeconds;
+  if (key === 'ui.ai.hunkAnnotationCap') return prefs.ui.hunkAnnotationCap;
+  if (key === 'ui.ai.summaryMaxChars') return prefs.ui.summaryMaxChars;
+  if (key === 'ui.ai.onboardingSeen') return prefs.ui.onboardingSeen;
+  if (key === 'density') return prefs.ui.density;
+  if (key === 'contentScale') return prefs.ui.contentScale;
+  if (key === 'inbox.defaultSort') return prefs.inbox.defaultSort;
+  if (key === 'inbox.sectionOrder') return prefs.inbox.sectionOrder;
+  if (key === 'inbox.showActivityRail') return prefs.inbox.showActivityRail;
+  if (key === 'inbox.groupByRepo') return prefs.inbox.groupByRepo;
+  if (key.startsWith('ui.ai.features.'))
+    return prefs.ui.features?.[
+      key.slice('ui.ai.features.'.length) as keyof PreferencesResponse['ui']['features']
+    ];
+  const id = key.slice('inbox.sections.'.length) as keyof PreferencesResponse['inbox']['sections'];
+  return prefs.inbox.sections[id];
+}
+
+export function writeKey(
+  prefs: PreferencesResponse,
+  key: PreferenceKey,
+  value: unknown,
+): PreferencesResponse {
+  if (key === 'theme')
+    return { ...prefs, ui: { ...prefs.ui, theme: value as PreferencesResponse['ui']['theme'] } };
+  if (key === 'accent')
+    return { ...prefs, ui: { ...prefs.ui, accent: value as PreferencesResponse['ui']['accent'] } };
+  if (key === 'ui.ai.mode') return { ...prefs, ui: { ...prefs.ui, aiMode: value as AiMode } };
+  if (key === 'ui.ai.providerTimeoutSeconds')
+    return { ...prefs, ui: { ...prefs.ui, providerTimeoutSeconds: value as number } };
+  if (key === 'ui.ai.hunkAnnotationCap')
+    return { ...prefs, ui: { ...prefs.ui, hunkAnnotationCap: value as number } };
+  if (key === 'ui.ai.summaryMaxChars')
+    return { ...prefs, ui: { ...prefs.ui, summaryMaxChars: value as number } };
+  if (key === 'ui.ai.onboardingSeen')
+    return { ...prefs, ui: { ...prefs.ui, onboardingSeen: value as boolean } };
+  if (key === 'density')
+    return {
+      ...prefs,
+      ui: { ...prefs.ui, density: value as PreferencesResponse['ui']['density'] },
+    };
+  if (key === 'contentScale')
+    return {
+      ...prefs,
+      ui: { ...prefs.ui, contentScale: value as PreferencesResponse['ui']['contentScale'] },
+    };
+  if (key === 'inbox.defaultSort')
+    return {
+      ...prefs,
+      inbox: {
+        ...prefs.inbox,
+        defaultSort: value as PreferencesResponse['inbox']['defaultSort'],
+      },
+    };
+  if (key === 'inbox.sectionOrder')
+    return {
+      ...prefs,
+      inbox: {
+        ...prefs.inbox,
+        sectionOrder: value as PreferencesResponse['inbox']['sectionOrder'],
+      },
+    };
+  if (key === 'inbox.showActivityRail')
+    return { ...prefs, inbox: { ...prefs.inbox, showActivityRail: value as boolean } };
+  if (key === 'inbox.groupByRepo')
+    return { ...prefs, inbox: { ...prefs.inbox, groupByRepo: value as boolean } };
+  if (key.startsWith('ui.ai.features.')) {
+    const seam = key.slice('ui.ai.features.'.length) as keyof PreferencesResponse['ui']['features'];
+    // writeKey is a test-only helper (no production callers). When prefs.ui.features
+    // is undefined this returns a features object holding only the written seam;
+    // acceptable because AiFeatures has no cross-field invariants and tests write/read
+    // the same seam — real GET responses always populate all nine keys.
+    return {
+      ...prefs,
+      ui: {
+        ...prefs.ui,
+        features: {
+          ...prefs.ui.features,
+          [seam]: value as boolean,
+        } as PreferencesResponse['ui']['features'],
+      },
+    };
+  }
+  const id = (key as InboxSectionKey).slice(
+    'inbox.sections.'.length,
+  ) as keyof PreferencesResponse['inbox']['sections'];
+  return {
+    ...prefs,
+    inbox: {
+      ...prefs.inbox,
+      sections: { ...prefs.inbox.sections, [id]: value as boolean },
+    },
+  };
+}
 
 export interface PreferencesContextValue {
   preferences: PreferencesResponse | null;

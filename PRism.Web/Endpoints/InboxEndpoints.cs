@@ -60,11 +60,16 @@ internal static class InboxEndpoints
                     var i = Array.IndexOf(SectionOrder, kv.Key);
                     return i < 0 ? int.MaxValue : i;
                 })
+                // Secondary key on the id keeps any unknown sections (all bucket to
+                // int.MaxValue) deterministically ordered — Sections is an
+                // IReadOnlyDictionary whose enumeration order isn't guaranteed.
+                .ThenBy(kv => kv.Key, StringComparer.Ordinal)
                 .Select(kv => new InboxSectionDto(kv.Key, Labels.TryGetValue(kv.Key, out var lbl) ? lbl : kv.Key, kv.Value))
                 .ToList();
             return Results.Ok(new InboxResponse(
                 sections, snap.Enrichments, snap.LastRefreshedAt,
-                config.Current.Inbox.ShowHiddenScopeFooter, snap.CiProbeComplete));
+                config.Current.Inbox.ShowHiddenScopeFooter, snap.CiProbeComplete,
+                snap.AiEnrichmentSettled.ToArray()));
         });
 
         // #311 — manual "Refresh now". Calls the orchestrator directly and AWAITS the pull

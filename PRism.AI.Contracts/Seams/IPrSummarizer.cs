@@ -6,4 +6,5 @@ namespace PRism.AI.Contracts.Seams;
 public interface IPrSummarizer
 {
     Task<PrSummary?> SummarizeAsync(PrReference pr, CancellationToken ct);
+    Task<PrSummary?> RegenerateAsync(PrReference pr, CancellationToken ct);
 }

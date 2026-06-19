@@ -18,7 +18,8 @@ async function setupMocks(page: Page) {
           store.ui.accent = value as typeof store.ui.accent;
         else if (key === 'density' && typeof value === 'string')
           store.ui.density = value as typeof store.ui.density;
-        else if (key === 'aiPreview' && typeof value === 'boolean') store.ui.aiPreview = value;
+        else if (key === 'ui.ai.mode' && typeof value === 'string')
+          store.ui.aiMode = value as 'off' | 'preview' | 'live';
       }
     }
     return route.fulfill({

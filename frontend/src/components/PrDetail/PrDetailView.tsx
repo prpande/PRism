@@ -9,6 +9,7 @@ import { CrossTabPresenceBanner } from './CrossTabPresenceBanner';
 import { UnresolvedPanel } from './Reconciliation/UnresolvedPanel';
 import { OverviewTab } from './OverviewTab/OverviewTab';
 import { FilesTab } from './FilesTab/FilesTab';
+import { HotspotsTab } from './HotspotsTab/HotspotsTab';
 import { DraftsTabRoute } from './DraftsTab/DraftsTabRoute';
 import { PrDetailSkeleton } from './PrDetailSkeleton';
 import type { PrTabId } from './PrSubTabStrip';
@@ -17,6 +18,9 @@ import { useActivePrUpdates } from '../../hooks/useActivePrUpdates';
 import { usePrDetailRefresh } from '../../hooks/usePrDetailRefresh';
 import { useToast } from '../Toast/useToast';
 import { useDraftSession } from '../../hooks/useDraftSession';
+import { useCapabilities } from '../../hooks/useCapabilities';
+import { usePreferences } from '../../hooks/usePreferences';
+import { useFileFocusResult } from '../../hooks/useFileFocusResult';
 import { useStateChangedSubscriber } from '../../hooks/useStateChangedSubscriber';
 import { useRootCommentPostedSubscriber } from '../../hooks/useRootCommentPostedSubscriber';
 import { useSingleCommentPostedSubscriber } from '../../hooks/useSingleCommentPostedSubscriber';
@@ -29,6 +33,8 @@ import { useOpenTabs } from '../../contexts/OpenTabsContext';
 import { useTabScrollMemory } from '../../hooks/useTabScrollMemory';
 import { LoadingBar } from '../LoadingBar';
 import { useActivationTransition } from '../../hooks/useActivationTransition';
+import { useAiFailure } from '../Ai/aiFailure';
+import { fileFocusStatusToMarkerState } from '../Ai/fileFocusMarkerState';
 import { ErrorModal } from '../ErrorModal';
 import bannerReconcileStyles from './BannerReconcile.module.css';
 
@@ -58,8 +64,30 @@ export function PrDetailView({
   const refKey = prRefKey(prRef);
   const navigate = useNavigate();
 
+  const { clearPr } = useAiFailure();
+  // Clear AI failures for this PR when the view unmounts (e.g. tab closed under PrTabHost
+  // keep-alive) so a stale Retry can't fire against a PR the user has left. clearPr is a
+  // stable useCallback from AiFailureProvider; prRef's primitive fields are the real deps.
+  useEffect(() => {
+    return () => clearPr(prRef);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- stable primitive prRef fields; clearPr stable (#331)
+  }, [owner, repo, number]);
+
   const { data, isLoading, error, reload } = usePrDetail(prRef);
   const updates = useActivePrUpdates(prRef);
+
+  // The SINGLE shared file-focus fetch (spec §8): owned here, consumed by both
+  // the Files-tree dots and the HotspotsTab via prDetailContext — no duplicate
+  // GET. Enabled when the fileFocus capability is on (Preview OR Live); the Live
+  // fetch is additionally gated on `subscribed` (D111 204 race).
+  const { capabilities } = useCapabilities();
+  const { preferences } = usePreferences();
+  // Preview and Live both set capabilities.fileFocus=true, so the capability flag
+  // can't tell them apart — read the mode to gate the numeric badge (Preview's
+  // placeholder data must not surface a count).
+  const isLive = preferences?.ui?.aiMode === 'live';
+  const fileFocusEnabled = capabilities?.fileFocus ?? false;
+  const fileFocus = useFileFocusResult(prRef, fileFocusEnabled, updates.subscribed);
 
   // #344 — proactive manual Refresh. Force-re-reads the PR from GitHub (bypasses
   // the head-SHA-keyed snapshot cache), then fires usePrDetail.reload() to re-GET
@@ -189,6 +217,34 @@ export function PrDetailView({
     setSubTab(tab);
   }, []);
 
+  // Spec §8 — the Hotspots tab exists only when the fileFocus capability is on
+  // (Preview or Live). `fileFocusEnabled` derives from async-loaded
+  // capabilities, so it starts false (null caps → off) and flips true once they
+  // resolve — the tab and its content appear reactively at that point.
+  //
+  // Deep-link-while-off edge: a `/pr/.../hotspots` URL seeds subTab='hotspots'
+  // (and a user can turn AI off while parked on the tab). Coerce 'hotspots' →
+  // 'overview' whenever the capability is off, so the strip's active-tab and the
+  // hidden-gating below agree — no blank screen, no misleading "No file changes"
+  // Hotspots state. `effectiveSubTab` is what the UI renders; the underlying
+  // `subTab` state is left untouched, so the live tab is restored once caps load.
+  const effectiveSubTab: PrTabId = subTab === 'hotspots' && !fileFocusEnabled ? 'overview' : subTab;
+
+  // Deep-link navigation intent (spec §8). HotspotsTab calls requestFileView(path):
+  // switch to Files and stash the path; FilesTab consumes pendingFilePath (resets
+  // the diff range, selects the file, focuses + announces), then clears it. Focus
+  // moves ONCE — when FilesTab applies the path — not on the tab switch here, to
+  // avoid a double screen-reader announcement (tab button, then diff region).
+  const [pendingFilePath, setPendingFilePath] = useState<string | null>(null);
+  const requestFileView = useCallback(
+    (path: string) => {
+      selectSubTab('files');
+      setPendingFilePath(path);
+    },
+    [selectSubTab],
+  );
+  const clearPendingFilePath = useCallback(() => setPendingFilePath(null), []);
+
   // Ordering dependency: the marker effect must precede useTabScrollMemory so
   // [data-app-scroll] is a scroll container before scrollTop is restored (in
   // browser mode it's only scrollable when data-files-active is set; writing
@@ -280,25 +336,46 @@ export function PrDetailView({
     ? 'pr-detail-page pr-detail-page-readonly'
     : 'pr-detail-page';
 
-  // Provider value for the direct-rendered sub-tabs. `prDetail` is non-nullable in
-  // the context shape, so the value is `null` during the pre-load window (data ===
-  // null) and the render gates on `ctxValue` below — building it here without a
-  // `data!` assertion that a future consumer rendered outside the gate could crash
-  // on. The always-visible chrome (UnresolvedPanel → StaleDraftRow) gets
-  // `onSelectSubTab` as an explicit prop instead, so it renders crash-free pre-load.
-  const ctxValue = useMemo<PrDetailContextValue | null>(
-    () =>
-      data
-        ? {
-            prRef,
-            prDetail: data,
-            draftSession,
-            readOnly: presence.readOnly,
-            onSelectSubTab: selectSubTab,
-          }
-        : null,
-    [prRef, data, draftSession, presence.readOnly, selectSubTab],
+  // Provider value for the direct-rendered sub-tabs. `prDetail` is
+  // non-nullable in the context shape, so this is only consumed inside the
+  // `data ?` gate below where `data!` is guaranteed present. The always-visible
+  // chrome (UnresolvedPanel → StaleDraftRow) gets `onSelectSubTab` as an
+  // explicit prop instead, so it renders crash-free during the pre-load window
+  // when `data === null`.
+  const ctxValue = useMemo<PrDetailContextValue>(
+    () => ({
+      prRef,
+      prDetail: data!,
+      draftSession,
+      readOnly: presence.readOnly,
+      subscribed: updates.subscribed,
+      baseShaChanged: updates.baseShaChanged,
+      onSelectSubTab: selectSubTab,
+      fileFocus,
+      pendingFilePath,
+      requestFileView,
+      clearPendingFilePath,
+    }),
+    [
+      prRef,
+      data,
+      draftSession,
+      presence.readOnly,
+      updates.subscribed,
+      updates.baseShaChanged,
+      selectSubTab,
+      fileFocus,
+      pendingFilePath,
+      requestFileView,
+      clearPendingFilePath,
+    ],
   );
+
+  // Hotspots tab-label cue mirrors the file-tree header reduction (spec §3): working
+  // while focus loads, idle once resolved, hidden on error/no-changes/off. Gate on the
+  // SAME capability flag that drives showHotspots so the tab marker and the tab presence
+  // stay in lockstep (avoid divergence between fileFocusEnabled and showHotspots).
+  const hotspotsAiState = fileFocusEnabled ? fileFocusStatusToMarkerState(fileFocus.status) : null;
 
   // Stable identity for PrHeader's onSessionRefetch — an inline arrow would hand
   // PrHeader a fresh function each render, churning its effect/memo dep hygiene.
@@ -308,7 +385,7 @@ export function PrDetailView({
   }, [draftSession.refetch]);
 
   return (
-    <div className={pageClassName} data-prref={refKey} hidden={!active}>
+    <div className={pageClassName} data-prref={refKey} hidden={!active} data-pr-main tabIndex={-1}>
       {/* Per-tab loading bar pinned to THIS tab's content boundary (not a global
           screen-top bar) — each open PR tab owns its own. Shows on cold load and
           background reload; self-contained, so no layout shift. */}
@@ -335,13 +412,24 @@ export function PrDetailView({
         }
         mergeability={data?.pr.mergeability}
         ciSummary={data?.pr.ciSummary}
-        activeTab={subTab}
+        activeTab={effectiveSubTab}
         onTabChange={selectSubTab}
+        showHotspots={fileFocusEnabled}
+        hotspotsAiState={hotspotsAiState}
         draftsCount={draftsCount}
+        hotspotsCount={
+          // Only a real (Live) ranking with signal gets a numeric badge. Preview
+          // (placeholder data) + loading/empty/error/fallback/no-changes/
+          // not-subscribed all suppress the count.
+          isLive && fileFocus.status === 'ok'
+            ? fileFocus.entries.filter((e) => e.level === 'high' || e.level === 'medium').length
+            : undefined
+        }
         session={draftSession.session}
         headShaDrift={updates.headShaChanged}
         currentHeadSha={data?.pr.headSha}
         prState={data?.pr.isMerged ? 'merged' : data?.pr.isClosed ? 'closed' : 'open'}
+        isDraft={data?.pr.isDraft ?? false}
         mergedAt={data?.pr.mergedAt}
         closedAt={data?.pr.closedAt}
         readOnly={presence.readOnly}
@@ -431,18 +519,32 @@ export function PrDetailView({
         // not in the DOM at all until first selected. Gated on `ctxValue` (non-null
         // iff `data` is) so the provider value is typed non-null without an assertion.
         <PrDetailContextProvider value={ctxValue}>
-          {visited.current.has('overview') && (
-            <div data-subtab="overview" hidden={subTab !== 'overview'}>
+          {/* effectiveSubTab is what drives visibility (spec §8): when the
+              fileFocus capability is off it coerces 'hotspots'→'overview', so a
+              /hotspots deep-link landed while AI is off falls back to Overview.
+              The `|| effectiveSubTab === 'overview'` term mounts Overview as the
+              safe fallback even when it was never visited (the deep-link case
+              seeds `visited` with only 'hotspots'), avoiding a blank screen. */}
+          {(visited.current.has('overview') || effectiveSubTab === 'overview') && (
+            <div data-subtab="overview" hidden={effectiveSubTab !== 'overview'}>
               <OverviewTab />
             </div>
           )}
           {visited.current.has('files') && (
-            <div data-subtab="files" hidden={subTab !== 'files'}>
+            <div data-subtab="files" hidden={effectiveSubTab !== 'files'}>
               <FilesTab />
             </div>
           )}
+          {/* Content gated on the capability too (not just the tab strip): when
+              AI is off no HotspotsTab mounts, so its misleading "No file changes"
+              state can never surface from a coerced/deep-linked subTab. */}
+          {fileFocusEnabled && visited.current.has('hotspots') && (
+            <div data-subtab="hotspots" hidden={effectiveSubTab !== 'hotspots'}>
+              <HotspotsTab />
+            </div>
+          )}
           {visited.current.has('drafts') && (
-            <div data-subtab="drafts" hidden={subTab !== 'drafts'}>
+            <div data-subtab="drafts" hidden={effectiveSubTab !== 'drafts'}>
               <DraftsTabRoute />
             </div>
           )}

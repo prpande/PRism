@@ -8,6 +8,11 @@ import { OpenTabsProvider } from '../contexts/OpenTabsContext';
 vi.mock('../hooks/useInbox', () => ({
   useInbox: vi.fn(),
 }));
+vi.mock('../components/Ai/AiOnboardingDialog', () => ({
+  AiOnboardingDialog: ({ onDismiss }: { onDismiss: () => void }) => (
+    <div data-testid="onboarding-dialog" onClick={onDismiss} />
+  ),
+}));
 vi.mock('../hooks/useInboxUpdates', () => ({
   useInboxUpdates: vi.fn(),
 }));
@@ -19,6 +24,7 @@ vi.mock('../hooks/usePreferences', () => ({
 }));
 vi.mock('../hooks/useAiGate', () => ({
   useAiGate: vi.fn(),
+  useIsSampleMode: () => false,
 }));
 
 import { useInbox } from '../hooks/useInbox';
@@ -84,7 +90,9 @@ function setHooks(
       ui: {
         theme: 'system',
         accent: 'indigo',
-        aiPreview: opts.aiPreview ?? false,
+        aiMode: 'off',
+        density: 'comfortable',
+        contentScale: 'm',
       },
       inbox: {
         sections: {
@@ -94,12 +102,14 @@ function setHooks(
           mentioned: true,
           'recently-closed': true,
         },
+        defaultSort: 'updated',
         sectionOrder:
           opts.sectionOrder ?? 'authored-by-me,review-requested,awaiting-author,mentioned',
         // #283 the rail reads this dedicated flag, not the AI gate. #439 defaults it ON
         // to mirror the product default; rail-off tests pass an explicit false, and the
         // rail only renders with mockViewportWide(true), so the default is inert otherwise.
         showActivityRail: opts.showActivityRail ?? true,
+        groupByRepo: true,
       },
       github: {
         host: 'https://github.com',
@@ -144,6 +154,7 @@ const sampleData: InboxResponse = {
           lastSeenCommentId: null,
           mergedAt: null,
           closedAt: null,
+          isDraft: false,
         },
       ],
     },
@@ -152,6 +163,7 @@ const sampleData: InboxResponse = {
   lastRefreshedAt: new Date().toISOString(),
   tokenScopeFooterEnabled: true,
   ciProbeComplete: true,
+  aiEnrichmentSettled: [],
 };
 
 const emptyData: InboxResponse = {
@@ -331,6 +343,7 @@ describe('InboxPage', () => {
         lastRefreshedAt: '',
         tokenScopeFooterEnabled: false,
         ciProbeComplete: true,
+        aiEnrichmentSettled: [],
       },
       // awaiting-author is in the saved order but absent from `sections` — exercises
       // orderInboxSections' "saved id matching no live section is harmlessly ignored".
@@ -370,6 +383,7 @@ describe('InboxPage — useAiGate migrations', () => {
         lastRefreshedAt: '2026-01-01T00:00:00Z',
         tokenScopeFooterEnabled: false,
         ciProbeComplete: true,
+        aiEnrichmentSettled: [],
       } as InboxResponse,
       isLoading: false,
       error: null,
@@ -385,7 +399,13 @@ describe('InboxPage — useAiGate migrations', () => {
     });
     vi.mocked(usePreferences).mockReturnValue({
       preferences: {
-        ui: { theme: 'system', accent: 'indigo', aiPreview: false, density: 'comfortable' },
+        ui: {
+          theme: 'system',
+          accent: 'indigo',
+          aiMode: 'off',
+          density: 'comfortable',
+          contentScale: 'm',
+        },
         inbox: {
           sections: {
             'review-requested': true,
@@ -399,6 +419,7 @@ describe('InboxPage — useAiGate migrations', () => {
           // #439 mirrors the product default (ON); the rail tests below call
           // setShowActivityRail() with an explicit value, so this baseline is inert for them.
           showActivityRail: true,
+          groupByRepo: true,
         },
         github: {
           host: 'https://github.com',
@@ -417,7 +438,13 @@ describe('InboxPage — useAiGate migrations', () => {
   function setShowActivityRail(showActivityRail: boolean) {
     vi.mocked(usePreferences).mockReturnValue({
       preferences: {
-        ui: { theme: 'system', accent: 'indigo', aiPreview: false, density: 'comfortable' },
+        ui: {
+          theme: 'system',
+          accent: 'indigo',
+          aiMode: 'off',
+          density: 'comfortable',
+          contentScale: 'm',
+        },
         inbox: {
           sections: {
             'review-requested': true,
@@ -429,6 +456,7 @@ describe('InboxPage — useAiGate migrations', () => {
           defaultSort: 'updated',
           sectionOrder: 'authored-by-me,review-requested,awaiting-author,mentioned',
           showActivityRail,
+          groupByRepo: true,
         },
         github: {
           host: 'https://github.com',
@@ -481,5 +509,195 @@ describe('InboxPage — useAiGate migrations', () => {
       </MemoryRouter>,
     );
     expect(container.querySelector('[data-testid="activity-rail"]')).not.toBeNull();
+  });
+});
+
+// ── #485 onboarding overlay gate ──────────────────────────────────────────────
+// AiOnboardingDialog is stubbed (see top-level vi.mock) to a sentinel testid so
+// these tests assert MOUNTING logic in InboxPage, not the dialog's internals.
+
+describe('InboxPage — onboarding overlay gate (#485)', () => {
+  // Shared mutable prefs state — tests mutate before rendering.
+  const prefs = {
+    onboardingSeen: false as boolean,
+    value: 'present' as 'present' | null, // 'null' → usePreferences returns preferences:null
+  };
+
+  function buildPreferences(onboardingSeen: boolean): PreferencesResponse {
+    return {
+      ui: {
+        theme: 'system',
+        accent: 'indigo',
+        aiMode: 'off',
+        density: 'comfortable',
+        contentScale: 'm',
+        providerTimeoutSeconds: 30,
+        hunkAnnotationCap: 10,
+        summaryMaxChars: 1000,
+        onboardingSeen,
+      },
+      inbox: {
+        sections: {
+          'review-requested': true,
+          'awaiting-author': true,
+          'authored-by-me': true,
+          mentioned: true,
+          'recently-closed': true,
+        },
+        defaultSort: 'updated',
+        sectionOrder: 'review-requested,awaiting-author,authored-by-me,mentioned',
+        showActivityRail: false,
+        groupByRepo: true,
+      },
+      github: {
+        host: 'https://github.com',
+        configPath: '/fake/config.json',
+        logsPath: '/fake/logs',
+      },
+    } as PreferencesResponse;
+  }
+
+  function applyPrefs() {
+    vi.mocked(usePreferences).mockReturnValue({
+      preferences: prefs.value === null ? null : buildPreferences(prefs.onboardingSeen),
+      error: null,
+      refetch: vi.fn().mockResolvedValue(undefined),
+      set: vi.fn().mockResolvedValue(undefined),
+    });
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    prefs.onboardingSeen = false;
+    prefs.value = 'present';
+
+    // Provide a loaded inbox so we never hit the loading/error early-returns
+    // (the overlay must render over loading too, but we test that separately).
+    vi.mocked(useInbox).mockReturnValue({
+      data: {
+        sections: [],
+        enrichments: {},
+        aiEnrichmentSettled: [],
+        lastRefreshedAt: new Date().toISOString(),
+        tokenScopeFooterEnabled: false,
+        ciProbeComplete: true,
+      } as InboxResponse,
+      isLoading: false,
+      error: null,
+      reload: vi.fn().mockResolvedValue(undefined),
+    });
+    vi.mocked(useInboxUpdates).mockReturnValue({ announce: '' });
+    vi.mocked(useCapabilities).mockReturnValue({
+      capabilities: { inboxEnrichment: false } as AiCapabilities,
+      error: null,
+      refetch: vi.fn().mockResolvedValue(undefined),
+    });
+    vi.mocked(useAiGate).mockReturnValue(false);
+    applyPrefs();
+  });
+
+  it('mounts the onboarding overlay when onboardingSeen is false', () => {
+    prefs.onboardingSeen = false;
+    applyPrefs();
+    render(
+      <MemoryRouter initialEntries={['/']}>
+        <OpenTabsProvider>
+          <InboxPage />
+        </OpenTabsProvider>
+      </MemoryRouter>,
+    );
+    expect(screen.getByTestId('onboarding-dialog')).toBeInTheDocument();
+  });
+
+  it('does NOT mount the overlay when onboardingSeen is true', () => {
+    prefs.onboardingSeen = true;
+    applyPrefs();
+    render(
+      <MemoryRouter initialEntries={['/']}>
+        <OpenTabsProvider>
+          <InboxPage />
+        </OpenTabsProvider>
+      </MemoryRouter>,
+    );
+    expect(screen.queryByTestId('onboarding-dialog')).not.toBeInTheDocument();
+  });
+
+  it('does NOT mount the overlay until preferences resolve (preferences null)', () => {
+    prefs.value = null;
+    applyPrefs();
+    render(
+      <MemoryRouter initialEntries={['/']}>
+        <OpenTabsProvider>
+          <InboxPage />
+        </OpenTabsProvider>
+      </MemoryRouter>,
+    );
+    expect(screen.queryByTestId('onboarding-dialog')).not.toBeInTheDocument();
+  });
+
+  it('auto-dismisses when onboardingSeen flips to true externally (multi-window)', () => {
+    prefs.onboardingSeen = false;
+    applyPrefs();
+    const { rerender } = render(
+      <MemoryRouter initialEntries={['/']}>
+        <OpenTabsProvider>
+          <InboxPage />
+        </OpenTabsProvider>
+      </MemoryRouter>,
+    );
+    expect(screen.getByTestId('onboarding-dialog')).toBeInTheDocument();
+
+    // Simulate a focus-refetch in another window resolving onboardingSeen=true.
+    prefs.onboardingSeen = true;
+    applyPrefs();
+    rerender(
+      <MemoryRouter initialEntries={['/']}>
+        <OpenTabsProvider>
+          <InboxPage />
+        </OpenTabsProvider>
+      </MemoryRouter>,
+    );
+    expect(screen.queryByTestId('onboarding-dialog')).not.toBeInTheDocument();
+  });
+
+  it('also mounts the overlay over the loading skeleton (not just the loaded inbox)', () => {
+    prefs.onboardingSeen = false;
+    applyPrefs();
+    // Override: no data yet, actively loading
+    vi.mocked(useInbox).mockReturnValue({
+      data: null,
+      isLoading: true,
+      error: null,
+      reload: vi.fn().mockResolvedValue(undefined),
+    });
+    render(
+      <MemoryRouter initialEntries={['/']}>
+        <OpenTabsProvider>
+          <InboxPage />
+        </OpenTabsProvider>
+      </MemoryRouter>,
+    );
+    expect(screen.getByTestId('inbox-skeleton')).toBeInTheDocument();
+    expect(screen.getByTestId('onboarding-dialog')).toBeInTheDocument();
+  });
+
+  it('does NOT mount the overlay over the error modal', () => {
+    prefs.onboardingSeen = false;
+    applyPrefs();
+    vi.mocked(useInbox).mockReturnValue({
+      data: null,
+      isLoading: false,
+      error: new Error('boom'),
+      reload: vi.fn().mockResolvedValue(undefined),
+    });
+    render(
+      <MemoryRouter initialEntries={['/']}>
+        <OpenTabsProvider>
+          <InboxPage />
+        </OpenTabsProvider>
+      </MemoryRouter>,
+    );
+    expect(screen.getByText(/couldn.t load inbox/i)).toBeInTheDocument();
+    expect(screen.queryByTestId('onboarding-dialog')).not.toBeInTheDocument();
   });
 });

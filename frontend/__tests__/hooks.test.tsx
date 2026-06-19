@@ -14,7 +14,7 @@ vi.mock('../src/components/Toast', () => ({
 const server = setupServer(
   http.get('/api/preferences', () =>
     HttpResponse.json({
-      ui: { theme: 'system', accent: 'indigo', aiPreview: false, density: 'comfortable' },
+      ui: { theme: 'system', accent: 'indigo', aiMode: 'off', density: 'comfortable' },
       inbox: {
         sections: {
           'review-requested': true,
@@ -86,7 +86,7 @@ describe('usePreferences', () => {
     server.use(
       http.post('/api/preferences', async () =>
         HttpResponse.json({
-          ui: { theme: 'system', accent: 'indigo', aiPreview: false, density: 'comfortable' },
+          ui: { theme: 'system', accent: 'indigo', aiMode: 'off', density: 'comfortable' },
           inbox: {
             sections: {
               'review-requested': false,
@@ -141,19 +141,19 @@ describe('usePreferences', () => {
 });
 
 describe('useCapabilities', () => {
-  // #221: capabilities are now DERIVED from the shared aiPreview preference, not
-  // fetched from /api/capabilities. AllOff when aiPreview is false.
-  it('derives AllOff from the shared preference when aiPreview is off', async () => {
+  // #221: capabilities are now DERIVED from the shared aiMode preference, not
+  // fetched from /api/capabilities. AllOff when aiMode is not 'preview'.
+  it('derives AllOff from the shared preference when aiMode is off', async () => {
     const { result } = renderHook(() => useCapabilities());
     await waitFor(() => expect(result.current.capabilities).not.toBeNull());
     expect(result.current.capabilities?.summary).toBe(false);
   });
 
-  it('derives AllOn when aiPreview is on', async () => {
+  it('derives AllOn when aiMode is preview', async () => {
     server.use(
       http.get('/api/preferences', () =>
         HttpResponse.json({
-          ui: { theme: 'system', accent: 'indigo', aiPreview: true, density: 'comfortable' },
+          ui: { theme: 'system', accent: 'indigo', aiMode: 'preview', density: 'comfortable' },
           inbox: { sections: {} },
           github: { host: 'https://github.com', configPath: '/c', logsPath: '/l' },
         }),

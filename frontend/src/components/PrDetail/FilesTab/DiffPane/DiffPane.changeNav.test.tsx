@@ -54,7 +54,7 @@ function renderPane(diffMode: DiffMode = 'unified') {
 describe('DiffPane change navigation', () => {
   beforeEach(() => {
     vi.mocked(useAiGate).mockReturnValue(false);
-    vi.mocked(useAiHunkAnnotations).mockReturnValue(null);
+    vi.mocked(useAiHunkAnnotations).mockReturnValue({ state: 'empty', annotations: null });
     vi.mocked(useWholeFileContent).mockReturnValue({
       fetchStatus: 'idle',
       headContent: null,

@@ -178,6 +178,22 @@ describe('AskAiDrawer messages', () => {
     expect(screen.getByText(/AI isn't available right now\./)).toBeInTheDocument();
   });
 
+  it('replaces all three drawer sparkles with markers and leaves no emoji', () => {
+    const handle = { current: null as SeedHandle | null };
+    const { container } = render(<HarnessWithApi handle={handle} />);
+    // Seed 1 AI message: send a user msg → AI reply fires after timeout
+    seed(handle, [{ role: 'user', body: 'hello' }]);
+    act(() => {
+      vi.advanceTimersByTime(700);
+    });
+    // Now send another user message to get pendingAiReply back
+    act(() => handle.current!.setInput('acme/api/1', 'again'));
+    act(() => handle.current!.sendMessage('acme/api/1'));
+    // header (1) + one AI message (1) + typing indicator (1) = 3
+    expect(screen.getAllByTestId('ai-marker')).toHaveLength(3);
+    expect(container.textContent).not.toContain('✨');
+  });
+
   it('renders bodies as plain text, not HTML (XSS guard)', () => {
     const handle = { current: null as SeedHandle | null };
     render(<HarnessWithApi handle={handle} />);

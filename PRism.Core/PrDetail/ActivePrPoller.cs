@@ -120,8 +120,11 @@ public sealed partial class ActivePrPoller : BackgroundService
                 // the first successful poll for a newly-subscribed PR. Without this,
                 // a quiet PR with no head-SHA or comment-count changes never produces
                 // an event, leaving the gate closed indefinitely.
+                // LastBaseSha follows the same first-poll null pattern as LastHeadSha/LastCommentCount:
+                // it is null on the first poll, so baseChanged short-circuits to false (no hydration false-fire).
                 var firstPoll = state.LastHeadSha is null && state.LastCommentCount is null;
                 var headChanged = state.LastHeadSha is { } prev && prev != snapshot.HeadSha;
+                var baseChanged = state.LastBaseSha is { } prevBase && prevBase != snapshot.BaseSha;
                 var commentChanged = state.LastCommentCount is { } prevCount && prevCount != snapshot.CommentCount;
                 // Close-state transition (open → merged/closed). The comparison is
                 // case-insensitive: the real poll path emits lowercase PrState
@@ -132,9 +135,9 @@ public sealed partial class ActivePrPoller : BackgroundService
                 var stateChanged = state.LastPrState is { } prevState
                     && !string.Equals(prevState, snapshot.PrState, StringComparison.OrdinalIgnoreCase);
 
-                LogPollSnapshot(_logger, prRef, snapshot.HeadSha, state.LastHeadSha, firstPoll, headChanged, commentChanged, stateChanged);
+                LogPollSnapshot(_logger, prRef, snapshot.HeadSha, state.LastHeadSha, firstPoll, headChanged, baseChanged, commentChanged, stateChanged);
 
-                if (firstPoll || headChanged || commentChanged || stateChanged)
+                if (firstPoll || headChanged || baseChanged || commentChanged || stateChanged)
                 {
                     var commentCountDelta = state.LastCommentCount is { } priorCount
                         ? snapshot.CommentCount - priorCount
@@ -144,6 +147,10 @@ public sealed partial class ActivePrPoller : BackgroundService
                     // case-insensitively.
                     var isMerged = string.Equals(snapshot.PrState, "merged", StringComparison.OrdinalIgnoreCase);
                     var isClosed = string.Equals(snapshot.PrState, "closed", StringComparison.OrdinalIgnoreCase);
+                    // Load-bearing ordering: Publish MUST precede _cache.Update.
+                    // The bus is synchronous, so eviction handlers (summarizer, loader) run
+                    // against the pre-move snapshot. _cache.Update installs the new base AFTER
+                    // eviction — required by the R7 compare-and-set reasoning in Task 9.
                     _bus.Publish(new ActivePrUpdated(
                         prRef,
                         HeadShaChanged: headChanged,
@@ -151,10 +158,13 @@ public sealed partial class ActivePrPoller : BackgroundService
                         NewHeadSha: headChanged ? snapshot.HeadSha : null,
                         CommentCountDelta: commentCountDelta,
                         IsMerged: isMerged,
-                        IsClosed: isClosed));
+                        IsClosed: isClosed,
+                        BaseShaChanged: baseChanged,
+                        NewBaseSha: baseChanged ? snapshot.BaseSha : null));
                 }
 
                 state.LastHeadSha = snapshot.HeadSha;
+                state.LastBaseSha = snapshot.BaseSha;
                 state.LastCommentCount = snapshot.CommentCount;
                 state.LastPrState = snapshot.PrState;
                 state.ConsecutiveErrors = 0;
@@ -166,7 +176,8 @@ public sealed partial class ActivePrPoller : BackgroundService
                 _cache.Update(prRef, new ActivePrSnapshot(
                     HeadSha: snapshot.HeadSha,
                     HighestIssueCommentId: null,
-                    ObservedAt: now));
+                    ObservedAt: now,
+                    BaseSha: snapshot.BaseSha));
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
@@ -206,7 +217,7 @@ public sealed partial class ActivePrPoller : BackgroundService
             "ActivePrPoller tick failed");
 
     [LoggerMessage(EventId = 3, EventName = "ActivePrPollSnapshot", Level = LogLevel.Information,
-        Message = "Active-PR poll snapshot {PrRef}: head={HeadSha} prevHead={PrevHeadSha} firstPoll={FirstPoll} headChanged={HeadChanged} commentChanged={CommentChanged} stateChanged={StateChanged}")]
+        Message = "Active-PR poll snapshot {PrRef}: head={HeadSha} prevHead={PrevHeadSha} firstPoll={FirstPoll} headChanged={HeadChanged} baseChanged={BaseChanged} commentChanged={CommentChanged} stateChanged={StateChanged}")]
     private static partial void LogPollSnapshot(
         ILogger logger,
         PrReference prRef,
@@ -214,6 +225,7 @@ public sealed partial class ActivePrPoller : BackgroundService
         string? prevHeadSha,
         bool firstPoll,
         bool headChanged,
+        bool baseChanged,
         bool commentChanged,
         bool stateChanged);
 }

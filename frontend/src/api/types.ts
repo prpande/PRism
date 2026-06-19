@@ -1,7 +1,12 @@
 export type Theme = 'light' | 'dark' | 'system';
 export type Accent = 'indigo' | 'amber' | 'teal';
 export type Density = 'comfortable' | 'compact';
+export type AiMode = 'off' | 'preview' | 'live';
 export type ContentScale = 'xs' | 's' | 'm' | 'l' | 'xl';
+
+// #496: why an AI seam failed, surfaced via the 503 body { reason }. Drives the timeout-specific
+// toast copy + "Adjust timeout" deep-link. A missing/unknown reason defaults to 'provider-error'.
+export type AiFailureReason = 'timeout' | 'provider-error';
 
 // S6 PR1 widened GET /api/preferences from the flat { theme, accent, aiPreview }
 // shape to a nested { ui, inbox, github } shape (spec § 2.4). UiPreferences is now
@@ -13,9 +18,21 @@ export type ContentScale = 'xs' | 's' | 'm' | 'l' | 'xl';
 export interface UiPreferences {
   theme: Theme;
   accent: Accent;
-  aiPreview: boolean;
+  aiMode: AiMode;
   density: Density;
   contentScale: ContentScale;
+  // #496 AI Settings tab — clamped, hot-reloaded knobs. The GET DTO already clamps these for display.
+  providerTimeoutSeconds: number;
+  hunkAnnotationCap: number;
+  // #525 best-effort summary character cap (500–5000, default 1000). GET clamps for display; fed into
+  // the summarizer prompt and stamped onto PrSummary.generatedMaxChars so the card can detect a cap change.
+  summaryMaxChars: number;
+  // #485 AI onboarding dialog: true once the user has dismissed the dialog via any committing exit
+  // (Off, Preview "Maybe later", or Manage AI settings). Esc does NOT set this — re-shows next launch.
+  onboardingSeen: boolean;
+  // #536 per-feature AI enablement flags. Backend defaults all nine to true; treat as possibly-absent at
+  // runtime (older configs / test fixtures may omit). All read sites use `preferences.ui.features?.[k] ?? true`.
+  features?: AiFeatures;
 }
 
 export interface InboxSectionsPreferences {
@@ -63,8 +80,23 @@ export interface AiCapabilities {
   inboxRanking: boolean;
 }
 
+// Per-feature user-enablement flags (#536). Structurally identical to AiCapabilities
+// but a distinct concept: `features` = what the user turned on/off; `capabilities` =
+// what the AI mode makes available. The gate is capability && feature-enabled.
+export interface AiFeatures {
+  summary: boolean;
+  fileFocus: boolean;
+  hunkAnnotations: boolean;
+  preSubmitValidators: boolean;
+  composerAssist: boolean;
+  draftSuggestions: boolean;
+  draftReconciliation: boolean;
+  inboxEnrichment: boolean;
+  inboxRanking: boolean;
+}
+
 // Wire contract for GET /api/capabilities. Retained as the endpoint's response
-// shape: since #221 the SPA derives capabilities from the shared aiPreview
+// shape: since #221 the SPA derives capabilities from the shared aiMode
 // preference (useCapabilities) rather than calling this endpoint, but D112 will
 // restore an independent fetch that consumes this type. See useCapabilities.ts.
 export interface CapabilitiesResponse {
@@ -122,6 +154,7 @@ export interface PrInboxItem {
   lastSeenCommentId: number | null;
   mergedAt: string | null;
   closedAt: string | null;
+  isDraft: boolean;
 }
 
 export interface InboxSection {
@@ -144,6 +177,7 @@ export interface InboxResponse {
   lastRefreshedAt: string;
   tokenScopeFooterEnabled: boolean;
   ciProbeComplete: boolean;
+  aiEnrichmentSettled: string[];
 }
 
 export interface ParsePrUrlResponse {
@@ -175,6 +209,7 @@ export interface PrDetailPr {
   ciSummary: string;
   isMerged: boolean;
   isClosed: boolean;
+  isDraft: boolean;
   openedAt: string;
   mergedAt: string | null;
   closedAt: string | null;
@@ -236,10 +271,25 @@ export interface PrDetailDto {
   viewerReview?: ViewerReview | null;
 }
 
+// Shared four-value AI load state (spec §1). "off" is NOT a state — it is the
+// useAiGate(...) capability gate; a disabled hook renders nothing. Surfaces map
+// their hook's richer state down to this for the AiMarker / skeleton cue.
+export type AiLoadState = 'loading' | 'ready' | 'empty' | 'error';
+
 export interface PrSummary {
   body: string;
   category: string;
+  // #525 the summary cap this summary was generated under (camelCase wire field). Optional/nullable so
+  // legacy payloads + the ~existing `{ body, category }` test literals stay valid; a null/absent value is
+  // never treated as stale. useAiSummary compares it to the live configured cap to offer Regenerate.
+  generatedMaxChars?: number | null;
 }
+
+export type AiSummaryResult =
+  | { kind: 'ok'; summary: PrSummary }
+  | { kind: 'absent' }
+  | { kind: 'auth' }
+  | { kind: 'error'; reason: AiFailureReason };
 
 // PR9b-ai-gating § 3.3. The backend `FocusLevel` enum carries 3 values;
 // today's PlaceholderFileFocusRanker emits High + Medium. Wire-shape:
@@ -250,7 +300,26 @@ export type FocusLevel = 'high' | 'medium' | 'low';
 export interface FileFocus {
   path: string;
   level: FocusLevel;
+  rationale: string;
 }
+
+// Response envelope from GET …/ai/file-focus. `fallback` is the response-level all-medium signal.
+export interface FileFocusResult {
+  entries: FileFocus[];
+  fallback: boolean;
+}
+
+// Discriminated UI status the shared fetch exposes (spec §8). `not-subscribed` is derived FE-side
+// (the fetch is gated on subscription) and is Live-only; `loading` is in-flight; the rest map from
+// the HTTP result.
+export type FileFocusStatus =
+  | 'loading'
+  | 'ok'
+  | 'empty'
+  | 'no-changes'
+  | 'not-subscribed'
+  | 'error'
+  | 'fallback';
 
 // AnnotationTone carries 3 backend values (PRism.AI.Contracts/Dtos/
 // HunkAnnotation.cs:5-10: Calm, HeadsUp, Concern). Today's placeholder
@@ -605,4 +674,58 @@ export interface ActivityResponse {
   generatedAt: string;
   degraded: ActivityDegradation;
   watching: WatchedRepoActivity[];
+}
+
+// #517 — AI usage & spend. Mirrors PRism.Web/Ai/AiUsageReport.cs (camelCase wire shape).
+export type AiUsageWindow = '24h' | '7d' | '30d' | 'all';
+
+export interface AiUsageTotals {
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadInputTokens: number;
+  cacheCreationInputTokens: number;
+  totalTokens: number;
+  estimatedCostUsd: number;
+  providerCalls: number;
+  cacheHits: number;
+}
+
+export interface AiUsageFeatureRow {
+  component: string;
+  displayName: string;
+  totalTokens: number;
+  estimatedCostUsd: number;
+  providerCalls: number;
+}
+
+export interface AiUsagePrRow {
+  prRef: string;
+  displayLabel: string;
+  totalTokens: number;
+  estimatedCostUsd: number;
+  providerCalls: number;
+}
+
+export interface AiCacheStats {
+  cacheHits: number;
+  providerCalls: number;
+  hitRate: number;
+}
+
+export interface AiUsageTrendBucket {
+  bucketStart: string;
+  granularity: string;
+  estimatedCostUsd: number;
+  totalTokens: number;
+}
+
+export interface AiUsageReport {
+  window: AiUsageWindow;
+  generatedAt: string;
+  totals: AiUsageTotals;
+  byFeature: AiUsageFeatureRow[];
+  byPr: AiUsagePrRow[];
+  totalPrCount: number;
+  cache: AiCacheStats;
+  trend: AiUsageTrendBucket[];
 }

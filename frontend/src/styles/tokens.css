@@ -5,6 +5,15 @@
 
 @import url('https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500;600&display=swap');
 
+/* Registered so the AI working-marker halo blur interpolates smoothly per-frame.
+   An UN-registered custom property (or a raw `filter` blur) animates in Chromium's
+   discrete filter steps, which reads as a blink; a registered <length> tweens. #508 */
+@property --ai-glow-blur {
+  syntax: '<length>';
+  inherits: false;
+  initial-value: 0px;
+}
+
 :root {
   /* type */
   --font-sans: "Geist", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
@@ -116,6 +125,19 @@
   --accent-soft: oklch(0.94 calc(var(--accent-c) * 0.5) var(--accent-h));
   --accent-text: oklch(0.99 0 0);
   --accent-ring: oklch(0.55 var(--accent-c) var(--accent-h) / 0.35);
+  /* AI marker states (#508). Idle = the existing accent (no visual change to
+     existing #489 markers). Working = the SAME accent hue, energised: brighter +
+     higher chroma + a glow (in AiMarker.module.css). Keeping the accent hue means
+     the cue stays on-brand for any chosen accent (B1 decision — no foreign hue);
+     working↔idle stays distinct under prefers-reduced-motion via the lightness/
+     chroma lift + static glow rather than a hue shift. */
+  --ai-idle-color: var(--accent);
+  --ai-working-color: oklch(0.62 calc(var(--accent-c) * 1.5) var(--accent-h));
+  /* Working halo = the accent's COMPLEMENT (hue + 180°), so it reads against any
+     accent instead of vanishing as a same-hue glow. Theme-aware lightness: mid +
+     saturated on light (pops on white), bright on dark. B1 choice (#508). */
+  --ai-working-glow: oklch(0.6 0.19 calc(var(--accent-h) + 180));
+  --ai-idle-opacity: 0.55;
 
   /* state */
   --success: oklch(0.55 0.10 150);
@@ -204,6 +226,13 @@
   --accent-soft: oklch(0.30 calc(var(--accent-c) * 0.7) var(--accent-h));
   --accent-text: oklch(0.15 0 0);
   --accent-ring: oklch(0.72 var(--accent-c) var(--accent-h) / 0.45);
+  --ai-idle-color: var(--accent);
+  /* Same accent hue as idle, lifted in lightness (0.72→0.82) + chroma so working↔idle stays
+     distinguishable under prefers-reduced-motion via brightness/glow, not a hue shift (B1 decision). */
+  --ai-working-color: oklch(0.82 calc(var(--accent-c) * 1.4) var(--accent-h));
+  /* Complement glow, brighter on dark so it pops on the dark surface (#508 B1). */
+  --ai-working-glow: oklch(0.88 0.15 calc(var(--accent-h) + 180));
+  --ai-idle-opacity: 0.72; /* lifted vs light so the dimmed idle marker keeps ≥3:1 (WCAG 1.4.11) */
 
   --success: oklch(0.72 0.13 150);
   --success-soft: oklch(0.30 0.06 150);
@@ -404,6 +433,54 @@ a:hover { text-decoration: underline; }
   overflow-wrap: anywhere;
 }
 
+/* #465 — shared compact treatment for AI-generated markdown (summary, hunk
+   annotation, hotspot rationale). Layered on the global `.markdown-body` base
+   (overflow-wrap + content-scale) via the `markdown-body ai-markdown` class pair.
+   Goal: a short bulleted answer reads as a tidy block, not double-spaced prose,
+   and a stray heading in model output cannot blow out the card chrome. */
+.ai-markdown > :first-child { margin-top: 0; }
+.ai-markdown > :last-child { margin-bottom: 0; }
+.ai-markdown p { margin: 0.35em 0; }
+.ai-markdown ul,
+.ai-markdown ol { margin: 0.35em 0; padding-left: 1.25em; }
+.ai-markdown li { margin: 0.15em 0; }
+.ai-markdown li > p { margin: 0; }
+.ai-markdown h1,
+.ai-markdown h2,
+.ai-markdown h3,
+.ai-markdown h4,
+.ai-markdown h5,
+.ai-markdown h6 {
+  font-size: 1em;
+  font-weight: 600;
+  margin: 0.5em 0 0.25em;
+}
+/* #465 — code in AI markdown must read as code, not flow text. The inline-code
+   chip lives in CommentCard's `.body code`, scoped to GitHub content, so AI
+   surfaces (no `.body` ancestor) never inherited it. Give inline code a chip and
+   fenced blocks a recessed background — so an untagged (non-Shiki) block is still
+   set apart from prose. Shiki colors tokens inline, not the block, so the
+   background never fights a syntax highlight. */
+.ai-markdown code:not(pre code) {
+  font-size: 0.92em;
+  padding: 1px 5px;
+  background: var(--surface-3);
+  border-radius: 3px;
+  color: var(--text-1);
+  white-space: normal;
+}
+.ai-markdown pre {
+  background: var(--surface-2);
+  border-radius: var(--radius-2);
+  padding: var(--s-2) var(--s-3);
+}
+
+/* #465/#488 — extra-tight modifier for the hunk-annotation popover, whose chrome
+   is narrower than the summary card. */
+.ai-markdown--popover ul,
+.ai-markdown--popover ol { padding-left: 1em; }
+.ai-markdown--popover pre { font-size: 0.85em; }
+
 ::selection { background: var(--accent-soft); color: var(--text-1); }
 
 /* focus ring */
@@ -503,6 +580,12 @@ a:hover { text-decoration: underline; }
 
 .btn-danger { background: var(--danger); color: oklch(0.99 0 0); }
 .btn-danger:hover:not(:disabled) { filter: brightness(0.92); }
+
+.btn-success { background: var(--success); color: oklch(0.99 0 0); }
+.btn-success:hover:not(:disabled) { filter: brightness(0.92); }
+/* Dark-theme --success is a light green (oklch 0.72); near-white text fails AA
+   on it, so flip to dark ink — mirroring the warning verdict segment. */
+[data-theme='dark'] .btn-success { color: oklch(0.18 0 0); }
 
 .btn-icon {
   width: 30px;
@@ -785,6 +868,9 @@ a:hover { text-decoration: underline; }
   .modal-dialog:has(.submit-dialog) { max-width: none; }
 }
 .modal-title {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
   margin: 0 0 var(--s-3);
   font-size: var(--text-lg);
   font-weight: 600;
@@ -905,7 +991,7 @@ a:hover { text-decoration: underline; }
 
 /* Pre-submit validator card (spec § 14.1) */
 .ai-validator-card { padding: var(--s-3); border-radius: var(--radius-3); }
-.ai-validator-card__chip { font-size: var(--text-2xs); margin-bottom: var(--s-2); }
+.ai-validator-card [data-sample-badge] + * { margin-top: var(--s-2); }
 .ai-validator-card__list { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: var(--s-2); }
 .ai-validator-card__item { display: flex; align-items: baseline; gap: var(--s-2); font-size: var(--text-sm); }
 .ai-validator-card__message { flex: 1; min-width: 0; }

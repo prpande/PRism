@@ -1,7 +1,10 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Text;
 using System.Text.Json;
 using FluentAssertions;
+using Microsoft.Extensions.DependencyInjection;
+using PRism.Core.Ai;
 using PRism.Web.Tests.TestHelpers;
 using Xunit;
 
@@ -31,7 +34,9 @@ public class PreferencesEndpointsTests
         var ui = body.GetProperty("ui");
         ui.GetProperty("theme").GetString().Should().Be("system");
         ui.GetProperty("accent").GetString().Should().Be("indigo");
-        ui.GetProperty("aiPreview").GetBoolean().Should().BeTrue();   // #283 AI preview ON by default
+        // AI defaults ON: default ui.ai.mode = Preview → derived aiPreview = true.
+        ui.GetProperty("aiPreview").GetBoolean().Should().BeTrue();
+        ui.GetProperty("aiMode").GetString().Should().Be("preview");
         ui.GetProperty("density").GetString().Should().Be("comfortable");
         ui.GetProperty("contentScale").GetString().Should().Be("m");
 
@@ -144,6 +149,46 @@ public class PreferencesEndpointsTests
         req.Headers.Add("Origin", origin);
         var resp = await client.SendAsync(req);
         resp.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
+    // Task 11: lock the aiPreview ↔ ui.ai.mode round-trip (FE-compat contract).
+    // POST { "aiPreview": true } must drive mode=Preview; GET must expose both the
+    // legacy aiPreview bool and the new aiMode string; AiModeState must follow synchronously.
+    [Fact]
+    public async Task POST_legacy_aiPreview_true_sets_mode_preview_and_GET_reflects_both()
+    {
+        using var factory = new PRismWebApplicationFactory();
+        var client = factory.CreateClient();
+
+        var post = await client.PostAsync(new Uri("/api/preferences", UriKind.Relative),
+            JsonContent.Create(new { aiPreview = true }));
+        post.IsSuccessStatusCode.Should().BeTrue();
+
+        var prefs = await client.GetAsync(new Uri("/api/preferences", UriKind.Relative));
+        var body = await prefs.Content.ReadFromJsonAsync<JsonElement>();
+        var ui = body.GetProperty("ui");
+        ui.GetProperty("aiPreview").GetBoolean().Should().BeTrue();   // FE still reads this
+        ui.GetProperty("aiMode").GetString().Should().Be("preview");  // new field for PR3
+
+        // The runtime AiModeState followed the POST synchronously.
+        factory.Services.GetRequiredService<AiModeState>().Mode.Should().Be(AiMode.Preview);
+    }
+
+    [Fact]
+    public async Task POST_ui_ai_mode_live_sets_mode_and_derives_aiPreview_true()
+    {
+        using var factory = new PRismWebApplicationFactory();
+        var client = factory.CreateClient();
+
+        // dotted/kebab key isn't a valid C# identifier → raw StringContent (existing idiom).
+        var post = await client.PostAsync(new Uri("/api/preferences", UriKind.Relative),
+            new StringContent("""{ "ui.ai.mode": "live" }""", Encoding.UTF8, "application/json"));
+        post.IsSuccessStatusCode.Should().BeTrue();
+
+        var prefs = await client.GetAsync(new Uri("/api/preferences", UriKind.Relative));
+        var body = await prefs.Content.ReadFromJsonAsync<JsonElement>();
+        body.GetProperty("ui").GetProperty("aiMode").GetString().Should().Be("live");
+        body.GetProperty("ui").GetProperty("aiPreview").GetBoolean().Should().BeTrue();
     }
 
     // #275: GET /api/preferences surfaces inbox.sectionOrder (defaults to canonical),
@@ -277,5 +322,70 @@ public class PreferencesEndpointsTests
         resp.StatusCode.Should().Be(HttpStatusCode.BadRequest);
         (await resp.Content.ReadFromJsonAsync<JsonElement>())
             .GetProperty("error").GetString().Should().Be("body must be a JSON object");
+    }
+
+    // #485 ai-onboarding: ui.ai.onboardingSeen is in the allowlist and round-trips through POST.
+    [Fact]
+    public async Task POST_ui_ai_onboardingSeen_is_allowlisted_and_round_trips()
+    {
+        using var factory = new PRismWebApplicationFactory();
+        var client = factory.CreateClient();
+        var origin = client.BaseAddress!.GetLeftPart(UriPartial.Authority);
+        using var content = new StringContent(
+            """{ "ui.ai.onboardingSeen": true }""",
+            System.Text.Encoding.UTF8,
+            "application/json");
+        using var req = new HttpRequestMessage(HttpMethod.Post, new Uri("/api/preferences", UriKind.Relative))
+        {
+            Content = content,
+        };
+        req.Headers.Add("Origin", origin);
+        var resp = await client.SendAsync(req);
+
+        resp.StatusCode.Should().Be(HttpStatusCode.OK); // NOT 400 — proves the dotted path is in the allowlist
+        var body = await resp.Content.ReadFromJsonAsync<JsonElement>();
+        body.GetProperty("ui").GetProperty("onboardingSeen").GetBoolean().Should().BeTrue();
+    }
+
+    // #485 ai-onboarding: GET /api/preferences carries ui.onboardingSeen as a camelCase bool.
+    [Fact]
+    public async Task GET_preferences_serializes_onboardingSeen_camelCase_under_ui()
+    {
+        using var factory = new PRismWebApplicationFactory();
+        var client = factory.CreateClient();
+        var body = await client.GetFromJsonAsync<JsonElement>("/api/preferences");
+        body.GetProperty("ui").TryGetProperty("onboardingSeen", out var seen).Should().BeTrue();
+        seen.ValueKind.Should().BeOneOf(JsonValueKind.True, JsonValueKind.False);
+    }
+
+    // #536: GET /api/preferences must project all nine feature flags onto ui.features, default true.
+    [Fact]
+    public async Task Get_preferences_projects_all_nine_features_default_true()
+    {
+        using var factory = new PRismWebApplicationFactory();   // the real factory name in this file (capital R)
+        var client = factory.CreateClient();
+
+        var body = await client.GetFromJsonAsync<JsonElement>("/api/preferences");
+        var features = body.GetProperty("ui").GetProperty("features");
+
+        features.GetProperty("summary").GetBoolean().Should().BeTrue();
+        features.GetProperty("fileFocus").GetBoolean().Should().BeTrue();
+        features.GetProperty("inboxRanking").GetBoolean().Should().BeTrue();
+        features.EnumerateObject().Count().Should().Be(9);
+    }
+
+    // #536: POST ui.ai.features.summary=false round-trips through GET ui.features.summary=false.
+    [Fact]
+    public async Task Post_feature_off_round_trips_through_get()
+    {
+        using var factory = new PRismWebApplicationFactory();   // same factory as the sibling test (capital R)
+        var client = factory.CreateClient();
+
+        var resp = await client.PostAsJsonAsync("/api/preferences",
+            new Dictionary<string, object> { ["ui.ai.features.summary"] = false });
+        resp.EnsureSuccessStatusCode();
+
+        var body = await client.GetFromJsonAsync<JsonElement>("/api/preferences");
+        body.GetProperty("ui").GetProperty("features").GetProperty("summary").GetBoolean().Should().BeFalse();
     }
 }

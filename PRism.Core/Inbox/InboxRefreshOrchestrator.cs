@@ -28,6 +28,11 @@ public sealed partial class InboxRefreshOrchestrator : IInboxRefreshOrchestrator
     private TaskCompletionSource _firstSnapshotTcs = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly SemaphoreSlim _writerLock = new(1, 1);
     private int _coldStartKicked;
+    private readonly IDisposable _enrichmentSub;
+    private volatile bool _disposed;
+    // Last-seen AI mode, stored as int so Interlocked can touch it (#548). The delta-gate
+    // in OnConfigChanged reads/advances it atomically.
+    private int _lastAiMode;
 
     public InboxRefreshOrchestrator(
         IConfigStore config,
@@ -53,6 +58,9 @@ public sealed partial class InboxRefreshOrchestrator : IInboxRefreshOrchestrator
         _stateStore = stateStore;
         _viewerLoginProvider = viewerLoginProvider;
         _log = log ?? NullLogger<InboxRefreshOrchestrator>.Instance;
+        _enrichmentSub = _events.Subscribe<InboxEnrichmentsReady>(OnInboxEnrichmentsReady);
+        _lastAiMode = (int)_config.Current.Ui.Ai.Mode;
+        _config.Changed += OnConfigChanged;
     }
 
     public InboxSnapshot? Current => Volatile.Read(ref _current);
@@ -244,14 +252,21 @@ public sealed partial class InboxRefreshOrchestrator : IInboxRefreshOrchestrator
             // ToDictionary would throw, leaving the snapshot uninitialized and the inbox 503.
             var allItems = sectionsFinal.Values.SelectMany(v => v)
                 .DistinctBy(i => i.Reference)
+                .Where(i => i.MergedAt == null && i.ClosedAt == null && !i.IsDraft) // #410: enrich open, non-draft only
                 .ToList();
             var enricher = _aiSelector.Resolve<IInboxItemEnricher>();
             var enrichments = await enricher.EnrichAsync(allItems, ct).ConfigureAwait(false);
             var enrichmentMap = enrichments.ToDictionary(e => e.PrId);
             Log.AiEnrichmentComplete(_log, enricher.GetType().Name, allItems.Count, enrichments.Count);
 
+            // Every PR the enricher resolved synchronously (cache hits) is settled —
+            // chip or not. Misses are still in flight; they arrive later via
+            // OnInboxEnrichmentsReady, which extends this set. (The cache is the durable
+            // store, so a later refresh re-derives the same settled set from enrichmentMap.)
+            var aiSettled = enrichmentMap.Keys.ToHashSet(StringComparer.Ordinal);
+
             // Build snapshot + diff
-            var newSnap = new InboxSnapshot(sectionsFinal, enrichmentMap, DateTimeOffset.UtcNow, ciProbeComplete);
+            var newSnap = new InboxSnapshot(sectionsFinal, enrichmentMap, DateTimeOffset.UtcNow, ciProbeComplete, aiSettled);
             var diff = ComputeDiff(_current, newSnap);
             Volatile.Write(ref _current, newSnap);
 
@@ -311,7 +326,9 @@ public sealed partial class InboxRefreshOrchestrator : IInboxRefreshOrchestrator
             LastSeenCommentId: lastSeenCommentId,
             MergedAt: r.MergedAt,
             ClosedAt: r.ClosedAt,
-            AvatarUrl: r.AvatarUrl);
+            AvatarUrl: r.AvatarUrl,
+            IsDraft: r.IsDraft,
+            Description: r.Description);
     }
 
     // NewOrUpdatedPrCount is named for the common case (added or updated PRs) but its
@@ -374,7 +391,108 @@ public sealed partial class InboxRefreshOrchestrator : IInboxRefreshOrchestrator
 
     private static int CountAll(InboxSnapshot s) => s.Sections.Values.Sum(v => v.Count);
 
-    public void Dispose() => _writerLock.Dispose();
+    public void Dispose()
+    {
+        _enrichmentSub.Dispose();          // unsubscribe first so no new handler invocations start
+        _config.Changed -= OnConfigChanged; // and detach the config-change handler (#548)
+        _disposed = true;                  // then flag so any in-flight invocation exits early
+        _writerLock.Dispose();             // finally release the semaphore
+    }
+
+    // Merge a completed enrichment batch into the live snapshot. Runs synchronously on the
+    // enricher's background thread (ReviewEventBus delivers inline). Takes the writer-lock and
+    // re-reads _current so it never clobbers a fresher snapshot the poller just committed; and
+    // applies each result only if the live PR's content token still matches the one the result
+    // was computed against (#410 edit-during-batch guard).
+    private void OnInboxEnrichmentsReady(InboxEnrichmentsReady evt)
+    {
+        if (_disposed) return; // host shutting down — don't touch a disposing _writerLock
+        _writerLock.Wait();
+        try
+        {
+            if (_disposed) return;
+            var current = _current;
+            if (current is null) return;
+
+            var liveByPrId = current.Sections.Values
+                .SelectMany(s => s)
+                .GroupBy(p => p.Reference.PrId, StringComparer.Ordinal)
+                .ToDictionary(g => g.Key, g => g.First(), StringComparer.Ordinal);
+
+            var merged = new Dictionary<string, InboxItemEnrichment>(current.Enrichments, StringComparer.Ordinal);
+            var settled = new HashSet<string>(current.AiEnrichmentSettled, StringComparer.Ordinal);
+            var changedSections = new HashSet<string>(StringComparer.Ordinal);
+            var applied = 0;
+            var newlySettled = 0;
+            foreach (var r in evt.Results)
+            {
+                if (!liveByPrId.TryGetValue(r.PrId, out var live)) continue;      // PR gone since batch started
+                if (InboxEnrichmentContent.Token(live.Title, live.Description) != r.ContentToken) continue; // stale edit-during-batch (#410 guard)
+                if (settled.Add(r.PrId)) newlySettled++;                          // resolved against the live PR → settled, chip or not
+                if (r.CategoryChip is not null)                                   // Enrichments stays chip-only on this path
+                {
+                    merged[r.PrId] = new InboxItemEnrichment(r.PrId, r.CategoryChip, HoverSummary: null);
+                    applied++;
+                }
+                // Runs for chip-less settles too: the section must be in changedSections so the FE clears its working marker even when no chip landed (#508).
+                foreach (var kv in current.Sections)
+                    if (kv.Value.Any(p => p.Reference.PrId == r.PrId)) changedSections.Add(kv.Key);
+            }
+            // Commit if a chip landed OR a PR newly settled — an all-"Other" batch must
+            // still clear the FE's working markers. A no-op batch (all stale/gone) → both 0 → return.
+            if (applied == 0 && newlySettled == 0) return;
+
+            Volatile.Write(ref _current, current with { Enrichments = merged, AiEnrichmentSettled = settled });
+            _events.Publish(new InboxUpdated(changedSections.ToArray(), applied)); // unconditional (ComputeDiff is enrichment-blind)
+        }
+        finally
+        {
+            _writerLock.Release();
+        }
+    }
+
+    // #548 — a stale Preview placeholder ("Refactor") must not linger after the AI mode changes.
+    // RaiseChanged is SYNCHRONOUS on the caller thread (preferences PUT thread + config-watcher
+    // thread), so this MUST be lock-free — mirror the real PrDetailLoader.InvalidateAll precedent.
+    private void OnConfigChanged(object? sender, ConfigChangedEventArgs e)
+    {
+        if (_disposed) return;
+        var newMode = e.Config.Ui.Ai.Mode;
+        // Atomically advance the last-seen mode; Interlocked.Exchange makes the delta-gate safe
+        // against two concurrent Changed producers (API thread + file-watcher thread) — neither
+        // can pass on a torn/stale read of _lastAiMode.
+        var prev = (AiMode)Interlocked.Exchange(ref _lastAiMode, (int)newMode);
+        if (prev == newMode) return; // only on an actual AI-mode delta
+
+        // CAS-clear the AI-derived fields. If a concurrent RefreshAsync already replaced _current,
+        // it loses the CAS — and that is CORRECT: that refresh's snapshot is authoritative for the
+        // new mode. The refresh poke below converges either outcome.
+        var current = Volatile.Read(ref _current);
+        if (current is not null &&
+            (current.Enrichments.Count > 0 || current.AiEnrichmentSettled.Count > 0))
+        {
+            var cleared = current with
+            {
+                Enrichments = new Dictionary<string, InboxItemEnrichment>(StringComparer.Ordinal),
+                AiEnrichmentSettled = new HashSet<string>(StringComparer.Ordinal),
+            };
+            if (ReferenceEquals(Interlocked.CompareExchange(ref _current, cleared, current), current))
+                // All section keys: ComputeDiff is enrichment-blind, so publish unconditionally to
+                // force the FE refetch. applied = 0 (no chips landed — we cleared them).
+                _events.Publish(new InboxUpdated(current.Sections.Keys.ToArray(), 0));
+        }
+
+        // Re-populate via the RESOLVED enricher rather than leaving every chip-eligible row pulsing
+        // for a full Polling.InboxSeconds (round-2 adversarial review, conf 75 — the N-row pulse-storm
+        // is the DEFAULT Preview→Live path, not an edge case). Fire-and-forget RefreshAsync is
+        // _writerLock-serialized, so a concurrent poll coalesces naturally; it runs OFF the caller
+        // thread, so the preferences PUT is never blocked. (If a poller handle is reachable from the
+        // orchestrator, prefer InboxPoller.RequestImmediateRefresh() — verify the wiring in-step;
+        // today the dependency runs poller→orchestrator, so RefreshAsync is the reachable path.)
+#pragma warning disable CA2012 // fire-and-forget by design; see comment above
+        _ = RefreshAsync(CancellationToken.None);
+#pragma warning restore CA2012
+    }
 
     private static partial class Log
     {

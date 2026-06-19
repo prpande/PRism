@@ -486,4 +486,70 @@ public class GitHubReviewServicePrDetailTests
         dto!.Pr.AvatarUrl.Should().Be("https://avatars.githubusercontent.com/in/29110?v=4");
         dto.RootComments.Single().AvatarUrl.Should().BeNull();
     }
+
+    [Theory]
+    [InlineData("true", true)]
+    [InlineData("false", false)]
+    public async Task GetPrDetailAsync_parses_isDraft_from_graphql(string isDraftJson, bool expected)
+    {
+        var body = $$"""
+        {
+          "data": {
+            "repository": {
+              "pullRequest": {
+                "title": "x", "body": "", "url": "https://github.com/o/r/pull/1",
+                "state": "OPEN", "isDraft": {{isDraftJson}},
+                "mergeable": "MERGEABLE", "mergeStateStatus": "CLEAN",
+                "headRefName": "h", "baseRefName": "main",
+                "headRefOid": "h", "baseRefOid": "b",
+                "author": { "login": "a" },
+                "createdAt": "2026-01-01T00:00:00Z",
+                "closedAt": null, "mergedAt": null, "changedFiles": 0,
+                "comments": { "pageInfo": { "hasNextPage": false, "endCursor": null }, "nodes": [] },
+                "reviewThreads": { "pageInfo": { "hasNextPage": false, "endCursor": null }, "nodes": [] },
+                "timelineItems": { "pageInfo": { "hasNextPage": false, "endCursor": null }, "nodes": [] }
+              }
+            }
+          }
+        }
+        """;
+        var handler = new GraphQLPlusRestHandler { GraphQLBody = body };
+
+        var dto = await NewService(handler).GetPrDetailAsync(new PrReference("o", "r", 1), CancellationToken.None);
+
+        dto.Should().NotBeNull();
+        dto!.Pr.IsDraft.Should().Be(expected);
+    }
+
+    [Fact]
+    public async Task GetPrDetailAsync_defaults_isDraft_false_when_field_absent()
+    {
+        // No "isDraft" key in the payload at all → must default to false, not throw.
+        var body = """
+        {
+          "data": {
+            "repository": {
+              "pullRequest": {
+                "title": "x", "body": "", "url": "https://github.com/o/r/pull/1",
+                "state": "OPEN",
+                "mergeable": "MERGEABLE", "mergeStateStatus": "CLEAN",
+                "headRefName": "h", "baseRefName": "main",
+                "headRefOid": "h", "baseRefOid": "b",
+                "author": { "login": "a" },
+                "createdAt": "2026-01-01T00:00:00Z",
+                "closedAt": null, "mergedAt": null, "changedFiles": 0,
+                "comments": { "pageInfo": { "hasNextPage": false, "endCursor": null }, "nodes": [] },
+                "reviewThreads": { "pageInfo": { "hasNextPage": false, "endCursor": null }, "nodes": [] },
+                "timelineItems": { "pageInfo": { "hasNextPage": false, "endCursor": null }, "nodes": [] }
+              }
+            }
+          }
+        }
+        """;
+        var handler = new GraphQLPlusRestHandler { GraphQLBody = body };
+
+        var dto = await NewService(handler).GetPrDetailAsync(new PrReference("o", "r", 1), CancellationToken.None);
+
+        dto!.Pr.IsDraft.Should().BeFalse();
+    }
 }
