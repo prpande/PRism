@@ -410,8 +410,10 @@ In `frontend/src/components/Inbox/InboxRow.tsx`, after `const prState: PrState =
 
 ```tsx
   // #501 — display discriminant for the status glyph. Drafts only matter while open
-  // (isDone wins via precedence); the PrState type stays open/merged/closed.
-  const glyphState: GlyphState = pr.isDraft && !isDone ? 'draft' : prState;
+  // (merged/closed win via precedence); the PrState type stays open/merged/closed.
+  // Same shape as PrHeader's derivation (prState === 'open' ⟺ !isDone here) so the
+  // two read identically across surfaces.
+  const glyphState: GlyphState = pr.isDraft && prState === 'open' ? 'draft' : prState;
 ```
 
 Update the import from Task 3 to also bring in the type:
@@ -555,8 +557,20 @@ describe('PrHeader state glyph + draft marker (#501)', () => {
     expect(container.querySelector('[data-pr-state="draft"]')).toBeNull();
     expect(container.querySelector('.chip-info')).toBeNull();
   });
+
+  it('keeps the Draft marker as a chip-draft keeplist hook (survives collapse CSS)', () => {
+    // The collapse rule hides every .prSubtitle child except the keeplist classes; the
+    // marker must carry chip-draft so it isn't blanked in collapsed mode. (JSDOM doesn't
+    // apply the stylesheet, so this pins the class contract that the CSS keeplist depends on
+    // rather than computed visibility.)
+    const { container } = renderHeader({ loading: false, title: 't', prState: 'open', isDraft: true });
+    expect(container.querySelector('.chip-draft')).not.toBeNull();
+    expect(container.querySelector('.chip-draft')).toHaveTextContent('Draft');
+  });
 });
 ```
+
+Note: the collapse suppression itself is CSS-only (a `data-collapsed` attribute rule), so JSDOM unit tests assert the **class contract** the keeplist relies on; the actual collapsed-visibility is covered by the Playwright baseline in Task 7 (capture the draft header in its collapsed state, or confirm the marker renders in the collapsed shot).
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
@@ -628,9 +642,34 @@ import glyphStyles from '../shared/prStateGlyph.module.css';
 
 ```tsx
             {/* #501 — info Draft marker. Open drafts only; merged/closed win via glyphState.
-                A "marker", not a pill/badge. Load-time only (ActivePrUpdated carries no draft). */}
-            {prState === 'open' && isDraft && <span className="chip chip-info">Draft</span>}
+                A "marker", not a pill/badge. Load-time only (ActivePrUpdated carries no draft).
+                The chip-draft class is a collapse-keeplist hook (see Step 4a) — chip-info
+                supplies the visuals, chip-draft carries no style of its own. */}
+            {prState === 'open' && isDraft && (
+              <span className="chip chip-info chip-draft">Draft</span>
+            )}
 ```
+
+- [ ] **Step 4a: Keep the Draft marker visible when the header is collapsed**
+
+The collapse CSS hides the breadcrumb glyph (`.pr-meta-repo` is hidden on collapse, `PrHeader.module.css:116`) AND every `.prSubtitle` child that isn't `.chip-ci` / `.chip-mergeability` (the implicit allowlist at `PrHeader.module.css:151`). Without this step, a collapsed draft header shows **zero** draft signal (no glyph, no marker) for both sighted and AT users — the same blank state a returning visitor sees by default (`usePrHeaderCollapsed` persists collapse). Add `chip-draft` to the keeplist so the marker survives collapse (the glyph staying hidden on collapse is fine — the surviving chip is the draft bearer, mirroring how merged/closed text status is also collapse-hidden). In `frontend/src/components/PrDetail/PrHeader.module.css`, change line 151 from:
+
+```css
+.prHeader[data-collapsed] .prSubtitle > :not(:global(.chip-ci)):not(:global(.chip-mergeability)) {
+  display: none;
+}
+```
+
+to:
+
+```css
+.prHeader[data-collapsed] .prSubtitle
+  > :not(:global(.chip-ci)):not(:global(.chip-mergeability)):not(:global(.chip-draft)) {
+  display: none;
+}
+```
+
+Also extend the FOOTGUN keeplist comment above it (lines 148-150) to name `.chip-draft` alongside `.chip-ci` / `.chip-mergeability`.
 
 - [ ] **Step 5: Add the glyph CSS module for the header**
 
@@ -673,12 +712,16 @@ In `frontend/src/components/PrDetail/PrDetailView.tsx`, in the `<PrHeader .../>`
 Run: `cd frontend && node_modules/.bin/vitest run src/components/PrDetail/PrHeader.test.tsx`
 Expected: PASS (all new state-glyph + marker tests green; existing PrHeader tests unaffected — the breadcrumb text spans are unchanged, only a leading glyph was added).
 
-- [ ] **Step 8: Typecheck the PrDetailView fixtures**
+- [ ] **Step 8: Fix the shared `makePr` factory, then typecheck-sweep the remaining fixtures**
 
-Adding a required `isDraft` field to `PrDetailPr` makes existing test fixtures that build a `PrDetailPr` fail typecheck. Run the typecheck to surface them:
+Adding a required `isDraft` field to `PrDetailPr` breaks every test fixture that builds a `PrDetailPr`. There is a **shared factory** that most consumers go through — fix it first (DRY), then let the typechecker surface the hand-rolled literals.
 
-Run: `cd frontend && node_modules/.bin/tsc -b --noEmit` (or the repo's configured typecheck — `tsc -b`, not `tsc --noEmit` alone)
-Expected: errors in fixtures that construct `pr: { ... }` without `isDraft` (e.g. `PrDetailView.test.tsx:68`, `PrDetailView.fileFocus.test.tsx:69`, `PrDetailView.freshness.test.tsx:118`, `PrDetailView.transition.test.tsx`, `PrDetailView.clearPr.test.tsx:53`, `PrTabHost.test.tsx:94`). Add `isDraft: false,` next to the `isMerged: false,`/`isClosed: false,` lines in each failing fixture. Re-run until the typecheck is clean.
+1. In `frontend/__tests__/helpers/prDetail.ts`, add `isDraft: false,` to the `makePr()` default object (next to `isMerged: false,` / `isClosed: false,` at lines 25-26). This covers every `makePr()` / `makePrDetailDto()` consumer in one edit.
+
+2. Then run the typecheck to find the remaining inline `pr: { ... }` literals that don't use the factory:
+
+Run: `cd frontend && node_modules/.bin/tsc -b` (use `tsc -b`, NOT `tsc --noEmit` alone — with project references the latter is vacuous)
+Expected: errors at the inline `pr:` literals. This list is **illustrative, not exhaustive — `tsc` is authoritative**; sweep every error it reports. Known offenders at time of writing: `PrDetailView.test.tsx`, `PrDetailView.fileFocus.test.tsx`, `PrDetailView.freshness.test.tsx`, `PrDetailView.transition.test.tsx`, `PrDetailView.clearPr.test.tsx`, `PrTabHost.test.tsx`, `usePrDetail.test.tsx`, `usePrDetail.preservation.test.tsx`, `FilesTab.viewPreservation.test.tsx`, `FilesTab.deepLink.test.tsx`, `useFirstActivePrPollComplete.test.tsx`, `MarkAllReadButton.test.tsx`. Add `isDraft: false,` next to the `isMerged`/`isClosed` lines in each. Re-run `tsc -b` until clean.
 
 - [ ] **Step 9: Run the affected frontend tests**
 
@@ -763,6 +806,18 @@ function ensurePr(
 
 ```ts
     const pr = ensurePr(branch, name, login, name === 'draft');
+```
+
+4. **Add the CI guard the spec requires** (§7: "Guard creation so an inadvertent CI run of the helper cannot create a live PR on the sandbox"). The current script calls `main()` unconditionally and CI does not invoke it today — but the spec mandates the guard before this slice adds a draft-PR-creating path. Add at the very top of `main()`, before any `gh` call:
+
+```ts
+  if (process.env.CI) {
+    console.error(
+      '[setup-real-e2e-fixtures] Refusing to run in CI: this script creates live ' +
+        'GitHub PRs on prpande/prism-sandbox and must only be run locally.',
+    );
+    process.exit(1);
+  }
 ```
 
 - [ ] **Step 3: Verify the script typechecks**
@@ -860,7 +915,26 @@ In `PRism.Web/TestHooks/TestEndpoints.cs`:
         });
 ```
 
-(Match the exact return/`StoreMissing` shape used by the neighbouring `/test/set-pr-state` handler — read lines 347-368 and mirror them.)
+(Match the exact return/`StoreMissing` shape used by the neighbouring `/test/set-pr-state` handler — read lines 347-368 and mirror them. The endpoint must be added INSIDE `MapTestEndpoints`, after the `if (!env.IsEnvironment("Test")) return app;` guard, so it is absent in production like every other `/test/*` route.)
+
+- [ ] **Step 3a: Extend the production-guard test to cover `/test/set-draft`**
+
+`tests/PRism.Web.Tests/TestHooks/TestEndpointsRegistrationTests.cs` currently probes only one route (`/test/advance-head`) to verify `/test/*` is absent in Production. Add a probe for the new route so the guard contract is pinned for it too. Convert the existing single-route assertion to a `[Theory]` (or add a second probe) so both routes are checked under the Production environment:
+
+```csharp
+    [Theory]
+    [InlineData("/test/advance-head")]
+    [InlineData("/test/set-draft")]
+    public async Task TestEndpoints_NotLiveInProduction(string route)
+    {
+        // ... existing Production-host setup ...
+        var resp = await client.PostAsJsonAsync(route, new { });
+        // ... existing assertion that the route is NOT a live test endpoint
+        //     (404 / not-registered), per the current test's expectation ...
+    }
+```
+
+Read the existing test body and preserve its exact setup + assertion; only parameterize the route. Expected after the change: PASS for both routes (the shared `if (!env.IsEnvironment("Test")) return app;` early-return blocks both).
 
 - [ ] **Step 4: Build the backend to confirm the test hooks compile**
 
@@ -895,6 +969,8 @@ Run the fake-backend Playwright suite with snapshot update for the affected spec
 Run: `cd frontend && node_modules/.bin/playwright test --update-snapshots` (scoped to the affected specs)
 Expected: PASS; new `inbox-draft-row.png` + `pr-detail-draft-header.png` written under `__screenshots__/win32`; existing PR-detail header baselines updated. Inspect the diffs to confirm only the intended glyph/marker changes appear.
 
+**Scope warning:** the full-header-glyph decision changes EVERY PR-detail header shot, not just the draft one. The `--update-snapshots` scope MUST include every spec that captures a PR-detail header in open/merged/closed state — not only the new draft spec. If you scope it to the draft spec alone, the open/merged/closed header baselines go stale and the next unscoped CI run fails. Grep the e2e specs for `pr-header` / `toHaveScreenshot` header captures and include all of them in the regeneration run.
+
 - [ ] **Step 7: Obtain the linux baselines from CI**
 
 Push the branch; the CI Playwright job renders linux. Per the established baseline-regeneration process (memory: delete the linux baseline so CI writes the exact render and goes red, then download the `e2e-results` / `test-results` artifact's `__screenshots__/linux/*.png` and commit them — do NOT use the `/zip` redirect). Commit the linux PNGs alongside the win32 ones so both platforms are pinned.
@@ -909,7 +985,9 @@ cd frontend && node --import tsx scripts/setup-real-e2e-fixtures.ts
 
 (Requires `gh` auth; mirrors the existing real-flow setup. Use the repo's actual tsx/ts-node invocation.) Then, with the app pointed at the sandbox, confirm:
 - the authored draft PR appears in the inbox under **`authored-by-me`** with the info `Draft` chip + draft glyph + `· draft` accessible name;
-- opening it shows the draft header glyph + `Draft` marker.
+- opening it shows the draft header glyph + `Draft` marker;
+- collapse the PR-detail header (the collapse toggle) and confirm the `Draft` marker stays visible (validates Step 4a);
+- **contrast:** verify the info `Draft` chip text (`--info-fg` on `--info-soft`) and its hover blend (`color-mix(... --info-soft 88%, --info-fg)`) meet WCAG AA (≥4.5:1 for the `--text-2xs` chip text) in **both** themes. `getComputedStyle().color` returns authored oklch, not rgb, so measure the rendered px values via a 1px canvas rather than eyeballing the tokens.
 
 Record the outcome (and a screenshot) in the PR's `## Proof` section (spec §7). If the authored draft is genuinely missing despite Task 2's guard passing, STOP and open a follow-up with the exact repro (spec §7 "conditional fix") rather than altering section queries here.
 
@@ -934,9 +1012,9 @@ git commit -m "test(e2e): draft-aware fake backend + draft visual baselines (#50
 - §5.4 (full aria-label `· draft`) → Task 4 Step 3.
 - §5.5 (narrow-width glyph-only) → no code change (existing `@container` rule already hides `.chipWrap`; the glyph remains). Confirmed in `InboxRow.module.css:316-332`; called out here so it isn't mistaken for a gap.
 - §5 precedence (merged/closed win) → Task 4 (`!isDone` guard) + Task 5 (`prState === 'open'` guard); tested in both.
-- §6 (full header glyph set + Draft marker + load-time-only) → Task 5.
+- §6 (full header glyph set + Draft marker + load-time-only) → Task 5; collapsed-header draft visibility (the `chip-draft` keeplist hook) → Task 5 Step 4a + its collapse test.
 - §7 (verify-not-fix + regression guard) → Task 2 (guard) + Task 7 Step 8 (manual verify).
-- §7 sandbox fixture (union + FIXTURE_NAMES + draft:true) → Task 6.
+- §7 sandbox fixture (union + FIXTURE_NAMES + draft:true) → Task 6, incl. the spec-mandated CI guard (Task 6 Step 2 item 4). The new `/test/set-draft` endpoint's production-absence is pinned by Task 7 Step 3a.
 - §8 unit tests (InboxRow, PrHeader, parser, visibility guard) → Tasks 1, 2, 4, 5; visual baselines → Task 7.
 - §10 decisions (full glyph set, info colour, shared glyph) → realized across Tasks 3, 5.
 - §11 acceptance → satisfied by Tasks 1–7 collectively.
