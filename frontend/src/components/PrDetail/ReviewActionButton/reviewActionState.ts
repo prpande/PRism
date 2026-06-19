@@ -1,4 +1,4 @@
-import type { DraftVerdict, ReviewSessionDto, ValidatorResult } from '../../../api/types';
+import type { DraftVerdict, ReviewSessionDto, ReviewState, ValidatorResult, ViewerReview } from '../../../api/types';
 import type { PrState } from '../PrHeader';
 import { submitDisabledReason } from '../SubmitButton';
 
@@ -16,6 +16,15 @@ export interface ReviewActionInputs {
   // until the real session arrived; we mirror that by freezing the whole control
   // so the chevron menu can't patch a verdict against the EMPTY_SESSION stand-in.
   sessionLoaded: boolean;
+  viewerReview: ViewerReview | null;
+  submittedReviewStale: boolean;
+}
+
+export interface ReviewActionCaption {
+  mode: 'reviewed' | 'was';
+  priorState: ReviewState;
+  submittedAt: string;
+  stale: boolean;
 }
 
 export interface ReviewActionFace {
@@ -23,11 +32,12 @@ export interface ReviewActionFace {
   label: string;
   pending: boolean;
   needsReconfirm: boolean;
-  mainAction: 'submit' | 'resume' | 'none';
+  mainAction: 'submit' | 'resume' | 'none' | 'change';
   mainDisabled: boolean;
   mainDisabledReason: string | null;
   frozen: boolean;
   pendingTooltip: string | null;
+  caption: ReviewActionCaption | null;
 }
 
 const VERDICT_LABEL: Record<DraftVerdict, string> = {
@@ -36,13 +46,40 @@ const VERDICT_LABEL: Record<DraftVerdict, string> = {
   comment: 'Comment',
 };
 
+export const PRIOR_VERDICT_LABEL: Record<ReviewState, string> = {
+  approved: 'Approved',
+  'changes-requested': 'Changes requested',
+  commented: 'Commented',
+};
+const STATE_FILL: Record<ReviewState, ReviewActionFill> = {
+  approved: 'approve',
+  'changes-requested': 'request-changes',
+  commented: 'comment',
+};
+
 export function deriveFace(i: ReviewActionInputs): ReviewActionFace {
-  const { session, prState } = i;
+  const { session, prState, viewerReview, submittedReviewStale } = i;
   const isClosedOrMerged = prState !== 'open';
   const verdict = session.draftVerdict;
   const pending = session.pendingReviewId !== null;
+  const hasSubmitted = viewerReview !== null;
 
-  const fill: ReviewActionFill = isClosedOrMerged ? 'secondary' : (verdict ?? 'accent'); // 'approve' | 'request-changes' | 'comment' map 1:1 to fill ids
+  // Caption: a draft-over-prior demotes the prior verdict to "was"; otherwise an idle
+  // submitted review reads "reviewed". No caption when there is no submitted review.
+  const caption: ReviewActionCaption | null = !hasSubmitted
+    ? null
+    : verdict || pending
+      ? { mode: 'was', priorState: viewerReview.state, submittedAt: viewerReview.submittedAt, stale: submittedReviewStale }
+      : { mode: 'reviewed', priorState: viewerReview.state, submittedAt: viewerReview.submittedAt, stale: submittedReviewStale };
+
+  // Fill precedence: closed/merged → secondary; draft verdict wins; else submitted verdict; else accent.
+  const fill: ReviewActionFill = isClosedOrMerged
+    ? 'secondary'
+    : verdict
+      ? verdict
+      : hasSubmitted && !pending
+        ? STATE_FILL[viewerReview.state]
+        : 'accent';
 
   const label = isClosedOrMerged
     ? 'Drafts'
@@ -50,14 +87,20 @@ export function deriveFace(i: ReviewActionInputs): ReviewActionFace {
       ? VERDICT_LABEL[verdict]
       : pending
         ? 'Resume review'
-        : 'Submit review';
+        : hasSubmitted
+          ? PRIOR_VERDICT_LABEL[viewerReview.state]
+          : 'Submit review';
 
   const needsReconfirm = session.draftVerdictStatus === 'needs-reconfirm';
   const mainAction: ReviewActionFace['mainAction'] = isClosedOrMerged
     ? 'none'
     : pending
       ? 'resume'
-      : 'submit';
+      : verdict
+        ? 'submit'
+        : hasSubmitted
+          ? 'change'   // status face; click opens the menu to start a new/updated review
+          : 'submit';
 
   // Resume + discard are never gated (today's SubmitInProgressBadge/pill aren't).
   // Only the fresh-submit path consults submitDisabledReason.
@@ -85,6 +128,7 @@ export function deriveFace(i: ReviewActionInputs): ReviewActionFace {
     mainDisabledReason: submitReason,
     frozen,
     pendingTooltip: pending ? 'Pending review on GitHub — not yet submitted' : null,
+    caption,
   };
 }
 

@@ -502,6 +502,8 @@ export function PrHeader({
               validatorResults={validatorResults}
               inSubmitFlow={inSubmitFlow}
               dialogOpen={dialogOpen}
+              viewerReview={null}
+              submittedReviewStale={false}
               onPatchVerdict={patchVerdict}
               onOpenSubmit={() => setDialogOpen(true)}
               onResume={onResume}

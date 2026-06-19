@@ -32,6 +32,8 @@ const props = (over = {}, h = handlers()) => ({
   inSubmitFlow: false,
   dialogOpen: false,
   sessionLoaded: true,
+  viewerReview: null,
+  submittedReviewStale: false,
   ...h,
   ...over,
 });
