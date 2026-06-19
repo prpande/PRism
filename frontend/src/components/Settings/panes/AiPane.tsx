@@ -258,7 +258,12 @@ export function AiPane() {
             </button>
           </div>
           {featuresOpen && (
-            <div id="ai-features-region" role="group" aria-label="AI features">
+            <div
+              id="ai-features-region"
+              role="group"
+              aria-label="AI features"
+              className={pane.featuresRegion}
+            >
               {FEATURE_ROWS.map(({ key, label, help }) => (
                 <div key={key} className={pane.row}>
                   <div>

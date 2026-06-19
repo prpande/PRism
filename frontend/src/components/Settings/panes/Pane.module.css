@@ -114,4 +114,15 @@
   text-align: left;
   font: inherit;
   color: inherit;
+  /* inline-flex so the InboxCaret (16px) is vertically centered on the label
+     text rather than sitting on its baseline, and a small gap separates them. */
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+/* Indent the feature toggles so they read as children of the "AI features"
+   accordion. 22px = caret (16px) + gap (6px), aligning each row's label under
+   the heading text. */
+.featuresRegion {
+  padding-left: 22px;
 }
