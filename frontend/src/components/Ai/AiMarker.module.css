@@ -11,7 +11,11 @@
 .working {
   color: var(--ai-working-color);
   filter: drop-shadow(0 0 3px var(--ai-working-color));
-  animation: ai-marker-pulse 1.4s ease-in-out infinite;
+  /* `alternate` makes each half-cycle ONE continuous eased ramp (dim→bright, then
+     bright→dim). A 0%/50%/100% keyframe would apply the easing per-segment and
+     decelerate INTO each stop — pausing at dim and at bright — which reads as a
+     blink/strobe. With from→to + alternate the halo breathes smoothly with no hold. */
+  animation: ai-marker-glow 1.3s ease-in-out infinite alternate;
 }
 @media (prefers-reduced-motion: reduce) {
   .working {
@@ -23,15 +27,14 @@
     transition: none;
   }
 }
-/* Pulse the GLOW (not just opacity) so the "thinking" state is obvious — the glyph
-   stays mostly opaque while its halo breathes from a tight to a wide spread. */
-@keyframes ai-marker-pulse {
-  0%,
-  100% {
-    opacity: 0.95;
+/* Breathe the GLOW (halo blur) plus a gentle opacity lift so the "thinking" state is
+   obvious without the glyph blinking. One ramp; `alternate` plays it forward then back. */
+@keyframes ai-marker-glow {
+  from {
+    opacity: 0.85;
     filter: drop-shadow(0 0 1px var(--ai-working-color));
   }
-  50% {
+  to {
     opacity: 1;
     filter: drop-shadow(0 0 7px var(--ai-working-color));
   }
