@@ -51,6 +51,15 @@ function CircleAlertIcon({ className }: { className?: string }) {
   );
 }
 
+function ErrorBox({ message }: { message: string }) {
+  return (
+    <div className={styles.errBox} role="alert" aria-live="assertive">
+      <CircleAlertIcon className={styles.errIcon} />
+      <span>{message}</span>
+    </div>
+  );
+}
+
 export function EgressConsentModal({ open, onAccept, onDecline }: Props) {
   const [disclosure, setDisclosure] = useState<EgressDisclosure | null>(null);
   const [failed, setFailed] = useState(false);
@@ -109,10 +118,7 @@ export function EgressConsentModal({ open, onAccept, onDecline }: Props) {
       role="dialog"
     >
       {failed ? (
-        <div className={styles.errBox} role="alert" aria-live="assertive">
-          <CircleAlertIcon className={styles.errIcon} />
-          <span>Couldn&apos;t load the data-sharing disclosure. Close and try again.</span>
-        </div>
+        <ErrorBox message="Couldn't load the data-sharing disclosure. Close and try again." />
       ) : !disclosure ? (
         <div aria-busy="true">
           <span className="sr-only" aria-live="polite">
@@ -149,12 +155,7 @@ export function EgressConsentModal({ open, onAccept, onDecline }: Props) {
           </div>
         </div>
       )}
-      {submitError && (
-        <div className={styles.errBox} role="alert" aria-live="assertive">
-          <CircleAlertIcon className={styles.errIcon} />
-          <span>Couldn&apos;t enable Live AI. Please try again.</span>
-        </div>
-      )}
+      {submitError && <ErrorBox message="Couldn't enable Live AI. Please try again." />}
       <div className="modal-actions row gap-2">
         <button
           type="button"
