@@ -1,7 +1,6 @@
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
-using System.Text.Json.Serialization;
 using PRism.AI.Contracts.Observability;
 
 namespace PRism.Web.Ai;
@@ -15,12 +14,6 @@ namespace PRism.Web.Ai;
 internal static class AiInteractionLogReader
 {
     internal readonly record struct LogEntry(DateTimeOffset Timestamp, AiInteractionRecord Record);
-
-    private static readonly JsonSerializerOptions Json = new()
-    {
-        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-        Converters = { new JsonStringEnumConverter(JsonNamingPolicy.CamelCase) },
-    };
 
     public static (IReadOnlyList<LogEntry> Entries, long NewOffset) ReadFrom(string filePath, long startOffset)
     {
@@ -64,7 +57,7 @@ internal static class AiInteractionLogReader
             if (node is null) return false;
             var ts = node["timestamp"]?.GetValue<string>();
             if (ts is null || !DateTimeOffset.TryParse(ts, out var when)) return false;
-            var record = node.Deserialize<AiInteractionRecord>(Json);
+            var record = node.Deserialize<AiInteractionRecord>(JsonlAiInteractionLog.Json);
             if (record is null) return false;
             entry = new LogEntry(when, record);
             return true;

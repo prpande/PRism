@@ -1,5 +1,6 @@
 using System.Text.Json;
 using PRism.AI.Contracts.Observability;
+using PRism.Core.Storage;
 
 namespace PRism.Web.Ai;
 
@@ -117,17 +118,22 @@ internal sealed class AiUsageRollupStore
         }
     }
 
-    public void Persist()
+    public async Task PersistAsync(CancellationToken ct = default)
     {
+        // Snapshot + serialize under the lock (all in-memory; no await needed). Write temp file and
+        // atomic rename outside the lock (await is not legal inside lock). Clear dirty under the lock
+        // after the move succeeds.
+        string json;
         lock (_gate)
         {
             EnsureDir();
             var snap = new Snapshot(_tailOffset, _sourceLength, _buckets.Values.ToList());
-            var tmp = _path + ".tmp";
-            File.WriteAllText(tmp, JsonSerializer.Serialize(snap, Json));
-            File.Move(tmp, _path, overwrite: true); // atomic replace: buckets + offset stay consistent
-            _dirty = false;
+            json = JsonSerializer.Serialize(snap, Json);
         }
+        var tmp = _path + ".tmp";
+        await File.WriteAllTextAsync(tmp, json, ct).ConfigureAwait(false);
+        await AtomicFileMove.MoveAsync(tmp, _path, ct).ConfigureAwait(false);
+        lock (_gate) { _dirty = false; }
     }
 
     public IReadOnlyList<UsageBucket> SnapshotBuckets()

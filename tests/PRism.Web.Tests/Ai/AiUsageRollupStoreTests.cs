@@ -71,12 +71,12 @@ public sealed class AiUsageRollupStoreTests : IDisposable
     }
 
     [Fact]
-    public void Persist_then_Load_roundtrips_buckets_and_offset()
+    public async Task Persist_then_Load_roundtrips_buckets_and_offset()
     {
         var store = NewStore();
         store.Fold(Entry("summary", "o/r#1", AiInteractionOutcome.Ok, true, 10, input: 100, cost: 0.05m));
         store.Advance(newOffset: 4096, sourceLength: 4096);
-        store.Persist();
+        await store.PersistAsync();
 
         var reloaded = NewStore();
         reloaded.Load();
@@ -109,13 +109,13 @@ public sealed class AiUsageRollupStoreTests : IDisposable
     }
 
     [Fact]
-    public void IsDirty_is_set_by_Fold_and_cleared_by_Persist()
+    public async Task IsDirty_is_set_by_Fold_and_cleared_by_Persist()
     {
         var store = NewStore();
         store.IsDirty.Should().BeFalse();
         store.Fold(Entry("summary", "o/r#1", AiInteractionOutcome.Ok, true, 10, input: 100));
         store.IsDirty.Should().BeTrue();
-        store.Persist();
+        await store.PersistAsync();
         store.IsDirty.Should().BeFalse();
     }
 
@@ -132,22 +132,22 @@ public sealed class AiUsageRollupStoreTests : IDisposable
     }
 
     [Fact]
-    public void Reset_marks_IsDirty_true()
+    public async Task Reset_marks_IsDirty_true()
     {
         var store = NewStore();
         store.Fold(Entry("summary", "o/r#1", AiInteractionOutcome.Ok, true, 10, input: 100));
-        store.Persist(); // clears dirty
+        await store.PersistAsync(); // clears dirty
         store.IsDirty.Should().BeFalse();
         store.Reset();
         store.IsDirty.Should().BeTrue();
     }
 
     [Fact]
-    public void Advance_with_same_offset_and_sourceLength_does_not_set_IsDirty()
+    public async Task Advance_with_same_offset_and_sourceLength_does_not_set_IsDirty()
     {
         var store = NewStore();
         store.Fold(Entry("summary", "o/r#1", AiInteractionOutcome.Ok, true, 10, input: 100));
-        store.Persist(); // clears dirty; stored offset = 0, sourceLength = 0 (never advanced)
+        await store.PersistAsync(); // clears dirty; stored offset = 0, sourceLength = 0 (never advanced)
         store.IsDirty.Should().BeFalse();
         store.Advance(0, 0); // same as currently stored — no-op
         store.IsDirty.Should().BeFalse();

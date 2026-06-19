@@ -63,7 +63,7 @@ internal sealed partial class AiUsageRollupTailer : IHostedService, IDisposable
         while (await timer.WaitForNextTickAsync(ct).ConfigureAwait(false));
     }
 
-    internal Task TickAsync(CancellationToken ct)
+    internal async Task TickAsync(CancellationToken ct)
     {
         ct.ThrowIfCancellationRequested();
         var fileLength = File.Exists(_logPath) ? new FileInfo(_logPath).Length : 0;
@@ -79,8 +79,7 @@ internal sealed partial class AiUsageRollupTailer : IHostedService, IDisposable
         foreach (var entry in entries) _store.Fold(entry);
         _store.Advance(newOffset, fileLength);
 
-        if (_store.IsDirty) _store.Persist(); // persist offset + buckets atomically, only when changed
-        return Task.CompletedTask;
+        if (_store.IsDirty) await _store.PersistAsync(ct).ConfigureAwait(false); // persist offset + buckets atomically, only when changed
     }
 
     public void Dispose()

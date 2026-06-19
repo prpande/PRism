@@ -15,7 +15,7 @@ namespace PRism.Web.Ai;
 /// so a sink that is never invoked litters nothing.</summary>
 internal sealed partial class JsonlAiInteractionLog : IAiInteractionLog
 {
-    private static readonly JsonSerializerOptions Json = new()
+    internal static readonly JsonSerializerOptions Json = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
