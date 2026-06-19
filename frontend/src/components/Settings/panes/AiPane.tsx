@@ -115,7 +115,7 @@ export function AiPane() {
           <h2 id="ai-heading" className={pane.title}>
             AI
           </h2>
-          <p className={pane.sub}>AI mode, provider timeout, and annotation settings.</p>
+          <p className={pane.sub}>AI mode, provider timeout, annotation, and summary settings.</p>
         </div>
       </div>
 
@@ -140,10 +140,11 @@ export function AiPane() {
         </div>
       </div>
 
-      {/* The min/max literals below (and the "30–600" / "1–50" help text) MIRROR the canonical bounds
-          in PRism.Core/Config/AiConfigBounds.cs (MinTimeout=30/MaxTimeout=600, MinCap=1/MaxCap=50). The
-          server re-clamps on write, so a stale literal here only mis-bounds the stepper UI — keep them in
-          sync if AiConfigBounds changes. The `step` values (30, 1) are UI-only and have no backend mirror. */}
+      {/* The min/max literals below (and the "30–600" / "1–50" / "500–5000" help text) MIRROR the canonical
+          bounds in PRism.Core/Config/AiConfigBounds.cs (MinTimeout=30/MaxTimeout=600, MinCap=1/MaxCap=50,
+          MinSummaryChars=500/MaxSummaryChars=5000). The server re-clamps on write, so a stale literal here
+          only mis-bounds the stepper UI — keep them in sync if AiConfigBounds changes. The `step` values
+          (30, 1, 100) are UI-only and have no backend mirror. */}
       <div className={pane.row}>
         <div>
           <div className={pane.label} id="ai-timeout-label">
@@ -186,6 +187,30 @@ export function AiPane() {
             step={1}
             unit="annotations"
             onChange={(n) => void set('ui.ai.hunkAnnotationCap', n).catch(() => {})}
+          />
+        </div>
+      </div>
+
+      <div className={pane.row}>
+        <div>
+          <div className={pane.label} id="ai-summary-len-label">
+            Summary length
+          </div>
+          <div className={pane.help}>
+            500–5000 characters. Applies to newly generated summaries; use Regenerate to re-apply on
+            an already-open PR.
+          </div>
+        </div>
+        <div className={pane.spring}>
+          <NumberStepper
+            label="Summary length"
+            labelledById="ai-summary-len-label"
+            value={preferences.ui.summaryMaxChars}
+            min={500}
+            max={5000}
+            step={100}
+            unit="characters"
+            onChange={(n) => void set('ui.ai.summaryMaxChars', n).catch(() => {})}
           />
         </div>
       </div>

@@ -31,6 +31,7 @@ vi.mock('../api/client', () => {
       aiMode: state.aiMode,
       providerTimeoutSeconds: 240,
       hunkAnnotationCap: 10,
+      summaryMaxChars: 1000,
     },
     inbox: { sections: {} } as never,
     github: {} as never,
