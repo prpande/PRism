@@ -78,9 +78,9 @@ internal static class AiEndpoints
         // Always 200 — an empty report (zeros + empty arrays) when no usage has been recorded yet
         // (incl. before the first tail tick). No log I/O on the request path — reads the in-memory store.
         app.MapGet("/api/ai/usage",
-            (string? window, AiUsageRollupStore store) =>
+            (string? window, AiUsageRollupStore store, TimeProvider clock) =>
                 Results.Ok(AiUsageAggregator.Aggregate(
-                    store.SnapshotBuckets(), window ?? "7d", DateTimeOffset.UtcNow)));
+                    store.SnapshotBuckets(), window ?? "7d", clock.GetUtcNow())));
 
         return app;
     }

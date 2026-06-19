@@ -15,7 +15,7 @@ internal static class AiInteractionLogReader
 {
     internal readonly record struct LogEntry(DateTimeOffset Timestamp, AiInteractionRecord Record);
 
-    public static (IReadOnlyList<LogEntry> Entries, long NewOffset) ReadFrom(string filePath, long startOffset)
+    internal static (IReadOnlyList<LogEntry> Entries, long NewOffset) ReadFrom(string filePath, long startOffset)
     {
         if (!File.Exists(filePath)) return (Array.Empty<LogEntry>(), startOffset);
 

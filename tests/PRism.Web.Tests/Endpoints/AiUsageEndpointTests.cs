@@ -3,9 +3,11 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using FluentAssertions;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using PRism.AI.Contracts.Observability;
 using PRism.Core.Ai;
 using PRism.Web.Ai;
+using PRism.Web.Middleware;
 using PRism.Web.Tests.TestHelpers;
 using Xunit;
 
@@ -13,6 +15,14 @@ namespace PRism.Web.Tests.Endpoints;
 
 public sealed class AiUsageEndpointTests
 {
+    /// <summary>Minimal hand-rolled TimeProvider stub returning a fixed "now". Mirrors the established
+    /// pattern in CachedLlmAvailabilityProbeTests (Microsoft.Extensions.Time.Testing is not referenced
+    /// in this project). Lets the endpoint's window-filtering be exercised at a deterministic instant.</summary>
+    private sealed class FixedTimeProvider(DateTimeOffset now) : TimeProvider
+    {
+        public override DateTimeOffset GetUtcNow() => now;
+    }
+
     [Fact]
     public async Task Get_ai_usage_returns_200_empty_report_when_no_usage_recorded()
     {
@@ -209,5 +219,58 @@ public sealed class AiUsageEndpointTests
         raw.Should().NotContain("\"PrRef\"", "prRef must be camelCase");
         raw.Should().NotContain("\"DisplayName\"", "displayName must be camelCase");
         raw.Should().NotContain("\"HitRate\"", "hitRate must be camelCase");
+    }
+
+    /// <summary>The endpoint must resolve "now" from the DI <see cref="TimeProvider"/> (not wall-clock),
+    /// so that <c>window</c> filtering is deterministic and testable end-to-end. Seeds two buckets — one
+    /// 2h before the fixed clock (inside the 24h window) and one 50h before (outside) — and asserts the
+    /// 24h totals reflect ONLY the in-window bucket. Under a wall-clock handler both buckets fall months
+    /// outside 24h, so the in-window assertion is the failing condition that pins the clock injection.</summary>
+    [Fact]
+    public async Task Get_ai_usage_filters_window_using_injected_clock()
+    {
+        var now = new DateTimeOffset(2026, 1, 15, 12, 0, 0, TimeSpan.Zero);
+        using var baseFactory = new PRismWebApplicationFactory();
+        using var factory = baseFactory.WithWebHostBuilder(b => b.ConfigureServices(s =>
+        {
+            s.RemoveAll<TimeProvider>();
+            s.AddSingleton<TimeProvider>(new FixedTimeProvider(now));
+        }));
+
+        // Seed BEFORE creating the client; the store is a singleton resolved from the derived factory.
+        var store = factory.Services.GetRequiredService<AiUsageRollupStore>();
+
+        // In-window: 2h before `now`. 100 input + 50 output tokens, $0.05.
+        store.Fold(new AiInteractionLogReader.LogEntry(now.AddHours(-2),
+            new AiInteractionRecord(
+                Component: "summary", ProviderId: "claude-code", Model: "claude-opus-4",
+                PrRef: "octo/repo#1", HeadSha: null, Outcome: AiInteractionOutcome.Ok, Egressed: true,
+                InputTokens: 100, OutputTokens: 50, EstimatedCostUsd: 0.05m)));
+
+        // Out-of-window: 50h before `now` (> 24h). 999 input tokens, $9.99 — must NOT count.
+        store.Fold(new AiInteractionLogReader.LogEntry(now.AddHours(-50),
+            new AiInteractionRecord(
+                Component: "summary", ProviderId: "claude-code", Model: "claude-opus-4",
+                PrRef: "octo/repo#2", HeadSha: null, Outcome: AiInteractionOutcome.Ok, Egressed: true,
+                InputTokens: 999, OutputTokens: 0, EstimatedCostUsd: 9.99m)));
+
+        // WithWebHostBuilder yields a vanilla factory whose CreateClient does not auto-inject the session
+        // token; mirror the AiEndpointsTests pattern and inject it manually.
+        var token = factory.Services.GetRequiredService<SessionTokenProvider>().Current;
+        var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-PRism-Session", token);
+        client.DefaultRequestHeaders.Add("Cookie", $"prism-session={token}");
+        var origin = client.BaseAddress?.GetLeftPart(UriPartial.Authority);
+        if (!string.IsNullOrEmpty(origin)) client.DefaultRequestHeaders.Add("Origin", origin);
+
+        var resp = await client.GetAsync(new Uri("/api/ai/usage?window=24h", UriKind.Relative));
+
+        resp.StatusCode.Should().Be(HttpStatusCode.OK);
+        var body = await resp.Content.ReadFromJsonAsync<JsonElement>();
+        var totals = body.GetProperty("totals");
+        // Only the in-window bucket: 100 input + 50 output = 150; $0.05. The 50h-old bucket is excluded.
+        totals.GetProperty("inputTokens").GetInt64().Should().Be(100);
+        totals.GetProperty("totalTokens").GetInt64().Should().Be(150);
+        totals.GetProperty("estimatedCostUsd").GetDecimal().Should().Be(0.05m);
     }
 }

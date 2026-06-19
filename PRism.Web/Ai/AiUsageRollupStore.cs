@@ -123,10 +123,10 @@ internal sealed class AiUsageRollupStore
         // Snapshot + serialize under the lock (all in-memory; no await needed). Write temp file and
         // atomic rename outside the lock (await is not legal inside lock). Clear dirty under the lock
         // after the move succeeds.
+        EnsureDir(); // idempotent + no dependency on locked state; keep sync FS calls off the read-path mutex
         string json;
         lock (_gate)
         {
-            EnsureDir();
             var snap = new Snapshot(_tailOffset, _sourceLength, _buckets.Values.ToList());
             json = JsonSerializer.Serialize(snap, Json);
         }
