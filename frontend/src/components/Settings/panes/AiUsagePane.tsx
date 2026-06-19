@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { getAiUsage } from '../../../api/aiUsage';
 import type { AiUsageReport, AiUsageWindow } from '../../../api/types';
 import { formatCost, formatTokens } from '../../../utils/formatUsage';
@@ -44,10 +44,6 @@ export function AiUsagePane() {
     load(selectedWindow);
   }, [selectedWindow, load]);
 
-  const onWindow = (w: AiUsageWindow) => {
-    if (w !== selectedWindow) setSelectedWindow(w);
-  };
-
   // A cache-only window (cacheHits > 0, no tokens, no provider calls) is NOT empty — it must show
   // the cache stat, the one signal that matters most to a cache-heavy user.
   const isEmpty =
@@ -73,7 +69,7 @@ export function AiUsagePane() {
           value={selectedWindow}
           options={WINDOWS}
           disabled={status === 'loading'}
-          onChange={(v) => onWindow(v as AiUsageWindow)}
+          onChange={(v) => setSelectedWindow(v as AiUsageWindow)}
         />
       </div>
 
@@ -139,13 +135,24 @@ function Report({ report }: { report: AiUsageReport }) {
   const prTableRef = useRef<HTMLTableElement>(null);
   // Bar height, tooltip, and the SR summary ALL track cost so the tallest bar IS the highest-spend
   // bucket (cache-read tokens are cheap; output costs more than input — token volume ≠ cost).
-  const trendCostMax = report.trend.reduce((m, t) => Math.max(m, t.estimatedCostUsd), 0);
+  // One pass over the trend: the peak bucket IS the max, so trendCostMax is just peak's cost. Bar
+  // titles are pre-formatted here so re-renders don't re-allocate a Date per bar.
+  const { peak, trendCostMax, bars } = useMemo(() => {
+    const peak = report.trend.reduce<AiUsageReport['trend'][number] | null>(
+      (a, b) => (a === null || b.estimatedCostUsd > a.estimatedCostUsd ? b : a),
+      null,
+    );
+    return {
+      peak,
+      trendCostMax: peak?.estimatedCostUsd ?? 0,
+      bars: report.trend.map((t) => ({
+        key: t.bucketStart,
+        cost: t.estimatedCostUsd,
+        title: `${new Date(t.bucketStart).toLocaleDateString()}: ${formatCost(t.estimatedCostUsd)}`,
+      })),
+    };
+  }, [report.trend]);
   const showTrend = trendCostMax > 0; // a spend trend — omit entirely when there's no cost to chart
-  const peak = report.trend.reduce<AiUsageReport['trend'][number] | null>(
-    (a, b) => (a === null || b.estimatedCostUsd > a.estimatedCostUsd ? b : a),
-    null,
-  );
-  const fmtDate = (iso: string) => new Date(iso).toLocaleDateString();
 
   return (
     <>
@@ -164,18 +171,20 @@ function Report({ report }: { report: AiUsageReport }) {
       {showTrend && (
         <>
           <div className={styles.trend} aria-hidden="true">
-            {report.trend.map((t) => (
+            {bars.map((b) => (
               <div
-                key={t.bucketStart}
+                key={b.key}
                 className={styles.bar}
-                style={{ height: `${Math.round((t.estimatedCostUsd / trendCostMax) * 100)}%` }}
-                title={`${fmtDate(t.bucketStart)}: ${formatCost(t.estimatedCostUsd)}`}
+                style={{ height: `${Math.round((b.cost / trendCostMax) * 100)}%` }}
+                title={b.title}
               />
             ))}
           </div>
-          {peak && peak.estimatedCostUsd > 0 && (
+          {/* showTrend (trendCostMax > 0) already guarantees peak is the non-null max-cost bucket. */}
+          {peak && (
             <p className="sr-only">
-              Highest spend: {fmtDate(peak.bucketStart)}, {formatCost(peak.estimatedCostUsd)}.
+              Highest spend: {new Date(peak.bucketStart).toLocaleDateString()},{' '}
+              {formatCost(peak.estimatedCostUsd)}.
             </p>
           )}
         </>

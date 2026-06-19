@@ -42,9 +42,9 @@ export function SettingsNav() {
   const current = pathname.replace(/^\/settings\/?/, '') || 'appearance';
   // The AI section is active for /settings/ai AND any /settings/ai/* child.
   const aiActive = current === 'ai' || current.startsWith('ai/');
-  // The Configuration child is "current" only at exactly /settings/ai (not a descendant).
-  const childActive = (childPath: string) =>
-    childPath === '/settings/ai' ? current === 'ai' : pathname === childPath;
+  // A child is "current" only at its exact path — Configuration (/settings/ai) is NOT current at the
+  // /settings/ai/usage descendant. One consistent comparison (no /settings/ai special-case needed).
+  const childActive = (childPath: string) => pathname === childPath;
 
   return (
     <nav className={styles.nav} aria-label="Settings sections">
