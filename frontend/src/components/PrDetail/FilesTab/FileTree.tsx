@@ -8,6 +8,7 @@ import type {
 } from '../../../api/types';
 import { AiMarker } from '../../Ai/AiMarker';
 import { AI_TREE_ANALYZED_LABEL } from '../../Ai/aiStrings';
+import { fileFocusStatusToMarkerState } from '../../Ai/fileFocusMarkerState';
 import { buildTree, type TreeNode, type FileTreeNode, type DirectoryTreeNode } from './treeBuilder';
 import { useTreeHScroll } from '../../../hooks/useTreeHScroll';
 import styles from './FileTree.module.css';
@@ -173,14 +174,17 @@ export function FileTree({
   // no longer loading — idle on empty is the truthful "AI ran, flagged nothing" signal
   // that dots alone cannot express. Hidden when AI is off (no-changes/not-subscribed)
   // or focus errored (and nothing is loading).
-  let headerMarkerState: 'working' | 'idle' | null = null;
-  if (aiPreview) {
-    if (focusStatus === 'loading' || annotationsLoading) {
-      headerMarkerState = 'working';
-    } else if (focusStatus === 'ok' || focusStatus === 'empty' || focusStatus === 'fallback') {
-      headerMarkerState = 'idle';
-    }
-  }
+  // Header marker spans BOTH AI passes (file-focus ranking + hunk annotation): stays
+  // `working` while either loads, else reflects focus status via the shared reduction.
+  // Behavior identical to the Slice-1 inline form — fileFocusStatusToMarkerState('loading')
+  // === 'working', so the original `focusStatus === 'loading' || annotationsLoading` OR is
+  // preserved transitively. The helper is NOT the sole authority here; annotationsLoading
+  // overrides it. Do not strip the annotationsLoading arm.
+  const headerMarkerState: 'working' | 'idle' | null = aiPreview
+    ? annotationsLoading
+      ? 'working'
+      : fileFocusStatusToMarkerState(focusStatus)
+    : null;
 
   // #214 — synthetic, bottom-pinned horizontal scrollbar. The clipped tree column
   // (.fileTreeScroll) is shifted via translateX from this bar's scrollLeft, so the bar
