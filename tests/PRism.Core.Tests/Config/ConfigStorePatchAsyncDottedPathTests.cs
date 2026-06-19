@@ -459,6 +459,8 @@ public class ConfigStorePatchAsyncDottedPathTests
 
     // #275: a config.json written before the field existed must load with the canonical
     // default via STJ's record-positional-default path (same mechanism as DefaultSort).
+    // Canonical default = "authored-by-me,review-requested,awaiting-author,mentioned"
+    // (authored-by-me leads); see AppConfig.SectionOrder.
     [Fact]
     public async Task InitAsync_LegacyConfigWithoutSectionOrder_DefaultsToCanonical()
     {

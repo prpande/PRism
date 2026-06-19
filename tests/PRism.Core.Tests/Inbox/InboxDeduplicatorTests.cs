@@ -200,13 +200,14 @@ public sealed class InboxDeduplicatorTests
     public void No_pr_appears_in_two_sections_after_dedupe()
     {
         // review-requested+mentioned share PR 1 → mentioned drops it (review-requested wins
-        // that pair). The authored-by-me PRs (4, 5) are unique to authored-by-me, so the
-        // authored-wins pairs don't fire on them.
+        // that pair). PR 3 is in awaiting-author AND authored-by-me → authored-by-me wins,
+        // so it is dropped from awaiting-author (exercises the authored∩awaiting pair in an
+        // integration scenario). PRs 4, 5 are unique to authored-by-me.
         var input = new Dictionary<string, IReadOnlyList<PrInboxItem>>
         {
             ["review-requested"] = new[] { Pr(1), Pr(2) },
             ["awaiting-author"] = new[] { Pr(3) },
-            ["authored-by-me"] = new[] { Pr(4), Pr(5) },
+            ["authored-by-me"] = new[] { Pr(3), Pr(4), Pr(5) },
             ["mentioned"] = new[] { Pr(1), Pr(6) },
         };
 
@@ -216,5 +217,8 @@ public sealed class InboxDeduplicatorTests
         result["review-requested"].Should().Contain(p => p.Reference.Number == 1);
         result["mentioned"].Should().NotContain(p => p.Reference.Number == 1);
         result["mentioned"].Should().Contain(p => p.Reference.Number == 6);
+        // PR 3 is in awaiting-author (loser) and authored-by-me (winner — kept there only).
+        result["awaiting-author"].Should().NotContain(p => p.Reference.Number == 3);
+        result["authored-by-me"].Should().Contain(p => p.Reference.Number == 3);
     }
 }
