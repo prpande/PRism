@@ -20,7 +20,7 @@
   /* Full cycle in the keyframes (NOT `alternate`) so we can hold the dim state at the
      start — a brief un-glowing beat between breathes — then swell up (~1s) and fade
      back down (~1s). `alternate` would restart the glow the instant it bottomed out. */
-  animation: ai-marker-glow 2.8s ease-in-out infinite;
+  animation: ai-marker-glow 2.4s ease-in-out infinite;
 }
 @media (prefers-reduced-motion: reduce) {
   .working {
@@ -33,13 +33,13 @@
   }
 }
 @keyframes ai-marker-glow {
-  /* 0–25%: held dim (the pause — glyph shows with ~no halo). 25→61%: swell up.
-     61→100%: fade back to dim, which flows into the next cycle's pause. */
+  /* 0–17%: held dim (the pause — glyph shows with ~no halo). 17→58%: swell up.
+     58→100%: fade back to dim, which flows into the next cycle's pause. */
   0%,
-  25% {
+  17% {
     --ai-glow-blur: 0.5px;
   }
-  61% {
+  58% {
     --ai-glow-blur: 4px;
   }
   100% {
