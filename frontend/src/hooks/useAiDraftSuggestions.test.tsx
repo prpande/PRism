@@ -1,5 +1,5 @@
 // frontend/src/hooks/useAiDraftSuggestions.test.tsx
-import { renderHook, waitFor } from '@testing-library/react';
+import { render, renderHook, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import type { ReactNode } from 'react';
 import { useAiDraftSuggestions } from './useAiDraftSuggestions';
@@ -43,6 +43,27 @@ it('is empty when disabled', () => {
   );
   expect(result.current.e.state).toBe('empty');
   expect(result.current.e.suggestions).toBeNull();
+});
+
+it('never reports loading when disabled (no working-marker flash) and does not fetch', () => {
+  const spy = vi.spyOn(api, 'getAiDraftSuggestions');
+  spy.mockClear(); // prior tests in this file share the spy; count only this render's calls
+  const states: string[] = [];
+  function Probe() {
+    states.push(useAiDraftSuggestions(PR, false).state);
+    return null;
+  }
+  render(
+    <MemoryRouter initialEntries={['/pr/o/r/1']}>
+      <AiFailureProvider>
+        <Probe />
+      </AiFailureProvider>
+    </MemoryRouter>,
+  );
+  // Lazy initializer starts a gated-off hook in 'empty', so 'loading' never renders.
+  expect(states).not.toContain('loading');
+  expect(states.at(-1)).toBe('empty');
+  expect(spy).not.toHaveBeenCalled();
 });
 
 it('reports on any non-401 throw (the seam has no backend 503 path today — see spec)', async () => {

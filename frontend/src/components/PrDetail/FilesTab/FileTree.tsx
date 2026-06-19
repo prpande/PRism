@@ -7,6 +7,7 @@ import type {
   FocusLevel,
 } from '../../../api/types';
 import { AiMarker } from '../../Ai/AiMarker';
+import { AI_TREE_ANALYZED_LABEL } from '../../Ai/aiStrings';
 import { buildTree, type TreeNode, type FileTreeNode, type DirectoryTreeNode } from './treeBuilder';
 import { useTreeHScroll } from '../../../hooks/useTreeHScroll';
 import styles from './FileTree.module.css';
@@ -195,7 +196,9 @@ export function FileTree({
     if (isLoading) return null;
     return (
       <div className={`file-tree ${styles.fileTree}`} data-testid="file-tree">
-        <div className={`file-tree-header ${styles.fileTreeHeader}`}>Files</div>
+        <div className={`file-tree-header ${styles.fileTreeHeader}`}>
+          <span className={styles.fileTreeHeaderLabel}>Files</span>
+        </div>
         <p className={`file-tree-empty muted ${styles.fileTreeEmpty}`}>No files in this diff.</p>
       </div>
     );
@@ -223,6 +226,12 @@ export function FileTree({
               decorative
               className={`${styles.fileTreeHeaderAi}${headerMarkerState === 'idle' ? ` ${styles.fileTreeHeaderAiIdle}` : ''}`}
             />
+            {/* The working marker carries a `title` tooltip; the idle marker is otherwise
+                silent to AT (decorative glyph, no per-row focus signal on an empty result),
+                so give it an sr-only label. */}
+            {headerMarkerState === 'idle' && (
+              <span className="sr-only">{AI_TREE_ANALYZED_LABEL}</span>
+            )}
           </span>
         )}
       </div>

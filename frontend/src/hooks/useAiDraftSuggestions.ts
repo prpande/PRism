@@ -13,10 +13,13 @@ export function useAiDraftSuggestions(
   prRef: PrReference,
   enabled: boolean,
 ): AiDraftSuggestionsState {
-  const [value, setValue] = useState<AiDraftSuggestionsState>({
-    state: 'loading',
+  // Lazy initializer keyed on `enabled` so a gated-off hook starts in 'empty', not
+  // 'loading' — otherwise the first render reports state==='loading' before the effect
+  // corrects it, briefly signalling "working" when AI is off here.
+  const [value, setValue] = useState<AiDraftSuggestionsState>(() => ({
+    state: enabled ? 'loading' : 'empty',
     suggestions: null,
-  });
+  }));
   const [retryNonce, setRetryNonce] = useState(0);
   const retry = useCallback(() => setRetryNonce((n) => n + 1), []);
   const { report, clear } = useAiFailure();

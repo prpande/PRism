@@ -1,6 +1,7 @@
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, within } from '@testing-library/react';
 import { describe, it, expect, vi } from 'vitest';
 import { FileTree } from './FileTree';
+import { AI_TREE_ANALYZED_LABEL } from '../../Ai/aiStrings';
 import type { FileChange, FileFocus, FileFocusStatus } from '../../../api/types';
 
 function file(path: string, overrides: Partial<FileChange> = {}): FileChange {
@@ -680,5 +681,19 @@ describe('FileTree — header AI marker (Task 5 / #508)', () => {
   it('renders no header marker on error', () => {
     renderTree({ aiPreview: true, focusStatus: 'error' });
     expect(screen.queryByTestId('file-tree-ai-progress')).not.toBeInTheDocument();
+  });
+
+  // The idle marker is a decorative glyph with no `title` (working-only) and no per-row
+  // focus signal on an empty result, so it carries an sr-only label for assistive tech.
+  it('gives the idle marker an sr-only label', () => {
+    renderTree({ aiPreview: true, focusStatus: 'empty' });
+    const progress = screen.getByTestId('file-tree-ai-progress');
+    expect(within(progress).getByText(AI_TREE_ANALYZED_LABEL)).toBeInTheDocument();
+  });
+
+  it('omits the analyzed sr-only label while working (the title tooltip covers it)', () => {
+    renderTree({ aiPreview: true, focusStatus: 'loading' });
+    const progress = screen.getByTestId('file-tree-ai-progress');
+    expect(within(progress).queryByText(AI_TREE_ANALYZED_LABEL)).not.toBeInTheDocument();
   });
 });

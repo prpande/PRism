@@ -1,5 +1,5 @@
 // frontend/src/hooks/useAiHunkAnnotations.test.tsx
-import { renderHook, waitFor } from '@testing-library/react';
+import { render, renderHook, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import type { ReactNode } from 'react';
 import { useAiHunkAnnotations } from './useAiHunkAnnotations';
@@ -87,4 +87,26 @@ it('is empty when disabled', () => {
   });
   expect(result.current.e.state).toBe('empty');
   expect(result.current.e.annotations).toBeNull();
+});
+
+it('never reports loading when disabled (no working-marker flash) and does not fetch', () => {
+  const spy = vi.spyOn(api, 'getAiHunkAnnotations');
+  spy.mockClear(); // prior tests in this file share the spy; count only this render's calls
+  const states: string[] = [];
+  function Probe() {
+    states.push(useAiHunkAnnotations(PR, false).state);
+    return null;
+  }
+  render(
+    <MemoryRouter initialEntries={['/pr/o/r/1']}>
+      <AiFailureProvider>
+        <Probe />
+      </AiFailureProvider>
+    </MemoryRouter>,
+  );
+  // The lazy initializer starts in 'empty' for a gated-off hook, so 'loading' is never
+  // rendered — without it the first render would flash 'loading' before the effect.
+  expect(states).not.toContain('loading');
+  expect(states.at(-1)).toBe('empty');
+  expect(spy).not.toHaveBeenCalled();
 });

@@ -10,10 +10,13 @@ export interface AiHunkAnnotationsState {
 }
 
 export function useAiHunkAnnotations(prRef: PrReference, enabled: boolean): AiHunkAnnotationsState {
-  const [value, setValue] = useState<AiHunkAnnotationsState>({
-    state: 'loading',
+  // Lazy initializer keyed on `enabled` so a gated-off hook starts in 'empty', not
+  // 'loading'. Otherwise the first render reports state==='loading' (→ a "working"
+  // header-marker flash) before the effect corrects it — wrong when AI is off here.
+  const [value, setValue] = useState<AiHunkAnnotationsState>(() => ({
+    state: enabled ? 'loading' : 'empty',
     annotations: null,
-  });
+  }));
   const [retryNonce, setRetryNonce] = useState(0);
   const retry = useCallback(() => setRetryNonce((n) => n + 1), []);
   const { report, clear } = useAiFailure();
