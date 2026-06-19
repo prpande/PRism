@@ -66,6 +66,9 @@ public class AiEndpointsTests
         var body = await resp.Content.ReadFromJsonAsync<JsonElement>();
         body.GetProperty("body").GetString().Should().NotBeNullOrWhiteSpace();
         body.GetProperty("category").GetString().Should().NotBeNullOrWhiteSpace();
+        // #525: the Preview placeholder stamps the gen-time cap (= default 1000) so the card can detect a
+        // cap change; it serializes camelCase as `generatedMaxChars`.
+        body.GetProperty("generatedMaxChars").GetInt32().Should().Be(1000);
     }
 
     [Fact]

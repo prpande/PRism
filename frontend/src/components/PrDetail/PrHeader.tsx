@@ -27,6 +27,13 @@ import { SubmitDialog } from './SubmitDialog/SubmitDialog';
 import { OpenInGitHubButton } from './OpenInGitHubButton';
 import { ReviewActionButton } from './ReviewActionButton/ReviewActionButton';
 import { RefreshButton } from '../controls/RefreshButton';
+import {
+  PR_GLYPH_PATH,
+  PR_GLYPH_CLASS,
+  PR_GLYPH_LABEL,
+  type GlyphState,
+} from '../shared/prStateGlyph';
+import glyphStyles from '../shared/prStateGlyph.module.css';
 
 // #128/#203 — double-chevron, authored pointing UP (the expanded state, where
 // content folds toward when collapsed). The collapsed state rotates it 180° to
@@ -115,6 +122,9 @@ interface PrHeaderProps {
   // Closed/merged PRs hide the verdict picker + disable Submit and surface the
   // bulk-discard button instead (spec § 13.1). Defaults to 'open' (loading).
   prState?: PrState;
+  // #501 — GitHub draft flag (data.pr.isDraft). Drives the leading state glyph
+  // (open→draft) and the info Draft marker. Load-time only; defaults false.
+  isDraft?: boolean;
   // Cross-tab ownership (spec § 5.7a). Threads into the SubmitDialog's PR-root
   // Edit toggle + editor so a peer-owned PR can't be edited from here.
   readOnly?: boolean;
@@ -161,6 +171,7 @@ export function PrHeader({
   headShaDrift = false,
   currentHeadSha = '',
   prState = 'open',
+  isDraft = false,
   readOnly = false,
   registerOpenComposer,
   getPrRootHolder,
@@ -208,6 +219,10 @@ export function PrHeader({
   const [pillDiscardModalOpen, setPillDiscardModalOpen] = useState(false);
   const [pillDiscardError, setPillDiscardError] = useState<string | null>(null);
   const [discardAllModalOpen, setDiscardAllModalOpen] = useState(false);
+
+  // #501 — header status glyph discriminant (full set: open/merged/closed/draft).
+  // isDone (merged/closed) wins over draft via the prState check.
+  const glyphState: GlyphState = isDraft && prState === 'open' ? 'draft' : prState;
 
   // Any active submit flow freezes the header verdict picker (spec § 8.3 — held
   // from Confirm through success or failure; the stale-commitOID/failed retry
@@ -409,6 +424,18 @@ export function PrHeader({
       <div className={styles.prHeaderTop}>
         <div className="pr-meta col gap-1" id={metaId}>
           <div className="row gap-2 muted-2 pr-meta-repo">
+            <svg
+              className={`${glyphStyles.prState} ${glyphStyles[PR_GLYPH_CLASS[glyphState]]}`}
+              data-pr-state={glyphState}
+              viewBox="0 0 16 16"
+              width="14"
+              height="14"
+              fill="currentColor"
+              aria-hidden="true"
+            >
+              <title>{PR_GLYPH_LABEL[glyphState]}</title>
+              <path d={PR_GLYPH_PATH[glyphState]} />
+            </svg>
             <span>
               {reference.owner}/{reference.repo}
             </span>
@@ -479,6 +506,13 @@ export function PrHeader({
               </span>
             )}
             {iterationLabel && <span className="chip">{iterationLabel}</span>}
+            {/* #501 — info Draft marker. Open drafts only; merged/closed win via glyphState.
+                A "marker", not a pill/badge. Load-time only (ActivePrUpdated carries no draft).
+                The chip-draft class is a collapse-keeplist hook (see Step 4a) — chip-info
+                supplies the visuals, chip-draft carries no style of its own. */}
+            {prState === 'open' && isDraft && (
+              <span className="chip chip-info chip-draft">Draft</span>
+            )}
           </div>
         </div>
         {/* No action buttons during cold load: nothing is clickable before the PR

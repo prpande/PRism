@@ -4,10 +4,28 @@ namespace PRism.AI.Placeholder;
 
 internal static class PlaceholderData
 {
+    // Short body shared with the #410 inbox enricher's hover summary — kept terse on purpose
+    // (the inbox chip is a one-liner). Do NOT grow this; the PR-detail summary uses the grouped
+    // sample below.
     public const string SummaryBody =
         "- Refactors the `Calc` utilities to tighten arithmetic boundary handling.\n" +
         "- Simplifies error mapping; behavior is preserved.\n" +
         "- Adds tests for the new boundary cases.";
+
+    // #525: the PR-detail Preview summary reflects the new grouped shape — bullets grouped under `###`
+    // subheadings — at a representative (~default-cap) length, so Preview demonstrates the format the Live
+    // summarizer now targets. This is the reference shape for the B1 visual gate. It is a FIXED sample and
+    // does NOT react to the configured cap value (D4).
+    public const string SummaryBodyGrouped =
+        "### What changed\n" +
+        "- Refactors the `Calc` utilities to tighten arithmetic boundary handling.\n" +
+        "- Extracts the overflow guard into a single `EnsureInRange` helper so the upper- and lower-bound checks share one path.\n" +
+        "- Simplifies error mapping; externally observable behavior is preserved.\n\n" +
+        "### Risk & review focus\n" +
+        "- The new clamp on the upper bound is the highest-risk line — confirm it is inclusive and free of off-by-one error.\n" +
+        "- Negative inputs now flow through the shared guard; verify they still throw rather than silently saturating.\n\n" +
+        "### Tests\n" +
+        "- Adds boundary cases for the new upper-bound and negative-input paths.";
 
     public const string SummaryCategory = "Refactor";
 

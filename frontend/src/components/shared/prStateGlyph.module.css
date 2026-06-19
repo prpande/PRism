@@ -1,0 +1,21 @@
+/* Shared PR-state glyph colours for PrHeader (#501). InboxRow defines its own copies
+   in InboxRow.module.css; this module exists so the header doesn't import the inbox
+   row's stylesheet. Colours match the established semantics. */
+.prState {
+  display: block;
+  width: 14px;
+  height: 14px;
+  flex: none;
+}
+.prOpen {
+  color: var(--success-fg);
+}
+.prMerged {
+  color: var(--merged-fg);
+}
+.prClosed {
+  color: var(--danger-fg);
+}
+.prDraft {
+  color: var(--info-fg);
+}

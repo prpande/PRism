@@ -110,7 +110,8 @@ internal static class ServiceCollectionExtensions
                 sp.GetRequiredService<ILogger<ClaudeCodeSummarizer>>(),
                 sp.GetRequiredService<IAiInteractionLog>(),
                 sp.GetRequiredService<IReviewEventBus>(),
-                sp.GetRequiredService<IActivePrCache>());
+                sp.GetRequiredService<IActivePrCache>(),
+                sp.GetRequiredService<IConfigStore>()); // #525 hot-read summary cap
         });
 
         // Net-new STRUCTURED resolver for the file-focus seam: returns DiffDto (not a flattened
