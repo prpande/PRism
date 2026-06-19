@@ -43,6 +43,8 @@ internal static class TestEndpoints
 
     internal sealed record SetPrStateRequest(string State);
 
+    internal sealed record SetDraftRequest(bool IsDraft);
+
     internal sealed record MarkPrViewedRequest(string Owner, string Repo, int Number, string TabId);
 
     internal sealed record EmitPrUpdatedRequest(
@@ -361,6 +363,16 @@ internal static class TestEndpoints
                 return Results.BadRequest(new { error = "state-invalid", state = req.State, message = ex.Message });
             }
             return Results.Ok(new { ok = true, state = store.PrState });
+        });
+
+        // #501 e2e-only. Flags the scenario PR as a draft so FakePrReader / FakeSectionQueryRunner
+        // emit IsDraft=true, driving the header glyph+marker and the inbox draft chip in baselines.
+        app.MapPost("/test/set-draft", (SetDraftRequest req, IServiceProvider sp) =>
+        {
+            var store = sp.GetService<FakeReviewBackingStore>();
+            if (store is null) return StoreMissing("/test/set-draft");
+            store.SetDraft(req.IsDraft);
+            return Results.NoContent();
         });
 
         // ----- /test/submit/* — drive the FakeReviewSubmitter (plan Task 61) -----
