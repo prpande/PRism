@@ -89,6 +89,30 @@ describe('AiSummaryCard', () => {
     expect(within(region).getByText(/out of date/i)).toBeInTheDocument();
   });
 
+  it('announces on mount when already stale (returning from Settings after a cap change)', () => {
+    // The chip is present at first render, so the polite live region would otherwise stay silent.
+    render(<AiSummaryCard {...baseProps} summary={{ body: 'b', category: 'fix' }} isStale live />);
+    const region = screen.getByRole('status');
+    expect(within(region).getByText('Summary is no longer up to date.')).toBeInTheDocument();
+  });
+
+  it('does NOT announce stale-on-mount in Preview (the chip is Live-only)', () => {
+    render(
+      <AiSummaryCard
+        {...baseProps}
+        summary={{ body: 'b', category: 'fix' }}
+        isStale
+        live={false}
+      />,
+    );
+    expect(screen.queryByText('Summary is no longer up to date.')).not.toBeInTheDocument();
+  });
+
+  it('does NOT announce stale-on-mount when fresh', () => {
+    render(<AiSummaryCard {...baseProps} summary={{ body: 'b', category: 'fix' }} live />);
+    expect(screen.queryByText('Summary is no longer up to date.')).not.toBeInTheDocument();
+  });
+
   it('regenerating: control disabled + spinner, stale body + chip retained', () => {
     render(
       <AiSummaryCard

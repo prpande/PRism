@@ -20,6 +20,7 @@ function prefs(overrides: Partial<PreferencesResponse['ui']> = {}): PreferencesR
       contentScale: 'm',
       providerTimeoutSeconds: 240,
       hunkAnnotationCap: 10,
+      summaryMaxChars: 1000,
       ...overrides,
     },
     inbox: {

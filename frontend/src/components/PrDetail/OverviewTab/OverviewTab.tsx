@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import { useFileDiff } from '../../../hooks/useFileDiff';
 import { useAiSummary } from '../../../hooks/useAiSummary';
 import { useAiGate, useIsLiveMode } from '../../../hooks/useAiGate';
+import { usePreferences } from '../../../hooks/usePreferences';
 import { usePrDetailContext } from '../prDetailContext';
 import { buildAllRange } from '../range';
 import { AiSummaryCard } from './AiSummaryCard';
@@ -17,6 +18,7 @@ export function OverviewTab() {
     usePrDetailContext();
   const aiOn = useAiGate('summary');
   const live = useIsLiveMode();
+  const { preferences } = usePreferences();
 
   const diff = useFileDiff(prRef, buildAllRange(prDetail.pr));
   const {
@@ -27,7 +29,14 @@ export function OverviewTab() {
     regenerating: aiRegenerating,
     regenerateError: aiRegenerateError,
     regenerate: aiRegenerate,
-  } = useAiSummary(prRef, aiOn, subscribed, baseShaChanged);
+    // #525 null while preferences load → useAiSummary suppresses cap-staleness until the cap is known.
+  } = useAiSummary(
+    prRef,
+    aiOn,
+    subscribed,
+    baseShaChanged,
+    preferences?.ui.summaryMaxChars ?? null,
+  );
 
   const filesCount = diff.data?.files.length ?? 0;
   const threadsCount = prDetail.reviewComments.length;

@@ -190,6 +190,90 @@ describe('useAiSummary', () => {
     expect(result.current.isStale).toBe(false);
   });
 
+  // #525 — cap-change staleness. A summary generated under a cap that no longer matches the live
+  // configured cap is "Out of date" (Regenerate offered), detected by comparing the stamped
+  // generatedMaxChars to the configuredMaxChars param.
+  it('is stale when the generated cap differs from the configured cap', async () => {
+    vi.spyOn(api, 'getAiSummaryResult').mockResolvedValue({
+      kind: 'ok',
+      summary: { body: 'b', category: 'fix', generatedMaxChars: 1000 },
+    });
+    const { result } = renderHook(() =>
+      useAiSummary(pr, true, true, false, /* configuredMaxChars */ 2000),
+    );
+    await waitFor(() => expect(result.current.summary).not.toBeNull());
+    expect(result.current.isStale).toBe(true);
+  });
+
+  it('is NOT stale when the generated cap matches the configured cap', async () => {
+    vi.spyOn(api, 'getAiSummaryResult').mockResolvedValue({
+      kind: 'ok',
+      summary: { body: 'b', category: 'fix', generatedMaxChars: 1000 },
+    });
+    const { result } = renderHook(() => useAiSummary(pr, true, true, false, 1000));
+    await waitFor(() => expect(result.current.summary).not.toBeNull());
+    expect(result.current.isStale).toBe(false);
+  });
+
+  it('is NOT stale when the generated cap is null (legacy summary)', async () => {
+    vi.spyOn(api, 'getAiSummaryResult').mockResolvedValue({
+      kind: 'ok',
+      summary: { body: 'b', category: 'fix' }, // no generatedMaxChars
+    });
+    const { result } = renderHook(() => useAiSummary(pr, true, true, false, 2000));
+    await waitFor(() => expect(result.current.summary).not.toBeNull());
+    expect(result.current.isStale).toBe(false);
+  });
+
+  it('is NOT stale while the configured cap is still null (preferences-load window — no flicker)', async () => {
+    vi.spyOn(api, 'getAiSummaryResult').mockResolvedValue({
+      kind: 'ok',
+      summary: { body: 'b', category: 'fix', generatedMaxChars: 1000 },
+    });
+    const { result } = renderHook(() => useAiSummary(pr, true, true, false, null));
+    await waitFor(() => expect(result.current.summary).not.toBeNull());
+    expect(result.current.isStale).toBe(false);
+  });
+
+  it('does NOT auto-refetch when the configured cap changes (render-time compare, token discipline)', async () => {
+    const spy = vi.spyOn(api, 'getAiSummaryResult').mockResolvedValue({
+      kind: 'ok',
+      summary: { body: 'b', category: 'fix', generatedMaxChars: 1000 },
+    });
+    const { result, rerender } = renderHook(({ cap }) => useAiSummary(pr, true, true, false, cap), {
+      initialProps: { cap: 1000 as number | null },
+    });
+    await waitFor(() => expect(spy).toHaveBeenCalledTimes(1));
+    expect(result.current.isStale).toBe(false);
+    rerender({ cap: 3000 }); // user changed the cap in Settings while this PR stayed open
+    expect(result.current.isStale).toBe(true); // picked up without a refetch
+    await Promise.resolve();
+    expect(spy).toHaveBeenCalledTimes(1); // NO extra GET
+  });
+
+  it('regenerate clears cap-change staleness (new summary restamps the current cap)', async () => {
+    vi.spyOn(api, 'getAiSummaryResult').mockResolvedValue({
+      kind: 'ok',
+      summary: { body: 'old', category: 'fix', generatedMaxChars: 1000 },
+    });
+    vi.spyOn(api, 'regenerateAiSummary').mockResolvedValue({
+      kind: 'ok',
+      summary: { body: 'new', category: 'fix', generatedMaxChars: 3000 },
+    });
+    const { result } = renderHook(() => useAiSummary(pr, true, true, false, 3000));
+    await waitFor(() => expect(result.current.summary).not.toBeNull());
+    expect(result.current.isStale).toBe(true); // 1000 != 3000
+    await act(async () => {
+      await result.current.regenerate();
+    });
+    expect(result.current.summary).toEqual({
+      body: 'new',
+      category: 'fix',
+      generatedMaxChars: 3000,
+    });
+    expect(result.current.isStale).toBe(false); // restamped to the live cap
+  });
+
   it('regenerate() retains the present body on 503', async () => {
     vi.spyOn(api, 'getAiSummaryResult').mockResolvedValue({
       kind: 'ok',

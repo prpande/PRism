@@ -24,6 +24,9 @@ export interface UiPreferences {
   // #496 AI Settings tab — clamped, hot-reloaded knobs. The GET DTO already clamps these for display.
   providerTimeoutSeconds: number;
   hunkAnnotationCap: number;
+  // #525 best-effort summary character cap (500–5000, default 1000). GET clamps for display; fed into
+  // the summarizer prompt and stamped onto PrSummary.generatedMaxChars so the card can detect a cap change.
+  summaryMaxChars: number;
 }
 
 export interface InboxSectionsPreferences {
@@ -247,6 +250,10 @@ export interface PrDetailDto {
 export interface PrSummary {
   body: string;
   category: string;
+  // #525 the summary cap this summary was generated under (camelCase wire field). Optional/nullable so
+  // legacy payloads + the ~existing `{ body, category }` test literals stay valid; a null/absent value is
+  // never treated as stale. useAiSummary compares it to the live configured cap to offer Regenerate.
+  generatedMaxChars?: number | null;
 }
 
 export type AiSummaryResult =

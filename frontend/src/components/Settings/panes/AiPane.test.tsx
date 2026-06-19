@@ -10,6 +10,7 @@ const prefs = vi.hoisted(() => ({
   aiMode: 'off' as 'off' | 'preview' | 'live',
   providerTimeoutSeconds: 240,
   hunkAnnotationCap: 10,
+  summaryMaxChars: 1000,
 }));
 vi.mock('../../../hooks/usePreferences', () => ({
   usePreferences: () => ({
@@ -22,6 +23,7 @@ vi.mock('../../../hooks/usePreferences', () => ({
         aiMode: prefs.aiMode,
         providerTimeoutSeconds: prefs.providerTimeoutSeconds,
         hunkAnnotationCap: prefs.hunkAnnotationCap,
+        summaryMaxChars: prefs.summaryMaxChars,
       },
       inbox: { sections: {} },
       github: {},
@@ -43,6 +45,7 @@ beforeEach(() => {
   prefs.aiMode = 'off';
   prefs.providerTimeoutSeconds = 240;
   prefs.hunkAnnotationCap = 10;
+  prefs.summaryMaxChars = 1000;
   vi.mocked(consentApi.getEgressDisclosure).mockResolvedValue(disclosure(false));
   vi.mocked(consentApi.postAiConsent).mockResolvedValue();
 });
@@ -185,5 +188,13 @@ describe('AiPane', () => {
     sb.focus();
     await userEvent.keyboard('{ArrowUp}'); // 10 -> 11
     await waitFor(() => expect(set).toHaveBeenCalledWith('ui.ai.hunkAnnotationCap', 11));
+  });
+
+  it('renders the summary-length stepper and writes on step (step 100)', async () => {
+    render(<AiPane />);
+    const sb = screen.getByRole('spinbutton', { name: 'Summary length' });
+    sb.focus();
+    await userEvent.keyboard('{ArrowUp}'); // 1000 -> 1100
+    await waitFor(() => expect(set).toHaveBeenCalledWith('ui.ai.summaryMaxChars', 1100));
   });
 });
