@@ -150,3 +150,16 @@ describe('PrHeader refresh button', () => {
     expect(screen.getByTestId('pr-refresh-button')).toBeInTheDocument();
   });
 });
+
+describe('PrHeader viewerReview wiring', () => {
+  it('passes viewerReview to the action button and computes staleness', () => {
+    renderHeader({
+      prState: 'open',
+      session: null,
+      currentHeadSha: 'HEAD2',
+      viewerReview: { state: 'approved', submittedAt: new Date().toISOString(), commitSha: 'HEAD1' },
+    });
+    expect(screen.getByTestId('review-action-caption')).toHaveTextContent(/You reviewed/);
+    expect(screen.getByTestId('review-action-caption')).toHaveTextContent(/out of date/);
+  });
+});
