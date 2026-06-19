@@ -145,7 +145,7 @@ function Report({ report }: { report: AiUsageReport }) {
 
   return (
     <>
-      <div className={styles.card}>
+      <div className={styles.card} role="region" aria-label="Usage summary">
         <div className={styles.headlineCost}>{formatCost(report.totals.estimatedCostUsd)}</div>
         <div>{formatTokens(report.totals.totalTokens)} tokens</div>
         <div className={styles.headlineSub}>
@@ -183,6 +183,7 @@ function Report({ report }: { report: AiUsageReport }) {
             <th>Feature</th>
             <th className={styles.num}>Calls</th>
             <th className={styles.num}>Tokens</th>
+            <th className={styles.num}>Est. cost</th>
           </tr>
         </thead>
         <tbody>
@@ -191,6 +192,7 @@ function Report({ report }: { report: AiUsageReport }) {
               <td>{f.displayName}</td>
               <td className={styles.num}>{formatTokens(f.providerCalls)}</td>
               <td className={styles.num}>{formatTokens(f.totalTokens)}</td>
+              <td className={styles.num}>{formatCost(f.estimatedCostUsd)}</td>
             </tr>
           ))}
         </tbody>

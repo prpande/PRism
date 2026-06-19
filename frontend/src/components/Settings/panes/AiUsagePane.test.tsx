@@ -51,6 +51,11 @@ function report(over: Partial<AiUsageReport> = {}): AiUsageReport {
   };
 }
 
+/** Wait for the report to be rendered by asserting the headline summary region is present. */
+async function findHeadlineSummary() {
+  return screen.findByRole('region', { name: /usage summary/i });
+}
+
 describe('AiUsagePane', () => {
   beforeEach(() => vi.restoreAllMocks());
 
@@ -58,7 +63,8 @@ describe('AiUsagePane', () => {
     vi.spyOn(api, 'getAiUsage').mockResolvedValue(report());
     render(<AiUsagePane />);
 
-    expect(await screen.findByText('$0.0012')).toBeInTheDocument(); // not $0.00
+    const summary = await findHeadlineSummary();
+    expect(within(summary).getByText('$0.0012')).toBeInTheDocument(); // not $0.00
     const table = screen.getByRole('table', { name: /by feature/i });
     expect(within(table).getByText('PR Summary')).toBeInTheDocument();
   });
@@ -96,7 +102,8 @@ describe('AiUsagePane', () => {
 
     expect(await screen.findByText('Could not load usage data.')).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: /try again/i }));
-    expect(await screen.findByText('$0.0012')).toBeInTheDocument();
+    const summary = await findHeadlineSummary();
+    expect(within(summary).getByText('$0.0012')).toBeInTheDocument();
     expect(spy).toHaveBeenCalledTimes(2);
   });
 
@@ -105,11 +112,11 @@ describe('AiUsagePane', () => {
       .mockResolvedValueOnce(report()) // initial 7d loads
       .mockRejectedValueOnce(new Error('boom')); // 30d switch fails
     render(<AiUsagePane />);
-    await screen.findByText('$0.0012');
+    const summary = await findHeadlineSummary();
 
     await userEvent.click(screen.getByRole('radio', { name: '30d' }));
     expect(await screen.findByText(/could not refresh/i)).toBeInTheDocument();
-    expect(screen.getByText('$0.0012')).toBeInTheDocument(); // stale data retained, not wiped
+    expect(within(summary).getByText('$0.0012')).toBeInTheDocument(); // stale data retained, not wiped
   });
 
   it('keeps the previous data visible while a window switch loads (stale-while-loading)', async () => {
@@ -124,21 +131,21 @@ describe('AiUsagePane', () => {
           }),
       );
     render(<AiUsagePane />);
-    await screen.findByText('$0.0012');
+    const summary = await findHeadlineSummary();
 
     await userEvent.click(screen.getByRole('radio', { name: '30d' }));
     // Old data still on screen while the 30d fetch is in flight.
-    expect(screen.getByText('$0.0012')).toBeInTheDocument();
+    expect(within(summary).getByText('$0.0012')).toBeInTheDocument();
 
     resolveSecond(report({ window: '30d', totals: { ...report().totals, estimatedCostUsd: 9.5 } }));
-    await waitFor(() => expect(screen.getByText('$9.50')).toBeInTheDocument());
+    await waitFor(() => expect(within(summary).getByText('$9.50')).toBeInTheDocument());
     expect(spy).toHaveBeenCalledWith('30d');
   });
 
   it('renders the by-PR "Inbox (batched)" row when the drill-down is expanded', async () => {
     vi.spyOn(api, 'getAiUsage').mockResolvedValue(report());
     render(<AiUsagePane />);
-    await screen.findByText('$0.0012');
+    await findHeadlineSummary();
 
     await userEvent.click(screen.getByRole('button', { name: /by pr/i }));
     expect(screen.getByText('Inbox (batched)')).toBeInTheDocument();
@@ -164,7 +171,7 @@ describe('AiUsagePane', () => {
       report({ byPr: [...priced, batch], totalPrCount: 26 }),
     );
     render(<AiUsagePane />);
-    await screen.findByText('$0.0012');
+    await findHeadlineSummary();
 
     await userEvent.click(screen.getByRole('button', { name: /by pr/i }));
     expect(screen.getByText('Inbox (batched)')).toBeInTheDocument(); // would be dropped by a .slice(0,20)
