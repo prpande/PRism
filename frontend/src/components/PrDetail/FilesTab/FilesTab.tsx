@@ -744,6 +744,8 @@ export function FilesTab() {
             headSha={prDetail.pr.headSha}
             baseSha={prDetail.pr.baseSha}
             lineWrap={lineWrap}
+            focusEntries={focusEntries}
+            focusStatus={fileFocus.status}
           />
         </div>
       </div>

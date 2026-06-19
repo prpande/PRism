@@ -695,6 +695,65 @@ describe('DiffPane', () => {
     );
     expect(screen.queryByTestId('ai-hunk-skeleton')).not.toBeInTheDocument();
   });
+
+  // #508 (B1): when focus has resolved, the skeleton is gated to files the annotator
+  // will actually annotate (High/Medium), not shown on every open file during the load.
+  it('renders the skeleton while loading when focus flagged the open file (ok)', () => {
+    vi.mocked(useAiGate).mockReturnValue(true);
+    vi.mocked(useAiHunkAnnotations).mockReturnValue({ state: 'loading', annotations: null });
+    render(
+      <DiffPane
+        prRef={samplePrRef}
+        selectedPath="src/main.ts"
+        file={sampleFile}
+        diffMode="unified"
+        truncated={false}
+        reviewThreads={[]}
+        prUrl=""
+        focusStatus="ok"
+        focusEntries={[{ path: 'src/main.ts', level: 'high', rationale: 'core change' }]}
+      />,
+    );
+    expect(screen.getByTestId('ai-hunk-skeleton')).toBeInTheDocument();
+  });
+
+  it('does NOT render the skeleton while loading when focus did not flag the open file (ok)', () => {
+    vi.mocked(useAiGate).mockReturnValue(true);
+    vi.mocked(useAiHunkAnnotations).mockReturnValue({ state: 'loading', annotations: null });
+    render(
+      <DiffPane
+        prRef={samplePrRef}
+        selectedPath="src/main.ts"
+        file={sampleFile}
+        diffMode="unified"
+        truncated={false}
+        reviewThreads={[]}
+        prUrl=""
+        focusStatus="ok"
+        focusEntries={[{ path: 'other/file.ts', level: 'high', rationale: 'elsewhere' }]}
+      />,
+    );
+    expect(screen.queryByTestId('ai-hunk-skeleton')).not.toBeInTheDocument();
+  });
+
+  it('falls back to showing the skeleton on any open file when focus errored', () => {
+    vi.mocked(useAiGate).mockReturnValue(true);
+    vi.mocked(useAiHunkAnnotations).mockReturnValue({ state: 'loading', annotations: null });
+    render(
+      <DiffPane
+        prRef={samplePrRef}
+        selectedPath="src/main.ts"
+        file={sampleFile}
+        diffMode="unified"
+        truncated={false}
+        reviewThreads={[]}
+        prUrl=""
+        focusStatus="error"
+        focusEntries={null}
+      />,
+    );
+    expect(screen.getByTestId('ai-hunk-skeleton')).toBeInTheDocument();
+  });
 });
 
 function makeModifiedFile(hunks: FileChange['hunks']): FileChange {

@@ -6,6 +6,8 @@ import type {
   PrReference,
   HunkAnnotation,
   DiffLine,
+  FileFocus,
+  FileFocusStatus,
 } from '../../../../api/types';
 import { parseHunkLines, interleaveWholeFile } from './interleaveWholeFile';
 import type { InlineAnchor } from '../../Composer/InlineCommentComposer';
@@ -143,6 +145,13 @@ export interface DiffPaneProps {
   // useLockedPaneScroll, so a too-wide line scrolls without the two panes
   // drifting out of column-alignment. Owned by FilesTab's toolbar toggle.
   lineWrap?: boolean;
+
+  // #508 (B1) — shared file-focus result, forwarded from FilesTab, so the in-flight
+  // annotation skeleton can be gated to files an annotation is actually expected on
+  // (High/Medium focus). Optional: when absent (non-FilesTab callers / test harnesses),
+  // the skeleton falls back to the annotator's own loading state on any open file.
+  focusEntries?: FileFocus[] | null;
+  focusStatus?: FileFocusStatus;
 }
 
 function findAdjacentPair(lines: DiffLine[], idx: number): DiffLine | null {
@@ -175,6 +184,8 @@ export function DiffPane({
   headSha = '',
   baseSha = '',
   lineWrap = false,
+  focusEntries = null,
+  focusStatus,
 }: DiffPaneProps) {
   const annotationsEnabled = useAiGate('hunkAnnotations');
   const aiAnnotations = useAiHunkAnnotations(prRef, annotationsEnabled);
@@ -192,9 +203,32 @@ export function DiffPane({
     return m;
   }, [allAnnotations, selectedPath]);
 
-  // Annotator's OWN loading state drives the per-file cue (spec §3): robust even when
-  // file-focus errors or flagged zero files. Only while a file is open and enabled.
-  const annotationsLoading = aiAnnotations.state === 'loading' && !!selectedPath;
+  // Is the open file one the focus ranker flagged High/Medium — i.e. a file the
+  // annotator will actually annotate? Used to scope the in-flight skeleton (#508 B1).
+  const openFileFlagged = useMemo(() => {
+    if (!selectedPath || !focusEntries) return false;
+    const level = focusEntries.find((e) => e.path === selectedPath)?.level;
+    return level === 'high' || level === 'medium';
+  }, [focusEntries, selectedPath]);
+
+  // Show the in-flight annotation skeleton only where an annotation is actually expected
+  // (#508 B1 — was showing on EVERY open file during the PR-wide fetch). When focus has
+  // resolved (ok/empty/fallback), trust its flags: skeleton only on a High/Medium file
+  // ('empty' → none flagged → no skeleton, matching the annotator's 204). If focus ERRORED
+  // we can't tell which files will be annotated, so fall back to the annotator's own loading
+  // state on any open file. While focus is still LOADING the file-tree header marker already
+  // signals "AI working", so suppress the per-file skeleton. When no focus info is wired
+  // (focusStatus undefined — non-FilesTab callers / tests) keep the own-state fallback.
+  const focusResolved =
+    focusStatus === 'ok' || focusStatus === 'empty' || focusStatus === 'fallback';
+  const skeletonAllowed =
+    focusStatus === undefined || focusStatus === 'error'
+      ? true
+      : focusResolved
+        ? openFileFlagged
+        : false;
+  const annotationsLoading =
+    aiAnnotations.state === 'loading' && !!selectedPath && skeletonAllowed;
 
   // Hook ordering rule: isSplit must be computed before the hook call so it
   // can be passed as a parameter.
