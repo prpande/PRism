@@ -65,6 +65,23 @@ describe('EgressConsentModal', () => {
     expect(onAccept).not.toHaveBeenCalled();
   });
 
+  it('renders the AI spark in the title without altering the dialog name', async () => {
+    vi.spyOn(api, 'getEgressDisclosure').mockResolvedValue(disclosure);
+    render(<EgressConsentModal open onAccept={vi.fn()} onDecline={vi.fn()} />);
+    // The spark icon is aria-hidden, so the dialog name is still exactly the title.
+    expect(screen.getByRole('dialog', { name: 'Enable Live AI' })).toBeInTheDocument();
+  });
+
+  it('renders the egress callout with recipient and each data category', async () => {
+    vi.spyOn(api, 'getEgressDisclosure').mockResolvedValue(disclosure);
+    render(<EgressConsentModal open onAccept={vi.fn()} onDecline={vi.fn()} />);
+    // Recipient stays in its own element (exact-match selectors depend on this).
+    expect(await screen.findByText('Anthropic, via the Claude Code CLI')).toBeInTheDocument();
+    for (const c of disclosure.dataCategories) {
+      expect(screen.getByText(c)).toBeInTheDocument();
+    }
+  });
+
   it('submit error: shows retry copy, does not call onAccept, re-enables Accept', async () => {
     vi.spyOn(api, 'getEgressDisclosure').mockResolvedValue(disclosure);
     vi.spyOn(api, 'postAiConsent').mockRejectedValue(new Error('409'));
