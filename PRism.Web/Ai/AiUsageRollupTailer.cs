@@ -45,8 +45,11 @@ internal sealed partial class AiUsageRollupTailer : IHostedService, IDisposable
             try { await _loop.ConfigureAwait(false); }
             catch (OperationCanceledException) { }
         }
-        try { await TickAsync(cancellationToken).ConfigureAwait(false); } // final tick so shutdown leaves it current
+        try { await TickAsync(cancellationToken).ConfigureAwait(false); } // best-effort final flush; must never crash shutdown
         catch (OperationCanceledException) { }
+#pragma warning disable CA1031 // a shutdown-flush failure is logged, never propagated out of StopAsync
+        catch (Exception ex) { Log.TickFailed(_logger, ex); }
+#pragma warning restore CA1031
     }
 
     private async Task RunLoopAsync(CancellationToken ct)

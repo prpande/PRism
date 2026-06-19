@@ -1,5 +1,6 @@
 using FluentAssertions;
 using Microsoft.Extensions.Logging.Abstractions;
+using PRism.AI.Contracts.Observability;
 using PRism.Web.Ai;
 using Xunit;
 
@@ -91,6 +92,36 @@ public sealed class AiUsageRollupTailerTests : IDisposable
         await tailer.StopAsync(default);  // final tick folds the line
 
         store.SnapshotBuckets().Should().ContainSingle().Which.InputTokens.Should().Be(100);
+    }
+
+    [Fact]
+    public async Task StopAsync_does_not_throw_when_the_final_flush_fails()
+    {
+        // Arrange: create a FILE at "occupied", then point the store's dir INSIDE that path
+        // so Directory.CreateDirectory / the write throws IOException at persist time.
+        var occupied = Path.Combine(_dir, "occupied");
+        File.WriteAllText(occupied, "x");
+        var store = new AiUsageRollupStore(Path.Combine(occupied, "rollup-dir"), TimeProvider.System);
+
+        // Seed the store dirty so TickAsync will attempt a persist.
+        store.Fold(new AiInteractionLogReader.LogEntry(
+            new DateTimeOffset(2026, 6, 19, 10, 0, 0, TimeSpan.Zero),
+            new PRism.AI.Contracts.Observability.AiInteractionRecord(
+                "summary", "claude-code", "m", "o/r#1", null,
+                AiInteractionOutcome.Ok, true, InputTokens: 100, EstimatedCostUsd: 0.01m)));
+        store.IsDirty.Should().BeTrue();
+
+        // The log path can be absent — TickAsync handles a missing file.
+        var tailer = new AiUsageRollupTailer(
+            store,
+            Path.Combine(_dir, "absent.log"),
+            TimeProvider.System,
+            NullLogger<AiUsageRollupTailer>.Instance);
+        // NOTE: no StartAsync — _loop is null, StopAsync goes straight to the final tick.
+
+        // Act + assert: best-effort flush must never propagate the IOException out of StopAsync.
+        var act = async () => await tailer.StopAsync(default);
+        await act.Should().NotThrowAsync();
     }
 
     public void Dispose()
