@@ -433,13 +433,15 @@ Add to the existing PR-detail parsing test class (e.g. `tests/PRism.GitHub.Tests
         //  data.viewer.login and data.repository.pullRequest.reviews.nodes.)
         const string body = """
         {"data":{"viewer":{"login":"me"},"repository":{"pullRequest":{
-          "title":"t","body":"","state":"OPEN","headRefOid":"HEAD","baseRefOid":"B",
-          "author":{"login":"a"},"createdAt":"2026-01-01T00:00:00Z",
+          "title":"t","body":"","state":"OPEN","isDraft":false,"mergeable":"MERGEABLE",
+          "mergeStateStatus":"CLEAN","headRefName":"h","baseRefName":"b",
+          "headRefOid":"HEAD","baseRefOid":"B","author":{"login":"a"},
+          "createdAt":"2026-01-01T00:00:00Z","changedFiles":1,
           "reviews":{"nodes":[{"author":{"login":"me"},"state":"APPROVED",
             "submittedAt":"2026-02-01T00:00:00Z","commit":{"oid":"REVSHA"}}]}
         }}}}
         """;
-        var svc = /* construct GitHubReviewService with an HTTP handler returning `body` — reuse the class helper */;
+        var svc = NewService(new GraphQLPlusRestHandler { GraphQLBody = body });
         var detail = await svc.GetPrDetailAsync(new PrReference("o", "r", 1), default);
 
         Assert.NotNull(detail!.ViewerReview);
@@ -447,7 +449,7 @@ Add to the existing PR-detail parsing test class (e.g. `tests/PRism.GitHub.Tests
         Assert.Equal("REVSHA", detail.ViewerReview.CommitSha);
     }
 ```
-> If the existing class has no reusable HTTP-stub helper, follow the harness pattern already used by its other `GetPrDetailAsync` tests (same `IHttpClientFactory`/handler fake). Do not invent a new transport.
+> Harness is real: `GitHubReviewServicePrDetailTests` already has `GraphQLPlusRestHandler { GraphQLBody }` + a `NewService(handler)` helper (→ `GitHubReviewServiceFactory.Create`). Prefer copying its existing `PrDetailGraphQLBody` literal and inserting the `viewer` + `reviews` nodes over the trimmed body above, so `ParsePr` sees every field it reads.
 
 - [ ] **Step 6: Run — expect FAIL (ViewerReview still null)**
 
@@ -709,7 +711,9 @@ git commit -m "feat(pr-detail): deriveFace surfaces submitted review (fill, labe
 
 In `ReviewActionButton.test.tsx`, extend the `props()` helper defaults with `viewerReview: null, submittedReviewStale: false`, then add:
 ```ts
-import { reviewed } from '...'; // or inline a ViewerReview literal as in Task 5
+// inline the same ViewerReview helper as Task 5 (do not import across test files):
+const reviewed = (over: Partial<ViewerReview> = {}): ViewerReview =>
+  ({ state: 'approved', submittedAt: '2026-02-01T00:00:00Z', commitSha: 'sha', ...over });
 
 it('renders the reviewed caption with relative time', () => {
   render(<ReviewActionButton {...props({ viewerReview: { state: 'approved', submittedAt: new Date(Date.now() - 2*86400000).toISOString(), commitSha: 'x' } })} />);
@@ -848,7 +852,7 @@ git commit -m "feat(pr-detail): ReviewActionButton renders submitted-review capt
 In `PrHeader.test.tsx`, render `PrHeader` with a `viewerReview` prop on an open PR and a `currentHeadSha` that differs from the review's `commitSha`; assert the caption shows "out of date":
 ```ts
 it('passes viewerReview to the action button and computes staleness', () => {
-  renderPrHeader({
+  renderHeader({
     prState: 'open',
     session: null,
     currentHeadSha: 'HEAD2',
@@ -858,7 +862,7 @@ it('passes viewerReview to the action button and computes staleness', () => {
   expect(screen.getByTestId('review-action-caption')).toHaveTextContent(/out of date/);
 });
 ```
-> Mirror the existing `renderPrHeader`/props helper in that test file; add `viewerReview` to it.
+> Mirror the existing `renderHeader(extra: Partial<React.ComponentProps<typeof PrHeader>>)` helper in that test file (it already takes a prop-bag; `viewerReview` becomes valid once Task 7 Step 3 adds the prop).
 
 - [ ] **Step 2: Run — expect FAIL**
 
@@ -954,9 +958,9 @@ git add -A && git commit -m "chore(pr-detail): simplify pass + verification (#51
 - Frozen-query + allowlist → Task 3.
 - #318 output-only kebab → Task 1 probe.
 
-**Placeholder scan:** one intentional harness reference in Task 3 Step 5 (`/* construct … reuse the class helper */`) — the surrounding note directs the implementer to the existing `GetPrDetailAsync` test harness rather than inventing transport; all other steps carry complete code.
+**Placeholder scan:** none. Task 3 Step 5 now names the real harness (`NewService(new GraphQLPlusRestHandler { GraphQLBody = body })`); all steps carry complete code.
 
-**Type consistency:** `ReviewState` values (`approved`/`changes-requested`/`commented`) consistent across Task 1 (enum→kebab), Task 4 (TS union), Task 5 (`STATE_FILL`/`PRIOR_VERDICT_LABEL`). `mainAction` `'change'` defined in Task 5, consumed in Task 6 (falls into the existing `else → setMenuOpen` branch; `mainInteractiveDisabled` stays false because `mainDisabled` is false for `change`). `caption` shape identical in Task 5 (produced) and Task 6 (consumed). `submittedReviewStale` produced in Task 7, consumed in Task 5.
+**Type consistency:** `ReviewState` values (`approved`/`changes-requested`/`commented`) consistent across Task 1 (enum→kebab), Task 4 (TS union), Task 5 (`STATE_FILL`/`PRIOR_VERDICT_LABEL`). `mainAction` `'change'` defined in Task 5, consumed in Task 6 (falls into the existing `else → setMenuOpen` branch; `mainInteractiveDisabled` stays false because `mainDisabled` is false for `change`). `caption` shape identical in Task 5 (produced) and Task 6 (consumed). `submittedReviewStale` is computed in Task 7 (PrHeader) and is part of `ReviewActionInputs` consumed by `deriveFace` (Tasks 5-6); the Task 5 `inputs()` test helper supplies it as a pre-computed boolean (default `false`), mirroring the existing `headShaDrift` pattern.
 
 **Plan deviations from the spec (documented):**
 - Spec §3 said the caption lives by reflowing `.root` to `flex-direction: column`. Corrected: `.root` holds the split button (main+chevron) as a row, so the caption goes in a NEW `.wrap` column around `.root` (Task 6). Same visual result (Treatment A).
