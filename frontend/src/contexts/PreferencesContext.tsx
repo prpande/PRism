@@ -22,6 +22,7 @@ export type PreferenceKey =
   | 'ui.ai.providerTimeoutSeconds'
   | 'ui.ai.hunkAnnotationCap'
   | 'ui.ai.summaryMaxChars'
+  | `ui.ai.features.${'summary' | 'fileFocus' | 'hunkAnnotations' | 'inboxEnrichment'}`
   | 'density'
   | 'contentScale'
   | 'inbox.defaultSort'
@@ -43,6 +44,7 @@ type InboxSectionKey = Exclude<
   | 'ui.ai.providerTimeoutSeconds'
   | 'ui.ai.hunkAnnotationCap'
   | 'ui.ai.summaryMaxChars'
+  | `ui.ai.features.${'summary' | 'fileFocus' | 'hunkAnnotations' | 'inboxEnrichment'}`
   | 'density'
   | 'contentScale'
   | 'inbox.defaultSort'
@@ -64,6 +66,10 @@ export function readKey(prefs: PreferencesResponse, key: PreferenceKey): unknown
   if (key === 'inbox.sectionOrder') return prefs.inbox.sectionOrder;
   if (key === 'inbox.showActivityRail') return prefs.inbox.showActivityRail;
   if (key === 'inbox.groupByRepo') return prefs.inbox.groupByRepo;
+  if (key.startsWith('ui.ai.features.'))
+    return prefs.ui.features?.[
+      key.slice('ui.ai.features.'.length) as keyof PreferencesResponse['ui']['features']
+    ];
   const id = key.slice('inbox.sections.'.length) as keyof PreferencesResponse['inbox']['sections'];
   return prefs.inbox.sections[id];
 }
@@ -114,6 +120,19 @@ export function writeKey(
     return { ...prefs, inbox: { ...prefs.inbox, showActivityRail: value as boolean } };
   if (key === 'inbox.groupByRepo')
     return { ...prefs, inbox: { ...prefs.inbox, groupByRepo: value as boolean } };
+  if (key.startsWith('ui.ai.features.')) {
+    const seam = key.slice('ui.ai.features.'.length) as keyof PreferencesResponse['ui']['features'];
+    return {
+      ...prefs,
+      ui: {
+        ...prefs.ui,
+        features: {
+          ...(prefs.ui.features ?? {}),
+          [seam]: value as boolean,
+        } as PreferencesResponse['ui']['features'],
+      },
+    };
+  }
   const id = (key as InboxSectionKey).slice(
     'inbox.sections.'.length,
   ) as keyof PreferencesResponse['inbox']['sections'];
