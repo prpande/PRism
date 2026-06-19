@@ -24,6 +24,7 @@ export function makePr(overrides: Partial<PrDetailPr> = {}): PrDetailPr {
     ciSummary: 'success',
     isMerged: false,
     isClosed: false,
+    isDraft: false,
     openedAt: '2026-05-01T00:00:00Z',
     mergedAt: null,
     closedAt: null,
