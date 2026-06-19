@@ -97,16 +97,16 @@ export function InboxRow({
   // working marker. The draft-chip branch is `pr.isDraft && !isDone` in the JSX, so we
   // mirror that condition here.
   const id = prId(pr);
-  const chipState: 'off' | 'loading' | 'ready' | 'empty' =
-    pr.isDraft && !isDone
-      ? 'off'
-      : !showCategoryChip
-        ? 'off'
-        : !settled.has(id)
-          ? 'loading'
-          : enrichment?.categoryChip
-            ? 'ready'
-            : 'empty';
+  let chipState: 'off' | 'loading' | 'ready' | 'empty';
+  if (pr.isDraft && !isDone) {
+    chipState = 'off';
+  } else if (!showCategoryChip) {
+    chipState = 'off';
+  } else if (!settled.has(id)) {
+    chipState = 'loading';
+  } else {
+    chipState = enrichment?.categoryChip ? 'ready' : 'empty';
+  }
 
   // Loading suffix rides the aria-label (the marker is decorative when loading so the
   // button's own aria-label is the only SR announcement). Must append to BOTH branches.

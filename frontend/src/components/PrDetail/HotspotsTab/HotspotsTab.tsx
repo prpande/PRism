@@ -52,18 +52,22 @@ export function HotspotsTab() {
   // One persistent polite announcer across all status branches (loading → ok/empty/fallback/
   // error/no-changes/not-subscribed). role="status" is an implicit aria-live="polite"; because
   // it is always mounted and lives outside any aria-busy subtree, AT announces each transition.
-  const statusAnnouncement =
-    status === 'loading'
-      ? 'Analyzing AI hotspots…'
-      : status === 'ok'
-        ? highMediumCount > 0
-          ? `${highMediumCount} ${highMediumCount === 1 ? 'file needs' : 'files need'} attention`
-          : 'No files need special attention'
-        : status === 'empty'
-          ? 'No files need special attention'
-          : status === 'fallback'
-            ? 'AI could not rank this pull request automatically'
-            : ''; // 'error' | 'no-changes' | 'not-subscribed' announce nothing (no AI outcome)
+  let statusAnnouncement: string;
+  if (status === 'loading') {
+    statusAnnouncement = 'Analyzing AI hotspots…';
+  } else if (status === 'ok') {
+    const noun = highMediumCount === 1 ? 'file needs' : 'files need';
+    statusAnnouncement =
+      highMediumCount > 0
+        ? `${highMediumCount} ${noun} attention`
+        : 'No files need special attention';
+  } else if (status === 'empty') {
+    statusAnnouncement = 'No files need special attention';
+  } else if (status === 'fallback') {
+    statusAnnouncement = 'AI could not rank this pull request automatically';
+  } else {
+    statusAnnouncement = ''; // 'error' | 'no-changes' | 'not-subscribed' announce nothing
+  }
 
   const renderHotspotsBody = () => {
     if (status === 'loading') {
