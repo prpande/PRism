@@ -56,7 +56,9 @@ export function HotspotsTab() {
     status === 'loading'
       ? 'Analyzing AI hotspots…'
       : status === 'ok'
-        ? `${highMediumCount} ${highMediumCount === 1 ? 'file needs' : 'files need'} attention`
+        ? highMediumCount > 0
+          ? `${highMediumCount} ${highMediumCount === 1 ? 'file needs' : 'files need'} attention`
+          : 'No files need special attention'
         : status === 'empty'
           ? 'No files need special attention'
           : status === 'fallback'

@@ -194,6 +194,25 @@ describe('HotspotsTab', () => {
     expect(screen.getByRole('status')).toHaveTextContent(/no files need special attention/i);
   });
 
+  it('announces the high/medium count when status is ok with high or medium entries', () => {
+    renderTab({
+      status: 'ok',
+      entries: [
+        { path: 'h.cs', level: 'high', rationale: 'Core logic\n- detail' },
+        { path: 'm.cs', level: 'medium', rationale: 'Localized change\n- detail' },
+      ],
+    });
+    expect(screen.getByRole('status')).toHaveTextContent(/2 files need attention/i);
+  });
+
+  it('announces "no files need special attention" when status is ok but all entries are low', () => {
+    renderTab({
+      status: 'ok',
+      entries: [{ path: 'c.cs', level: 'low', rationale: 'Formatting only' }],
+    });
+    expect(screen.getByRole('status')).toHaveTextContent(/no files need special attention/i);
+  });
+
   it('empty (all-low) shows the positive message, no card, no footer, no retry', () => {
     renderTab({ status: 'empty', entries: [] });
     expect(screen.getByText(/nothing needs special attention/i)).toBeInTheDocument();
