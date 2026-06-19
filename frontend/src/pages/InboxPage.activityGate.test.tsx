@@ -54,7 +54,7 @@ vi.mock('../hooks/usePreferences', () => ({
         defaultSort: 'updated',
         showActivityRail: showRailRef.value,
         groupByRepo: true,
-        sectionOrder: 'review-requested,awaiting-author,authored-by-me,mentioned',
+        sectionOrder: 'authored-by-me,review-requested,awaiting-author,mentioned',
       },
     },
   }),

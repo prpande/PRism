@@ -35,7 +35,7 @@ function prefs(contentScale: PreferencesResponse['ui']['contentScale']): Prefere
         'recently-closed': true,
       },
       defaultSort: 'updated',
-      sectionOrder: 'review-requested,awaiting-author,authored-by-me,mentioned',
+      sectionOrder: 'authored-by-me,review-requested,awaiting-author,mentioned',
       showActivityRail: false,
       groupByRepo: true,
     },

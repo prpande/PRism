@@ -23,7 +23,7 @@ function prefs(overrides: Partial<PreferencesResponse['ui']> = {}): PreferencesR
     inbox: {
       sections: {},
       defaultSort: 'updated',
-      sectionOrder: 'review-requested,awaiting-author,authored-by-me,mentioned',
+      sectionOrder: 'authored-by-me,review-requested,awaiting-author,mentioned',
     } as PreferencesResponse['inbox'],
     github: { host: 'https://github.com', configPath: '/c', logsPath: '/l' },
   };

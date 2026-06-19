@@ -157,7 +157,7 @@ public class PreferencesEndpointsTests
 
         var initial = await client.GetFromJsonAsync<JsonElement>(new Uri("/api/preferences", UriKind.Relative));
         initial.GetProperty("inbox").GetProperty("sectionOrder").GetString()
-            .Should().Be("review-requested,awaiting-author,authored-by-me,mentioned");
+            .Should().Be("authored-by-me,review-requested,awaiting-author,mentioned");
 
         using var content = new StringContent(
             """{ "inbox.sectionOrder": "mentioned,authored-by-me,review-requested,awaiting-author" }""",

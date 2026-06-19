@@ -449,15 +449,18 @@ public class ConfigStorePatchAsyncDottedPathTests
     // #275: SectionOrder is a new trailing-defaulted string parameter on InboxConfig.
     // AppConfig.Default (what feature code reads at runtime) must expose the canonical
     // work-section order — recently-closed is pinned in the frontend, so it is absent here.
+    // The canonical default leads with authored-by-me (your own PRs surface first).
     [Fact]
     public void Default_SectionOrder_IsCanonicalWorkOrder()
     {
         AppConfig.Default.Inbox.SectionOrder
-            .Should().Be("review-requested,awaiting-author,authored-by-me,mentioned");
+            .Should().Be("authored-by-me,review-requested,awaiting-author,mentioned");
     }
 
     // #275: a config.json written before the field existed must load with the canonical
     // default via STJ's record-positional-default path (same mechanism as DefaultSort).
+    // Canonical default = "authored-by-me,review-requested,awaiting-author,mentioned"
+    // (authored-by-me leads); see AppConfig.SectionOrder.
     [Fact]
     public async Task InitAsync_LegacyConfigWithoutSectionOrder_DefaultsToCanonical()
     {
@@ -472,7 +475,7 @@ public class ConfigStorePatchAsyncDottedPathTests
         await store.InitAsync(CancellationToken.None);
 
         store.Current.Inbox.SectionOrder
-            .Should().Be("review-requested,awaiting-author,authored-by-me,mentioned");
+            .Should().Be("authored-by-me,review-requested,awaiting-author,mentioned");
     }
 
     // #275: a valid 4-id permutation patches through to InboxConfig.SectionOrder and persists.

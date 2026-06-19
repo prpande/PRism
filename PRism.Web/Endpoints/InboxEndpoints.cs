@@ -18,10 +18,12 @@ internal static class InboxEndpoints
 
     // Canonical UI order. Serialized sections follow this regardless of snapshot
     // dictionary enumeration; unknown ids sort last (stable) and render with a
-    // fallback label rather than being dropped.
+    // fallback label rather than being dropped. authored-by-me leads (your own PRs
+    // first); recently-closed stays pinned last. The frontend re-sorts by the saved
+    // inbox.sectionOrder preference, so this is the cold-start / no-preference order.
     private static readonly string[] SectionOrder =
     {
-        "review-requested", "awaiting-author", "authored-by-me", "mentioned", "recently-closed",
+        "authored-by-me", "review-requested", "awaiting-author", "mentioned", "recently-closed",
     };
 
     public static IEndpointRouteBuilder MapInbox(this IEndpointRouteBuilder app)

@@ -12,7 +12,7 @@ type Preferences = ReturnType<typeof makeDefaultPreferences> & {
 };
 
 function makePrefsWithOrder(
-  sectionOrder = 'review-requested,awaiting-author,authored-by-me,mentioned',
+  sectionOrder = 'authored-by-me,review-requested,awaiting-author,mentioned',
 ): Preferences {
   const base = makeDefaultPreferences();
   return {
@@ -100,8 +100,9 @@ test('moving a section down in Settings reorders the inbox and persists across r
   const dialog = page.getByRole('dialog', { name: 'Settings' });
   await expect(dialog).toBeVisible({ timeout: 30_000 });
 
-  // Default order: review-requested, awaiting-author, authored-by-me, mentioned.
-  // Click "Move Review requested down" → new order: awaiting-author, review-requested, ...
+  // Default order: authored-by-me, review-requested, awaiting-author, mentioned.
+  // Click "Move Review requested down" → it swaps below awaiting-author, so awaiting-author
+  // ends up before review-requested (which is what the assertions below check).
   const postPromise = page.waitForResponse(
     (r) => r.url().includes('/api/preferences') && r.request().method() === 'POST',
   );

@@ -120,7 +120,13 @@ test.describe('parity baselines — Inbox', () => {
     // Loading state, which would capture "Loading..." instead of the populated
     // list (D64a → D83 weakness). The 45s wait timeout covers the same cold-
     // start window inside the bumped 60s test timeout.
-    await page.getByText(/Review requested/).waitFor({ timeout: 45_000 });
+    //
+    // Scope to the section-header BUTTON, not bare text: the activity rail (on by
+    // the real prod default) renders received-event links like "Review requested
+    // on #1842 …", so getByText(/Review requested/) matches two elements and trips
+    // strict mode. The collapsible section header is the only `button` carrying
+    // that label, so role-scoping resolves to exactly one element.
+    await page.getByRole('button', { name: /Review requested/ }).waitFor({ timeout: 45_000 });
     await page.addStyleTag({ content: KILL_ANIMATIONS_CSS });
     await expect(page.locator('main')).toHaveScreenshot('inbox.png', SCREENSHOT_OPTS);
   });

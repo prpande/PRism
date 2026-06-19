@@ -13,7 +13,7 @@ const ids = (xs: InboxSection[]) => xs.map((s) => s.id);
 describe('CANONICAL_DEFAULT_ORDER_STRING', () => {
   it('is the four work ids joined, no recently-closed', () => {
     expect(CANONICAL_DEFAULT_ORDER_STRING).toBe(
-      'review-requested,awaiting-author,authored-by-me,mentioned',
+      'authored-by-me,review-requested,awaiting-author,mentioned',
     );
     expect(CANONICAL_WORK_ORDER).not.toContain('recently-closed');
   });
@@ -73,9 +73,9 @@ describe('orderInboxSections', () => {
     for (const bad of [undefined, '', '   ', ',,,']) {
       const out = orderInboxSections(live, bad);
       expect(ids(out)).toEqual([
+        'authored-by-me',
         'review-requested',
         'awaiting-author',
-        'authored-by-me',
         'mentioned',
         'recently-closed',
       ]);
@@ -93,7 +93,7 @@ describe('orderInboxSections', () => {
 
   it('orders two unlisted sections by canonical order, not input order', () => {
     // Neither live section is in the saved order, so both fall through to the
-    // canonical-index tiebreak. authored-by-me (canonical idx 2) must precede
+    // canonical-index tiebreak. authored-by-me (canonical idx 0) must precede
     // mentioned (idx 3) even though input order is the reverse — this pins the
     // "appended in canonical order" contract, not just stable input order.
     const out = orderInboxSections(
@@ -128,17 +128,17 @@ describe('orderedWorkSectionIds', () => {
   it('appends missing ids canonically and dedups / drops unknowns', () => {
     expect(orderedWorkSectionIds('mentioned,bogus,mentioned')).toEqual([
       'mentioned',
+      'authored-by-me',
       'review-requested',
       'awaiting-author',
-      'authored-by-me',
     ]);
   });
 
   it('returns full canonical order for undefined', () => {
     expect(orderedWorkSectionIds(undefined)).toEqual([
+      'authored-by-me',
       'review-requested',
       'awaiting-author',
-      'authored-by-me',
       'mentioned',
     ]);
   });

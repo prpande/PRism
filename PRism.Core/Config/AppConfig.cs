@@ -43,8 +43,10 @@ public sealed record InboxConfig(
     // #275 user-customizable order of the four WORK sections. recently-closed is
     // deliberately absent — it is an archive pinned to the bottom in the frontend,
     // never part of the reorderable/persisted order. Validated as a permutation of
-    // these four ids in ConfigStore.PatchAsync.
-    string SectionOrder = "review-requested,awaiting-author,authored-by-me,mentioned",
+    // these four ids in ConfigStore.PatchAsync. The default leads with authored-by-me
+    // so your own open PRs surface first (mirror the frontend SSOT CANONICAL_WORK_ORDER
+    // in frontend/src/components/Inbox/sectionOrder.ts — keep the two in sync).
+    string SectionOrder = "authored-by-me,review-requested,awaiting-author,mentioned",
     // #283 the activity rail (a non-AI inbox panel) was previously gated on the
     // AI-preview toggle (useAiGate('inboxRanking')); #283 decoupled it onto this
     // dedicated flag. #137 then wired it to the real /api/activity endpoint and
