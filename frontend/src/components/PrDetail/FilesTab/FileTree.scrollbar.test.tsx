@@ -18,6 +18,7 @@ function renderTree(files: FileChange[]) {
       viewedPaths={new Set()}
       onToggleViewed={() => {}}
       focusEntries={null}
+      focusStatus="no-changes"
       aiPreview={false}
     />,
   );

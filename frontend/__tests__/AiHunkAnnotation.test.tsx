@@ -55,7 +55,7 @@ describe('AiHunkAnnotation', () => {
     expect(chip.className).toContain('chip-danger');
   });
 
-  it('renders the ai-icon as a decorative AiMarker (svg is aria-hidden)', () => {
+  it('renders a decorative, un-boxed AiMarker (bare glyph, svg is aria-hidden)', () => {
     const { container } = render(
       <AiHunkAnnotation
         annotation={{
@@ -66,9 +66,11 @@ describe('AiHunkAnnotation', () => {
         }}
       />,
     );
-    const icon = container.querySelector('.ai-icon');
+    // #508 B1 un-boxed the marker: it no longer carries the `.ai-icon` chip box —
+    // it's the bare AiMarker glyph, consistent with the other AI surfaces.
+    const icon = container.querySelector('[data-ai-marker]');
     expect(icon).toBeInTheDocument();
-    expect(icon).toHaveAttribute('data-ai-marker');
-    expect(container.querySelector('.ai-icon svg')).toHaveAttribute('aria-hidden', 'true');
+    expect(container.querySelector('.ai-icon')).not.toBeInTheDocument();
+    expect(container.querySelector('[data-ai-marker] svg')).toHaveAttribute('aria-hidden', 'true');
   });
 });

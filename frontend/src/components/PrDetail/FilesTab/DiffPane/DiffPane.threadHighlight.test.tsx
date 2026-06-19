@@ -2,12 +2,8 @@ import { render } from '@testing-library/react';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { DiffPane } from './DiffPane';
 import type { FileChange, ReviewThreadDto, PrReference } from '../../../../api/types';
-import { useAiGate } from '../../../../hooks/useAiGate';
-import { useAiHunkAnnotations } from '../../../../hooks/useAiHunkAnnotations';
 import { useWholeFileContent } from '../../../../hooks/useWholeFileContent';
 
-vi.mock('../../../../hooks/useAiGate');
-vi.mock('../../../../hooks/useAiHunkAnnotations');
 vi.mock('../../../../hooks/useWholeFileContent');
 
 const prRef: PrReference = { owner: 'octocat', repo: 'hello', number: 42 };
@@ -48,8 +44,6 @@ const threadAtLine1: ReviewThreadDto = {
 
 describe('DiffPane commented-line highlight', () => {
   beforeEach(() => {
-    vi.mocked(useAiGate).mockReturnValue(false);
-    vi.mocked(useAiHunkAnnotations).mockReturnValue(null);
     vi.mocked(useWholeFileContent).mockReturnValue({
       fetchStatus: 'idle',
       headContent: null,
