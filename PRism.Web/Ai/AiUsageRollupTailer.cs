@@ -39,7 +39,12 @@ internal sealed partial class AiUsageRollupTailer : IHostedService, IDisposable
 
     public async Task StopAsync(CancellationToken cancellationToken)
     {
-        await _cts.CancelAsync().ConfigureAwait(false);
+        // Host teardown can dispose this singleton (Dispose() → _cts.Dispose()) BEFORE StopAsync
+        // runs — WebApplicationFactory does exactly this. Dispose() already cancelled the loop, so
+        // there is nothing left to stop or flush: return cleanly rather than crash shutdown (the
+        // class contract below). Without this guard CancelAsync throws ObjectDisposedException.
+        try { await _cts.CancelAsync().ConfigureAwait(false); }
+        catch (ObjectDisposedException) { return; }
         if (_loop is not null)
         {
             try { await _loop.ConfigureAwait(false); }
