@@ -53,7 +53,7 @@ function CircleAlertIcon({ className }: { className?: string }) {
 
 function ErrorBox({ message }: { message: string }) {
   return (
-    <div className={styles.errBox} role="alert" aria-live="assertive">
+    <div className={styles.errBox} role="alert">
       <CircleAlertIcon className={styles.errIcon} />
       <span>{message}</span>
     </div>

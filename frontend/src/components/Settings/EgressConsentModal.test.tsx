@@ -82,6 +82,24 @@ describe('EgressConsentModal', () => {
     }
   });
 
+  it('shows the submitting spinner + "Enabling…" while the consent POST is in flight', async () => {
+    vi.spyOn(api, 'getEgressDisclosure').mockResolvedValue(disclosure);
+    let resolvePost!: () => void;
+    vi.spyOn(api, 'postAiConsent').mockReturnValue(
+      new Promise<void>((res) => {
+        resolvePost = res;
+      }),
+    );
+    const onAccept = vi.fn();
+    render(<EgressConsentModal open onAccept={onAccept} onDecline={vi.fn()} />);
+    await waitFor(() => screen.getByText(/Anthropic/));
+    await userEvent.click(screen.getByRole('button', { name: /enable live/i }));
+    // While the POST is in flight the button relabels to "Enabling…" and is disabled.
+    expect(screen.getByRole('button', { name: /enabling/i })).toBeDisabled();
+    resolvePost();
+    await waitFor(() => expect(onAccept).toHaveBeenCalled());
+  });
+
   it('submit error: shows retry copy, does not call onAccept, re-enables Accept', async () => {
     vi.spyOn(api, 'getEgressDisclosure').mockResolvedValue(disclosure);
     vi.spyOn(api, 'postAiConsent').mockRejectedValue(new Error('409'));

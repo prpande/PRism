@@ -74,7 +74,10 @@ describe('Modal', () => {
     );
     // The icon node is rendered…
     expect(screen.getByText('DECOR')).toBeInTheDocument();
-    // …but it is aria-hidden, so the dialog's accessible name is still exactly the title.
+    // …inside an aria-hidden wrapper that Modal owns (so callers can't leak the
+    // icon into the dialog name)…
+    expect(screen.getByText('DECOR').parentElement).toHaveAttribute('aria-hidden', 'true');
+    // …and the dialog's accessible name is therefore still exactly the title.
     expect(screen.getByRole('dialog', { name: 'Enable Live AI' })).toBeInTheDocument();
   });
 

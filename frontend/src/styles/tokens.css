@@ -552,7 +552,7 @@ a:hover { text-decoration: underline; }
 .btn-danger { background: var(--danger); color: oklch(0.99 0 0); }
 .btn-danger:hover:not(:disabled) { filter: brightness(0.92); }
 
-.btn-success { background: var(--success); color: oklch(0.99 0 0); border-color: var(--success); }
+.btn-success { background: var(--success); color: oklch(0.99 0 0); }
 .btn-success:hover:not(:disabled) { filter: brightness(0.92); }
 /* Dark-theme --success is a light green (oklch 0.72); near-white text fails AA
    on it, so flip to dark ink — mirroring the warning verdict segment. */
