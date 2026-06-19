@@ -5,27 +5,35 @@
   /* working→ready hue settle (spec §3). Dropped under reduced-motion below. */
   transition: color 150ms ease;
 }
-/* Working: AI is in flight. Hue is the load-bearing differentiator (survives
-   reduced-motion); the pulse is layered on top and dropped when motion is reduced. */
+/* Working: AI is in flight. The accent-derived hue + a glow are the load-bearing
+   differentiators (they survive reduced-motion); the pulse animates the glow on top
+   and is dropped when motion is reduced (a static glow remains). */
 .working {
   color: var(--ai-working-color);
+  filter: drop-shadow(0 0 3px var(--ai-working-color));
   animation: ai-marker-pulse 1.4s ease-in-out infinite;
 }
 @media (prefers-reduced-motion: reduce) {
   .working {
     animation: none;
+    /* keep a steady glow so "working" still reads as active without motion */
+    filter: drop-shadow(0 0 3px var(--ai-working-color));
   }
   .aiMarker {
     transition: none;
   }
 }
+/* Pulse the GLOW (not just opacity) so the "thinking" state is obvious — the glyph
+   stays mostly opaque while its halo breathes from a tight to a wide spread. */
 @keyframes ai-marker-pulse {
   0%,
   100% {
-    opacity: 1;
+    opacity: 0.95;
+    filter: drop-shadow(0 0 1px var(--ai-working-color));
   }
   50% {
-    opacity: 0.5;
+    opacity: 1;
+    filter: drop-shadow(0 0 7px var(--ai-working-color));
   }
 }
 .glyph {

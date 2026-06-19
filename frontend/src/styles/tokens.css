@@ -117,11 +117,13 @@
   --accent-text: oklch(0.99 0 0);
   --accent-ring: oklch(0.55 var(--accent-c) var(--accent-h) / 0.35);
   /* AI marker states (#508). Idle = the existing accent (no visual change to
-     existing #489 markers). Working = a distinct hue so "AI is thinking" never
-     reads identical to "AI content present" — and the distinction survives
-     prefers-reduced-motion, where the pulse is dropped and only the hue remains. */
+     existing #489 markers). Working = the SAME accent hue, energised: brighter +
+     higher chroma + a glow (in AiMarker.module.css). Keeping the accent hue means
+     the cue stays on-brand for any chosen accent (B1 decision — no foreign hue);
+     working↔idle stays distinct under prefers-reduced-motion via the lightness/
+     chroma lift + static glow rather than a hue shift. */
   --ai-idle-color: var(--accent);
-  --ai-working-color: oklch(0.62 0.15 230);
+  --ai-working-color: oklch(0.62 calc(var(--accent-c) * 1.5) var(--accent-h));
   --ai-idle-opacity: 0.55;
 
   /* state */
@@ -212,9 +214,9 @@
   --accent-text: oklch(0.15 0 0);
   --accent-ring: oklch(0.72 var(--accent-c) var(--accent-h) / 0.45);
   --ai-idle-color: var(--accent);
-  /* Cyan-shifted (~50° off the 245° dark accent) + higher chroma so working↔idle stays
-     distinguishable under prefers-reduced-motion, where hue is the only signal. B1 tunes. */
-  --ai-working-color: oklch(0.78 0.18 195);
+  /* Same accent hue as idle, lifted in lightness (0.72→0.82) + chroma so working↔idle stays
+     distinguishable under prefers-reduced-motion via brightness/glow, not a hue shift (B1 decision). */
+  --ai-working-color: oklch(0.82 calc(var(--accent-c) * 1.4) var(--accent-h));
   --ai-idle-opacity: 0.72; /* lifted vs light so the dimmed idle marker keeps ≥3:1 (WCAG 1.4.11) */
 
   --success: oklch(0.72 0.13 150);
