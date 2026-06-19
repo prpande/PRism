@@ -14,6 +14,7 @@ import { InboxFooter } from '../components/Inbox/InboxFooter';
 import { EmptyAllSections } from '../components/Inbox/EmptyAllSections';
 import { ActivityRail } from '../components/ActivityRail/ActivityRail';
 import { SampleBadge } from '../components/Ai/SampleBadge';
+import { AiOnboardingDialog } from '../components/Ai/AiOnboardingDialog';
 import { InboxSkeleton } from '../components/Inbox/InboxSkeleton';
 import { LoadingBar } from '../components/LoadingBar';
 import { ErrorModal } from '../components/ErrorModal';
@@ -34,6 +35,18 @@ export function InboxPage() {
   });
   const { preferences } = usePreferences();
   const initialSort = preferences?.inbox.defaultSort ?? 'updated';
+
+  // #485 first-run onboarding overlay: show iff preferences resolved AND not yet seen.
+  // `onboardingDismissed` keeps the dialog gone after the user closes it without depending
+  // on the dialog's internal open state. Multi-window auto-dismiss is automatic: if
+  // preferences.ui.onboardingSeen flips to true via a focus-refetch, showOnboarding
+  // becomes false and the overlay unmounts.
+  const [onboardingDismissed, setOnboardingDismissed] = useState(false);
+  const showOnboarding =
+    !onboardingDismissed && preferences != null && preferences.ui.onboardingSeen === false;
+  const onboarding = showOnboarding ? (
+    <AiOnboardingDialog onDismiss={() => setOnboardingDismissed(true)} />
+  ) : null;
 
   const showCategoryChip = useAiGate('inboxEnrichment');
   // #283 the activity rail is a fabricated, non-AI mockup — decoupled from the AI-preview
@@ -70,7 +83,9 @@ export function InboxPage() {
     return (
       <>
         {/* Per-surface loading bar pinned to the inbox content top (self-contained,
-            no layout shift) + the content-shaped skeleton. */}
+            no layout shift) + the content-shaped skeleton. The onboarding overlay
+            renders over the skeleton so a fresh user sees it immediately (#485). */}
+        {onboarding}
         <LoadingBar active data-testid="inbox-loading-bar" />
         <InboxSkeleton showRail={showRail} />
       </>
@@ -97,6 +112,8 @@ export function InboxPage() {
 
   return (
     <>
+      {/* #485 first-run onboarding overlay — renders over the loaded inbox. */}
+      {onboarding}
       {/* Background reload (data present, isLoading): the bar is the non-intrusive
           "refreshing" signal. Kept a sibling ABOVE <main> (not inside it) so it
           spans the same full width as the cold-load bar above <InboxSkeleton> —
