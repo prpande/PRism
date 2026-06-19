@@ -31,9 +31,27 @@ describe('SettingsNav', () => {
 
   it('shows the AI marker only on the AI nav item', () => {
     renderAt('/settings/appearance');
-    const aiLink = screen.getByRole('link', { name: 'AI' });
+    const aiLink = screen.getByRole('link', { name: /^AI/ });
     expect(aiLink.querySelector('[data-ai-marker]')).not.toBeNull();
     const appearance = screen.getByRole('link', { name: 'Appearance' });
     expect(appearance.querySelector('[data-ai-marker]')).toBeNull();
+  });
+});
+
+describe('SettingsNav AI nesting', () => {
+  it('shows AI children only when an /settings/ai* route is active', () => {
+    renderAt('/settings/appearance');
+    expect(screen.queryByRole('link', { name: 'Usage' })).not.toBeInTheDocument();
+
+    renderAt('/settings/ai');
+    expect(screen.getByRole('link', { name: 'Configuration' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Usage' })).toBeInTheDocument();
+  });
+
+  it('marks Usage as current when on /settings/ai/usage', () => {
+    renderAt('/settings/ai/usage');
+    expect(screen.getByRole('link', { name: 'Usage' })).toHaveAttribute('aria-current', 'page');
+    // The AI parent reflects the active section too.
+    expect(screen.getByRole('link', { name: /^AI/ })).toHaveAttribute('aria-current', 'page');
   });
 });

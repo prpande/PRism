@@ -3,6 +3,7 @@ import { SettingsModal } from './SettingsModal';
 import { SettingsLayout } from './SettingsLayout';
 import { AppearancePane } from './panes/AppearancePane';
 import { AiPane } from './panes/AiPane';
+import { AiUsagePane } from './panes/AiUsagePane';
 import { InboxPane } from './panes/InboxPane';
 import { GitHubConnectionPane } from './panes/GitHubConnectionPane';
 import { SystemPane } from './panes/SystemPane';
@@ -62,6 +63,7 @@ export function SettingsModalRoutes({ isAuthed, unauthedTarget }: SettingsModalR
       >
         <Route path="appearance" element={<AppearancePane />} />
         <Route path="ai" element={<AiPane />} />
+        <Route path="ai/usage" element={<AiUsagePane />} />
         <Route path="inbox" element={<InboxPane />} />
         <Route path="github-connection" element={<GitHubConnectionPane />} />
         <Route path="system" element={<SystemPane />} />
