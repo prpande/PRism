@@ -1,6 +1,6 @@
 import { renderHook } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import type { AiMode } from '../api/types';
+import type { AiMode, AiFeatures } from '../api/types';
 
 // Drives useCapabilities' local derivation directly off a mocked aiMode.
 const mock = vi.hoisted(() => ({ aiMode: 'off' as AiMode, hasUi: true }));
@@ -11,7 +11,35 @@ vi.mock('./usePreferences', () => ({
   }),
 }));
 
-import { useCapabilities } from './useCapabilities';
+import { useCapabilities, deriveCapabilities } from './useCapabilities';
+
+const allOn: AiFeatures = {
+  summary: true,
+  fileFocus: true,
+  hunkAnnotations: true,
+  preSubmitValidators: true,
+  composerAssist: true,
+  draftSuggestions: true,
+  draftReconciliation: true,
+  inboxEnrichment: true,
+  inboxRanking: true,
+};
+
+it('masks a disabled feature off in Live', () => {
+  const caps = deriveCapabilities('live', { ...allOn, summary: false });
+  expect(caps?.summary).toBe(false);
+  expect(caps?.hunkAnnotations).toBe(true); // unaffected
+});
+
+it('masks a disabled feature off in Preview', () => {
+  const caps = deriveCapabilities('preview', { ...allOn, fileFocus: false });
+  expect(caps?.fileFocus).toBe(false);
+});
+
+it('fails open when features is undefined', () => {
+  const caps = deriveCapabilities('live', undefined);
+  expect(caps?.summary).toBe(true);
+});
 
 beforeEach(() => {
   mock.aiMode = 'off';

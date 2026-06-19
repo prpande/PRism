@@ -3,6 +3,8 @@ import { usePreferences } from '../../../hooks/usePreferences';
 import type { AiMode } from '../../../api/types';
 import { SegmentedControl } from '../../controls/SegmentedControl';
 import { NumberStepper } from '../../controls/NumberStepper';
+import { Switch } from '../../controls/Switch';
+import { InboxCaret } from '../../Inbox/InboxCaret';
 import { getEgressDisclosure } from '../../../api/aiConsent';
 import { EgressConsentModal } from '../EgressConsentModal';
 import pane from './Pane.module.css';
@@ -13,6 +15,29 @@ const AI_MODES = [
   { value: 'live' as AiMode, label: 'Live' },
 ];
 const AI_MODE_LABELS: Record<AiMode, string> = { off: 'Off', preview: 'Preview', live: 'Live' };
+
+const FEATURE_ROWS = [
+  {
+    key: 'summary' as const,
+    label: 'Summary',
+    help: 'When off, the AI summary card is hidden on pull requests.',
+  },
+  {
+    key: 'fileFocus' as const,
+    label: 'File focus',
+    help: 'When off, AI file hotspots are not shown in the Files tab.',
+  },
+  {
+    key: 'hunkAnnotations' as const,
+    label: 'Hunk annotations',
+    help: 'When off, inline AI annotations are not added to diffs.',
+  },
+  {
+    key: 'inboxEnrichment' as const,
+    label: 'Inbox enrichment',
+    help: 'When off, the AI kind-of-change chip is removed from inbox rows.',
+  },
+];
 
 export function AiPane() {
   const { preferences, set } = usePreferences();
@@ -27,6 +52,7 @@ export function AiPane() {
   const abortRef = useRef<AbortController | null>(null);
   const [pendingLive, setPendingLive] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
+  const [featuresOpen, setFeaturesOpen] = useState(false);
 
   // Move focus to the intended segment once the modal has closed. Keyed on
   // `modalOpen`: when it flips to false the Modal (a child) runs its focus-
@@ -115,7 +141,9 @@ export function AiPane() {
           <h2 id="ai-heading" className={pane.title}>
             AI
           </h2>
-          <p className={pane.sub}>AI mode, provider timeout, annotation, and summary settings.</p>
+          <p className={pane.sub}>
+            Choose how AI runs. Provider, summary, and per-feature settings appear in Live mode.
+          </p>
         </div>
       </div>
 
@@ -145,75 +173,146 @@ export function AiPane() {
           MinSummaryChars=500/MaxSummaryChars=5000). The server re-clamps on write, so a stale literal here
           only mis-bounds the stepper UI — keep them in sync if AiConfigBounds changes. The `step` values
           (30, 1, 100) are UI-only and have no backend mirror. */}
-      <div className={pane.row}>
-        <div>
-          <div className={pane.label} id="ai-timeout-label">
-            Provider timeout
+      {resolvedMode === 'live' && (
+        <>
+          <div className={pane.row}>
+            <div>
+              <div className={pane.label} id="ai-timeout-label">
+                Provider timeout
+              </div>
+              <div className={pane.help}>
+                30–600 seconds. Applies to the next AI request — no restart.
+              </div>
+            </div>
+            <div className={pane.spring}>
+              <NumberStepper
+                label="Provider timeout"
+                labelledById="ai-timeout-label"
+                value={preferences.ui.providerTimeoutSeconds}
+                min={30}
+                max={600}
+                step={30}
+                unit="seconds"
+                onChange={(n) => void set('ui.ai.providerTimeoutSeconds', n).catch(() => {})}
+              />
+            </div>
           </div>
-          <div className={pane.help}>
-            30–600 seconds. Applies to the next AI request — no restart.
-          </div>
-        </div>
-        <div className={pane.spring}>
-          <NumberStepper
-            label="Provider timeout"
-            labelledById="ai-timeout-label"
-            value={preferences.ui.providerTimeoutSeconds}
-            min={30}
-            max={600}
-            step={30}
-            unit="seconds"
-            onChange={(n) => void set('ui.ai.providerTimeoutSeconds', n).catch(() => {})}
-          />
-        </div>
-      </div>
 
-      <div className={pane.row}>
-        <div>
-          <div className={pane.label} id="ai-cap-label">
-            Annotation cap
+          <div className={pane.row}>
+            <div>
+              <div className={pane.label} id="ai-cap-label">
+                Annotation cap
+              </div>
+              <div className={pane.help}>
+                1–50 hunk annotations per PR. Higher values cost more and add latency.
+              </div>
+            </div>
+            <div className={pane.spring}>
+              <NumberStepper
+                label="Annotation cap"
+                labelledById="ai-cap-label"
+                value={preferences.ui.hunkAnnotationCap}
+                min={1}
+                max={50}
+                step={1}
+                unit="annotations"
+                onChange={(n) => void set('ui.ai.hunkAnnotationCap', n).catch(() => {})}
+              />
+            </div>
           </div>
-          <div className={pane.help}>
-            1–50 hunk annotations per PR. Higher values cost more and add latency.
-          </div>
-        </div>
-        <div className={pane.spring}>
-          <NumberStepper
-            label="Annotation cap"
-            labelledById="ai-cap-label"
-            value={preferences.ui.hunkAnnotationCap}
-            min={1}
-            max={50}
-            step={1}
-            unit="annotations"
-            onChange={(n) => void set('ui.ai.hunkAnnotationCap', n).catch(() => {})}
-          />
-        </div>
-      </div>
 
-      <div className={pane.row}>
-        <div>
-          <div className={pane.label} id="ai-summary-len-label">
-            Summary length
+          <div className={pane.row}>
+            <div>
+              <div className={pane.label} id="ai-summary-len-label">
+                Summary length
+              </div>
+              <div className={pane.help}>
+                500–5000 characters. Applies to newly generated summaries; use Regenerate to
+                re-apply on an already-open PR.
+              </div>
+            </div>
+            <div className={pane.spring}>
+              <NumberStepper
+                label="Summary length"
+                labelledById="ai-summary-len-label"
+                value={preferences.ui.summaryMaxChars}
+                min={500}
+                max={5000}
+                step={100}
+                unit="characters"
+                onChange={(n) => void set('ui.ai.summaryMaxChars', n).catch(() => {})}
+              />
+            </div>
           </div>
-          <div className={pane.help}>
-            500–5000 characters. Applies to newly generated summaries; use Regenerate to re-apply on
-            an already-open PR.
+
+          <div className={pane.row}>
+            <button
+              type="button"
+              className={`${pane.label} ${pane.disclosureBtn}`}
+              aria-expanded={featuresOpen}
+              aria-controls={featuresOpen ? 'ai-features-region' : undefined}
+              onClick={() => setFeaturesOpen((o) => !o)}
+            >
+              <InboxCaret open={featuresOpen} />
+              AI features
+            </button>
+          </div>
+          {featuresOpen && (
+            <div
+              id="ai-features-region"
+              role="group"
+              aria-label="AI features"
+              className={pane.featuresRegion}
+            >
+              {FEATURE_ROWS.map(({ key, label, help }) => (
+                <div key={key} className={pane.row}>
+                  <div>
+                    <label className={pane.label} htmlFor={`ai-feat-${key}`}>
+                      {label}
+                    </label>
+                    <p id={`ai-feat-${key}-help`} className={pane.help}>
+                      {help}
+                    </p>
+                  </div>
+                  <div className={pane.spring} />
+                  <Switch
+                    id={`ai-feat-${key}`}
+                    label={label}
+                    describedById={`ai-feat-${key}-help`}
+                    checked={preferences.ui.features?.[key] ?? true}
+                    onChange={(next) => void set(`ui.ai.features.${key}`, next).catch(() => {})}
+                  />
+                </div>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+
+      {resolvedMode === 'preview' && (
+        <div className={pane.row}>
+          <div>
+            {/* Intentionally inert: a discoverability affordance only — the real toggles
+                live in Live mode. No onClick (a no-op handler on type="button" is
+                misleading), and it never calls set/setFeaturesOpen, so clicking does
+                nothing; aria-disabled + dimmed opacity convey the disabled state. */}
+            <button
+              type="button"
+              className={`${pane.label} ${pane.disclosureBtn}`}
+              style={{ opacity: 0.5 }}
+              aria-disabled="true"
+              aria-describedby="ai-features-preview-hint"
+            >
+              AI features
+            </button>
+            <p id="ai-features-preview-hint" className={pane.help}>
+              {FEATURE_ROWS.some(({ key }) => (preferences.ui.features?.[key] ?? true) === false)
+                ? 'Some AI features are turned off. Switch to Live to change them.'
+                : 'Switch to Live to turn individual features on or off.'}
+            </p>
           </div>
         </div>
-        <div className={pane.spring}>
-          <NumberStepper
-            label="Summary length"
-            labelledById="ai-summary-len-label"
-            value={preferences.ui.summaryMaxChars}
-            min={500}
-            max={5000}
-            step={100}
-            unit="characters"
-            onChange={(n) => void set('ui.ai.summaryMaxChars', n).catch(() => {})}
-          />
-        </div>
-      </div>
+      )}
 
       <EgressConsentModal open={modalOpen} onAccept={onModalAccept} onDecline={onModalDecline} />
     </section>

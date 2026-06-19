@@ -15,6 +15,8 @@ export interface SegmentedControlProps<T extends string> {
   variant?: 'segmented' | 'nav';
   /** id of an element describing the control; wired to the radiogroup's aria-describedby. */
   describedById?: string;
+  /** When set, the selected radio carries data-modal-role={value} (lets a Modal host focus it on open). */
+  selectedDataRole?: string;
 }
 
 export function SegmentedControl<T extends string>({
@@ -25,6 +27,7 @@ export function SegmentedControl<T extends string>({
   disabled = false,
   variant = 'segmented',
   describedById,
+  selectedDataRole,
 }: SegmentedControlProps<T>) {
   const refs = useRef<(HTMLButtonElement | null)[]>([]);
   const selectedIdx = Math.max(
@@ -75,6 +78,7 @@ export function SegmentedControl<T extends string>({
             disabled={disabled}
             className={`${segCls}${selected ? ` ${segOnCls}` : ''}`}
             onClick={() => onChange(o.value)}
+            data-modal-role={selected ? selectedDataRole : undefined}
           >
             {o.label}
           </button>

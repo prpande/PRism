@@ -91,3 +91,33 @@ describe('SegmentedControl', () => {
     expect(onChange).toHaveBeenCalledWith('fine-grained');
   });
 });
+
+const opts = [
+  { value: 'off', label: 'Off' },
+  { value: 'preview', label: 'Preview' },
+  { value: 'live', label: 'Live' },
+] as const;
+
+describe('SegmentedControl selectedDataRole', () => {
+  it('marks only the selected radio with data-modal-role', () => {
+    render(
+      <SegmentedControl
+        label="AI mode"
+        options={opts}
+        value="preview"
+        onChange={vi.fn()}
+        selectedDataRole="cancel"
+      />,
+    );
+    expect(screen.getByRole('radio', { name: 'Preview' })).toHaveAttribute(
+      'data-modal-role',
+      'cancel',
+    );
+    expect(screen.getByRole('radio', { name: 'Off' })).not.toHaveAttribute('data-modal-role');
+  });
+
+  it('adds no attribute when the prop is omitted', () => {
+    render(<SegmentedControl label="AI mode" options={opts} value="preview" onChange={vi.fn()} />);
+    expect(screen.getByRole('radio', { name: 'Preview' })).not.toHaveAttribute('data-modal-role');
+  });
+});

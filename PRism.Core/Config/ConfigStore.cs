@@ -62,6 +62,16 @@ public sealed class ConfigStore : IConfigStore, IDisposable
             // #525 best-effort summary character cap. Clamped on write (AiConfigBounds.ClampSummaryChars)
             // in the apply switch below; surfaced + read-clamped in PRism.Web and fed hot into the summarizer.
             ["ui.ai.summaryMaxChars"]            = ConfigFieldType.Int,
+            // #485 UX-suppression flag for the first-run AI onboarding overlay. Set once by the FE
+            // after the user dismisses the dialog; never read by any AI seam or egress gate.
+            ["ui.ai.onboardingSeen"]             = ConfigFieldType.Bool,
+            // #536 per-feature AI on/off toggles. Only the four Live-gated seams are settable;
+            // dormant keys (inboxRanking etc.) are intentionally absent so they are rejected here
+            // (unknown field → ConfigPatchException → 400) before reaching the switch.
+            ["ui.ai.features.summary"]           = ConfigFieldType.Bool,
+            ["ui.ai.features.fileFocus"]         = ConfigFieldType.Bool,
+            ["ui.ai.features.hunkAnnotations"]   = ConfigFieldType.Bool,
+            ["ui.ai.features.inboxEnrichment"]   = ConfigFieldType.Bool,
         };
 
     // #262 PR3: inbox.defaultSort is a string-typed key with a CLOSED value set (unlike
@@ -254,6 +264,16 @@ public sealed class ConfigStore : IConfigStore, IDisposable
                     _current with { Ui = ui with { Ai = ui.Ai with { HunkAnnotationCap = AiConfigBounds.ClampCap((int)value!) } } },
                 "ui.ai.summaryMaxChars" =>
                     _current with { Ui = ui with { Ai = ui.Ai with { SummaryMaxChars = AiConfigBounds.ClampSummaryChars((int)value!) } } },
+                "ui.ai.onboardingSeen" =>
+                    _current with { Ui = ui with { Ai = ui.Ai with { OnboardingSeen = (bool)value! } } },
+                "ui.ai.features.summary" =>
+                    _current with { Ui = ui with { Ai = ui.Ai with { Features = ui.Ai.Features.With("summary", (bool)value!) } } },
+                "ui.ai.features.fileFocus" =>
+                    _current with { Ui = ui with { Ai = ui.Ai with { Features = ui.Ai.Features.With("fileFocus", (bool)value!) } } },
+                "ui.ai.features.hunkAnnotations" =>
+                    _current with { Ui = ui with { Ai = ui.Ai with { Features = ui.Ai.Features.With("hunkAnnotations", (bool)value!) } } },
+                "ui.ai.features.inboxEnrichment" =>
+                    _current with { Ui = ui with { Ai = ui.Ai with { Features = ui.Ai.Features.With("inboxEnrichment", (bool)value!) } } },
                 _ => throw new ConfigPatchException($"unknown field: {key}")
             };
             await WriteToDiskAsync(ct).ConfigureAwait(false);
@@ -402,6 +422,21 @@ public sealed class ConfigStore : IConfigStore, IDisposable
                         Features = ai.Features ?? AppConfig.Default.Ui.Ai.Features,
                     } } };
                 }
+            }
+
+            // One-time onboarding backfill (spec §8.1). Runs ONLY when the key is absent on disk
+            // (OnboardingSeen is null). Once present, the stored value is authoritative — never
+            // recomputed (a per-load recompute would re-show the overlay forever to a Preview-keeper
+            // whose seen-write didn't persist). Mirrors the Consent/Features key-absence backfills above.
+            if (parsed.Ui.Ai is not null && parsed.Ui.Ai.OnboardingSeen is null)
+            {
+                var ai = parsed.Ui.Ai;
+                var consent = new AiConsentState();
+                consent.Set(ai.Consent ?? AppConfig.Default.Ui.Ai.Consent);
+                var seen = consent.IsConsented(AiProviderIds.Claude, AiDisclosure.CurrentVersion)
+                           || ai.Mode == AiMode.Off;
+                parsed = parsed with { Ui = parsed.Ui with { Ai = ai with { OnboardingSeen = seen } } };
+                rewritten = true;
             }
 
             _current = parsed;

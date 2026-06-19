@@ -36,6 +36,11 @@ vi.mock('../hooks/useMediaQuery', () => ({ useMediaQuery: () => true })); // wid
 vi.mock('../hooks/usePreferences', () => ({
   usePreferences: () => ({
     preferences: {
+      ui: {
+        // onboardingSeen:true suppresses the onboarding overlay so it does not
+        // interfere with the rail-gate assertions this file owns.
+        onboardingSeen: true,
+      },
       inbox: {
         defaultSort: 'updated',
         showActivityRail: showRailRef.value,

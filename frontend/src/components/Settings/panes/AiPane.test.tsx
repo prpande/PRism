@@ -11,6 +11,17 @@ const prefs = vi.hoisted(() => ({
   providerTimeoutSeconds: 240,
   hunkAnnotationCap: 10,
   summaryMaxChars: 1000,
+  features: {
+    summary: true,
+    fileFocus: true,
+    hunkAnnotations: true,
+    preSubmitValidators: true,
+    composerAssist: true,
+    draftSuggestions: true,
+    draftReconciliation: true,
+    inboxEnrichment: true,
+    inboxRanking: true,
+  },
 }));
 vi.mock('../../../hooks/usePreferences', () => ({
   usePreferences: () => ({
@@ -24,6 +35,7 @@ vi.mock('../../../hooks/usePreferences', () => ({
         providerTimeoutSeconds: prefs.providerTimeoutSeconds,
         hunkAnnotationCap: prefs.hunkAnnotationCap,
         summaryMaxChars: prefs.summaryMaxChars,
+        features: prefs.features,
       },
       inbox: { sections: {} },
       github: {},
@@ -175,6 +187,7 @@ describe('AiPane', () => {
   // ---- New numeric-stepper cases ----
 
   it('renders the provider-timeout stepper and writes on step', async () => {
+    prefs.aiMode = 'live';
     render(<AiPane />);
     const sb = screen.getByRole('spinbutton', { name: 'Provider timeout' });
     sb.focus();
@@ -183,6 +196,7 @@ describe('AiPane', () => {
   });
 
   it('renders the hunk-annotation-cap stepper and writes on step', async () => {
+    prefs.aiMode = 'live';
     render(<AiPane />);
     const sb = screen.getByRole('spinbutton', { name: 'Annotation cap' });
     sb.focus();
@@ -191,10 +205,36 @@ describe('AiPane', () => {
   });
 
   it('renders the summary-length stepper and writes on step (step 100)', async () => {
+    prefs.aiMode = 'live';
     render(<AiPane />);
     const sb = screen.getByRole('spinbutton', { name: 'Summary length' });
     sb.focus();
     await userEvent.keyboard('{ArrowUp}'); // 1000 -> 1100
     await waitFor(() => expect(set).toHaveBeenCalledWith('ui.ai.summaryMaxChars', 1100));
+  });
+
+  it('hides detail controls in Off and Preview, and the Preview button does not activate', async () => {
+    prefs.aiMode = 'preview';
+    render(<AiPane />);
+    expect(screen.queryByRole('spinbutton', { name: 'Provider timeout' })).toBeNull();
+    // Preview shows the disabled, non-expanding "AI features" button + hint.
+    const btn = screen.getByRole('button', { name: /AI features/ });
+    expect(btn).toHaveAttribute('aria-disabled', 'true');
+    expect(screen.getByText(/Switch to Live/)).toBeInTheDocument();
+    // The button has no onClick and never calls set/setFeaturesOpen, so a click is inert
+    // even though aria-disabled alone would not block native activation: no patch, no expand.
+    await userEvent.click(btn);
+    expect(set).not.toHaveBeenCalled();
+    expect(screen.queryByRole('switch')).toBeNull(); // accordion did not expand
+  });
+
+  it('shows four feature switches in Live and toggles one', async () => {
+    prefs.aiMode = 'live';
+    render(<AiPane />);
+    await userEvent.click(screen.getByRole('button', { name: /AI features/ }));
+    const summary = screen.getByRole('switch', { name: 'Summary' });
+    expect(summary).toBeChecked();
+    await userEvent.click(summary);
+    await waitFor(() => expect(set).toHaveBeenCalledWith('ui.ai.features.summary', false));
   });
 });

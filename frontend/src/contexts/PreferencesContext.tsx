@@ -22,12 +22,14 @@ export type PreferenceKey =
   | 'ui.ai.providerTimeoutSeconds'
   | 'ui.ai.hunkAnnotationCap'
   | 'ui.ai.summaryMaxChars'
+  | `ui.ai.features.${'summary' | 'fileFocus' | 'hunkAnnotations' | 'inboxEnrichment'}`
   | 'density'
   | 'contentScale'
   | 'inbox.defaultSort'
   | 'inbox.sectionOrder'
   | 'inbox.showActivityRail'
   | 'inbox.groupByRepo'
+  | 'ui.ai.onboardingSeen'
   | `inbox.sections.${
       | 'review-requested'
       | 'awaiting-author'
@@ -43,6 +45,8 @@ type InboxSectionKey = Exclude<
   | 'ui.ai.providerTimeoutSeconds'
   | 'ui.ai.hunkAnnotationCap'
   | 'ui.ai.summaryMaxChars'
+  | 'ui.ai.onboardingSeen'
+  | `ui.ai.features.${'summary' | 'fileFocus' | 'hunkAnnotations' | 'inboxEnrichment'}`
   | 'density'
   | 'contentScale'
   | 'inbox.defaultSort'
@@ -58,12 +62,17 @@ export function readKey(prefs: PreferencesResponse, key: PreferenceKey): unknown
   if (key === 'ui.ai.providerTimeoutSeconds') return prefs.ui.providerTimeoutSeconds;
   if (key === 'ui.ai.hunkAnnotationCap') return prefs.ui.hunkAnnotationCap;
   if (key === 'ui.ai.summaryMaxChars') return prefs.ui.summaryMaxChars;
+  if (key === 'ui.ai.onboardingSeen') return prefs.ui.onboardingSeen;
   if (key === 'density') return prefs.ui.density;
   if (key === 'contentScale') return prefs.ui.contentScale;
   if (key === 'inbox.defaultSort') return prefs.inbox.defaultSort;
   if (key === 'inbox.sectionOrder') return prefs.inbox.sectionOrder;
   if (key === 'inbox.showActivityRail') return prefs.inbox.showActivityRail;
   if (key === 'inbox.groupByRepo') return prefs.inbox.groupByRepo;
+  if (key.startsWith('ui.ai.features.'))
+    return prefs.ui.features?.[
+      key.slice('ui.ai.features.'.length) as keyof PreferencesResponse['ui']['features']
+    ];
   const id = key.slice('inbox.sections.'.length) as keyof PreferencesResponse['inbox']['sections'];
   return prefs.inbox.sections[id];
 }
@@ -84,6 +93,8 @@ export function writeKey(
     return { ...prefs, ui: { ...prefs.ui, hunkAnnotationCap: value as number } };
   if (key === 'ui.ai.summaryMaxChars')
     return { ...prefs, ui: { ...prefs.ui, summaryMaxChars: value as number } };
+  if (key === 'ui.ai.onboardingSeen')
+    return { ...prefs, ui: { ...prefs.ui, onboardingSeen: value as boolean } };
   if (key === 'density')
     return {
       ...prefs,
@@ -114,6 +125,23 @@ export function writeKey(
     return { ...prefs, inbox: { ...prefs.inbox, showActivityRail: value as boolean } };
   if (key === 'inbox.groupByRepo')
     return { ...prefs, inbox: { ...prefs.inbox, groupByRepo: value as boolean } };
+  if (key.startsWith('ui.ai.features.')) {
+    const seam = key.slice('ui.ai.features.'.length) as keyof PreferencesResponse['ui']['features'];
+    // writeKey is a test-only helper (no production callers). When prefs.ui.features
+    // is undefined this returns a features object holding only the written seam;
+    // acceptable because AiFeatures has no cross-field invariants and tests write/read
+    // the same seam — real GET responses always populate all nine keys.
+    return {
+      ...prefs,
+      ui: {
+        ...prefs.ui,
+        features: {
+          ...prefs.ui.features,
+          [seam]: value as boolean,
+        } as PreferencesResponse['ui']['features'],
+      },
+    };
+  }
   const id = (key as InboxSectionKey).slice(
     'inbox.sections.'.length,
   ) as keyof PreferencesResponse['inbox']['sections'];

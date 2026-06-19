@@ -21,6 +21,7 @@ function prefs(overrides: Partial<PreferencesResponse['ui']> = {}): PreferencesR
       providerTimeoutSeconds: 240,
       hunkAnnotationCap: 10,
       summaryMaxChars: 1000,
+      onboardingSeen: false,
       ...overrides,
     },
     inbox: {
