@@ -69,6 +69,11 @@ only `FocusLevel`, never the rationale text), so reshaping the rationale is full
   glyph alone. (Drops the "segment containers / group headings" item from the original issue scope — the
   glyph makes headings redundant chrome. This is the owner's explicit brainstorm decision; the glyph plus
   the `sr-only` level text carry severity.)
+- **D4a — Container width: capped and centered, matching the Overview tab (B1).** The outer container caps
+  at `max-width: 920px` with `margin: 0 auto`, matching `.overviewGrid`'s current width so the triage surface
+  reads as a centered column rather than sprawling edge-to-edge. This deliberately mirrors Overview's flat
+  920px rather than adopting #470's proposed fluid `min(80%, 1200px)` — the fluid-width judgment stays with
+  #470 (still open). Added during owner B1 live-validation.
 - **D5 — Section divider: whitespace only.** A vertical gap (a spacing token, pinned in the plan) between
   the High block and the Medium block, and before the Low footer. No rule, no accent line.
 - **D6 — Level glyph: signal bars, hue + shape coded, via design tokens.** Ascending bars; active-bar count
