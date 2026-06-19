@@ -123,6 +123,25 @@ public class PreferencesAiNumericTests
     }
 
     [Fact]
+    public async Task Post_summary_max_chars_above_max_clamps_to_5000()
+    {
+        using var factory = new PRismWebApplicationFactory();
+        var client = factory.CreateClient();
+        var origin = client.BaseAddress!.GetLeftPart(UriPartial.Authority);
+        using var req = new HttpRequestMessage(HttpMethod.Post, new Uri("/api/preferences", UriKind.Relative))
+        {
+            Content = new StringContent("""{ "ui.ai.summaryMaxChars": 99999 }""", Encoding.UTF8, "application/json"),
+        };
+        req.Headers.Add("Origin", origin);
+
+        var resp = await client.SendAsync(req);
+
+        resp.StatusCode.Should().Be(HttpStatusCode.OK);
+        var json = await resp.Content.ReadFromJsonAsync<JsonElement>();
+        json.GetProperty("ui").GetProperty("summaryMaxChars").GetInt32().Should().Be(5000);
+    }
+
+    [Fact]
     public async Task Get_exposes_summary_max_chars_default()
     {
         using var factory = new PRismWebApplicationFactory();
