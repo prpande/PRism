@@ -23,6 +23,25 @@ public class ConfigStoreFeatureToggleTests
         store.Current.Ui.Ai.Features.Enabled["fileFocus"].Should().BeTrue();
     }
 
+    [Theory]
+    [InlineData("summary")]
+    [InlineData("fileFocus")]
+    [InlineData("hunkAnnotations")]
+    [InlineData("inboxEnrichment")]
+    public async Task Patch_settable_feature_flips_only_that_seam(string seam)
+    {
+        using var dir = new TempDataDir();
+        using var store = new ConfigStore(dir.Path);
+        await store.InitAsync(CancellationToken.None);
+
+        await store.PatchAsync(new Dictionary<string, object?> { [$"ui.ai.features.{seam}"] = false }, CancellationToken.None);
+
+        var enabled = store.Current.Ui.Ai.Features.Enabled;
+        enabled[seam].Should().BeFalse();
+        foreach (var other in new[] { "summary", "fileFocus", "hunkAnnotations", "inboxEnrichment" })
+            if (other != seam) enabled[other].Should().BeTrue($"{other} must stay on when only {seam} is toggled");
+    }
+
     [Fact]
     public async Task Patch_unsettable_feature_key_is_rejected()
     {
