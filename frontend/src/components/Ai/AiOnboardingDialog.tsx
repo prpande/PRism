@@ -22,6 +22,13 @@ const BUTTON: Record<AiMode, { label: string; className: string }> = {
   live: { label: 'Enable Live AI', className: 'btn btn-success' },
 };
 
+// Concise SR status per mode (announces the change without re-reading the whole legend card).
+const LIVE_STATUS: Record<AiMode, string> = {
+  off: 'Off selected.',
+  preview: 'Preview selected.',
+  live: 'Live selected. Review the data-sharing disclosure below.',
+};
+
 export function AiOnboardingDialog({ onDismiss }: { onDismiss: () => void }) {
   const { preferences, set } = usePreferences();
   const navigate = useNavigate();
@@ -142,13 +149,7 @@ export function AiOnboardingDialog({ onDismiss }: { onDismiss: () => void }) {
     }
   };
 
-  // Concise SR status (announces the mode/region change without re-reading the whole legend card).
-  const liveStatus =
-    pending === 'live'
-      ? 'Live selected. Review the data-sharing disclosure below.'
-      : pending === 'off'
-        ? 'Off selected.'
-        : 'Preview selected.';
+  const liveStatus = LIVE_STATUS[pending];
 
   const btn = BUTTON[pending];
 
