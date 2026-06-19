@@ -571,6 +571,7 @@ describe('InboxPage — onboarding overlay gate (#485)', () => {
       data: {
         sections: [],
         enrichments: {},
+        aiEnrichmentSettled: [],
         lastRefreshedAt: new Date().toISOString(),
         tokenScopeFooterEnabled: false,
         ciProbeComplete: true,
