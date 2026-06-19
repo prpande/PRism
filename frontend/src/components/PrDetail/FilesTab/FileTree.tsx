@@ -1,5 +1,11 @@
 import { useState, useCallback, useMemo, useRef } from 'react';
-import type { FileChange, FileChangeStatus, FileFocus, FileFocusStatus, FocusLevel } from '../../../api/types';
+import type {
+  FileChange,
+  FileChangeStatus,
+  FileFocus,
+  FileFocusStatus,
+  FocusLevel,
+} from '../../../api/types';
 import { AiMarker } from '../../Ai/AiMarker';
 import { buildTree, type TreeNode, type FileTreeNode, type DirectoryTreeNode } from './treeBuilder';
 import { useTreeHScroll } from '../../../hooks/useTreeHScroll';
@@ -15,6 +21,12 @@ export interface FileTreeProps {
   isLoading?: boolean;
   focusEntries: FileFocus[] | null;
   focusStatus: FileFocusStatus;
+  // #508 (B1) — the PR-wide hunk-annotation fetch (lifted to FilesTab) is still in
+  // flight. The one header marker spans BOTH AI passes: it stays "working" while
+  // focus OR annotations are loading, so the cue doesn't drop to idle the moment
+  // focus resolves while annotations are still arriving. Default false for callers
+  // that don't wire annotations (tests / non-FilesTab).
+  annotationsLoading?: boolean;
   aiPreview: boolean;
 }
 
@@ -117,6 +129,7 @@ export function FileTree({
   isLoading = false,
   focusEntries,
   focusStatus,
+  annotationsLoading = false,
   aiPreview,
 }: FileTreeProps) {
   const tree = useMemo(() => buildTree(files), [files]);
@@ -152,18 +165,22 @@ export function FileTree({
     return m;
   }, [focusEntries]);
 
-  // One header cue for the whole tree (spec §3 — never per-row). Working while the
-  // shared file-focus fetch is in flight; a PERSISTENT idle "AI is on here" marker
-  // once it has run (ok/empty/fallback) — idle on empty is the truthful "AI ran,
-  // flagged nothing" signal that dots alone cannot express. Hidden when AI is off
-  // (no-changes/not-subscribed) or errored.
-  const headerMarkerState: 'working' | 'idle' | null = !aiPreview
-    ? null
-    : focusStatus === 'loading'
-      ? 'working'
-      : focusStatus === 'ok' || focusStatus === 'empty' || focusStatus === 'fallback'
-        ? 'idle'
-        : null;
+  // One header cue for the whole tree (spec §3 — never per-row). Working while EITHER
+  // AI pass is in flight — the shared file-focus fetch OR the PR-wide hunk-annotation
+  // fetch — so the cue spans the whole "AI working" window instead of dropping to idle
+  // the instant focus resolves while annotations are still loading. A PERSISTENT idle
+  // "AI is on here" marker once focus has run (ok/empty/fallback) and annotations are
+  // no longer loading — idle on empty is the truthful "AI ran, flagged nothing" signal
+  // that dots alone cannot express. Hidden when AI is off (no-changes/not-subscribed)
+  // or focus errored (and nothing is loading).
+  let headerMarkerState: 'working' | 'idle' | null = null;
+  if (aiPreview) {
+    if (focusStatus === 'loading' || annotationsLoading) {
+      headerMarkerState = 'working';
+    } else if (focusStatus === 'ok' || focusStatus === 'empty' || focusStatus === 'fallback') {
+      headerMarkerState = 'idle';
+    }
+  }
 
   // #214 — synthetic, bottom-pinned horizontal scrollbar. The clipped tree column
   // (.fileTreeScroll) is shifted via translateX from this bar's scrollLeft, so the bar

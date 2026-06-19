@@ -6,8 +6,6 @@ import type {
   PrReference,
   HunkAnnotation,
   DiffLine,
-  FileFocus,
-  FileFocusStatus,
 } from '../../../../api/types';
 import { parseHunkLines, interleaveWholeFile } from './interleaveWholeFile';
 import type { InlineAnchor } from '../../Composer/InlineCommentComposer';
@@ -18,9 +16,6 @@ import {
 import { DiffTruncationBanner } from './DiffTruncationBanner';
 import { WordDiffOverlay } from './WordDiffOverlay';
 import { AiHunkAnnotation } from './AiHunkAnnotation';
-import { AiHunkSkeleton } from './AiHunkSkeleton';
-import { useAiGate } from '../../../../hooks/useAiGate';
-import { useAiHunkAnnotations } from '../../../../hooks/useAiHunkAnnotations';
 import { useWholeFileContent } from '../../../../hooks/useWholeFileContent';
 import { useLockedPaneScroll } from '../../../../hooks/useLockedPaneScroll';
 import { useDiffViewportWidthVar } from '../../../../hooks/useDiffViewportWidthVar';
@@ -146,12 +141,13 @@ export interface DiffPaneProps {
   // drifting out of column-alignment. Owned by FilesTab's toolbar toggle.
   lineWrap?: boolean;
 
-  // #508 (B1) — shared file-focus result, forwarded from FilesTab, so the in-flight
-  // annotation skeleton can be gated to files an annotation is actually expected on
-  // (High/Medium focus). Optional: when absent (non-FilesTab callers / test harnesses),
-  // the skeleton falls back to the annotator's own loading state on any open file.
-  focusEntries?: FileFocus[] | null;
-  focusStatus?: FileFocusStatus;
+  // #508 (B1) — resolved hunk annotations for the whole PR, lifted to FilesTab (the
+  // single fetch source) so the file-tree header marker can also reflect the
+  // annotation-loading state. DiffPane just renders the ones for the open file; it no
+  // longer owns the fetch or any per-hunk loading skeleton (a positional skeleton
+  // over-promised — focus level ≠ which hunks the annotator actually annotates). null
+  // when AI is off, still loading, or the annotator returned nothing.
+  annotations?: HunkAnnotation[] | null;
 }
 
 function findAdjacentPair(lines: DiffLine[], idx: number): DiffLine | null {
@@ -184,51 +180,19 @@ export function DiffPane({
   headSha = '',
   baseSha = '',
   lineWrap = false,
-  focusEntries = null,
-  focusStatus,
+  annotations = null,
 }: DiffPaneProps) {
-  const annotationsEnabled = useAiGate('hunkAnnotations');
-  const aiAnnotations = useAiHunkAnnotations(prRef, annotationsEnabled);
-  const allAnnotations = aiAnnotations.annotations;
-
   const annotationsForFile = useMemo(() => {
-    if (!allAnnotations || !selectedPath) return null;
+    if (!annotations || !selectedPath) return null;
     const m = new Map<number, HunkAnnotation[]>();
-    for (const a of allAnnotations) {
+    for (const a of annotations) {
       if (a.path !== selectedPath) continue;
       const existing = m.get(a.hunkIndex);
       if (existing) existing.push(a);
       else m.set(a.hunkIndex, [a]);
     }
     return m;
-  }, [allAnnotations, selectedPath]);
-
-  // Is the open file one the focus ranker flagged High/Medium — i.e. a file the
-  // annotator will actually annotate? Used to scope the in-flight skeleton (#508 B1).
-  const openFileFlagged = useMemo(() => {
-    if (!selectedPath || !focusEntries) return false;
-    const level = focusEntries.find((e) => e.path === selectedPath)?.level;
-    return level === 'high' || level === 'medium';
-  }, [focusEntries, selectedPath]);
-
-  // Show the in-flight annotation skeleton only where an annotation is actually expected
-  // (#508 B1 — was showing on EVERY open file during the PR-wide fetch). When focus has
-  // resolved (ok/empty/fallback), trust its flags: skeleton only on a High/Medium file
-  // ('empty' → none flagged → no skeleton, matching the annotator's 204). If focus ERRORED
-  // we can't tell which files will be annotated, so fall back to the annotator's own loading
-  // state on any open file. While focus is still LOADING the file-tree header marker already
-  // signals "AI working", so suppress the per-file skeleton. When no focus info is wired
-  // (focusStatus undefined — non-FilesTab callers / tests) keep the own-state fallback.
-  const focusResolved =
-    focusStatus === 'ok' || focusStatus === 'empty' || focusStatus === 'fallback';
-  const skeletonAllowed =
-    focusStatus === undefined || focusStatus === 'error'
-      ? true
-      : focusResolved
-        ? openFileFlagged
-        : false;
-  const annotationsLoading =
-    aiAnnotations.state === 'loading' && !!selectedPath && skeletonAllowed;
+  }, [annotations, selectedPath]);
 
   // Hook ordering rule: isSplit must be computed before the hook call so it
   // can be passed as a parameter.
@@ -471,14 +435,6 @@ export function DiffPane({
                 </tr>,
               );
             }
-          } else if (annotationsLoading && hunkCounter === 0) {
-            rows.push(
-              <tr key={`ann-loading-${idx}`} className={styles.aiHunkRow}>
-                <td colSpan={colSpan}>
-                  <AiHunkSkeleton />
-                </td>
-              </tr>,
-            );
           }
         }
         // Whole-file ok mode: emit nothing for the hunk-header itself.
@@ -589,14 +545,6 @@ export function DiffPane({
                 </tr>,
               );
             }
-          } else if (annotationsLoading && hunkCounter === 0) {
-            rows.push(
-              <tr key={`ann-loading-${idx}`} className={styles.aiHunkRow}>
-                <td colSpan={colSpan}>
-                  <AiHunkSkeleton />
-                </td>
-              </tr>,
-            );
           }
         }
         continue;

@@ -615,10 +615,12 @@ describe('FileTree — AI dot fixed column (#492)', () => {
 });
 
 // Helper for Task 5 header-marker tests.
-const fixtureFiles: FileChange[] = [
-  { path: 'src/a.ts', status: 'modified', hunks: [] },
-];
-function renderTree(overrides: { aiPreview: boolean; focusStatus: FileFocusStatus }) {
+const fixtureFiles: FileChange[] = [{ path: 'src/a.ts', status: 'modified', hunks: [] }];
+function renderTree(overrides: {
+  aiPreview: boolean;
+  focusStatus: FileFocusStatus;
+  annotationsLoading?: boolean;
+}) {
   return render(
     <FileTree
       files={fixtureFiles}
@@ -635,12 +637,24 @@ function renderTree(overrides: { aiPreview: boolean; focusStatus: FileFocusStatu
 describe('FileTree — header AI marker (Task 5 / #508)', () => {
   it('shows a working header marker while focus is loading', () => {
     renderTree({ aiPreview: true, focusStatus: 'loading' });
-    expect(screen.getByTestId('file-tree-ai-progress').getAttribute('data-ai-state')).toBe('working');
+    expect(screen.getByTestId('file-tree-ai-progress').getAttribute('data-ai-state')).toBe(
+      'working',
+    );
   });
 
   it('keeps a persistent idle marker once focus has run (ok)', () => {
     renderTree({ aiPreview: true, focusStatus: 'ok' });
     expect(screen.getByTestId('file-tree-ai-progress').getAttribute('data-ai-state')).toBe('idle');
+  });
+
+  // #508 (B1): the one header marker spans BOTH AI passes. Focus can resolve while the
+  // PR-wide hunk-annotation fetch is still loading — the marker stays "working" then,
+  // instead of dropping to idle and leaving no cue for the in-flight annotations.
+  it('stays working after focus resolves while annotations are still loading', () => {
+    renderTree({ aiPreview: true, focusStatus: 'ok', annotationsLoading: true });
+    expect(screen.getByTestId('file-tree-ai-progress').getAttribute('data-ai-state')).toBe(
+      'working',
+    );
   });
 
   it('keeps a persistent idle marker on empty (AI ran, nothing flagged)', () => {
