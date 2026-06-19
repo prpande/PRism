@@ -1,5 +1,6 @@
 import { useState, useCallback, useMemo, useRef } from 'react';
-import type { FileChange, FileChangeStatus, FileFocus, FocusLevel } from '../../../api/types';
+import type { FileChange, FileChangeStatus, FileFocus, FileFocusStatus, FocusLevel } from '../../../api/types';
+import { AiMarker } from '../../Ai/AiMarker';
 import { buildTree, type TreeNode, type FileTreeNode, type DirectoryTreeNode } from './treeBuilder';
 import { useTreeHScroll } from '../../../hooks/useTreeHScroll';
 import styles from './FileTree.module.css';
@@ -13,6 +14,7 @@ export interface FileTreeProps {
   onToggleViewed: (path: string) => void;
   isLoading?: boolean;
   focusEntries: FileFocus[] | null;
+  focusStatus: FileFocusStatus;
   aiPreview: boolean;
 }
 
@@ -114,6 +116,7 @@ export function FileTree({
   onToggleViewed,
   isLoading = false,
   focusEntries,
+  focusStatus,
   aiPreview,
 }: FileTreeProps) {
   const tree = useMemo(() => buildTree(files), [files]);
@@ -149,6 +152,19 @@ export function FileTree({
     return m;
   }, [focusEntries]);
 
+  // One header cue for the whole tree (spec §3 — never per-row). Working while the
+  // shared file-focus fetch is in flight; a PERSISTENT idle "AI is on here" marker
+  // once it has run (ok/empty/fallback) — idle on empty is the truthful "AI ran,
+  // flagged nothing" signal that dots alone cannot express. Hidden when AI is off
+  // (no-changes/not-subscribed) or errored.
+  const headerMarkerState: 'working' | 'idle' | null = !aiPreview
+    ? null
+    : focusStatus === 'loading'
+      ? 'working'
+      : focusStatus === 'ok' || focusStatus === 'empty' || focusStatus === 'fallback'
+        ? 'idle'
+        : null;
+
   // #214 — synthetic, bottom-pinned horizontal scrollbar. The clipped tree column
   // (.fileTreeScroll) is shifted via translateX from this bar's scrollLeft, so the bar
   // (a sticky footer below) is reachable without scrolling the tree to its end. Refs stay
@@ -180,8 +196,20 @@ export function FileTree({
       data-ai-on={aiPreview ? '1' : '0'}
     >
       <div className={`file-tree-header ${styles.fileTreeHeader}`}>
-        Files · {viewedCount}/{files.length} viewed
-        {aiPreview && <SampleBadge variant="region" />}
+        <span className={styles.fileTreeHeaderLabel}>
+          Files · {viewedCount}/{files.length} viewed
+          {aiPreview && <SampleBadge variant="region" />}
+        </span>
+        {headerMarkerState && (
+          <span data-testid="file-tree-ai-progress" data-ai-state={headerMarkerState}>
+            <AiMarker
+              variant="inline"
+              state={headerMarkerState}
+              decorative
+              className={`${styles.fileTreeHeaderAi}${headerMarkerState === 'idle' ? ` ${styles.fileTreeHeaderAiIdle}` : ''}`}
+            />
+          </span>
+        )}
       </div>
       <div className={styles.fileTreeBody}>
         <div

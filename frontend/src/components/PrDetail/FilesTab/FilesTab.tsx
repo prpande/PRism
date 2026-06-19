@@ -716,6 +716,7 @@ export function FilesTab() {
               onToggleViewed={handleToggleViewed}
               isLoading={diff.isLoading}
               focusEntries={focusEntries}
+              focusStatus={fileFocus.status}
               aiPreview={aiDotsOn}
             />
           )}

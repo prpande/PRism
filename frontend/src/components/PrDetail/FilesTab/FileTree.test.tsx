@@ -1,7 +1,7 @@
 import { render, screen, fireEvent } from '@testing-library/react';
 import { describe, it, expect, vi } from 'vitest';
 import { FileTree } from './FileTree';
-import type { FileChange, FileFocus } from '../../../api/types';
+import type { FileChange, FileFocus, FileFocusStatus } from '../../../api/types';
 
 function file(path: string, overrides: Partial<FileChange> = {}): FileChange {
   return { path, status: 'modified', hunks: [], ...overrides };
@@ -17,6 +17,7 @@ describe('FileTree', () => {
         viewedPaths={new Set()}
         onToggleViewed={vi.fn()}
         focusEntries={null}
+        focusStatus="no-changes"
         aiPreview={false}
       />,
     );
@@ -33,6 +34,7 @@ describe('FileTree', () => {
         viewedPaths={new Set()}
         onToggleViewed={vi.fn()}
         focusEntries={null}
+        focusStatus="no-changes"
         aiPreview={false}
       />,
     );
@@ -49,6 +51,7 @@ describe('FileTree', () => {
         viewedPaths={new Set()}
         onToggleViewed={vi.fn()}
         focusEntries={null}
+        focusStatus="no-changes"
         aiPreview={false}
       />,
     );
@@ -68,6 +71,7 @@ describe('FileTree', () => {
         viewedPaths={new Set()}
         onToggleViewed={vi.fn()}
         focusEntries={null}
+        focusStatus="no-changes"
         aiPreview={false}
       />,
     );
@@ -85,6 +89,7 @@ describe('FileTree', () => {
         viewedPaths={new Set(['a.ts'])}
         onToggleViewed={onToggle}
         focusEntries={null}
+        focusStatus="no-changes"
         aiPreview={false}
       />,
     );
@@ -103,6 +108,7 @@ describe('FileTree', () => {
         viewedPaths={new Set()}
         onToggleViewed={vi.fn()}
         focusEntries={null}
+        focusStatus="no-changes"
         aiPreview={false}
       />,
     );
@@ -121,6 +127,7 @@ describe('FileTree', () => {
         viewedPaths={new Set(['seen.ts'])}
         onToggleViewed={vi.fn()}
         focusEntries={null}
+        focusStatus="no-changes"
         aiPreview={false}
       />,
     );
@@ -141,6 +148,7 @@ describe('FileTree', () => {
         viewedPaths={new Set()}
         onToggleViewed={vi.fn()}
         focusEntries={null}
+        focusStatus="no-changes"
         aiPreview={false}
       />,
     );
@@ -161,6 +169,7 @@ describe('FileTree', () => {
         viewedPaths={new Set(['a.ts'])}
         onToggleViewed={vi.fn()}
         focusEntries={null}
+        focusStatus="no-changes"
         aiPreview={false}
       />,
     );
@@ -176,6 +185,7 @@ describe('FileTree', () => {
         viewedPaths={new Set()}
         onToggleViewed={vi.fn()}
         focusEntries={null}
+        focusStatus="no-changes"
         aiPreview={false}
       />,
     );
@@ -193,6 +203,7 @@ describe('FileTree', () => {
         viewedPaths={new Set()}
         onToggleViewed={vi.fn()}
         focusEntries={null}
+        focusStatus="no-changes"
         aiPreview={false}
       />,
     );
@@ -208,6 +219,7 @@ describe('FileTree', () => {
         viewedPaths={new Set()}
         onToggleViewed={vi.fn()}
         focusEntries={null}
+        focusStatus="no-changes"
         aiPreview={false}
       />,
     );
@@ -228,6 +240,7 @@ describe('FileTree', () => {
         viewedPaths={new Set()}
         onToggleViewed={vi.fn()}
         focusEntries={null}
+        focusStatus="no-changes"
         aiPreview={false}
       />,
     );
@@ -247,6 +260,7 @@ describe('FileTree', () => {
         viewedPaths={new Set()}
         onToggleViewed={vi.fn()}
         focusEntries={null}
+        focusStatus="no-changes"
         aiPreview={false}
       />,
     );
@@ -266,6 +280,7 @@ describe('FileTree', () => {
         viewedPaths={new Set()}
         onToggleViewed={vi.fn()}
         focusEntries={null}
+        focusStatus="no-changes"
         aiPreview={false}
       />,
     );
@@ -282,6 +297,7 @@ describe('FileTree', () => {
         viewedPaths={new Set()}
         onToggleViewed={vi.fn()}
         focusEntries={null}
+        focusStatus="no-changes"
         aiPreview={false}
       />,
     );
@@ -310,6 +326,7 @@ describe('FileTree — status accessible label (item 8)', () => {
           viewedPaths={new Set()}
           onToggleViewed={vi.fn()}
           focusEntries={null}
+          focusStatus="no-changes"
           aiPreview={false}
         />,
       );
@@ -341,6 +358,7 @@ describe('FileTree — whole-tree horizontal scroll + fixed checkbox column (ite
         viewedPaths={new Set()}
         onToggleViewed={vi.fn()}
         focusEntries={null}
+        focusStatus="no-changes"
         aiPreview={false}
       />,
     );
@@ -366,6 +384,7 @@ describe('FileTree — whole-tree horizontal scroll + fixed checkbox column (ite
         viewedPaths={new Set()}
         onToggleViewed={vi.fn()}
         focusEntries={null}
+        focusStatus="no-changes"
         aiPreview={false}
       />,
     );
@@ -389,6 +408,7 @@ describe('FileTree — whole-tree horizontal scroll + fixed checkbox column (ite
         viewedPaths={new Set()}
         onToggleViewed={vi.fn()}
         focusEntries={null}
+        focusStatus="no-changes"
         aiPreview={false}
       />,
     );
@@ -417,6 +437,7 @@ describe('FileTree — AI focus dot (D32a)', () => {
         viewedPaths={new Set()}
         onToggleViewed={() => {}}
         focusEntries={null}
+        focusStatus="no-changes"
         aiPreview={false}
       />,
     );
@@ -435,6 +456,7 @@ describe('FileTree — AI focus dot (D32a)', () => {
         viewedPaths={new Set()}
         onToggleViewed={() => {}}
         focusEntries={entries}
+        focusStatus="no-changes"
         aiPreview={true}
       />,
     );
@@ -459,6 +481,7 @@ describe('FileTree — AI focus dot (D32a)', () => {
         viewedPaths={new Set()}
         onToggleViewed={() => {}}
         focusEntries={entries}
+        focusStatus="no-changes"
         aiPreview={true}
       />,
     );
@@ -481,6 +504,7 @@ describe('FileTree — AI focus dot (D32a)', () => {
         viewedPaths={new Set()}
         onToggleViewed={() => {}}
         focusEntries={entries}
+        focusStatus="no-changes"
         aiPreview={true}
       />,
     );
@@ -503,6 +527,7 @@ describe('FileTree — AI focus dot (D32a)', () => {
         viewedPaths={new Set()}
         onToggleViewed={() => {}}
         focusEntries={null}
+        focusStatus="no-changes"
         aiPreview={false}
       />,
     );
@@ -530,6 +555,7 @@ describe('FileTree — AI dot fixed column (#492)', () => {
         viewedPaths={new Set()}
         onToggleViewed={() => {}}
         focusEntries={entries}
+        focusStatus="no-changes"
         aiPreview={true}
       />,
     );
@@ -553,6 +579,7 @@ describe('FileTree — AI dot fixed column (#492)', () => {
         viewedPaths={new Set()}
         onToggleViewed={() => {}}
         focusEntries={[{ path: 'a.ts', level: 'high', rationale: 'core' }]}
+        focusStatus="no-changes"
         aiPreview={true}
       />,
     );
@@ -574,6 +601,7 @@ describe('FileTree — AI dot fixed column (#492)', () => {
         viewedPaths={new Set()}
         onToggleViewed={() => {}}
         focusEntries={[{ path: 'src/a.ts', level: 'high', rationale: 'core' }]}
+        focusStatus="no-changes"
         aiPreview={true}
       />,
     );
@@ -583,5 +611,60 @@ describe('FileTree — AI dot fixed column (#492)', () => {
     // exactly one .file-tree-ai per FILE row; the dir slot carries none, so the
     // count===files invariant (and its aria-hidden guard) holds unchanged
     expect(aiCol.querySelectorAll('.file-tree-ai')).toHaveLength(2);
+  });
+});
+
+// Helper for Task 5 header-marker tests.
+const fixtureFiles: FileChange[] = [
+  { path: 'src/a.ts', status: 'modified', hunks: [] },
+];
+function renderTree(overrides: { aiPreview: boolean; focusStatus: FileFocusStatus }) {
+  return render(
+    <FileTree
+      files={fixtureFiles}
+      selectedPath={null}
+      onSelectFile={() => {}}
+      viewedPaths={new Set()}
+      onToggleViewed={() => {}}
+      focusEntries={null}
+      {...overrides}
+    />,
+  );
+}
+
+describe('FileTree — header AI marker (Task 5 / #508)', () => {
+  it('shows a working header marker while focus is loading', () => {
+    renderTree({ aiPreview: true, focusStatus: 'loading' });
+    expect(screen.getByTestId('file-tree-ai-progress').getAttribute('data-ai-state')).toBe('working');
+  });
+
+  it('keeps a persistent idle marker once focus has run (ok)', () => {
+    renderTree({ aiPreview: true, focusStatus: 'ok' });
+    expect(screen.getByTestId('file-tree-ai-progress').getAttribute('data-ai-state')).toBe('idle');
+  });
+
+  it('keeps a persistent idle marker on empty (AI ran, nothing flagged)', () => {
+    renderTree({ aiPreview: true, focusStatus: 'empty' });
+    expect(screen.getByTestId('file-tree-ai-progress').getAttribute('data-ai-state')).toBe('idle');
+  });
+
+  it('keeps a persistent idle marker on fallback (all-medium run)', () => {
+    renderTree({ aiPreview: true, focusStatus: 'fallback' });
+    expect(screen.getByTestId('file-tree-ai-progress').getAttribute('data-ai-state')).toBe('idle');
+  });
+
+  it('renders no header marker when AI is off (preview false)', () => {
+    renderTree({ aiPreview: false, focusStatus: 'no-changes' });
+    expect(screen.queryByTestId('file-tree-ai-progress')).not.toBeInTheDocument();
+  });
+
+  it('renders no header marker when not subscribed', () => {
+    renderTree({ aiPreview: true, focusStatus: 'not-subscribed' });
+    expect(screen.queryByTestId('file-tree-ai-progress')).not.toBeInTheDocument();
+  });
+
+  it('renders no header marker on error', () => {
+    renderTree({ aiPreview: true, focusStatus: 'error' });
+    expect(screen.queryByTestId('file-tree-ai-progress')).not.toBeInTheDocument();
   });
 });
