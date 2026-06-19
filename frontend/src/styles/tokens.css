@@ -5,6 +5,15 @@
 
 @import url('https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500;600&display=swap');
 
+/* Registered so the AI working-marker halo blur interpolates smoothly per-frame.
+   An UN-registered custom property (or a raw `filter` blur) animates in Chromium's
+   discrete filter steps, which reads as a blink; a registered <length> tweens. #508 */
+@property --ai-glow-blur {
+  syntax: '<length>';
+  inherits: false;
+  initial-value: 0px;
+}
+
 :root {
   /* type */
   --font-sans: "Geist", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
@@ -124,6 +133,10 @@
      chroma lift + static glow rather than a hue shift. */
   --ai-idle-color: var(--accent);
   --ai-working-color: oklch(0.62 calc(var(--accent-c) * 1.5) var(--accent-h));
+  /* Working halo = the accent's COMPLEMENT (hue + 180°), so it reads against any
+     accent instead of vanishing as a same-hue glow. Theme-aware lightness: mid +
+     saturated on light (pops on white), bright on dark. B1 choice (#508). */
+  --ai-working-glow: oklch(0.6 0.19 calc(var(--accent-h) + 180));
   --ai-idle-opacity: 0.55;
 
   /* state */
@@ -217,6 +230,8 @@
   /* Same accent hue as idle, lifted in lightness (0.72→0.82) + chroma so working↔idle stays
      distinguishable under prefers-reduced-motion via brightness/glow, not a hue shift (B1 decision). */
   --ai-working-color: oklch(0.82 calc(var(--accent-c) * 1.4) var(--accent-h));
+  /* Complement glow, brighter on dark so it pops on the dark surface (#508 B1). */
+  --ai-working-glow: oklch(0.88 0.15 calc(var(--accent-h) + 180));
   --ai-idle-opacity: 0.72; /* lifted vs light so the dimmed idle marker keeps ≥3:1 (WCAG 1.4.11) */
 
   --success: oklch(0.72 0.13 150);

@@ -10,33 +10,31 @@
    and is dropped when motion is reduced (a static glow remains). */
 .working {
   color: var(--ai-working-color);
-  filter: drop-shadow(0 0 3px var(--ai-working-color));
-  /* `alternate` makes each half-cycle ONE continuous eased ramp (dim→bright, then
-     bright→dim). A 0%/50%/100% keyframe would apply the easing per-segment and
-     decelerate INTO each stop — pausing at dim and at bright — which reads as a
-     blink/strobe. With from→to + alternate the halo breathes smoothly with no hold. */
-  animation: ai-marker-glow 1.3s ease-in-out infinite alternate;
+  /* Doubled drop-shadow in the accent's COMPLEMENT (--ai-working-glow) for a dense,
+     high-contrast halo that breathes. The blur is the registered --ai-glow-blur length
+     (see tokens.css) so it tweens smoothly instead of stepping. `alternate` makes each
+     half-cycle one continuous eased ramp (no mid-keyframe to hold on → no blink). */
+  --ai-glow-blur: 2px;
+  filter: drop-shadow(0 0 var(--ai-glow-blur) var(--ai-working-glow))
+    drop-shadow(0 0 var(--ai-glow-blur) var(--ai-working-glow));
+  animation: ai-marker-glow 1s ease-in-out infinite alternate;
 }
 @media (prefers-reduced-motion: reduce) {
   .working {
     animation: none;
-    /* keep a steady glow so "working" still reads as active without motion */
-    filter: drop-shadow(0 0 3px var(--ai-working-color));
+    /* steady mid glow so "working" still reads as active without motion */
+    --ai-glow-blur: 3px;
   }
   .aiMarker {
     transition: none;
   }
 }
-/* Breathe the GLOW (halo blur) plus a gentle opacity lift so the "thinking" state is
-   obvious without the glyph blinking. One ramp; `alternate` plays it forward then back. */
 @keyframes ai-marker-glow {
   from {
-    opacity: 0.85;
-    filter: drop-shadow(0 0 1px var(--ai-working-color));
+    --ai-glow-blur: 0.5px;
   }
   to {
-    opacity: 1;
-    filter: drop-shadow(0 0 7px var(--ai-working-color));
+    --ai-glow-blur: 4px;
   }
 }
 .glyph {
