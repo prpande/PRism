@@ -83,7 +83,10 @@ internal static class PreferencesEndpoints
                     // The cap uses ClampCapForRead (NOT ClampCap) so the display matches the annotator's
                     // read semantics exactly — including the legacy `<=0 → 10` corner.
                     ProviderTimeoutSeconds: AiConfigBounds.ClampTimeout(ui.Ai.ProviderTimeoutSeconds),
-                    HunkAnnotationCap: AiConfigBounds.ClampCapForRead(ui.Ai.HunkAnnotationCap)),
+                    HunkAnnotationCap: AiConfigBounds.ClampCapForRead(ui.Ai.HunkAnnotationCap),
+                    // #525: same read-clamp the summarizer stamps onto PrSummary.GeneratedMaxChars, so the
+                    // displayed cap and the card's stale-detection comparison can never disagree (D6).
+                    SummaryMaxChars: AiConfigBounds.ClampSummaryCharsForRead(ui.Ai.SummaryMaxChars)),
             Inbox: new InboxPreferencesDto(
                 new InboxSectionsDto(
                     ReviewRequested: sections.ReviewRequested,

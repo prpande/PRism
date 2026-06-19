@@ -59,6 +59,9 @@ public sealed class ConfigStore : IConfigStore, IDisposable
             // (AiConfigBounds) in the apply switch below; surfaced + read-clamped in PRism.Web.
             ["ui.ai.providerTimeoutSeconds"]     = ConfigFieldType.Int,
             ["ui.ai.hunkAnnotationCap"]          = ConfigFieldType.Int,
+            // #525 best-effort summary character cap. Clamped on write (AiConfigBounds.ClampSummaryChars)
+            // in the apply switch below; surfaced + read-clamped in PRism.Web and fed hot into the summarizer.
+            ["ui.ai.summaryMaxChars"]            = ConfigFieldType.Int,
         };
 
     // #262 PR3: inbox.defaultSort is a string-typed key with a CLOSED value set (unlike
@@ -249,6 +252,8 @@ public sealed class ConfigStore : IConfigStore, IDisposable
                     _current with { Ui = ui with { Ai = ui.Ai with { ProviderTimeoutSeconds = AiConfigBounds.ClampTimeout((int)value!) } } },
                 "ui.ai.hunkAnnotationCap" =>
                     _current with { Ui = ui with { Ai = ui.Ai with { HunkAnnotationCap = AiConfigBounds.ClampCap((int)value!) } } },
+                "ui.ai.summaryMaxChars" =>
+                    _current with { Ui = ui with { Ai = ui.Ai with { SummaryMaxChars = AiConfigBounds.ClampSummaryChars((int)value!) } } },
                 _ => throw new ConfigPatchException($"unknown field: {key}")
             };
             await WriteToDiskAsync(ct).ConfigureAwait(false);

@@ -11,8 +11,13 @@ public sealed class PlaceholderPrSummarizer : IPrSummarizer
     public Task<PrSummary?> SummarizeAsync(PrReference pr, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(pr);
+        // #525: use the grouped (`###`-subheading) sample and stamp the gen-time cap = the default cap.
+        // 1000 == AiConfigBounds.DefaultSummaryChars (PRism.Core.Config — not referenced from this layer);
+        // the sample is hand-tuned to that default shape, so the literal and the sample move together.
         return Task.FromResult<PrSummary?>(new PrSummary(
-            $"Sample AI summary for {pr.PrId}.\n\n{PlaceholderData.SummaryBody}", PlaceholderData.SummaryCategory));
+            $"Sample AI summary for {pr.PrId}.\n\n{PlaceholderData.SummaryBodyGrouped}",
+            PlaceholderData.SummaryCategory,
+            GeneratedMaxChars: 1000));
     }
 
     // Preview mode has no cache to bypass — regenerate returns the same placeholder (no real spend).
