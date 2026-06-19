@@ -1036,5 +1036,9 @@ public sealed class InboxRefreshOrchestratorTests
         // InboxUpdated must fire so the FE clears its working markers
         published.OfType<InboxUpdated>().Should().NotBeEmpty(
             "publishing InboxUpdated is required even when no chip landed");
+        // The published event must include the section containing the chip-less PR so the FE
+        // knows which rail entry to clear its working marker on.
+        published.OfType<InboxUpdated>().Single().ChangedSectionIds.Should().Contain("review-requested",
+            "the section holding the chip-less PR must appear in ChangedSectionIds so the FE can clear its working marker");
     }
 }

@@ -415,6 +415,7 @@ public sealed partial class InboxRefreshOrchestrator : IInboxRefreshOrchestrator
                     merged[r.PrId] = new InboxItemEnrichment(r.PrId, r.CategoryChip, HoverSummary: null);
                     applied++;
                 }
+                // Runs for chip-less settles too: the section must be in changedSections so the FE clears its working marker even when no chip landed (#508).
                 foreach (var kv in current.Sections)
                     if (kv.Value.Any(p => p.Reference.PrId == r.PrId)) changedSections.Add(kv.Key);
             }
