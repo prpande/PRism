@@ -3,6 +3,13 @@ import { useEffect, useId, useRef } from 'react';
 export interface ModalProps {
   open: boolean;
   title: string;
+  /**
+   * Optional decorative leading glyph for the title (e.g. an AI spark). Modal
+   * wraps it in an aria-hidden span so it NEVER contributes to the dialog's
+   * accessible name (aria-labelledby resolves to this <h2>). Callers do not
+   * need to set aria-hidden themselves; pass a text-free decorative node.
+   */
+  titleIcon?: React.ReactNode;
   onClose: () => void;
   // 'primary' = default, focuses the destructive/affirmative button on open;
   // 'cancel' = focuses the dismissive button on open. Per spec § 5.5a, the
@@ -30,6 +37,7 @@ const FOCUSABLE_SELECTOR =
 export function Modal({
   open,
   title,
+  titleIcon,
   onClose,
   defaultFocus = 'primary',
   disableEscDismiss = false,
@@ -104,6 +112,7 @@ export function Modal({
         className="modal-dialog"
       >
         <h2 id={titleId} className="modal-title">
+          {titleIcon != null && <span aria-hidden="true">{titleIcon}</span>}
           {title}
         </h2>
         <div className="modal-body">{children}</div>

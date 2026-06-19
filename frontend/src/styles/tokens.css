@@ -817,6 +817,9 @@ a:hover { text-decoration: underline; }
   .modal-dialog:has(.submit-dialog) { max-width: none; }
 }
 .modal-title {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
   margin: 0 0 var(--s-3);
   font-size: var(--text-lg);
   font-weight: 600;
