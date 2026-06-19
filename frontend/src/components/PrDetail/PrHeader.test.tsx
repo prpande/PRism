@@ -110,6 +110,50 @@ describe('PrHeader mergeability chip', () => {
   });
 });
 
+describe('PrHeader state glyph + draft marker (#501)', () => {
+  it.each([
+    ['open', false, 'open'],
+    ['merged', false, 'merged'],
+    ['closed', false, 'closed'],
+    ['open', true, 'draft'],
+  ] as const)(
+    'renders the %s glyph (isDraft=%s) → data-pr-state=%s',
+    (prState, isDraft, expected) => {
+      const { container } = renderHeader({ loading: false, title: 't', prState, isDraft });
+      expect(container.querySelector(`[data-pr-state="${expected}"]`)).not.toBeNull();
+    },
+  );
+
+  it('shows the Draft marker for an open draft PR', () => {
+    const { container } = renderHeader({ loading: false, title: 't', prState: 'open', isDraft: true });
+    const marker = container.querySelector('.chip-info');
+    expect(marker).not.toBeNull();
+    expect(marker).toHaveTextContent('Draft');
+  });
+
+  it('hides the Draft marker for a non-draft open PR', () => {
+    const { container } = renderHeader({ loading: false, title: 't', prState: 'open', isDraft: false });
+    expect(container.querySelector('.chip-info')).toBeNull();
+  });
+
+  it('a merged draft shows the merged glyph and no Draft marker (precedence)', () => {
+    const { container } = renderHeader({ loading: false, title: 't', prState: 'merged', isDraft: true });
+    expect(container.querySelector('[data-pr-state="merged"]')).not.toBeNull();
+    expect(container.querySelector('[data-pr-state="draft"]')).toBeNull();
+    expect(container.querySelector('.chip-info')).toBeNull();
+  });
+
+  it('keeps the Draft marker as a chip-draft keeplist hook (survives collapse CSS)', () => {
+    // The collapse rule hides every .prSubtitle child except the keeplist classes; the
+    // marker must carry chip-draft so it isn't blanked in collapsed mode. (JSDOM doesn't
+    // apply the stylesheet, so this pins the class contract that the CSS keeplist depends on
+    // rather than computed visibility.)
+    const { container } = renderHeader({ loading: false, title: 't', prState: 'open', isDraft: true });
+    expect(container.querySelector('.chip-draft')).not.toBeNull();
+    expect(container.querySelector('.chip-draft')).toHaveTextContent('Draft');
+  });
+});
+
 describe('PrHeader refresh button', () => {
   it('renders the Refresh button in the actions cluster when not loading', () => {
     renderHeader({

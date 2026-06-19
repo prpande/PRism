@@ -139,16 +139,17 @@
 .prHeader[data-collapsed] .prSubtitle {
   flex: 0 0 auto;
 }
-/* Keep ONLY the CI + mergeability chips; hide author/branch/iterationLabel.
-   .chip-ci / .chip-mergeability are GLOBAL classes (className strings in
+/* Keep ONLY the CI + mergeability + draft chips; hide author/branch/iterationLabel.
+   .chip-ci / .chip-mergeability / .chip-draft are GLOBAL classes (className strings in
    PrHeader.tsx, no module rule), so they MUST be wrapped in :global() — a bare
    .chip-ci inside a CSS Module is hashed and matches nothing, which would hide
    the very chips we want to keep. Same idiom as DiffPane.module.css's
    :global(.diff-pane--split:not(...)).
    FOOTGUN: this is an implicit allowlist — ANY new .prSubtitle child that is not
-   .chip-ci / .chip-mergeability will hide in collapsed mode. Add it to the keep
+   .chip-ci / .chip-mergeability / .chip-draft will hide in collapsed mode. Add it to the keep
    list here if a future child must stay visible when collapsed. */
-.prHeader[data-collapsed] .prSubtitle > :not(:global(.chip-ci)):not(:global(.chip-mergeability)) {
+.prHeader[data-collapsed] .prSubtitle
+  > :not(:global(.chip-ci)):not(:global(.chip-mergeability)):not(:global(.chip-draft)) {
   display: none;
 }
 .prHeader[data-collapsed] .collapseToggle svg {
