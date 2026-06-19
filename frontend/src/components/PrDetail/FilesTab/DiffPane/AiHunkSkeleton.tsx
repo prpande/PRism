@@ -8,7 +8,7 @@ import styles from './AiHunkAnnotation.module.css';
 export function AiHunkSkeleton() {
   return (
     <div className={`ai-hunk ${styles.aiHunk}`} data-testid="ai-hunk-skeleton" aria-busy="true">
-      <AiMarker variant="inline" state="working" decorative className="ai-icon" />
+      <AiMarker variant="inline" state="working" decorative />
       <div className={styles.aiHunkBody}>
         <span className="sr-only" aria-live="polite">
           AI is reviewing this file…
