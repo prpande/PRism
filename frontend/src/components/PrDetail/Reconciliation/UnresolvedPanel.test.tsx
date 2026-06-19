@@ -325,7 +325,10 @@ function mockAiGate(gates: { draftSuggestions: boolean }) {
   vi.mocked(useAiGate).mockReturnValue(gates.draftSuggestions);
 }
 
-function mockUseAiDraftSuggestions(value: { state: string; suggestions: unknown }) {
+function mockUseAiDraftSuggestions(value: {
+  state: 'loading' | 'ready' | 'empty' | 'error';
+  suggestions: unknown;
+}) {
   vi.mocked(useAiDraftSuggestions).mockReturnValue(
     value as ReturnType<typeof useAiDraftSuggestions>,
   );
