@@ -122,12 +122,16 @@ export function writeKey(
     return { ...prefs, inbox: { ...prefs.inbox, groupByRepo: value as boolean } };
   if (key.startsWith('ui.ai.features.')) {
     const seam = key.slice('ui.ai.features.'.length) as keyof PreferencesResponse['ui']['features'];
+    // writeKey is a test-only helper (no production callers). When prefs.ui.features
+    // is undefined this returns a features object holding only the written seam;
+    // acceptable because AiFeatures has no cross-field invariants and tests write/read
+    // the same seam — real GET responses always populate all nine keys.
     return {
       ...prefs,
       ui: {
         ...prefs.ui,
         features: {
-          ...(prefs.ui.features ?? {}),
+          ...prefs.ui.features,
           [seam]: value as boolean,
         } as PreferencesResponse['ui']['features'],
       },
