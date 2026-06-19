@@ -292,13 +292,16 @@ export function AiPane() {
       {resolvedMode === 'preview' && (
         <div className={pane.row}>
           <div>
+            {/* Intentionally inert: a discoverability affordance only — the real toggles
+                live in Live mode. No onClick (a no-op handler on type="button" is
+                misleading), and it never calls set/setFeaturesOpen, so clicking does
+                nothing; aria-disabled + dimmed opacity convey the disabled state. */}
             <button
               type="button"
               className={`${pane.label} ${pane.disclosureBtn}`}
               style={{ opacity: 0.5 }}
               aria-disabled="true"
               aria-describedby="ai-features-preview-hint"
-              onClick={(e) => e.preventDefault()}
             >
               AI features
             </button>

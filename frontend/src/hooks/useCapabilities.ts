@@ -84,6 +84,10 @@ export function deriveCapabilities(
           ? LIVE_CAPABILITIES
           : ALL_ON; // preview → every surface shows SAMPLE content (SampleBadge marks it)
   if (base === null) return null;
+  // Invariant: AiCapabilities and AiFeatures are structurally parallel (the same nine keys).
+  // We iterate the capability keys and mask each by its same-named feature flag. If the two
+  // types ever diverge, a key in one but not the other would silently skip masking — keep them
+  // in lockstep (both mirror AiFeaturesConfig.AllOn).
   return Object.fromEntries(
     (Object.keys(base) as (keyof AiCapabilities)[]).map((k) => [
       k,

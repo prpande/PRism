@@ -550,21 +550,9 @@ test('ai-tab: real-wire gate — features.summary=false masks summary capability
   test.setTimeout(60_000);
 
   // Shared mutable store seeded from makeAiPreferences (Live, all features on).
+  // makeDefaultPreferences always populates ui.features (all nine, all on), so the
+  // store is ready to mutate below — no defensive backfill needed.
   const store = makeAiPreferences();
-  // Ensure features is present and mutable (makeDefaultPreferences now always populates it).
-  if (!store.ui.features) {
-    (store.ui as Record<string, unknown>).features = {
-      summary: true,
-      fileFocus: true,
-      hunkAnnotations: true,
-      preSubmitValidators: true,
-      composerAssist: true,
-      draftSuggestions: true,
-      draftReconciliation: true,
-      inboxEnrichment: true,
-      inboxRanking: true,
-    };
-  }
 
   // Wire all routes from a single preferences store so the POST mutation is
   // visible to the subsequent PR-view navigation (same page, no reload needed).

@@ -221,9 +221,11 @@ describe('AiPane', () => {
     const btn = screen.getByRole('button', { name: /AI features/ });
     expect(btn).toHaveAttribute('aria-disabled', 'true');
     expect(screen.getByText(/Switch to Live/)).toBeInTheDocument();
-    // aria-disabled does NOT block native activation; onClick must early-return.
+    // The button has no onClick and never calls set/setFeaturesOpen, so a click is inert
+    // even though aria-disabled alone would not block native activation: no patch, no expand.
     await userEvent.click(btn);
     expect(set).not.toHaveBeenCalled();
+    expect(screen.queryByRole('switch')).toBeNull(); // accordion did not expand
   });
 
   it('shows four feature switches in Live and toggles one', async () => {
