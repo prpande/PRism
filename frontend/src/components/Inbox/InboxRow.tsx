@@ -157,19 +157,12 @@ export function InboxRow({
               </span>
             ) : chipState === 'loading' ? (
               <span className={styles.chipWrap}>
-                {/* #508/#548 — working marker while enrichment is in flight. Decorative:
-                    the aria-loading suffix on the row button carries the SR announcement. */}
-                <span
-                  className={`${styles.chip} ${styles.chipLoading}`}
-                  data-testid="inbox-chip-loading"
-                >
-                  <AiMarker
-                    variant="inline"
-                    state="working"
-                    decorative
-                    className={styles.chipMarker}
-                  />
-                </span>
+                {/* #508/#548 — while enrichment is in flight show ONLY the pulsing AI marker in
+                    the chip slot (no chip box); the full category chip box replaces it in place
+                    when the categorisation arrives (owner B1 2026-06-19). The slot is not
+                    width-reserved, so the meta line settles left when the box appears — accepted.
+                    Decorative: the aria-loading suffix on the row button carries the SR announcement. */}
+                <AiMarker variant="inline" state="working" decorative />
                 <span className={styles.dotsep}>·</span>
               </span>
             ) : chipState === 'ready' && enrichment?.categoryChip ? (

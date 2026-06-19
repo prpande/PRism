@@ -245,14 +245,6 @@
   letter-spacing: 0.03em;
 }
 
-/* #508/#548 — loading chip: a min-width approximating a real category label so the meta
-   line doesn't shift left when text arrives. 56px is a representative placeholder;
-   flag for B1 width-tuning against real labels (e.g. "Bug fix" ≈ 48px at --text-2xs). */
-.chipLoading {
-  min-width: 56px;
-  justify-content: center;
-}
-
 .draftChip {
   display: inline-flex;
   align-items: center;
