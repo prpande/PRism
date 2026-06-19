@@ -88,14 +88,17 @@ export function deriveFace(i: ReviewActionInputs): ReviewActionFace {
           stale: submittedReviewStale,
         };
 
-  // Fill precedence: closed/merged → secondary; draft verdict wins; else submitted verdict; else accent.
+  // Fill precedence: closed/merged → secondary; draft verdict wins; pending → accent;
+  // else submitted verdict; else accent. Mirrors `label`'s branch order below.
   const fill: ReviewActionFill = isClosedOrMerged
     ? 'secondary'
     : verdict
       ? verdict
-      : hasSubmitted && !pending
-        ? STATE_FILL[viewerReview.state]
-        : 'accent';
+      : pending
+        ? 'accent'
+        : hasSubmitted
+          ? STATE_FILL[viewerReview.state]
+          : 'accent';
 
   const label = isClosedOrMerged
     ? 'Drafts'

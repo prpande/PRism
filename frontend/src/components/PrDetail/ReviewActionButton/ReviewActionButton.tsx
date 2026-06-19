@@ -53,7 +53,7 @@ export function ReviewActionButton(props: ReviewActionButtonProps) {
   const onMainClick = () => {
     if (face.mainAction === 'submit') props.onOpenSubmit();
     else if (face.mainAction === 'resume') props.onResume();
-    else setMenuOpen((v) => !v); // closed/merged: main opens the menu
+    else setMenuOpen((v) => !v); // 'change' (submitted) and 'none' (closed/merged): main opens the menu
   };
 
   // Spec §4: disabled / aria-disabled / onClick MUST share one predicate so they
