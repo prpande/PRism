@@ -92,18 +92,6 @@ export interface AiFeatures {
   inboxRanking: boolean;
 }
 
-export const AI_FEATURE_KEYS = [
-  'summary',
-  'fileFocus',
-  'hunkAnnotations',
-  'preSubmitValidators',
-  'composerAssist',
-  'draftSuggestions',
-  'draftReconciliation',
-  'inboxEnrichment',
-  'inboxRanking',
-] as const satisfies readonly (keyof AiFeatures)[];
-
 // Wire contract for GET /api/capabilities. Retained as the endpoint's response
 // shape: since #221 the SPA derives capabilities from the shared aiMode
 // preference (useCapabilities) rather than calling this endpoint, but D112 will
