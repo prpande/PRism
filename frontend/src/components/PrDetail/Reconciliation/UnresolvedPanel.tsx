@@ -81,7 +81,8 @@ export function UnresolvedPanel({
   const counts = useMemo(() => computeCounts(session), [session]);
 
   const draftSuggestionsEnabled = useAiGate('draftSuggestions');
-  const allSuggestions = useAiDraftSuggestions(prRef, draftSuggestionsEnabled);
+  const aiSuggestions = useAiDraftSuggestions(prRef, draftSuggestionsEnabled);
+  const allSuggestions = aiSuggestions.suggestions;
 
   const suggestionFor = useMemo(() => {
     if (!allSuggestions) return null;

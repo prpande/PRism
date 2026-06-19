@@ -27,7 +27,7 @@ export function AiHunkAnnotation({ annotation }: AiHunkAnnotationProps) {
   const chip = TONE_CHIP[annotation.tone] ?? { variant: 'info' as const, label: annotation.tone };
   return (
     <div className={`ai-hunk ${styles.aiHunk}`} data-testid="ai-hunk">
-      <AiMarker variant="inline" decorative className="ai-icon" />
+      <AiMarker variant="inline" decorative />
       <div className={styles.aiHunkBody}>
         <div className={`ai-hunk-meta ${styles.aiHunkMeta}`}>
           <span>AI</span>
