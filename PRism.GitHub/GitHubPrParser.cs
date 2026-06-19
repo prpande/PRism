@@ -137,6 +137,11 @@ internal static class GitHubPrParser
         // consumer and was a footgun (PR #19 review).
         var isClosed = string.Equals(state, "CLOSED", StringComparison.Ordinal) && !isMerged;
 
+        // Draft flag — additive (#501). The GraphQL query already selects isDraft;
+        // read it null-safely (absent/null → false), mirroring the inbox path.
+        var isDraft = pull.TryGetProperty("isDraft", out var dr)
+            && dr.ValueKind == JsonValueKind.True;
+
         return new Pr(
             reference,
             Title: GetStr("title"),
@@ -155,7 +160,8 @@ internal static class GitHubPrParser
             MergedAt: mergedAt,
             ClosedAt: closedAt,
             AvatarUrl: avatarUrl,
-            HtmlUrl: HtmlUrl());
+            HtmlUrl: HtmlUrl(),
+            IsDraft: isDraft);
     }
 
     internal static List<IssueCommentDto> ParseRootComments(JsonElement pull)
