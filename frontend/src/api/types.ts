@@ -233,6 +233,7 @@ export interface PrDetailDto {
   rootComments: IssueCommentDto[];
   reviewComments: ReviewThreadDto[];
   timelineCapHit: boolean;
+  viewerReview?: ViewerReview | null;
 }
 
 export interface PrSummary {
@@ -309,6 +310,14 @@ export type DraftStatus = 'draft' | 'moved' | 'stale';
 // PUT /draft, and POST /submit all speak it. The C# DraftVerdict / SubmitEvent
 // enums serialize via JsonStringEnumConverter + KebabCaseJsonNamingPolicy.
 export type DraftVerdict = 'approve' | 'request-changes' | 'comment';
+
+export type ReviewState = 'approved' | 'changes-requested' | 'commented';
+
+export interface ViewerReview {
+  state: ReviewState;
+  submittedAt: string;
+  commitSha: string | null;
+}
 
 export type DraftVerdictStatus = 'draft' | 'needs-reconfirm';
 
