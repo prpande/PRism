@@ -144,7 +144,8 @@ public sealed partial class GitHubReviewService : IPrDiscovery, IPrReader
             Commits: Array.Empty<CommitDto>(),
             RootComments: rootComments,
             ReviewComments: reviewComments,
-            TimelineCapHit: timelineCapHit);
+            TimelineCapHit: timelineCapHit,
+            ViewerReview: null);
     }
 
     public async Task<DiffDto> GetDiffAsync(PrReference reference, DiffRangeRequest range, CancellationToken ct)
