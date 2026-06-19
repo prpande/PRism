@@ -10,6 +10,9 @@
    and is dropped when motion is reduced (a static glow remains). */
 .working {
   color: var(--ai-working-color);
+  /* Anchor the hover-target pseudo-element below. (The drop-shadow filter already
+     establishes a containing block, but be explicit.) */
+  position: relative;
   /* Doubled drop-shadow in the accent's COMPLEMENT (--ai-working-glow) for a dense,
      high-contrast halo that breathes. The blur is the registered --ai-glow-blur length
      (see tokens.css) so it tweens smoothly instead of stepping. `alternate` makes each
@@ -21,6 +24,17 @@
      start — a brief un-glowing beat between breathes — then swell up (~1s) and fade
      back down (~1s). `alternate` would restart the glow the instant it bottomed out. */
   animation: ai-marker-glow 2.4s ease-in-out infinite;
+}
+/* Enlarge the hover/`title` target far beyond the ~16px glyph so the "AI is working…"
+   tooltip is easy to summon. An invisible, absolutely-positioned pseudo-element pads the
+   hit region by ~10px on every side; because it's abspos it adds NO layout box, so there's
+   no shift when the marker toggles working↔idle. It must keep pointer-events (default) —
+   the native title fires when the cursor is over the element, and this pseudo-element is
+   part of the element's hit region. Only on .working (idle has no tooltip to summon). */
+.working::after {
+  content: '';
+  position: absolute;
+  inset: -10px;
 }
 @media (prefers-reduced-motion: reduce) {
   .working {

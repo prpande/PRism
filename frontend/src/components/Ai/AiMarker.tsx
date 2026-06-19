@@ -29,9 +29,20 @@ export function AiMarker({
     .filter(Boolean)
     .join(' ');
   return (
-    <span className={cls} data-ai-marker="" data-ai-state={state} data-testid="ai-marker">
+    // Native `title` hover tooltip on the working marker (#508) — "AI is working…".
+    // Native title is PRism's house tooltip chrome (used app-wide), so this matches by
+    // construction. Working state only; the idle provenance marker carries its own label.
+    <span
+      className={cls}
+      data-ai-marker=""
+      data-ai-state={state}
+      data-testid="ai-marker"
+      title={working ? AI_WORKING_LABEL : undefined}
+    >
       <SparkIcon className={styles.glyph} />
-      {!decorative && <span className="sr-only">{working ? AI_WORKING_LABEL : AI_PROVENANCE_LABEL}</span>}
+      {!decorative && (
+        <span className="sr-only">{working ? AI_WORKING_LABEL : AI_PROVENANCE_LABEL}</span>
+      )}
     </span>
   );
 }
