@@ -14,10 +14,13 @@
      high-contrast halo that breathes. The blur is the registered --ai-glow-blur length
      (see tokens.css) so it tweens smoothly instead of stepping. `alternate` makes each
      half-cycle one continuous eased ramp (no mid-keyframe to hold on → no blink). */
-  --ai-glow-blur: 2px;
+  --ai-glow-blur: 0.5px;
   filter: drop-shadow(0 0 var(--ai-glow-blur) var(--ai-working-glow))
     drop-shadow(0 0 var(--ai-glow-blur) var(--ai-working-glow));
-  animation: ai-marker-glow 1s ease-in-out infinite alternate;
+  /* Full cycle in the keyframes (NOT `alternate`) so we can hold the dim state at the
+     start — a brief un-glowing beat between breathes — then swell up (~1s) and fade
+     back down (~1s). `alternate` would restart the glow the instant it bottomed out. */
+  animation: ai-marker-glow 2.8s ease-in-out infinite;
 }
 @media (prefers-reduced-motion: reduce) {
   .working {
@@ -30,11 +33,17 @@
   }
 }
 @keyframes ai-marker-glow {
-  from {
+  /* 0–25%: held dim (the pause — glyph shows with ~no halo). 25→61%: swell up.
+     61→100%: fade back to dim, which flows into the next cycle's pause. */
+  0%,
+  25% {
     --ai-glow-blur: 0.5px;
   }
-  to {
+  61% {
     --ai-glow-blur: 4px;
+  }
+  100% {
+    --ai-glow-blur: 0.5px;
   }
 }
 .glyph {
