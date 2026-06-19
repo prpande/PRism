@@ -23,6 +23,7 @@ vi.mock('../api/client', () => {
       providerTimeoutSeconds: 240,
       hunkAnnotationCap: 10,
       summaryMaxChars: 1000,
+      onboardingSeen: false,
     },
     inbox: { sections: {} } as never,
     github: {} as never,

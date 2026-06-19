@@ -322,6 +322,40 @@ public class PreferencesEndpointsTests
             .GetProperty("error").GetString().Should().Be("body must be a JSON object");
     }
 
+    // #485 ai-onboarding: ui.ai.onboardingSeen is in the allowlist and round-trips through POST.
+    [Fact]
+    public async Task POST_ui_ai_onboardingSeen_is_allowlisted_and_round_trips()
+    {
+        using var factory = new PRismWebApplicationFactory();
+        var client = factory.CreateClient();
+        var origin = client.BaseAddress!.GetLeftPart(UriPartial.Authority);
+        using var content = new StringContent(
+            """{ "ui.ai.onboardingSeen": true }""",
+            System.Text.Encoding.UTF8,
+            "application/json");
+        using var req = new HttpRequestMessage(HttpMethod.Post, new Uri("/api/preferences", UriKind.Relative))
+        {
+            Content = content,
+        };
+        req.Headers.Add("Origin", origin);
+        var resp = await client.SendAsync(req);
+
+        resp.StatusCode.Should().Be(HttpStatusCode.OK); // NOT 400 — proves the dotted path is in the allowlist
+        var body = await resp.Content.ReadFromJsonAsync<JsonElement>();
+        body.GetProperty("ui").GetProperty("onboardingSeen").GetBoolean().Should().BeTrue();
+    }
+
+    // #485 ai-onboarding: GET /api/preferences carries ui.onboardingSeen as a camelCase bool.
+    [Fact]
+    public async Task GET_preferences_serializes_onboardingSeen_camelCase_under_ui()
+    {
+        using var factory = new PRismWebApplicationFactory();
+        var client = factory.CreateClient();
+        var body = await client.GetFromJsonAsync<JsonElement>("/api/preferences");
+        body.GetProperty("ui").TryGetProperty("onboardingSeen", out var seen).Should().BeTrue();
+        seen.ValueKind.Should().BeOneOf(JsonValueKind.True, JsonValueKind.False);
+    }
+
     // #536: GET /api/preferences must project all nine feature flags onto ui.features, default true.
     [Fact]
     public async Task Get_preferences_projects_all_nine_features_default_true()

@@ -1,4 +1,5 @@
 using FluentAssertions;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using PRism.AI.Contracts.Observability;
 using PRism.Web.Ai;
@@ -138,6 +139,44 @@ public sealed class AiUsageRollupTailerTests : IDisposable
         // Act + assert: best-effort flush must never propagate the IOException out of StopAsync.
         var act = async () => await tailer.StopAsync(default);
         await act.Should().NotThrowAsync();
+    }
+
+    [Fact]
+    public async Task StopAsync_does_not_throw_when_logging_the_flush_failure_throws()
+    {
+        // The #550 host-teardown race: the final flush fails AND the logger's sink (e.g. an
+        // EventLog provider) is already disposed, so logging the failure throws — the framework
+        // wraps it in an AggregateException. StopAsync must not let that escape shutdown. The
+        // sibling test above uses NullLogger (never throws on Log), so it does NOT cover this.
+        var occupied = Path.Combine(_dir, "occupied-throwlog");
+        File.WriteAllText(occupied, "x");
+        var store = new AiUsageRollupStore(Path.Combine(occupied, "rollup-dir"), TimeProvider.System);
+        store.Fold(new AiInteractionLogReader.LogEntry(
+            new DateTimeOffset(2026, 6, 19, 10, 0, 0, TimeSpan.Zero),
+            new PRism.AI.Contracts.Observability.AiInteractionRecord(
+                "summary", "claude-code", "m", "o/r#1", null,
+                AiInteractionOutcome.Ok, true, InputTokens: 100, EstimatedCostUsd: 0.01m)));
+        store.IsDirty.Should().BeTrue();
+
+        var tailer = new AiUsageRollupTailer(
+            store,
+            Path.Combine(_dir, "absent.log"),
+            TimeProvider.System,
+            new ThrowOnLogLogger()); // logs throw, mimicking a disposed EventLog sink at teardown
+
+        var act = async () => await tailer.StopAsync(default);
+        await act.Should().NotThrowAsync();
+    }
+
+    // A logger whose every write throws — stands in for a logger provider (e.g. EventLog) that
+    // the host has already disposed when StopAsync's catch block tries to log the flush failure.
+    private sealed class ThrowOnLogLogger : ILogger<AiUsageRollupTailer>
+    {
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(LogLevel logLevel) => true;
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception,
+            Func<TState, Exception?, string> formatter) =>
+            throw new ObjectDisposedException("EventLogInternal");
     }
 
     public void Dispose()

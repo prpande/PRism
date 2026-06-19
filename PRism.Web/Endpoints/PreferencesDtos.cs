@@ -28,7 +28,8 @@ internal sealed record AiFeaturesDto(
 
 internal sealed record UiPreferencesDto(
     string Theme, string Accent, bool AiPreview, string AiMode, string Density, string ContentScale,
-    int ProviderTimeoutSeconds, int HunkAnnotationCap, int SummaryMaxChars, AiFeaturesDto Features);
+    int ProviderTimeoutSeconds, int HunkAnnotationCap, int SummaryMaxChars, bool OnboardingSeen,
+    AiFeaturesDto Features);
 
 // #283 ShowActivityRail serializes as `showActivityRail` natively under the camelCase
 // policy — no [JsonPropertyName] needed. Default false; gates the activity rail (#137

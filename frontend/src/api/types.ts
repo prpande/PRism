@@ -27,6 +27,9 @@ export interface UiPreferences {
   // #525 best-effort summary character cap (500–5000, default 1000). GET clamps for display; fed into
   // the summarizer prompt and stamped onto PrSummary.generatedMaxChars so the card can detect a cap change.
   summaryMaxChars: number;
+  // #485 AI onboarding dialog: true once the user has dismissed the dialog via any committing exit
+  // (Off, Preview "Maybe later", or Manage AI settings). Esc does NOT set this — re-shows next launch.
+  onboardingSeen: boolean;
   // #536 per-feature AI enablement flags. Backend defaults all nine to true; treat as possibly-absent at
   // runtime (older configs / test fixtures may omit). All read sites use `preferences.ui.features?.[k] ?? true`.
   features?: AiFeatures;

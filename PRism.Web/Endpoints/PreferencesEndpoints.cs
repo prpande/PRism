@@ -89,6 +89,9 @@ internal static class PreferencesEndpoints
                     // #525: same read-clamp the summarizer stamps onto PrSummary.GeneratedMaxChars, so the
                     // displayed cap and the card's stale-detection comparison can never disagree (D6).
                     SummaryMaxChars: AiConfigBounds.ClampSummaryCharsForRead(ui.Ai.SummaryMaxChars),
+                    // #485: null (key absent on disk / pre-feature) projects as false so the FE always
+                    // gets a concrete bool; Task-2 backfill computes and persists the real value on first load.
+                    OnboardingSeen: ui.Ai.OnboardingSeen ?? false,
                     Features: new AiFeaturesDto(
                         Summary:             On("summary"),
                         FileFocus:           On("fileFocus"),

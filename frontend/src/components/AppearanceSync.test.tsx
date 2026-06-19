@@ -28,6 +28,7 @@ function prefs(contentScale: PreferencesResponse['ui']['contentScale']): Prefere
       providerTimeoutSeconds: 240,
       hunkAnnotationCap: 10,
       summaryMaxChars: 1000,
+      onboardingSeen: false,
     },
     inbox: {
       sections: {
