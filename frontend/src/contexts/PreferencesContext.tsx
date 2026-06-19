@@ -21,6 +21,7 @@ export type PreferenceKey =
   | 'ui.ai.mode'
   | 'ui.ai.providerTimeoutSeconds'
   | 'ui.ai.hunkAnnotationCap'
+  | 'ui.ai.summaryMaxChars'
   | 'density'
   | 'contentScale'
   | 'inbox.defaultSort'
@@ -41,6 +42,7 @@ type InboxSectionKey = Exclude<
   | 'ui.ai.mode'
   | 'ui.ai.providerTimeoutSeconds'
   | 'ui.ai.hunkAnnotationCap'
+  | 'ui.ai.summaryMaxChars'
   | 'density'
   | 'contentScale'
   | 'inbox.defaultSort'
@@ -55,6 +57,7 @@ export function readKey(prefs: PreferencesResponse, key: PreferenceKey): unknown
   if (key === 'ui.ai.mode') return prefs.ui.aiMode;
   if (key === 'ui.ai.providerTimeoutSeconds') return prefs.ui.providerTimeoutSeconds;
   if (key === 'ui.ai.hunkAnnotationCap') return prefs.ui.hunkAnnotationCap;
+  if (key === 'ui.ai.summaryMaxChars') return prefs.ui.summaryMaxChars;
   if (key === 'density') return prefs.ui.density;
   if (key === 'contentScale') return prefs.ui.contentScale;
   if (key === 'inbox.defaultSort') return prefs.inbox.defaultSort;
@@ -79,6 +82,8 @@ export function writeKey(
     return { ...prefs, ui: { ...prefs.ui, providerTimeoutSeconds: value as number } };
   if (key === 'ui.ai.hunkAnnotationCap')
     return { ...prefs, ui: { ...prefs.ui, hunkAnnotationCap: value as number } };
+  if (key === 'ui.ai.summaryMaxChars')
+    return { ...prefs, ui: { ...prefs.ui, summaryMaxChars: value as number } };
   if (key === 'density')
     return {
       ...prefs,
