@@ -30,6 +30,9 @@ public sealed partial class InboxRefreshOrchestrator : IInboxRefreshOrchestrator
     private int _coldStartKicked;
     private readonly IDisposable _enrichmentSub;
     private volatile bool _disposed;
+    // Last-seen AI mode, stored as int so Interlocked can touch it (#548). The delta-gate
+    // in OnConfigChanged reads/advances it atomically.
+    private int _lastAiMode;
 
     public InboxRefreshOrchestrator(
         IConfigStore config,
@@ -56,6 +59,8 @@ public sealed partial class InboxRefreshOrchestrator : IInboxRefreshOrchestrator
         _viewerLoginProvider = viewerLoginProvider;
         _log = log ?? NullLogger<InboxRefreshOrchestrator>.Instance;
         _enrichmentSub = _events.Subscribe<InboxEnrichmentsReady>(OnInboxEnrichmentsReady);
+        _lastAiMode = (int)_config.Current.Ui.Ai.Mode;
+        _config.Changed += OnConfigChanged;
     }
 
     public InboxSnapshot? Current => Volatile.Read(ref _current);
@@ -375,9 +380,10 @@ public sealed partial class InboxRefreshOrchestrator : IInboxRefreshOrchestrator
 
     public void Dispose()
     {
-        _enrichmentSub.Dispose();   // unsubscribe first so no new handler invocations start
-        _disposed = true;           // then flag so any in-flight invocation exits early
-        _writerLock.Dispose();      // finally release the semaphore
+        _enrichmentSub.Dispose();          // unsubscribe first so no new handler invocations start
+        _config.Changed -= OnConfigChanged; // and detach the config-change handler (#548)
+        _disposed = true;                  // then flag so any in-flight invocation exits early
+        _writerLock.Dispose();             // finally release the semaphore
     }
 
     // Merge a completed enrichment batch into the live snapshot. Runs synchronously on the
@@ -430,6 +436,49 @@ public sealed partial class InboxRefreshOrchestrator : IInboxRefreshOrchestrator
         {
             _writerLock.Release();
         }
+    }
+
+    // #548 — a stale Preview placeholder ("Refactor") must not linger after the AI mode changes.
+    // RaiseChanged is SYNCHRONOUS on the caller thread (preferences PUT thread + config-watcher
+    // thread), so this MUST be lock-free — mirror the real PrDetailLoader.InvalidateAll precedent.
+    private void OnConfigChanged(object? sender, ConfigChangedEventArgs e)
+    {
+        if (_disposed) return;
+        var newMode = e.Config.Ui.Ai.Mode;
+        // Atomically advance the last-seen mode; Interlocked.Exchange makes the delta-gate safe
+        // against two concurrent Changed producers (API thread + file-watcher thread) — neither
+        // can pass on a torn/stale read of _lastAiMode.
+        var prev = (AiMode)Interlocked.Exchange(ref _lastAiMode, (int)newMode);
+        if (prev == newMode) return; // only on an actual AI-mode delta
+
+        // CAS-clear the AI-derived fields. If a concurrent RefreshAsync already replaced _current,
+        // it loses the CAS — and that is CORRECT: that refresh's snapshot is authoritative for the
+        // new mode. The refresh poke below converges either outcome.
+        var current = Volatile.Read(ref _current);
+        if (current is not null &&
+            (current.Enrichments.Count > 0 || current.AiEnrichmentSettled.Count > 0))
+        {
+            var cleared = current with
+            {
+                Enrichments = new Dictionary<string, InboxItemEnrichment>(StringComparer.Ordinal),
+                AiEnrichmentSettled = new HashSet<string>(StringComparer.Ordinal),
+            };
+            if (ReferenceEquals(Interlocked.CompareExchange(ref _current, cleared, current), current))
+                // All section keys: ComputeDiff is enrichment-blind, so publish unconditionally to
+                // force the FE refetch. applied = 0 (no chips landed — we cleared them).
+                _events.Publish(new InboxUpdated(current.Sections.Keys.ToArray(), 0));
+        }
+
+        // Re-populate via the RESOLVED enricher rather than leaving every chip-eligible row pulsing
+        // for a full Polling.InboxSeconds (round-2 adversarial review, conf 75 — the N-row pulse-storm
+        // is the DEFAULT Preview→Live path, not an edge case). Fire-and-forget RefreshAsync is
+        // _writerLock-serialized, so a concurrent poll coalesces naturally; it runs OFF the caller
+        // thread, so the preferences PUT is never blocked. (If a poller handle is reachable from the
+        // orchestrator, prefer InboxPoller.RequestImmediateRefresh() — verify the wiring in-step;
+        // today the dependency runs poller→orchestrator, so RefreshAsync is the reachable path.)
+#pragma warning disable CA2012 // fire-and-forget by design; see comment above
+        _ = RefreshAsync(CancellationToken.None);
+#pragma warning restore CA2012
     }
 
     private static partial class Log

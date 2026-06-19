@@ -1041,4 +1041,92 @@ public sealed class InboxRefreshOrchestratorTests
         published.OfType<InboxUpdated>().Single().ChangedSectionIds.Should().Contain("review-requested",
             "the section holding the chip-less PR must appear in ChangedSectionIds so the FE can clear its working marker");
     }
+
+    // ── #548: AI-mode change invalidates stale enrichments ────────────────────
+
+    // Mode-aware seam selector mirroring the real AiSeamSelector: Preview resolves the
+    // placeholder enricher (chips for every PR), Off/Live resolve Noop (no chips). The
+    // orchestrator's fire-and-forget RefreshAsync poke after a mode change therefore
+    // re-populates with whatever the NEW mode resolves — so the post-Preview state stays
+    // chip-less regardless of async timing, matching production.
+    private sealed class ModeAwareAiSeamSelector : IAiSeamSelector
+    {
+        private readonly IConfigStore _config;
+        public ModeAwareAiSeamSelector(IConfigStore config) => _config = config;
+        public T Resolve<T>() where T : class
+        {
+            IInboxItemEnricher enricher = _config.Current.Ui.Ai.Mode == AiMode.Preview
+                ? new PlaceholderInboxItemEnricher()
+                : new NoopInboxItemEnricher();
+            return (enricher as T)!;
+        }
+    }
+
+    // Build an orchestrator seeded (via a real refresh with the placeholder enricher) with a
+    // non-empty Enrichments map + AiEnrichmentSettled set, starting from the given AI mode.
+    // Returns the SUT, the (recording) bus, and the FakeConfigStore so the caller can flip the
+    // mode + raise Changed.
+    private static (InboxRefreshOrchestrator Sut, RecordingEventBus Bus, FakeConfigStore Config)
+        BuildSeededForAiModeChange(AiMode startMode)
+    {
+        var bus = new RecordingEventBus();
+        var configFake = ConfigStoreFake(ConfigWithSections(
+            reviewRequested: true, awaitingAuthor: false, authoredByMe: false, mentioned: false)
+            with { Ui = AppConfig.Default.Ui with { Ai = AppConfig.Default.Ui.Ai with { Mode = startMode } } });
+        var sections = new FakeSectionQueryRunner(_ => new Dictionary<string, IReadOnlyList<RawPrInboxItem>>
+        {
+            ["review-requested"] = new[] { RawOpen(1, "Add X", "d"), RawOpen(2, "Fix Y", "e") },
+        });
+        var sut = Build(
+            config: configFake,
+            sections: sections,
+            aiSelector: new ModeAwareAiSeamSelector(configFake),
+            events: bus);
+        return (sut, bus, configFake);
+    }
+
+    [Fact]
+    public async Task OnConfigChanged_AiModeChange_ClearsEnrichmentsAndNotifies()
+    {
+        var (sut, bus, config) = BuildSeededForAiModeChange(AiMode.Preview);
+        using var _ = sut;
+
+        await sut.RefreshAsync(CancellationToken.None);
+        // Seeded: placeholder enricher gives every open PR a chip + settles it.
+        sut.Current!.Enrichments.Should().NotBeEmpty();
+        sut.Current!.AiEnrichmentSettled.Should().NotBeEmpty();
+        bus.Published.Clear();
+
+        // Flip the AI mode and raise Changed (synchronous, mirrors the PUT /api/preferences thread).
+        config.Current = config.Current with
+        {
+            Ui = config.Current.Ui with { Ai = config.Current.Ui.Ai with { Mode = AiMode.Live } }
+        };
+        config.RaiseChanged();
+
+        // The cleared state is the observable post-handler state (RefreshAsync poke is fire-and-forget).
+        sut.Current!.Enrichments.Should().BeEmpty("a stale Preview chip must not survive an AI-mode change");
+        sut.Current!.AiEnrichmentSettled.Should().BeEmpty("the settled set must be cleared so chip-eligible rows show a loading cue");
+        bus.Published.OfType<InboxUpdated>().Should().NotBeEmpty(
+            "the FE must be force-notified to refetch (ComputeDiff is enrichment-blind)");
+    }
+
+    [Fact]
+    public async Task OnConfigChanged_SameAiMode_DoesNotClear()
+    {
+        var (sut, bus, config) = BuildSeededForAiModeChange(AiMode.Preview);
+        using var _ = sut;
+
+        await sut.RefreshAsync(CancellationToken.None);
+        sut.Current!.Enrichments.Should().NotBeEmpty();
+        var enrichmentsBefore = sut.Current!.Enrichments.Count;
+        bus.Published.Clear();
+
+        // Raise Changed with the SAME AI mode (e.g. an unrelated theme/accent change).
+        config.Current = config.Current with { Ui = config.Current.Ui with { Theme = "dark" } };
+        config.RaiseChanged();
+
+        sut.Current!.Enrichments.Should().HaveCount(enrichmentsBefore, "no AI-mode delta means no clear");
+        bus.Published.OfType<InboxUpdated>().Should().BeEmpty("no AI-mode delta means no spurious churn");
+    }
 }
