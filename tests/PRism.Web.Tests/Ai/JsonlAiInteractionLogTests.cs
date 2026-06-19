@@ -20,6 +20,7 @@ public sealed class JsonlAiInteractionLogTests : IDisposable
         Component: "summary", ProviderId: "claude-code", Model: "claude-sonnet-4-6",
         PrRef: "o/r#1", HeadSha: "abc123", Outcome: AiInteractionOutcome.Ok, Egressed: true,
         LatencyMs: 4200, InputTokens: 100, OutputTokens: 20, CacheReadInputTokens: 0,
+        CacheCreationInputTokens: 89414,
         EstimatedCostUsd: 0.01m, PromptChars: 5000, ResponseChars: 300);
 
     [Fact]
@@ -37,6 +38,8 @@ public sealed class JsonlAiInteractionLogTests : IDisposable
         root.GetProperty("outcome").GetString().Should().Be("ok"); // enum → camelCase string
         root.GetProperty("egressed").GetBoolean().Should().BeTrue();
         root.GetProperty("inputTokens").GetInt64().Should().Be(100);
+        // #379: cache-creation tokens hold the bulk of a cold call's input volume — must be audited.
+        root.GetProperty("cacheCreationInputTokens").GetInt64().Should().Be(89414);
         root.GetProperty("timestamp").GetString().Should().NotBeNullOrWhiteSpace();
         // Metadata only: no prompt/response content fields are ever serialized.
         root.TryGetProperty("body", out _).Should().BeFalse();

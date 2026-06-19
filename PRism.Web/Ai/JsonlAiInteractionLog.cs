@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 using Microsoft.Extensions.Logging;
 using PRism.AI.Contracts.Observability;
@@ -40,27 +41,19 @@ internal sealed partial class JsonlAiInteractionLog : IAiInteractionLog
 #pragma warning disable CA1031 // deliberate broad catch: an audit-log write must never deny the user a summary (spec §9). Cancellation is excluded so request aborts still propagate.
         try
         {
-            var line = JsonSerializer.Serialize(
-                new
-                {
-                    timestamp = _clock.GetUtcNow().ToString("O"),
-                    record.Component,
-                    record.ProviderId,
-                    record.Model,
-                    record.PrRef,
-                    record.HeadSha,
-                    record.Outcome,
-                    record.Egressed,
-                    record.LatencyMs,
-                    record.InputTokens,
-                    record.OutputTokens,
-                    record.CacheReadInputTokens,
-                    record.EstimatedCostUsd,
-                    record.PromptChars,
-                    record.ResponseChars,
-                    record.ErrorType,
-                },
-                Json);
+            // Serialize the record DIRECTLY rather than a hand-listed projection, so a future
+            // AiInteractionRecord field can never silently drop from the audit log — that field-drop
+            // bug is exactly #379 (at the provider's token parse), and a hand-maintained projection here
+            // was the same trap one layer up. Safe because AiInteractionRecord is metadata-only by
+            // contract (no prompt/response content). `timestamp` is clock-derived — not on the record —
+            // so it is injected as the leading property after serialization. Null fields are still
+            // omitted (WhenWritingNull) and the enum/camelCase options still apply via `Json`.
+            var node = JsonSerializer.SerializeToNode(record, Json)!.AsObject();
+            node.Insert(0, "timestamp", _clock.GetUtcNow().ToString("O"));
+            // ToJsonString consumes only the JsonWriterOptions slice of `Json` (so we get the
+            // non-indented single-line form); the camelCase naming policy and enum converter were
+            // already applied during SerializeToNode above and are baked into `node`.
+            var line = node.ToJsonString(Json);
 
             lock (_gate)
             {
