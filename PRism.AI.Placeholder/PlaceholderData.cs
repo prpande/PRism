@@ -14,9 +14,9 @@ internal static class PlaceholderData
     public static IReadOnlyList<FileFocus> FileFocus { get; } = new[]
     {
         new FileFocus("src/Calc.cs", FocusLevel.High,
-            "- Core calculation logic — review the boundary handling closely."),
+            "Boundary handling in core calc\n- Review the new clamp on the upper bound for off-by-one risk.\n- Confirm negative inputs still throw rather than silently saturating."),
         new FileFocus("src/Calc.Tests.cs", FocusLevel.Medium,
-            "- Tests for the changed logic; confirm the new boundary cases are covered."),
+            "Tests for the changed boundary logic\n- Verify the new upper-bound and negative-input cases are actually asserted, not just exercised."),
     };
 
     public static IReadOnlyList<HunkAnnotation> HunkAnnotations { get; } = new[]

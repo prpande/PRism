@@ -89,12 +89,17 @@ public class PlaceholderSeamTests
     }
 
     [Fact]
-    public async Task FileFocus_rationale_is_bulleted_markdown()
+    public async Task FileFocus_rationale_is_synopsis_first_bulleted_markdown()
     {
         IFileFocusRanker s = new PlaceholderFileFocusRanker();
         var result = await s.RankAsync(Ref, CancellationToken.None);
         result.Entries.Should().NotBeEmpty();
-        result.Entries[0].Rationale.Should().StartWith("- ");
+        // Synopsis-first format: a headline line, then one or more "- " bullets.
+        // The headline must not begin with a bullet; the body must contain bullets.
+        result.Entries[0].Rationale.Should().NotStartWith("- ",
+            because: "rationale must open with a synopsis headline, not a bullet (#520)");
+        result.Entries[0].Rationale.Should().Contain("\n- ",
+            because: "rationale body must carry at least one bullet after the synopsis (#520)");
     }
 
     [Fact]

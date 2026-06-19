@@ -7,8 +7,10 @@ import type { FileFocusState } from '../../../hooks/useFileFocusResult';
 
 function renderTab(
   fileFocus: Omit<FileFocusState, 'retry'> & { retry?: () => void },
-  requestFileView = vi.fn(),
+  overrides: { requestFileView?: () => void; onSelectSubTab?: () => void } = {},
 ) {
+  const requestFileView = overrides.requestFileView ?? vi.fn();
+  const onSelectSubTab = overrides.onSelectSubTab ?? vi.fn();
   const value = {
     prRef: { owner: 'o', repo: 'r', number: 1 },
     prDetail: {} as never,
@@ -16,7 +18,7 @@ function renderTab(
     readOnly: false,
     subscribed: true,
     baseShaChanged: false,
-    onSelectSubTab: vi.fn(),
+    onSelectSubTab,
     fileFocus: { retry: vi.fn(), ...fileFocus },
     pendingFilePath: null,
     requestFileView,
@@ -30,104 +32,122 @@ function renderTab(
 }
 
 describe('HotspotsTab', () => {
-  it('groups High then Medium, omits empty group headings, hides low', () => {
+  it('lists High then Medium in one container, hides Low rows, shows a Low footer', () => {
     renderTab({
       status: 'ok',
       entries: [
-        { path: 'a.cs', level: 'high', rationale: 'core' },
-        { path: 'b.cs', level: 'medium', rationale: 'localized' },
-        { path: 'c.cs', level: 'low', rationale: 'format' },
+        { path: 'm.cs', level: 'medium', rationale: 'Localized change\n- detail' },
+        { path: 'h.cs', level: 'high', rationale: 'Core logic\n- detail' },
+        { path: 'c.cs', level: 'low', rationale: 'Formatting only' },
       ],
     });
-    expect(screen.getByRole('heading', { name: /high/i })).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: /medium/i })).toBeInTheDocument();
-    expect(screen.getByText('core')).toBeInTheDocument();
-    expect(screen.queryByText('c.cs')).not.toBeInTheDocument(); // low hidden
+    // Headlines are the synopsis (first line), not the path.
+    expect(screen.getByText('Core logic')).toBeInTheDocument();
+    expect(screen.getByText('Localized change')).toBeInTheDocument();
+    // High comes before Medium in DOM order.
+    const headlines = screen.getAllByText(/Core logic|Localized change/);
+    expect(headlines[0]).toHaveTextContent('Core logic');
+    // Low file is not a row; the footer summarises it.
+    expect(screen.queryByText('Formatting only')).not.toBeInTheDocument();
+    expect(screen.getByText(/1 low-priority file/i)).toBeInTheDocument();
   });
 
-  it('only-high PR shows no Medium heading', () => {
-    renderTab({ status: 'ok', entries: [{ path: 'a.cs', level: 'high', rationale: 'x' }] });
-    expect(screen.queryByRole('heading', { name: /medium/i })).not.toBeInTheDocument();
-  });
-
-  it('defaults to all-collapsed: shows stripped previews, no rendered markdown panel', () => {
+  it('sorts rows within a level by path ascending (deterministic order)', () => {
     renderTab({
       status: 'ok',
-      entries: [{ path: 'a.cs', level: 'high', rationale: '- **core** logic\n- second' }],
+      entries: [
+        { path: 'z.cs', level: 'high', rationale: 'Z synopsis\n- d' },
+        { path: 'a.cs', level: 'high', rationale: 'A synopsis\n- d' },
+      ],
     });
-    // collapsed preview = first stripped line
-    expect(screen.getByText('core logic')).toBeInTheDocument();
-    // the second bullet only exists in the expanded markdown — absent while collapsed
-    expect(screen.queryByText('second')).not.toBeInTheDocument();
-    // the panel is not rendered at all while collapsed (its aria-controls target is absent)
-    const toggle = screen.getByRole('button', { name: /toggle a\.cs/i });
+    const toggles = screen.getAllByRole('button', { name: /Toggle .* rationale/i });
+    expect(toggles[0]).toHaveAccessibleName(/Toggle a\.cs rationale/i);
+    expect(toggles[1]).toHaveAccessibleName(/Toggle z\.cs rationale/i);
+  });
+
+  it('expands to render the rationale body as markdown; synopsis is not duplicated', () => {
+    renderTab({
+      status: 'ok',
+      entries: [{ path: 'a.cs', level: 'high', rationale: 'Core logic\n- first\n- second' }],
+    });
+    const toggle = screen.getByRole('button', { name: /toggle a\.cs rationale/i });
     expect(toggle).toHaveAttribute('aria-expanded', 'false');
-    expect(document.getElementById(toggle.getAttribute('aria-controls')!)).toBeNull();
-  });
-
-  it('expanding a row renders the rationale as markdown', () => {
-    renderTab({
-      status: 'ok',
-      entries: [{ path: 'a.cs', level: 'high', rationale: '- first\n- second' }],
-    });
-    const toggle = screen.getByRole('button', { name: /toggle a\.cs/i });
     fireEvent.click(toggle);
-    // Scope the listitem count to the panel: the accordion rows are real <li>s
-    // now (no role="presentation"), so a global getAllByRole would also count them.
+    expect(toggle).toHaveAttribute('aria-expanded', 'true');
     const panel = document.getElementById(toggle.getAttribute('aria-controls')!);
     expect(panel).not.toBeNull();
-    expect(within(panel!).getAllByRole('listitem')).toHaveLength(2);
-    expect(toggle).toHaveAttribute('aria-expanded', 'true');
+    expect(within(panel!).getAllByRole('listitem')).toHaveLength(2); // - first / - second
+    // synopsis headline is NOT repeated inside the panel
+    expect(within(panel!).queryByText('Core logic')).toBeNull();
   });
 
-  it('is multi-open: two rows can be expanded at once', () => {
-    renderTab({
-      status: 'ok',
-      entries: [
-        { path: 'a.cs', level: 'high', rationale: 'ra' },
-        { path: 'b.cs', level: 'medium', rationale: 'rb' },
-      ],
-    });
-    fireEvent.click(screen.getByRole('button', { name: /toggle a\.cs/i }));
-    fireEvent.click(screen.getByRole('button', { name: /toggle b\.cs/i }));
-    expect(screen.getByRole('button', { name: /toggle a\.cs/i })).toHaveAttribute(
-      'aria-expanded',
-      'true',
-    );
-    expect(screen.getByRole('button', { name: /toggle b\.cs/i })).toHaveAttribute(
-      'aria-expanded',
-      'true',
-    );
-  });
-
-  it('keyboard Enter on the toggle expands the row (spec: keyboard toggle)', async () => {
+  it('keyboard Enter on the toggle expands the row', async () => {
     const user = userEvent.setup();
-    renderTab({ status: 'ok', entries: [{ path: 'a.cs', level: 'high', rationale: 'r' }] });
-    const toggle = screen.getByRole('button', { name: /toggle a\.cs/i });
+    renderTab({ status: 'ok', entries: [{ path: 'a.cs', level: 'high', rationale: 'S\n- b' }] });
+    const toggle = screen.getByRole('button', { name: /toggle a\.cs rationale/i });
     toggle.focus();
     await user.keyboard('{Enter}');
     expect(toggle).toHaveAttribute('aria-expanded', 'true');
   });
 
-  it('the open-in-diff control calls requestFileView without toggling the row', () => {
-    const req = vi.fn();
-    renderTab({ status: 'ok', entries: [{ path: 'a.cs', level: 'high', rationale: 'x' }] }, req);
+  it('the Diff pill calls requestFileView without toggling the row', () => {
+    const requestFileView = vi.fn();
+    renderTab(
+      { status: 'ok', entries: [{ path: 'a.cs', level: 'high', rationale: 'S\n- b' }] },
+      { requestFileView },
+    );
     fireEvent.click(screen.getByRole('button', { name: /open a\.cs in diff/i }));
-    expect(req).toHaveBeenCalledWith('a.cs');
-    // header toggle stayed collapsed
-    expect(screen.getByRole('button', { name: /toggle a\.cs/i })).toHaveAttribute(
+    expect(requestFileView).toHaveBeenCalledWith('a.cs');
+    expect(screen.getByRole('button', { name: /toggle a\.cs rationale/i })).toHaveAttribute(
       'aria-expanded',
       'false',
     );
   });
 
-  it('the header toggle is wired to its panel via aria-controls', () => {
-    renderTab({ status: 'ok', entries: [{ path: 'a.cs', level: 'high', rationale: 'r' }] });
-    const toggle = screen.getByRole('button', { name: /toggle a\.cs/i });
-    fireEvent.click(toggle);
-    const panelId = toggle.getAttribute('aria-controls');
-    expect(panelId).toBeTruthy();
-    expect(document.getElementById(panelId!)).not.toBeNull();
+  it('a synopsis-only row renders no toggle (not expandable) but still has a Diff pill', () => {
+    renderTab({
+      status: 'ok',
+      entries: [{ path: 'a.cs', level: 'high', rationale: 'Just a synopsis' }],
+    });
+    expect(
+      screen.queryByRole('button', { name: /toggle a\.cs rationale/i }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByText('Just a synopsis')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /open a\.cs in diff/i })).toBeInTheDocument();
+  });
+
+  it('a backfill row uses the path as its headline (path stays primary)', () => {
+    renderTab({
+      status: 'ok',
+      entries: [
+        { path: 'src/Backfilled.cs', level: 'medium', rationale: 'Not individually ranked.' },
+      ],
+    });
+    expect(screen.getByText('src/Backfilled.cs')).toBeInTheDocument();
+    expect(screen.queryByText('Not individually ranked.')).not.toBeInTheDocument();
+    // not expandable
+    expect(
+      screen.queryByRole('button', { name: /toggle src\/Backfilled\.cs rationale/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it('the Low footer excludes low-by-rule files and switches to the Files tab', () => {
+    const onSelectSubTab = vi.fn();
+    renderTab(
+      {
+        status: 'ok',
+        entries: [
+          { path: 'h.cs', level: 'high', rationale: 'Core\n- d' },
+          { path: 'r.cs', level: 'low', rationale: 'No changes to review in this file.' }, // low-by-rule
+          { path: 'f.cs', level: 'low', rationale: 'Formatting' }, // model-scored low
+        ],
+      },
+      { onSelectSubTab },
+    );
+    // count = 1 (only the model-scored low; low-by-rule excluded)
+    const footer = screen.getByRole('button', { name: /1 low-priority file/i });
+    fireEvent.click(footer);
+    expect(onSelectSubTab).toHaveBeenCalledWith('files');
   });
 
   it('expanded panel renders no live <script> and no javascript: link (XSS)', () => {
@@ -137,11 +157,11 @@ describe('HotspotsTab', () => {
         {
           path: 'a.cs',
           level: 'high',
-          rationale: '<script>alert(1)</script>\n\n[click](javascript:alert(1))',
+          rationale: 'Synopsis\n<script>alert(1)</script>\n\n[click](javascript:alert(1))',
         },
       ],
     });
-    fireEvent.click(screen.getByRole('button', { name: /toggle a\.cs/i }));
+    fireEvent.click(screen.getByRole('button', { name: /toggle a\.cs rationale/i }));
     expect(document.querySelector('script')).toBeNull();
     expect(document.querySelector('a[href*="javascript:"]')).toBeNull();
   });
@@ -151,10 +171,20 @@ describe('HotspotsTab', () => {
     expect(screen.getByTestId('hotspots-skeleton')).toBeInTheDocument();
   });
 
-  it('empty (all-low) shows the positive message and NO retry', () => {
+  it('empty (all-low) shows the positive message, no card, no footer, no retry', () => {
     renderTab({ status: 'empty', entries: [] });
     expect(screen.getByText(/nothing needs special attention/i)).toBeInTheDocument();
+    expect(screen.queryByText(/low-priority file/i)).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /retry/i })).not.toBeInTheDocument();
+  });
+
+  it('all entries Low shows the positive message (no rows, no footer)', () => {
+    renderTab({
+      status: 'ok',
+      entries: [{ path: 'c.cs', level: 'low', rationale: 'Formatting' }],
+    });
+    expect(screen.getByText(/nothing needs special attention/i)).toBeInTheDocument();
+    expect(screen.queryByText(/low-priority file/i)).not.toBeInTheDocument();
   });
 
   it('no-changes shows the distinct empty-diff message', () => {
@@ -164,28 +194,26 @@ describe('HotspotsTab', () => {
 
   it('not-subscribed shows its own copy', () => {
     renderTab({ status: 'not-subscribed', entries: [] });
-    expect(screen.getByText(/isn’t active for this pr/i)).toBeInTheDocument();
+    expect(screen.getByText(/isn't active for this pr/i)).toBeInTheDocument();
   });
 
   it('error shows a distinct message + a Retry button that calls retry', () => {
     const retry = vi.fn();
     renderTab({ status: 'error', entries: [], retry });
-    expect(screen.getByText(/couldn’t load ai focus/i)).toBeInTheDocument();
-    const retryBtn = screen.getByRole('button', { name: /retry/i });
-    fireEvent.click(retryBtn);
+    expect(screen.getByText(/couldn't load ai focus/i)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /retry/i }));
     expect(retry).toHaveBeenCalledTimes(1);
   });
 
-  it('fallback shows the single dedicated state, never medium rows, no retry', () => {
+  it('fallback shows the single dedicated state, never rows, no retry', () => {
     renderTab({
       status: 'fallback',
-      entries: [
-        { path: 'a.cs', level: 'medium', rationale: 'x' },
-        { path: 'b.cs', level: 'medium', rationale: 'y' },
-      ],
+      entries: [{ path: 'a.cs', level: 'medium', rationale: 'x' }],
     });
-    expect(screen.getByText(/couldn’t rank this pr automatically/i)).toBeInTheDocument();
-    expect(screen.queryByText('a.cs')).not.toBeInTheDocument(); // no rows
+    expect(screen.getByText(/couldn't rank this pr automatically/i)).toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: /toggle a\.cs rationale/i }),
+    ).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /retry/i })).not.toBeInTheDocument();
   });
 });

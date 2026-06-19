@@ -109,10 +109,20 @@ const sampleDiff = {
 
 // Real FileFocusResult envelope: one High + one Medium flagged file, fallback
 // false (so the Hotspots tab renders the rows rather than the fallback message).
+// High/Medium rationales have a synopsis line + a bullet so the rows are
+// expandable (the toggle button only renders when a body exists).
 const fileFocusResult = {
   entries: [
-    { path: HIGH_FILE, level: 'high', rationale: 'Core billing math changed here.' },
-    { path: MEDIUM_FILE, level: 'medium', rationale: 'Touches a shared helper.' },
+    {
+      path: HIGH_FILE,
+      level: 'high',
+      rationale: 'Core billing math changed\n- Verify rounding on the new tax path.',
+    },
+    {
+      path: MEDIUM_FILE,
+      level: 'medium',
+      rationale: 'Touches a shared helper\n- Confirm no other caller depends on the old signature.',
+    },
     { path: OTHER_FILE, level: 'low', rationale: 'Whitespace-only.' },
   ],
   fallback: false,
