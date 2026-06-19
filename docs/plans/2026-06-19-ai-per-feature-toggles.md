@@ -287,7 +287,7 @@ public async Task Get_preferences_projects_all_nine_features_default_true()
 [Fact]
 public async Task Post_feature_off_round_trips_through_get()
 {
-    using var factory = new PrismWebFactory();
+    using var factory = new PRismWebApplicationFactory();   // same factory as the sibling test (capital R)
     var client = factory.CreateClient();
 
     var resp = await client.PostAsJsonAsync("/api/preferences",
@@ -605,12 +605,17 @@ In each of the three stepper tests (`renders the provider-timeout stepper …`, 
 Append inside `describe('AiPane', …)`:
 
 ```typescript
-it('hides detail controls in Off and Preview', () => {
+it('hides detail controls in Off and Preview, and the Preview button does not activate', async () => {
   prefs.aiMode = 'preview';
   render(<AiPane />);
   expect(screen.queryByRole('spinbutton', { name: 'Provider timeout' })).toBeNull();
-  // Preview shows the disabled, non-expanding "AI features" button.
-  expect(screen.getByRole('button', { name: /AI features/ })).toHaveAttribute('aria-disabled', 'true');
+  // Preview shows the disabled, non-expanding "AI features" button + hint.
+  const btn = screen.getByRole('button', { name: /AI features/ });
+  expect(btn).toHaveAttribute('aria-disabled', 'true');
+  expect(screen.getByText(/Switch to Live/)).toBeInTheDocument();
+  // aria-disabled does NOT block native activation; onClick must early-return.
+  await userEvent.click(btn);
+  expect(set).not.toHaveBeenCalled();
 });
 
 it('shows four feature switches in Live and toggles one', async () => {
@@ -644,9 +649,10 @@ Expected: FAIL — no Live-gate, no accordion, no Preview button.
         type="button"
         className={`${pane.label} ${pane.disclosureBtn}`}
         aria-expanded={featuresOpen}
-        aria-controls="ai-features-region"
+        aria-controls={featuresOpen ? 'ai-features-region' : undefined}
         onClick={() => setFeaturesOpen((o) => !o)}
       >
+        <InboxCaret open={featuresOpen} />
         AI features
       </button>
     </div>
@@ -674,7 +680,9 @@ Expected: FAIL — no Live-gate, no accordion, no Preview button.
 )}
 ```
 
-4. Add the Preview disabled button:
+The trigger renders an `InboxCaret` (the shared disclosure caret used by `InboxSection` / `RepoGroupAccordion` / `HelpModal`) so sighted users get the same expand affordance as the inbox accordions — the spec requires this. `aria-controls` is gated on `featuresOpen` because `#ai-features-region` only mounts while expanded; an unconditional `aria-controls` pointing at an absent id fails axe `aria-valid-attr-value`. Both choices mirror `HelpModal.tsx:165-174` verbatim (`aria-controls={open ? bodyId : undefined}` + `<InboxCaret open={open} />`); read it before implementing.
+
+4. Add the Preview disabled button (note `onClick` early-returns — `aria-disabled` does NOT block native click/Enter/Space activation, only the styling + AT announce):
 
 ```tsx
 {resolvedMode === 'preview' && (
@@ -686,11 +694,12 @@ Expected: FAIL — no Live-gate, no accordion, no Preview button.
         style={{ opacity: 0.5 }}
         aria-disabled="true"
         aria-describedby="ai-features-preview-hint"
+        onClick={(e) => e.preventDefault()}
       >
         AI features
       </button>
       <p id="ai-features-preview-hint" className={pane.help}>
-        {Object.values(preferences.ui.features ?? {}).some((v) => v === false)
+        {FEATURE_ROWS.some(({ key }) => (preferences.ui.features?.[key] ?? true) === false)
           ? 'Some AI features are turned off. Switch to Live to change them.'
           : 'Switch to Live to turn individual features on or off.'}
       </p>
@@ -698,6 +707,8 @@ Expected: FAIL — no Live-gate, no accordion, no Preview button.
   </div>
 )}
 ```
+
+The hint checks the four settable keys via `FEATURE_ROWS.some(...)`, NOT `Object.values(features ?? {}).some(...)`. When `features` is absent (stale cache / additive-rollout window), `Object.values({})` is empty so `.some` is always `false` and the hint would wrongly read "Switch to Live to turn individual features on or off" even for a user who turned a feature off in a prior Live session. Iterating `FEATURE_ROWS` with `?? true` fail-open scopes the check to the real toggles and degrades correctly.
 
 5. Define the row config near the top of the module:
 
@@ -710,7 +721,7 @@ const FEATURE_ROWS = [
 ];
 ```
 
-Import `Switch` from `../../controls/Switch` and `useState` from `react`.
+Import `Switch` from `../../controls/Switch`, `InboxCaret` from `../../Inbox/InboxCaret`, and `useState` from `react`.
 
 - [ ] **Step 5: Run tests to verify they pass**
 
@@ -722,7 +733,7 @@ Expected: PASS (existing mode + steppers re-seeded; new Off/Preview/Live cases g
 Run (from `frontend/`): `node_modules/.bin/prettier --write src/components/Settings/panes/AiPane.tsx src/components/Settings/panes/AiPane.test.tsx && node_modules/.bin/eslint . && node_modules/.bin/tsc -b`
 
 ```bash
-git add frontend/src/components/Settings/panes/AiPane.tsx frontend/src/components/Settings/panes/AiPane.test.tsx
+git add frontend/src/components/Settings/panes/AiPane.tsx frontend/src/components/Settings/panes/AiPane.test.tsx frontend/src/components/Settings/panes/Pane.module.css
 git commit -m "feat(ai): AI features accordion + Live-gated AiPane (#536)"
 ```
 
