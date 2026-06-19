@@ -93,7 +93,16 @@ interface TabProps {
   aiMarkerState?: 'idle' | 'working' | null;
 }
 
-function Tab({ id, label, active, onSelect, disabled, count, srCountSuffix, aiMarkerState }: TabProps) {
+function Tab({
+  id,
+  label,
+  active,
+  onSelect,
+  disabled,
+  count,
+  srCountSuffix,
+  aiMarkerState,
+}: TabProps) {
   // D11/D103 — the handoff (design/handoff/pr-detail.jsx:124 + :134) applies
   // `.pr-tab-count-warn` drafts-only, never on files. The base `.pr-tab-count`
   // class is shared. Conditional-render of the span (count > 0) already covers

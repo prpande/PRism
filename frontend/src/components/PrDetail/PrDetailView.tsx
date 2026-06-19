@@ -375,9 +375,7 @@ export function PrDetailView({
   // while focus loads, idle once resolved, hidden on error/no-changes/off. Gate on the
   // SAME capability flag that drives showHotspots so the tab marker and the tab presence
   // stay in lockstep (avoid divergence between fileFocusEnabled and showHotspots).
-  const hotspotsAiState = fileFocusEnabled
-    ? fileFocusStatusToMarkerState(fileFocus.status)
-    : null;
+  const hotspotsAiState = fileFocusEnabled ? fileFocusStatusToMarkerState(fileFocus.status) : null;
 
   // Stable identity for PrHeader's onSessionRefetch — an inline arrow would hand
   // PrHeader a fresh function each render, churning its effect/memo dep hygiene.
