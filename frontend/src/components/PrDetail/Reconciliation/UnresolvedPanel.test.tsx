@@ -315,6 +315,22 @@ function buildSessionFixture(): ReviewSessionDto {
   });
 }
 
+// ── Task 7: region-level draft-suggestion cue ────────────────────────────────
+
+const sessionWithOneStaleDraft = mkSession({
+  draftComments: [mkComment({ id: 'task7-d1', status: 'stale' })],
+});
+
+function mockAiGate(gates: { draftSuggestions: boolean }) {
+  vi.mocked(useAiGate).mockReturnValue(gates.draftSuggestions);
+}
+
+function mockUseAiDraftSuggestions(value: { state: string; suggestions: unknown }) {
+  vi.mocked(useAiDraftSuggestions).mockReturnValue(
+    value as ReturnType<typeof useAiDraftSuggestions>,
+  );
+}
+
 describe('UnresolvedPanel — StaleDraftRow AI suggestion (D48)', () => {
   it('renders no stale-draft-ai-suggestion when gate is off', () => {
     vi.mocked(useAiGate).mockReturnValue(false);
@@ -348,5 +364,34 @@ describe('UnresolvedPanel — StaleDraftRow AI suggestion (D48)', () => {
     });
     renderPanel(buildSessionFixture());
     expect(screen.queryByTestId('stale-draft-ai-suggestion')).not.toBeInTheDocument();
+  });
+});
+
+describe('UnresolvedPanel — region-level draft-suggestion cue (Task 7, #508)', () => {
+  it('shows a region-level working marker while draft suggestions load', () => {
+    mockAiGate({ draftSuggestions: true });
+    mockUseAiDraftSuggestions({ state: 'loading', suggestions: null });
+    renderPanel(sessionWithOneStaleDraft);
+    const header = screen.getByTestId('unresolved-panel').querySelector('header')!;
+    expect(within(header).getByTestId('ai-marker')).toHaveAttribute('data-ai-state', 'working');
+    // NO aria-busy on the <section>: it would silence the section's existing summary aria-live
+    // (round-2 design review, conf 100). The cue is the marker + the one sr-only label below.
+    expect(screen.getByTestId('unresolved-panel')).not.toHaveAttribute('aria-busy');
+    // exactly one sr-only announcement (no double-announce)
+    expect(within(header).getAllByText(/reviewing your stale drafts/i)).toHaveLength(1);
+  });
+
+  it('shows no region marker once suggestions settle', () => {
+    mockAiGate({ draftSuggestions: true });
+    mockUseAiDraftSuggestions({ state: 'ready', suggestions: [] });
+    renderPanel(sessionWithOneStaleDraft);
+    expect(within(screen.getByTestId('unresolved-panel')).queryByTestId('ai-marker')).toBeNull();
+  });
+
+  it('shows no region marker when draft suggestions are gated off', () => {
+    mockAiGate({ draftSuggestions: false });
+    mockUseAiDraftSuggestions({ state: 'empty', suggestions: null });
+    renderPanel(sessionWithOneStaleDraft);
+    expect(within(screen.getByTestId('unresolved-panel')).queryByTestId('ai-marker')).toBeNull();
   });
 });

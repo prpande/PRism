@@ -6,6 +6,8 @@ import type { DraftLike } from '../draftKinds';
 import type { PrTabId } from '../PrSubTabStrip';
 import { useAiGate } from '../../../hooks/useAiGate';
 import { useAiDraftSuggestions } from '../../../hooks/useAiDraftSuggestions';
+import { AiMarker } from '../../Ai/AiMarker';
+import { AI_DRAFT_REVIEWING_LABEL } from '../../Ai/aiStrings';
 import styles from './UnresolvedPanel.module.css';
 
 interface UnresolvedPanelProps {
@@ -83,6 +85,7 @@ export function UnresolvedPanel({
   const draftSuggestionsEnabled = useAiGate('draftSuggestions');
   const aiSuggestions = useAiDraftSuggestions(prRef, draftSuggestionsEnabled);
   const allSuggestions = aiSuggestions.suggestions;
+  const draftsWorking = draftSuggestionsEnabled && aiSuggestions.state === 'loading';
 
   const suggestionFor = useMemo(() => {
     if (!allSuggestions) return null;
@@ -173,6 +176,12 @@ export function UnresolvedPanel({
         >
           {summary}
         </span>
+        {draftsWorking && (
+          <span className={styles.draftAiCue} data-testid="unresolved-panel-ai-cue">
+            <AiMarker variant="inline" state="working" decorative />
+            <span className="sr-only">{AI_DRAFT_REVIEWING_LABEL}</span>
+          </span>
+        )}
       </header>
       <ul className={`unresolved-panel-rows ${styles.unresolvedPanelRows}`}>
         {counts.stale.map((d) => (
