@@ -53,7 +53,7 @@ test.describe('draft PR marker baselines (#501)', () => {
 
     // Wait for the draft row. Its aria-label is:
     //   "Calc utilities · acme/api · draft · iteration 3"
-    // The "draft" word comes from InboxRow's openStateWord derivation (#501).
+    // The "draft" word comes from InboxRow's glyphState derivation (#501).
     const row = page.getByRole('button', { name: /Calc utilities.*draft/i });
     await row.waitFor({ timeout: 45_000 });
 
