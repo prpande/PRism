@@ -2,7 +2,7 @@
 
 - **Date:** 2026-06-19
 - **Branch:** V2 (part of the V2 AI roadmap, epic #423)
-- **Status:** Slice 1 shipped (PR #543, merged to V2). Slice 2 implemented (this PR — closes #508 Slice 2 and #548); B1 visual gate pending. See **Implementation status** under §7.
+- **Status:** Slice 1 shipped (PR #543, merged to V2). Slice 2 implemented (this PR — closes #508 Slice 2 and #548); B1 visual gate **owner-approved 2026-06-19**. See **Implementation status** under §7.
 - **Supersedes:** generalizes and replaces the scope of #508 (file-tree dots + annotator in-progress). Adjacent: #509 (styled dot tooltip), #489 (universal AI marker), #484 (AI failure surfacing).
 
 ## Problem
@@ -144,7 +144,7 @@ This keeps the most-felt pain from being gated on the riskiest/least-verified su
   - Region-level draft-suggestion cue on `UnresolvedPanel` (no `aria-busy` on the section — it would silence the panel's existing summary `aria-live`).
 - **Fork resolutions:** (1) the inbox settled signal is a **snapshot-level per-PR set** — `InboxSnapshot.AiEnrichmentSettled` (`IReadOnlySet<string>`), wire `aiEnrichmentSettled: string[]` — not a per-row field and not a snapshot-wide bool, because enrichment arrives progressively (cached hits sync, misses via background `InboxEnrichmentsReady` batches); (2) the draft cue is **region-level** (one marker on the panel header), not per-draft, avoiding the same positional-promise flash on drafts that receive no suggestion.
 - **#548 fold-in:** the inbox orchestrator now subscribes to `IConfigStore.Changed` and, on an AI-mode delta, **lock-free** CAS-clears the stale enrichments + settled set and force-publishes `InboxUpdated` (`ComputeDiff` is enrichment-blind). This stops a Preview placeholder category ("Refactor") from leaking into Live/Off; the settled signal lets the post-invalidation state render an honest in-progress cue rather than a stale placeholder. The handler is lock-free by necessity — `IConfigStore.RaiseChanged` fires synchronously on the preferences-PUT thread, so a blocking lock would freeze the settings save behind an in-flight refresh.
-- **B1 visual gate:** retained (gated issue) — pending owner sign-off.
+- **B1 visual gate:** retained (gated issue) — **owner sign-off received 2026-06-19**. Round-1 deltas applied: (1) the inbox loading chip shows **only** the pulsing `AiMarker` in the slot (no chip box) until the category arrives — the box is not width-reserved, so the meta line settles left on arrival (owner-accepted); (2) the inbox **Preview** chip label is a generic **"Category"** (`PlaceholderData.InboxSampleCategory`), kept separate from the summarizer's canonical "Refactor" so the PR-detail summary card's taxonomy-mapped chip is unaffected. Deferred: hunk annotations not rendering on real PRs is **not a Slice 2 regression** (this branch touches no annotation code) — it is a pre-existing Preview-placeholder-path / Live-empty-result behaviour; to be filed separately only if it persists (owner decision).
 
 ## Items to verify visually during implementation (B1 gate)
 
