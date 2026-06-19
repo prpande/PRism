@@ -18,7 +18,7 @@ public class PrRefreshEndpointTests
                 "feat/x", "main", "MERGEABLE", "passing", false, false, DateTimeOffset.UtcNow, null),
             ClusteringQuality: ClusteringQuality.Ok, Iterations: null, Commits: Array.Empty<CommitDto>(),
             RootComments: Array.Empty<IssueCommentDto>(), ReviewComments: Array.Empty<ReviewThreadDto>(),
-            TimelineCapHit: false);
+            TimelineCapHit: false, ViewerReview: null);
 
     private static async Task<HttpResponseMessage> PostRefresh(HttpClient client, PrReference pr)
     {

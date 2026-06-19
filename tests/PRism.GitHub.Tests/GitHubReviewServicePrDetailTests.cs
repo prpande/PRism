@@ -397,6 +397,67 @@ public class GitHubReviewServicePrDetailTests
     }
 
     [Fact]
+    public async Task GetPrDetailAsync_populates_ViewerReview_from_viewer_and_reviews()
+    {
+        // Arrange a canned GraphQL response that mirrors the full PrDetailGraphQLBody shape
+        // (so ParsePr sees every field it reads) and adds data.viewer.login + reviews.nodes
+        // for the viewer. ViewerReview must be populated from data.viewer.login resolved at
+        // the root (not from pull) and matched against reviews.nodes[].author.login.
+        const string body = """
+        {
+          "data": {
+            "viewer": { "login": "me" },
+            "repository": {
+              "pullRequest": {
+                "title": "Add widget pipeline",
+                "body": "Implements widget v1",
+                "url": "https://github.com/o/r/pull/42",
+                "state": "OPEN",
+                "isDraft": false,
+                "mergeable": "MERGEABLE",
+                "mergeStateStatus": "BEHIND",
+                "headRefName": "feat/widget",
+                "baseRefName": "main",
+                "headRefOid": "head-sha-42",
+                "baseRefOid": "base-sha-42",
+                "author": { "login": "alice", "avatarUrl": "https://avatars.githubusercontent.com/u/1?v=4" },
+                "createdAt": "2026-01-01T00:00:00Z",
+                "closedAt": null,
+                "mergedAt": null,
+                "changedFiles": 7,
+                "comments": {
+                  "pageInfo": { "hasNextPage": false, "endCursor": null },
+                  "nodes": []
+                },
+                "reviewThreads": {
+                  "pageInfo": { "hasNextPage": false, "endCursor": null },
+                  "nodes": []
+                },
+                "reviews": {
+                  "nodes": [
+                    { "author": { "login": "me" }, "state": "APPROVED",
+                      "submittedAt": "2026-02-01T00:00:00Z", "commit": { "oid": "REVSHA" } }
+                  ]
+                },
+                "timelineItems": {
+                  "pageInfo": { "hasNextPage": false, "endCursor": null },
+                  "nodes": []
+                }
+              }
+            }
+          }
+        }
+        """;
+        var svc = NewService(new GraphQLPlusRestHandler { GraphQLBody = body });
+        var detail = await svc.GetPrDetailAsync(new PrReference("o", "r", 42), default);
+
+        detail.Should().NotBeNull();
+        detail!.ViewerReview.Should().NotBeNull();
+        detail.ViewerReview!.State.Should().Be(ReviewState.Approved);
+        detail.ViewerReview.CommitSha.Should().Be("REVSHA");
+    }
+
+    [Fact]
     public async Task GetPrDetailAsync_carries_bot_avatar_and_tolerates_missing_avatar()
     {
         // Bot author keeps its avatarUrl (the case client-side github.com/{login}.png would 404);

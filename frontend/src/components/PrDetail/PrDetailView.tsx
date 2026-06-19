@@ -351,6 +351,7 @@ export function PrDetailView({
         onRefresh={prRefresh.refresh}
         isRefreshing={prRefresh.isRefreshing}
         justRefreshed={prRefresh.justRefreshed}
+        viewerReview={data?.viewerReview}
       />
       <CrossTabPresenceBanner
         visible={presence.showBanner}
