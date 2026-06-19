@@ -85,6 +85,7 @@ public sealed class ClaudeCodeLlmProvider(ICliProcessRunner runner, ClaudeCodePr
             InputTokens: usage?.InputTokens ?? 0,
             OutputTokens: usage?.OutputTokens ?? 0,
             CacheReadInputTokens: usage?.CacheReadInputTokens ?? 0,
+            CacheCreationInputTokens: usage?.CacheCreationInputTokens ?? 0,
             EstimatedCostUsd: envelope.TotalCostUsd);
     }
 }

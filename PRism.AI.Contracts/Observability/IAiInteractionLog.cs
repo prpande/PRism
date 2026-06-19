@@ -32,6 +32,8 @@ public enum AiInteractionOutcome
 /// <param name="InputTokens">Prompt tokens reported by the provider; null unless <see cref="AiInteractionOutcome.Ok"/>.</param>
 /// <param name="OutputTokens">Completion tokens reported by the provider; null unless <see cref="AiInteractionOutcome.Ok"/>.</param>
 /// <param name="CacheReadInputTokens">Provider prompt-cache read tokens; null unless <see cref="AiInteractionOutcome.Ok"/>.</param>
+/// <param name="CacheCreationInputTokens">Provider prompt-cache WRITE tokens; null unless <see cref="AiInteractionOutcome.Ok"/>.
+/// Dominates a cold call's input volume, so omitting it under-reports input by orders of magnitude (#379).</param>
 /// <param name="EstimatedCostUsd">Provider-estimated cost; null unless <see cref="AiInteractionOutcome.Ok"/>.</param>
 /// <param name="PromptChars">Characters of PR-derived prompt content sent; null on a cache hit.</param>
 /// <param name="ResponseChars">Characters of model response received; null unless <see cref="AiInteractionOutcome.Ok"/>.</param>
@@ -48,6 +50,7 @@ public sealed record AiInteractionRecord(
     long? InputTokens = null,
     long? OutputTokens = null,
     long? CacheReadInputTokens = null,
+    long? CacheCreationInputTokens = null,
     decimal? EstimatedCostUsd = null,
     int? PromptChars = null,
     int? ResponseChars = null,

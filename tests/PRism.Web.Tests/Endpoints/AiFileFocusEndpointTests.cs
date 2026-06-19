@@ -227,7 +227,7 @@ public class AiFileFocusEndpointTests
             Calls++;
             if (_throw is not null)
                 throw _throw;
-            return Task.FromResult(new LlmResult(_response, 100, 20, 0, 0.01m));
+            return Task.FromResult(new LlmResult(_response, 100, 20, 0, 0, 0.01m));
         }
     }
 }

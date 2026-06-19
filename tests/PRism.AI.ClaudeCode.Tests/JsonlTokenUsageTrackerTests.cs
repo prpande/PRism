@@ -14,8 +14,8 @@ public sealed class JsonlTokenUsageTrackerTests : IDisposable
     public async Task Appends_one_json_line_per_record()
     {
         using var tracker = new JsonlTokenUsageTracker(_dir);
-        await tracker.RecordAsync(new TokenUsageRecord("summary", "claude-code", 100, 20, 80, 0.5m, IsRetry: false), default);
-        await tracker.RecordAsync(new TokenUsageRecord("summary", "claude-code", 50, 10, 0, 0.2m, IsRetry: true), default);
+        await tracker.RecordAsync(new TokenUsageRecord("summary", "claude-code", 100, 20, 80, 4096, 0.5m, IsRetry: false), default);
+        await tracker.RecordAsync(new TokenUsageRecord("summary", "claude-code", 50, 10, 0, 0, 0.2m, IsRetry: true), default);
 
         var lines = await File.ReadAllLinesAsync(Path.Combine(_dir, "token-usage.jsonl"));
         lines.Should().HaveCount(2);
@@ -23,6 +23,8 @@ public sealed class JsonlTokenUsageTrackerTests : IDisposable
         var first = JsonSerializer.Deserialize<TokenUsageRecord>(lines[0], Web);
         first!.Feature.Should().Be("summary");
         first.CacheReadInputTokens.Should().Be(80);
+        // #379: cache-creation tokens must round-trip — they hold the bulk of cold-call input volume.
+        first.CacheCreationInputTokens.Should().Be(4096);
         first.IsRetry.Should().BeFalse();
         first.RecordedAt.Should().BeCloseTo(DateTimeOffset.UtcNow, TimeSpan.FromMinutes(5));
     }
@@ -31,7 +33,7 @@ public sealed class JsonlTokenUsageTrackerTests : IDisposable
     public async Task Never_writes_environment_variable_values()
     {
         using var tracker = new JsonlTokenUsageTracker(_dir);
-        await tracker.RecordAsync(new TokenUsageRecord("summary", "claude-code", 1, 1, 0, 0m, false), default);
+        await tracker.RecordAsync(new TokenUsageRecord("summary", "claude-code", 1, 1, 0, 0, 0m, false), default);
         var content = await File.ReadAllTextAsync(Path.Combine(_dir, "token-usage.jsonl"));
         content.Should().NotContain("ANTHROPIC_");
         content.Should().NotContain("apiKey");
@@ -42,7 +44,7 @@ public sealed class JsonlTokenUsageTrackerTests : IDisposable
     {
         Skip.If(OperatingSystem.IsWindows(), "POSIX-only: Windows relies on the per-user dataDir ACL, not Unix mode bits.");
         using var tracker = new JsonlTokenUsageTracker(_dir);
-        await tracker.RecordAsync(new TokenUsageRecord("summary", "claude-code", 1, 1, 0, 0m, false), default);
+        await tracker.RecordAsync(new TokenUsageRecord("summary", "claude-code", 1, 1, 0, 0, 0m, false), default);
 
 #pragma warning disable CA1416 // Guarded by Skip.If(IsWindows) above — this assertion only runs on POSIX.
         var mode = File.GetUnixFileMode(_dir);
