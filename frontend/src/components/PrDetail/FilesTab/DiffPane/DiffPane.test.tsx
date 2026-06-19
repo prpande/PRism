@@ -3,13 +3,9 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { DiffPane } from './DiffPane';
 import type { FileChange, ReviewThreadDto, PrReference } from '../../../../api/types';
 import type { DiffMode } from './DiffPane';
-import { useAiGate } from '../../../../hooks/useAiGate';
-import { useAiHunkAnnotations } from '../../../../hooks/useAiHunkAnnotations';
 import { useWholeFileContent } from '../../../../hooks/useWholeFileContent';
 import styles from './DiffPane.module.css';
 
-vi.mock('../../../../hooks/useAiGate');
-vi.mock('../../../../hooks/useAiHunkAnnotations');
 vi.mock('../../../../hooks/useWholeFileContent');
 
 const samplePrRef: PrReference = { owner: 'octocat', repo: 'hello', number: 42 };
@@ -61,8 +57,6 @@ const sampleThread: ReviewThreadDto = {
 
 describe('DiffPane', () => {
   beforeEach(() => {
-    vi.mocked(useAiGate).mockReturnValue(false);
-    vi.mocked(useAiHunkAnnotations).mockReturnValue(null);
     vi.mocked(useWholeFileContent).mockReturnValue({
       fetchStatus: 'idle',
       headContent: null,
@@ -452,15 +446,6 @@ describe('DiffPane', () => {
   });
 
   it('renders AI annotation row with colSpan=4 in split mode', () => {
-    vi.mocked(useAiGate).mockReturnValue(true);
-    vi.mocked(useAiHunkAnnotations).mockReturnValue([
-      {
-        path: 'src/main.ts',
-        hunkIndex: 0,
-        body: 'Consider naming this clearer.',
-        tone: 'calm',
-      },
-    ]);
     render(
       <DiffPane
         prRef={samplePrRef}
@@ -470,6 +455,14 @@ describe('DiffPane', () => {
         truncated={false}
         reviewThreads={[]}
         prUrl=""
+        annotations={[
+          {
+            path: 'src/main.ts',
+            hunkIndex: 0,
+            body: 'Consider naming this clearer.',
+            tone: 'calm',
+          },
+        ]}
       />,
     );
     const annotationCell = screen.getByTestId('ai-hunk').closest('td');
@@ -676,8 +669,6 @@ describe('DiffPane whole-file mode', () => {
   };
 
   beforeEach(() => {
-    vi.mocked(useAiGate).mockReturnValue(false);
-    vi.mocked(useAiHunkAnnotations).mockReturnValue(null);
     vi.mocked(useWholeFileContent).mockReturnValue({
       fetchStatus: 'idle',
       headContent: null,
@@ -807,21 +798,25 @@ describe('DiffPane whole-file mode', () => {
   });
 
   it('renders AI annotation row before the first non-header line of each hunk in whole-file mode', async () => {
-    vi.mocked(useAiGate).mockReturnValue(true);
     vi.mocked(useWholeFileContent).mockReturnValue({
       fetchStatus: 'ok',
       headContent: 'a\nb\nc\nd',
       baseContent: null,
       failureReason: null,
     });
-    vi.mocked(useAiHunkAnnotations).mockReturnValue([
-      { path: 'src/a.ts', hunkIndex: 0, body: 'Annotation for hunk 0', tone: 'calm' },
-    ]);
     const file = makeModifiedFile([
       { oldStart: 2, oldLines: 1, newStart: 2, newLines: 1, body: '@@ -2,1 +2,1 @@\n-old\n+b' },
     ]);
     const { container } = render(
-      <DiffPane {...defaultProps} file={file} diffMode="unified" wholeFileEnabled={true} />,
+      <DiffPane
+        {...defaultProps}
+        file={file}
+        diffMode="unified"
+        wholeFileEnabled={true}
+        annotations={[
+          { path: 'src/a.ts', hunkIndex: 0, body: 'Annotation for hunk 0', tone: 'calm' },
+        ]}
+      />,
     );
     const annotationRow = container.querySelector(`.${styles.aiHunkRow}`);
     expect(annotationRow).toBeInTheDocument();

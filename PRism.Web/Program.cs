@@ -97,6 +97,16 @@ builder.Services.AddPrismClaudeCode(
     },
     llmUsageDir);
 builder.Services.AddPrismAi();
+// #517 — durable AI-usage rollup. The store is the read source for GET /api/ai/usage; the tailer
+// folds new ai-interactions.log lines into it on a 60s timer (fully decoupled from the AI record
+// path). llmUsageDir holds the rollup file (same owner-restricted dir as token-usage.jsonl); the
+// log lives under LogsPathInfo.Path (= dataDir/logs), where JsonlAiInteractionLog writes it.
+builder.Services.AddSingleton(sp => new PRism.Web.Ai.AiUsageRollupStore(llmUsageDir, sp.GetRequiredService<TimeProvider>()));
+builder.Services.AddHostedService(sp => new PRism.Web.Ai.AiUsageRollupTailer(
+    sp.GetRequiredService<PRism.Web.Ai.AiUsageRollupStore>(),
+    Path.Combine(sp.GetRequiredService<PRism.Web.Logging.LogsPathInfo>().Path, "ai-interactions.log"),
+    sp.GetRequiredService<TimeProvider>(),
+    sp.GetRequiredService<ILogger<PRism.Web.Ai.AiUsageRollupTailer>>()));
 builder.Services.AddPrismWeb();
 builder.Services.AddSingleton<SessionTokenProvider>();
 // TimeProvider is an ActivityProvider ctor dependency (clock for cache TTL + the

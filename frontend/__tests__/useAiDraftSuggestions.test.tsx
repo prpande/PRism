@@ -12,34 +12,33 @@ describe('useAiDraftSuggestions', () => {
     vi.mocked(aiDraftSuggestions.getAiDraftSuggestions).mockReset();
   });
 
-  it('returns null when disabled (no fetch)', () => {
+  it('is empty when disabled (no fetch)', () => {
     const { result } = renderHook(() => useAiDraftSuggestions(PR_REF, false));
-    expect(result.current).toBe(null);
+    expect(result.current.state).toBe('empty');
+    expect(result.current.suggestions).toBe(null);
     expect(aiDraftSuggestions.getAiDraftSuggestions).not.toHaveBeenCalled();
   });
 
-  it('fetches and returns DraftSuggestion[] when enabled', async () => {
+  it('fetches and returns ready state with suggestions when enabled', async () => {
     vi.mocked(aiDraftSuggestions.getAiDraftSuggestions).mockResolvedValue([
       { filePath: 'src/Calc.cs', lineNumber: 5, body: 'Worth a comment here?' },
     ]);
     const { result } = renderHook(() => useAiDraftSuggestions(PR_REF, true));
-    await waitFor(() => expect(result.current).not.toBe(null));
-    expect(result.current).toHaveLength(1);
-    expect(result.current?.[0].filePath).toBe('src/Calc.cs');
-    expect(result.current?.[0].lineNumber).toBe(5);
+    await waitFor(() => expect(result.current.state).toBe('ready'));
+    expect(result.current.suggestions).toHaveLength(1);
+    expect(result.current.suggestions?.[0].filePath).toBe('src/Calc.cs');
+    expect(result.current.suggestions?.[0].lineNumber).toBe(5);
   });
 
-  it('returns null on 204', async () => {
+  it('is empty on 204 (null result)', async () => {
     vi.mocked(aiDraftSuggestions.getAiDraftSuggestions).mockResolvedValue(null);
     const { result } = renderHook(() => useAiDraftSuggestions(PR_REF, true));
-    await waitFor(() => expect(aiDraftSuggestions.getAiDraftSuggestions).toHaveBeenCalled());
-    expect(result.current).toBe(null);
+    await waitFor(() => expect(result.current.state).toBe('empty'));
   });
 
-  it('returns null on network error', async () => {
+  it('is error on network error', async () => {
     vi.mocked(aiDraftSuggestions.getAiDraftSuggestions).mockRejectedValue(new Error('boom'));
     const { result } = renderHook(() => useAiDraftSuggestions(PR_REF, true));
-    await waitFor(() => expect(aiDraftSuggestions.getAiDraftSuggestions).toHaveBeenCalled());
-    expect(result.current).toBe(null);
+    await waitFor(() => expect(result.current.state).toBe('error'));
   });
 });

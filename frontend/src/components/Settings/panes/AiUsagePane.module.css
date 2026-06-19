@@ -1,0 +1,88 @@
+/* position:relative so the .sr-only trend summary's containing block is this pane, not <html>
+   (repo .sr-only is position:absolute; top:0; left:0 — see memory reference_sr_only_abspos_page_scroll). */
+.pane {
+  position: relative;
+}
+.card {
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-2);
+  padding: 16px;
+  margin: 14px 0;
+}
+.headlineCost {
+  font-size: var(--text-2xl);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+.headlineSub {
+  color: var(--text-3);
+  font-size: var(--text-xs);
+  margin-top: 4px;
+}
+.trend {
+  display: flex;
+  align-items: flex-end;
+  gap: 3px;
+  height: 64px;
+  margin: 14px 0;
+}
+.bar {
+  flex: 1 1 auto;
+  background: var(--accent);
+  border-radius: 2px 2px 0 0;
+  min-height: 2px;
+}
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--text-sm);
+}
+.table th {
+  text-align: left;
+  color: var(--text-3);
+  font-weight: 500;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border-1);
+}
+.table td {
+  padding: 6px 8px;
+  border-bottom: 1px solid color-mix(in oklab, var(--border-1) 55%, transparent);
+}
+.num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.skeletonBar,
+.skeletonRow {
+  background: var(--surface-3);
+  border-radius: var(--radius-1);
+  animation: pulse 1.4s ease-in-out infinite;
+}
+.skeletonBar {
+  flex: 1 1 auto;
+  height: 50%;
+}
+.skeletonRow {
+  height: 28px;
+  margin: 4px 0;
+}
+.loadingControl {
+  opacity: 0.6;
+}
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+/* Respect reduced-motion: hold the skeleton steady rather than pulsing. (The shared
+   <Skeleton> swap is a tracked follow-up; this closes the a11y gap in the meantime.) */
+@media (prefers-reduced-motion: reduce) {
+  .skeletonBar,
+  .skeletonRow {
+    animation: none;
+  }
+}

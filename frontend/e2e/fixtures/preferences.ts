@@ -34,6 +34,19 @@ export function makeDefaultPreferences() {
       aiMode: 'off' as const,
       density: 'comfortable' as const,
       contentScale: 'm' as const,
+      // #536: per-feature AI flags. Real GET always emits all nine; default all-on matches
+      // AiFeaturesConfig.AllOn so mocked GET responses are in contract with the backend wire shape.
+      features: {
+        summary: true,
+        fileFocus: true,
+        hunkAnnotations: true,
+        preSubmitValidators: true,
+        composerAssist: true,
+        draftSuggestions: true,
+        draftReconciliation: true,
+        inboxEnrichment: true,
+        inboxRanking: true,
+      },
     },
     inbox: {
       sections: {

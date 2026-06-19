@@ -12,34 +12,35 @@ describe('useAiHunkAnnotations', () => {
     vi.mocked(aiHunkAnnotations.getAiHunkAnnotations).mockReset();
   });
 
-  it('returns null when disabled (no fetch)', () => {
+  it('returns empty state when disabled (no fetch)', () => {
     const { result } = renderHook(() => useAiHunkAnnotations(PR_REF, false));
-    expect(result.current).toBe(null);
+    expect(result.current.state).toBe('empty');
+    expect(result.current.annotations).toBeNull();
     expect(aiHunkAnnotations.getAiHunkAnnotations).not.toHaveBeenCalled();
   });
 
-  it('fetches and returns HunkAnnotation[] when enabled', async () => {
+  it('fetches and returns ready state with HunkAnnotation[] when enabled', async () => {
     vi.mocked(aiHunkAnnotations.getAiHunkAnnotations).mockResolvedValue([
       { path: 'src/Calc.cs', hunkIndex: 0, body: 'Reads cleaner.', tone: 'calm' },
     ]);
 
     const { result } = renderHook(() => useAiHunkAnnotations(PR_REF, true));
-    await waitFor(() => expect(result.current).not.toBe(null));
-    expect(result.current).toHaveLength(1);
-    expect(result.current?.[0].tone).toBe('calm');
+    await waitFor(() => expect(result.current.state).toBe('ready'));
+    expect(result.current.annotations).toHaveLength(1);
+    expect(result.current.annotations?.[0].tone).toBe('calm');
   });
 
-  it('returns null on 204', async () => {
+  it('returns empty state on 204', async () => {
     vi.mocked(aiHunkAnnotations.getAiHunkAnnotations).mockResolvedValue(null);
     const { result } = renderHook(() => useAiHunkAnnotations(PR_REF, true));
-    await waitFor(() => expect(aiHunkAnnotations.getAiHunkAnnotations).toHaveBeenCalled());
-    expect(result.current).toBe(null);
+    await waitFor(() => expect(result.current.state).toBe('empty'));
+    expect(result.current.annotations).toBeNull();
   });
 
-  it('returns null on network error', async () => {
+  it('returns error state on network error', async () => {
     vi.mocked(aiHunkAnnotations.getAiHunkAnnotations).mockRejectedValue(new Error('boom'));
     const { result } = renderHook(() => useAiHunkAnnotations(PR_REF, true));
-    await waitFor(() => expect(aiHunkAnnotations.getAiHunkAnnotations).toHaveBeenCalled());
-    expect(result.current).toBe(null);
+    await waitFor(() => expect(result.current.state).toBe('error'));
+    expect(result.current.annotations).toBeNull();
   });
 });

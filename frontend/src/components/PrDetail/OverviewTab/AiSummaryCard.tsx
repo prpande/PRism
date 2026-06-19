@@ -76,6 +76,10 @@ export function AiSummaryCard({
         className={`${styles.aiSummaryCard} overview-card overview-card-hero ai-tint`}
         aria-busy="true"
       >
+        <span className={styles.aiSummaryLabel}>
+          <AiMarker variant="lead" state="working" decorative />
+          AI Summary
+        </span>
         <span className="sr-only" aria-live="polite">
           Loading AI summary…
         </span>

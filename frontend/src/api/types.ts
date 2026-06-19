@@ -30,6 +30,9 @@ export interface UiPreferences {
   // #485 AI onboarding dialog: true once the user has dismissed the dialog via any committing exit
   // (Off, Preview "Maybe later", or Manage AI settings). Esc does NOT set this — re-shows next launch.
   onboardingSeen: boolean;
+  // #536 per-feature AI enablement flags. Backend defaults all nine to true; treat as possibly-absent at
+  // runtime (older configs / test fixtures may omit). All read sites use `preferences.ui.features?.[k] ?? true`.
+  features?: AiFeatures;
 }
 
 export interface InboxSectionsPreferences {
@@ -66,6 +69,21 @@ export interface PreferencesResponse {
 }
 
 export interface AiCapabilities {
+  summary: boolean;
+  fileFocus: boolean;
+  hunkAnnotations: boolean;
+  preSubmitValidators: boolean;
+  composerAssist: boolean;
+  draftSuggestions: boolean;
+  draftReconciliation: boolean;
+  inboxEnrichment: boolean;
+  inboxRanking: boolean;
+}
+
+// Per-feature user-enablement flags (#536). Structurally identical to AiCapabilities
+// but a distinct concept: `features` = what the user turned on/off; `capabilities` =
+// what the AI mode makes available. The gate is capability && feature-enabled.
+export interface AiFeatures {
   summary: boolean;
   fileFocus: boolean;
   hunkAnnotations: boolean;
@@ -249,6 +267,11 @@ export interface PrDetailDto {
   reviewComments: ReviewThreadDto[];
   timelineCapHit: boolean;
 }
+
+// Shared four-value AI load state (spec §1). "off" is NOT a state — it is the
+// useAiGate(...) capability gate; a disabled hook renders nothing. Surfaces map
+// their hook's richer state down to this for the AiMarker / skeleton cue.
+export type AiLoadState = 'loading' | 'ready' | 'empty' | 'error';
 
 export interface PrSummary {
   body: string;
@@ -640,4 +663,58 @@ export interface ActivityResponse {
   generatedAt: string;
   degraded: ActivityDegradation;
   watching: WatchedRepoActivity[];
+}
+
+// #517 — AI usage & spend. Mirrors PRism.Web/Ai/AiUsageReport.cs (camelCase wire shape).
+export type AiUsageWindow = '24h' | '7d' | '30d' | 'all';
+
+export interface AiUsageTotals {
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadInputTokens: number;
+  cacheCreationInputTokens: number;
+  totalTokens: number;
+  estimatedCostUsd: number;
+  providerCalls: number;
+  cacheHits: number;
+}
+
+export interface AiUsageFeatureRow {
+  component: string;
+  displayName: string;
+  totalTokens: number;
+  estimatedCostUsd: number;
+  providerCalls: number;
+}
+
+export interface AiUsagePrRow {
+  prRef: string;
+  displayLabel: string;
+  totalTokens: number;
+  estimatedCostUsd: number;
+  providerCalls: number;
+}
+
+export interface AiCacheStats {
+  cacheHits: number;
+  providerCalls: number;
+  hitRate: number;
+}
+
+export interface AiUsageTrendBucket {
+  bucketStart: string;
+  granularity: string;
+  estimatedCostUsd: number;
+  totalTokens: number;
+}
+
+export interface AiUsageReport {
+  window: AiUsageWindow;
+  generatedAt: string;
+  totals: AiUsageTotals;
+  byFeature: AiUsageFeatureRow[];
+  byPr: AiUsagePrRow[];
+  totalPrCount: number;
+  cache: AiCacheStats;
+  trend: AiUsageTrendBucket[];
 }

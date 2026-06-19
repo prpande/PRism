@@ -13,7 +13,6 @@ import { InboxSection } from '../components/Inbox/InboxSection';
 import { InboxFooter } from '../components/Inbox/InboxFooter';
 import { EmptyAllSections } from '../components/Inbox/EmptyAllSections';
 import { ActivityRail } from '../components/ActivityRail/ActivityRail';
-import { SampleBadge } from '../components/Ai/SampleBadge';
 import { AiOnboardingDialog } from '../components/Ai/AiOnboardingDialog';
 import { InboxSkeleton } from '../components/Inbox/InboxSkeleton';
 import { LoadingBar } from '../components/LoadingBar';
@@ -151,7 +150,6 @@ export function InboxPage() {
         />
         <div className={styles.grid} data-has-rail={showRail || undefined}>
           <div className={styles.sections}>
-            {showCategoryChip && <SampleBadge variant="region" />}
             {!filterActive && allEmpty && <EmptyAllSections />}
             {zeroMatch && <NoFilterMatches onClear={() => filterState?.clear()} />}
             {!zeroMatch &&

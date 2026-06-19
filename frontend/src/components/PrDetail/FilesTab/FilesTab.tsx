@@ -4,6 +4,8 @@ import { postFileViewed } from '../../../api/fileViewed';
 import { useFileDiff } from '../../../hooks/useFileDiff';
 import { useUnionDiff } from '../../../hooks/useUnionDiff';
 import { useFilesTabShortcuts } from '../../../hooks/useFilesTabShortcuts';
+import { useAiGate } from '../../../hooks/useAiGate';
+import { useAiHunkAnnotations } from '../../../hooks/useAiHunkAnnotations';
 import { FileTree } from './FileTree';
 import { DiffPane } from './DiffPane';
 import type { DiffMode } from './DiffPane';
@@ -92,7 +94,7 @@ export function FilesTab() {
   // (spec §8), owned by PrDetailView and carried in context — no second GET.
   // The dot only renders for high/medium (FileTree's own logic), so empty /
   // fallback cases (no high/medium entries) naturally show no dots. The column
-  // (its data-on flag + the region SampleBadge) is visible only when AI is
+  // (its data-on flag) is visible only when AI is
   // genuinely active for this PR: `not-subscribed` is Live-without-subscription,
   // and `no-changes` is ALSO what useFileFocusResult returns when the fileFocus
   // capability is OFF entirely (AI off) — both mean "AI not active here", so the
@@ -100,6 +102,13 @@ export function FilesTab() {
   // turns it on.
   const focusEntries = fileFocus.entries;
   const aiDotsOn = fileFocus.status !== 'not-subscribed' && fileFocus.status !== 'no-changes';
+
+  // #508 (B1) — own the SINGLE PR-wide hunk-annotation fetch here (was inside DiffPane)
+  // so both the file-tree header marker (working while annotations load) and the diff
+  // pane (renders the resolved annotations) read one source. A second hook call in
+  // DiffPane would double-GET — the endpoint isn't request-deduped.
+  const hunkAnnotationsEnabled = useAiGate('hunkAnnotations');
+  const aiHunkAnnotations = useAiHunkAnnotations(prRef, hunkAnnotationsEnabled);
 
   const [activeRange, setActiveRange] = useState<string>('all');
   const [selectedCommits, setSelectedCommits] = useState<string[] | null>(null);
@@ -716,6 +725,8 @@ export function FilesTab() {
               onToggleViewed={handleToggleViewed}
               isLoading={diff.isLoading}
               focusEntries={focusEntries}
+              focusStatus={fileFocus.status}
+              annotationsLoading={aiHunkAnnotations.state === 'loading'}
               aiPreview={aiDotsOn}
             />
           )}
@@ -743,6 +754,7 @@ export function FilesTab() {
             headSha={prDetail.pr.headSha}
             baseSha={prDetail.pr.baseSha}
             lineWrap={lineWrap}
+            annotations={aiHunkAnnotations.annotations}
           />
         </div>
       </div>
