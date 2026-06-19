@@ -33,6 +33,10 @@ export function AiOnboardingDialog({ onDismiss }: { onDismiss: () => void }) {
   const { preferences, set } = usePreferences();
   const navigate = useNavigate();
   const location = useLocation();
+  // Captured at render time; commitMode compares against it to skip a redundant mode write.
+  // A multi-window focus-refetch could change aiMode between render and commit, making this
+  // stale — but the dialog unmounts the moment onboardingSeen flips, and mode-without-seen
+  // drift is out of normal flow, so the staleness window has near-zero blast radius.
   const current = preferences?.ui.aiMode ?? 'preview';
   const [pending, setPending] = useState<AiMode>(current);
   const [open, setOpen] = useState(true);
