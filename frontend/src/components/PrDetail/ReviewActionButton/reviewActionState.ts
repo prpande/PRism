@@ -1,4 +1,10 @@
-import type { DraftVerdict, ReviewSessionDto, ReviewState, ValidatorResult, ViewerReview } from '../../../api/types';
+import type {
+  DraftVerdict,
+  ReviewSessionDto,
+  ReviewState,
+  ValidatorResult,
+  ViewerReview,
+} from '../../../api/types';
 import type { PrState } from '../PrHeader';
 import { submitDisabledReason } from '../SubmitButton';
 
@@ -69,8 +75,18 @@ export function deriveFace(i: ReviewActionInputs): ReviewActionFace {
   const caption: ReviewActionCaption | null = !hasSubmitted
     ? null
     : verdict || pending
-      ? { mode: 'was', priorState: viewerReview.state, submittedAt: viewerReview.submittedAt, stale: submittedReviewStale }
-      : { mode: 'reviewed', priorState: viewerReview.state, submittedAt: viewerReview.submittedAt, stale: submittedReviewStale };
+      ? {
+          mode: 'was',
+          priorState: viewerReview.state,
+          submittedAt: viewerReview.submittedAt,
+          stale: submittedReviewStale,
+        }
+      : {
+          mode: 'reviewed',
+          priorState: viewerReview.state,
+          submittedAt: viewerReview.submittedAt,
+          stale: submittedReviewStale,
+        };
 
   // Fill precedence: closed/merged → secondary; draft verdict wins; else submitted verdict; else accent.
   const fill: ReviewActionFill = isClosedOrMerged
@@ -99,7 +115,7 @@ export function deriveFace(i: ReviewActionInputs): ReviewActionFace {
       : verdict
         ? 'submit'
         : hasSubmitted
-          ? 'change'   // status face; click opens the menu to start a new/updated review
+          ? 'change' // status face; click opens the menu to start a new/updated review
           : 'submit';
 
   // Resume + discard are never gated (today's SubmitInProgressBadge/pill aren't).

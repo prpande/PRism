@@ -157,7 +157,11 @@ describe('PrHeader viewerReview wiring', () => {
       prState: 'open',
       session: null,
       currentHeadSha: 'HEAD2',
-      viewerReview: { state: 'approved', submittedAt: new Date().toISOString(), commitSha: 'HEAD1' },
+      viewerReview: {
+        state: 'approved',
+        submittedAt: new Date().toISOString(),
+        commitSha: 'HEAD1',
+      },
     });
     expect(screen.getByTestId('review-action-caption')).toHaveTextContent(/You reviewed/);
     expect(screen.getByTestId('review-action-caption')).toHaveTextContent(/out of date/);

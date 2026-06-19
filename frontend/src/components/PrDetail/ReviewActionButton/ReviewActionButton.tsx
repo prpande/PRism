@@ -1,7 +1,12 @@
 import { useCallback, useRef, useState } from 'react';
 import type { DraftVerdict } from '../../../api/types';
 import { formatAge } from '../../../utils/relativeTime';
-import { deriveFace, deriveMenu, PRIOR_VERDICT_LABEL, type ReviewActionInputs } from './reviewActionState';
+import {
+  deriveFace,
+  deriveMenu,
+  PRIOR_VERDICT_LABEL,
+  type ReviewActionInputs,
+} from './reviewActionState';
 import { ReviewActionMenu } from './ReviewActionMenu';
 import styles from './ReviewActionButton.module.css';
 

@@ -109,8 +109,12 @@ describe('deriveFace — pending / reconfirm / action / disabled', () => {
   });
 });
 
-const reviewed = (over: Partial<ViewerReview> = {}): ViewerReview =>
-  ({ state: 'approved', submittedAt: '2026-02-01T00:00:00Z', commitSha: 'sha', ...over });
+const reviewed = (over: Partial<ViewerReview> = {}): ViewerReview => ({
+  state: 'approved',
+  submittedAt: '2026-02-01T00:00:00Z',
+  commitSha: 'sha',
+  ...over,
+});
 
 describe('deriveFace — submitted review status', () => {
   it('shows submitted verdict when no draft (fill + past-tense label + change action)', () => {
@@ -119,13 +123,24 @@ describe('deriveFace — submitted review status', () => {
     expect(f.label).toBe('Approved');
     expect(f.mainAction).toBe('change');
     expect(f.mainDisabled).toBe(false);
-    expect(f.caption).toEqual({ mode: 'reviewed', priorState: 'approved', submittedAt: '2026-02-01T00:00:00Z', stale: false });
+    expect(f.caption).toEqual({
+      mode: 'reviewed',
+      priorState: 'approved',
+      submittedAt: '2026-02-01T00:00:00Z',
+      stale: false,
+    });
   });
 
   it('maps changes-requested and commented', () => {
-    expect(deriveFace(inputs({}, { viewerReview: reviewed({ state: 'changes-requested' }) })).fill).toBe('request-changes');
-    expect(deriveFace(inputs({}, { viewerReview: reviewed({ state: 'changes-requested' }) })).label).toBe('Changes requested');
-    expect(deriveFace(inputs({}, { viewerReview: reviewed({ state: 'commented' }) })).fill).toBe('comment');
+    expect(
+      deriveFace(inputs({}, { viewerReview: reviewed({ state: 'changes-requested' }) })).fill,
+    ).toBe('request-changes');
+    expect(
+      deriveFace(inputs({}, { viewerReview: reviewed({ state: 'changes-requested' }) })).label,
+    ).toBe('Changes requested');
+    expect(deriveFace(inputs({}, { viewerReview: reviewed({ state: 'commented' }) })).fill).toBe(
+      'comment',
+    );
   });
 
   it('flags stale in the caption', () => {
@@ -138,7 +153,12 @@ describe('deriveFace — submitted review status', () => {
     expect(f.fill).toBe('request-changes');
     expect(f.label).toBe('Request changes'); // action label, not past-tense
     expect(f.pending).toBe(false);
-    expect(f.caption).toEqual({ mode: 'was', priorState: 'approved', submittedAt: '2026-02-01T00:00:00Z', stale: false });
+    expect(f.caption).toEqual({
+      mode: 'was',
+      priorState: 'approved',
+      submittedAt: '2026-02-01T00:00:00Z',
+      stale: false,
+    });
   });
 
   it('no submitted review and no draft → Submit review, no caption', () => {
@@ -148,7 +168,11 @@ describe('deriveFace — submitted review status', () => {
   });
 
   it('PRIOR_VERDICT_LABEL is past-tense', () => {
-    expect(PRIOR_VERDICT_LABEL).toEqual({ approved: 'Approved', 'changes-requested': 'Changes requested', commented: 'Commented' });
+    expect(PRIOR_VERDICT_LABEL).toEqual({
+      approved: 'Approved',
+      'changes-requested': 'Changes requested',
+      commented: 'Commented',
+    });
   });
 });
 

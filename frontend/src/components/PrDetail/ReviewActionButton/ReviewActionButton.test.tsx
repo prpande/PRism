@@ -157,22 +157,64 @@ describe('ReviewActionButton — face', () => {
 
 describe('ReviewActionButton — submitted-review caption', () => {
   it('renders the reviewed caption with relative time', () => {
-    render(<ReviewActionButton {...props({ viewerReview: { state: 'approved', submittedAt: new Date(Date.now() - 2*86400000).toISOString(), commitSha: 'x' } })} />);
+    render(
+      <ReviewActionButton
+        {...props({
+          viewerReview: {
+            state: 'approved',
+            submittedAt: new Date(Date.now() - 2 * 86400000).toISOString(),
+            commitSha: 'x',
+          },
+        })}
+      />,
+    );
     expect(screen.getByTestId('review-action-caption')).toHaveTextContent(/You reviewed · 2d ago/);
   });
 
   it('appends "out of date" when stale', () => {
-    render(<ReviewActionButton {...props({ viewerReview: { state: 'approved', submittedAt: new Date().toISOString(), commitSha: 'old' }, submittedReviewStale: true })} />);
+    render(
+      <ReviewActionButton
+        {...props({
+          viewerReview: {
+            state: 'approved',
+            submittedAt: new Date().toISOString(),
+            commitSha: 'old',
+          },
+          submittedReviewStale: true,
+        })}
+      />,
+    );
     expect(screen.getByTestId('review-action-caption')).toHaveTextContent(/out of date/);
   });
 
   it('demotes prior verdict to "was" while drafting', () => {
-    render(<ReviewActionButton {...props({ session: { ...session(), draftVerdict: 'request-changes' }, viewerReview: { state: 'approved', submittedAt: new Date().toISOString(), commitSha: 'x' } })} />);
+    render(
+      <ReviewActionButton
+        {...props({
+          session: { ...session(), draftVerdict: 'request-changes' },
+          viewerReview: {
+            state: 'approved',
+            submittedAt: new Date().toISOString(),
+            commitSha: 'x',
+          },
+        })}
+      />,
+    );
     expect(screen.getByTestId('review-action-caption')).toHaveTextContent(/was Approved/);
   });
 
   it('submitted-status main button opens the menu (change)', async () => {
-    render(<ReviewActionButton {...props({ viewerReview: { state: 'approved', submittedAt: new Date().toISOString(), commitSha: 'x' } })} />);
+    render(
+      <ReviewActionButton
+        {...props({
+          viewerReview: {
+            state: 'approved',
+            submittedAt: new Date().toISOString(),
+            commitSha: 'x',
+          },
+        })}
+      />,
+    );
     const main = screen.getByTestId('review-action-main');
     expect(main).not.toBeDisabled();
     await userEvent.click(main);
@@ -180,7 +222,20 @@ describe('ReviewActionButton — submitted-review caption', () => {
   });
 
   it('exposes the submitted status to screen readers via aria-label', () => {
-    render(<ReviewActionButton {...props({ viewerReview: { state: 'approved', submittedAt: new Date().toISOString(), commitSha: 'x' } })} />);
-    expect(screen.getByTestId('review-action-main')).toHaveAttribute('aria-label', expect.stringMatching(/you reviewed/i));
+    render(
+      <ReviewActionButton
+        {...props({
+          viewerReview: {
+            state: 'approved',
+            submittedAt: new Date().toISOString(),
+            commitSha: 'x',
+          },
+        })}
+      />,
+    );
+    expect(screen.getByTestId('review-action-main')).toHaveAttribute(
+      'aria-label',
+      expect.stringMatching(/you reviewed/i),
+    );
   });
 });

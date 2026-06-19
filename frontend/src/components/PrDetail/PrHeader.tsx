@@ -1,5 +1,11 @@
 import { useEffect, useId, useState } from 'react';
-import type { DraftVerdict, PrReference, ReviewSessionDto, ValidatorResult, ViewerReview } from '../../api/types';
+import type {
+  DraftVerdict,
+  PrReference,
+  ReviewSessionDto,
+  ValidatorResult,
+  ViewerReview,
+} from '../../api/types';
 import { prRefKey } from '../../api/types';
 import { usePrHeaderCollapsed } from '../../hooks/usePrHeaderCollapsed';
 import type { ComposerOwnerKey } from '../../hooks/useDraftSession';
