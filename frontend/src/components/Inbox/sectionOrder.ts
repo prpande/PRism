@@ -6,9 +6,9 @@ import type { InboxSection } from '../../api/types';
 // render-time sort, the Settings pane rows, the restore-default button) imports from
 // here so the id list can never drift between layers.
 export const CANONICAL_WORK_ORDER = [
+  'authored-by-me',
   'review-requested',
   'awaiting-author',
-  'authored-by-me',
   'mentioned',
 ] as const;
 

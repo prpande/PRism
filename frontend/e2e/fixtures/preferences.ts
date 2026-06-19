@@ -46,7 +46,8 @@ export function makeDefaultPreferences() {
       defaultSort: 'updated',
       // #275: the real GET /api/preferences always emits sectionOrder; keep the
       // shared mock in contract with it (canonical order = no reorder applied).
-      sectionOrder: 'review-requested,awaiting-author,authored-by-me,mentioned',
+      // Canonical default leads with authored-by-me (your own PRs first).
+      sectionOrder: 'authored-by-me,review-requested,awaiting-author,mentioned',
       // #283: real GET always emits showActivityRail. The PRODUCT default is now ON
       // (#439), but this shared mock deliberately pins it OFF so the rail doesn't appear
       // in mock-mode specs that aren't testing it (e.g. ai-gating-sweep asserts it stays

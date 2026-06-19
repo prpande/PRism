@@ -70,7 +70,7 @@ public sealed class ConfigStore : IConfigStore, IDisposable
     // frontend/src/components/Inbox/sectionOrder.ts — if a 5th work section is ever
     // added it must be added in both places (and the default in AppConfig.SectionOrder).
     private static readonly string[] _workSectionIds =
-        { "review-requested", "awaiting-author", "authored-by-me", "mentioned" };
+        { "authored-by-me", "review-requested", "awaiting-author", "mentioned" };
 
     public ConfigStore(string dataDir)
     {

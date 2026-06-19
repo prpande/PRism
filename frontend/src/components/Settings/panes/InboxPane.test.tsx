@@ -8,7 +8,7 @@ import { InboxPane } from './InboxPane';
 // renderInboxPane(...) while the module-level vi.mock stays a single fixed factory.
 const set = vi.fn().mockResolvedValue(undefined);
 let defaultSort: SortKey = 'updated';
-let sectionOrder: string = 'review-requested,awaiting-author,authored-by-me,mentioned';
+let sectionOrder: string = 'authored-by-me,review-requested,awaiting-author,mentioned';
 let showActivityRail: boolean = false;
 let groupByRepo: boolean = true;
 vi.mock('../../../hooks/usePreferences', () => ({
@@ -47,7 +47,7 @@ function renderInboxPane(
     set.mockImplementation(opts.set as Parameters<typeof set.mockImplementation>[0]);
   }
   defaultSort = opts.defaultSort ?? 'updated';
-  sectionOrder = opts.sectionOrder ?? 'review-requested,awaiting-author,authored-by-me,mentioned';
+  sectionOrder = opts.sectionOrder ?? 'authored-by-me,review-requested,awaiting-author,mentioned';
   showActivityRail = opts.showActivityRail ?? false;
   groupByRepo = opts.groupByRepo ?? true;
   return render(<InboxPane />);
@@ -57,7 +57,7 @@ beforeEach(() => {
   set.mockReset();
   set.mockResolvedValue(undefined);
   defaultSort = 'updated';
-  sectionOrder = 'review-requested,awaiting-author,authored-by-me,mentioned';
+  sectionOrder = 'authored-by-me,review-requested,awaiting-author,mentioned';
   showActivityRail = false;
   groupByRepo = true;
 });
@@ -132,17 +132,19 @@ describe('InboxPane reorder', () => {
 
   it('disables up on the first row and down on the last work row', () => {
     renderInboxPane();
-    expect(screen.getByRole('button', { name: 'Move Review requested up' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Move Authored by me up' })).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Move Mentioned down' })).toBeDisabled();
   });
 
   it('writes the swapped permutation on Move down', async () => {
     renderInboxPane();
+    // Default order is authored-by-me, review-requested, awaiting-author, mentioned;
+    // moving review-requested (row 2) down swaps it with awaiting-author (row 3).
     await userEvent.click(screen.getByRole('button', { name: 'Move Review requested down' }));
     await waitFor(() =>
       expect(set).toHaveBeenCalledWith(
         'inbox.sectionOrder',
-        'awaiting-author,review-requested,authored-by-me,mentioned',
+        'authored-by-me,awaiting-author,review-requested,mentioned',
       ),
     );
   });
@@ -157,7 +159,9 @@ describe('InboxPane reorder', () => {
     });
     const down = screen.getByRole('button', { name: 'Move Review requested down' });
     await userEvent.click(down);
-    const other = screen.getByRole('button', { name: 'Move Authored by me up' });
+    // A non-boundary button that is otherwise enabled, so its disabled state proves
+    // the in-flight guard fired (not a first/last-row boundary disable).
+    const other = screen.getByRole('button', { name: 'Move Mentioned up' });
     expect(other).toBeDisabled();
     // Settle the POST and confirm controls recover (also flushes the state update
     // inside act so no dangling-update warning leaks).
@@ -171,7 +175,7 @@ describe('InboxPane reorder', () => {
     renderInboxPane({ set: () => Promise.reject(new Error('boom')) });
     await userEvent.click(screen.getByRole('button', { name: 'Move Review requested down' }));
     await waitFor(() =>
-      expect(screen.getByRole('button', { name: 'Move Authored by me up' })).toBeEnabled(),
+      expect(screen.getByRole('button', { name: 'Move Mentioned up' })).toBeEnabled(),
     );
     // A failed (rolled-back) move must NOT announce a position change to AT users.
     expect(screen.getByRole('status')).toHaveTextContent('');
@@ -182,7 +186,7 @@ describe('InboxPane reorder', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Move Review requested down' }));
     await waitFor(() =>
       expect(screen.getByRole('status')).toHaveTextContent(
-        'Review requested moved to position 2 of 4',
+        'Review requested moved to position 3 of 4',
       ),
     );
   });
@@ -200,7 +204,7 @@ describe('InboxPane reorder', () => {
     await waitFor(() =>
       expect(set).toHaveBeenCalledWith(
         'inbox.sectionOrder',
-        'review-requested,awaiting-author,authored-by-me,mentioned',
+        'authored-by-me,review-requested,awaiting-author,mentioned',
       ),
     );
   });

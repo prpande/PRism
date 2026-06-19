@@ -68,9 +68,10 @@ public sealed class InboxDeduplicatorTests
     }
 
     [Fact]
-    public void Pr_in_unrelated_pair_is_not_deduplicated()
+    public void Authored_by_me_wins_over_review_requested()
     {
-        // section 1 + section 3 is NOT a dedupe pair
+        // A PR you authored is yours; it must surface only under authored-by-me, never
+        // also under review-requested. authored-by-me is the winner of that pair.
         var input = new Dictionary<string, IReadOnlyList<PrInboxItem>>
         {
             ["review-requested"] = new[] { Pr(1) },
@@ -79,27 +80,60 @@ public sealed class InboxDeduplicatorTests
 
         var result = _sut.Deduplicate(input, deduplicate: true);
 
-        result["review-requested"].Should().HaveCount(1);
-        result["authored-by-me"].Should().HaveCount(1);
+        result["authored-by-me"].Should().ContainSingle(p => p.Reference.Number == 1);
+        result["review-requested"].Should().BeEmpty();
     }
 
     [Fact]
-    public void Pr_in_review_requested_and_mentioned_and_authored_resolves_per_pair()
+    public void Authored_by_me_wins_over_awaiting_author()
     {
-        // PR 1 is in review-requested+mentioned (resolves to review-requested).
-        // authored-by-me is NOT in any pair with review-requested, so it keeps the PR.
+        var input = new Dictionary<string, IReadOnlyList<PrInboxItem>>
+        {
+            ["awaiting-author"] = new[] { Pr(1) },
+            ["authored-by-me"] = new[] { Pr(1) },
+        };
+
+        var result = _sut.Deduplicate(input, deduplicate: true);
+
+        result["authored-by-me"].Should().ContainSingle(p => p.Reference.Number == 1);
+        result["awaiting-author"].Should().BeEmpty();
+    }
+
+    [Fact]
+    public void Authored_by_me_wins_over_mentioned()
+    {
+        // The common real overlap: you author a PR and get @-mentioned in its thread.
+        var input = new Dictionary<string, IReadOnlyList<PrInboxItem>>
+        {
+            ["mentioned"] = new[] { Pr(1) },
+            ["authored-by-me"] = new[] { Pr(1) },
+        };
+
+        var result = _sut.Deduplicate(input, deduplicate: true);
+
+        result["authored-by-me"].Should().ContainSingle(p => p.Reference.Number == 1);
+        result["mentioned"].Should().BeEmpty();
+    }
+
+    [Fact]
+    public void Authored_by_me_in_every_other_section_keeps_only_authored()
+    {
+        // PR 1 appears in all four open sections. authored-by-me wins against each of the
+        // other three, so it ends up exclusively under authored-by-me.
         var input = new Dictionary<string, IReadOnlyList<PrInboxItem>>
         {
             ["review-requested"] = new[] { Pr(1) },
+            ["awaiting-author"] = new[] { Pr(1) },
             ["authored-by-me"] = new[] { Pr(1) },
             ["mentioned"] = new[] { Pr(1) },
         };
 
         var result = _sut.Deduplicate(input, deduplicate: true);
 
-        result["review-requested"].Should().ContainSingle();
+        result["authored-by-me"].Should().ContainSingle();
+        result["review-requested"].Should().BeEmpty();
+        result["awaiting-author"].Should().BeEmpty();
         result["mentioned"].Should().BeEmpty();
-        result["authored-by-me"].Should().ContainSingle(); // no pair removes it
     }
 
     [Fact]
@@ -165,8 +199,9 @@ public sealed class InboxDeduplicatorTests
     [Fact]
     public void No_pr_appears_in_two_sections_after_dedupe()
     {
-        // review-requested+mentioned share PR 1 → mentioned drops it.
-        // authored-by-me and awaiting-author are not in any pair, so they keep their PRs.
+        // review-requested+mentioned share PR 1 → mentioned drops it (review-requested wins
+        // that pair). The authored-by-me PRs (4, 5) are unique to authored-by-me, so the
+        // authored-wins pairs don't fire on them.
         var input = new Dictionary<string, IReadOnlyList<PrInboxItem>>
         {
             ["review-requested"] = new[] { Pr(1), Pr(2) },

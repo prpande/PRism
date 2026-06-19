@@ -177,7 +177,7 @@ public class InboxEndpointsTests
         var ids = body.GetProperty("sections").EnumerateArray()
             .Select(s => s.GetProperty("id").GetString())
             .ToList();
-        ids.Should().Equal("review-requested", "awaiting-author", "authored-by-me", "mentioned", "recently-closed");
+        ids.Should().Equal("authored-by-me", "review-requested", "awaiting-author", "mentioned", "recently-closed");
     }
 
     [Fact]
