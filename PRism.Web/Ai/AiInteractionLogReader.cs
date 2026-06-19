@@ -71,6 +71,7 @@ internal static class AiInteractionLogReader
         }
         catch (JsonException) { return false; }
         catch (FormatException) { return false; }
+        catch (InvalidOperationException) { return false; } // valid JSON but not an object (e.g. array, scalar)
     }
 
     // Byte length of the line beginning at byteOffset, INCLUDING its terminator.

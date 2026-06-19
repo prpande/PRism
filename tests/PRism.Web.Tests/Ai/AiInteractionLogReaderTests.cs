@@ -91,6 +91,20 @@ public sealed class AiInteractionLogReaderTests : IDisposable
         newOffset.Should().Be(new FileInfo(LogPath).Length); // a COMPLETE garbage line still advances
     }
 
+    [Fact]
+    public void ReadFrom_valid_but_non_object_json_line_is_skipped_and_offset_advances()
+    {
+        var good = Line("2026-06-19T10:00:00.0000000+00:00", "summary", "ok", "o/r#1", 100);
+        var good2 = Line("2026-06-19T12:00:00.0000000+00:00", "summary", "ok", "o/r#2", 200);
+        Write(good, "[1,2,3]", good2);
+
+        var (entries, newOffset) = AiInteractionLogReader.ReadFrom(LogPath, 0);
+
+        entries.Should().HaveCount(2); // the array line is dropped; valid records survive
+        entries.Select(e => e.Record.PrRef).Should().Equal("o/r#1", "o/r#2");
+        newOffset.Should().Be(new FileInfo(LogPath).Length); // offset advances past the array line
+    }
+
     public void Dispose()
     {
         try { if (Directory.Exists(_dir)) Directory.Delete(_dir, recursive: true); }
