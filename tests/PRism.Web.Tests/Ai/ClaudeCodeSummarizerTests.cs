@@ -20,7 +20,7 @@ public sealed class ClaudeCodeSummarizerTests
         public int Calls; public LlmRequest? Last;
         public string Response = "CATEGORY: fix\nSummary body.";
         public Task<LlmResult> CompleteAsync(LlmRequest request, CancellationToken ct)
-        { Calls++; Last = request; return Task.FromResult(new LlmResult(Response, 100, 20, 0, 0.01m)); }
+        { Calls++; Last = request; return Task.FromResult(new LlmResult(Response, 100, 20, 0, 89414, 0.01m)); }
     }
     private sealed class ThrowingProvider : ILlmProvider
     {
@@ -132,6 +132,19 @@ public sealed class ClaudeCodeSummarizerTests
         rec.OutputTokens.Should().Be(20);
         rec.PromptChars.Should().BeGreaterThan(0);
         rec.ResponseChars.Should().BeGreaterThan(0);
+    }
+
+    [Fact]
+    public async Task Success_RecordsCacheCreationInputTokens_InTrackerAndAuditLog()
+    {
+        // #379: the cold-call input volume the CLI bills as cache-creation must reach BOTH sinks —
+        // the budget tracker (TokenUsageRecord) and the audit log (AiInteractionRecord) — or the
+        // recorded input is off by orders of magnitude.
+        var t = new FakeTracker(); var log = new FakeAiInteractionLog();
+        await Build(new FakeProvider(), t, log: log).SummarizeAsync(Pr, CancellationToken.None);
+
+        t.Last!.CacheCreationInputTokens.Should().Be(89414);
+        log.Records[0].CacheCreationInputTokens.Should().Be(89414);
     }
 
     [Fact]

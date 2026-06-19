@@ -53,7 +53,7 @@ public sealed class ClaudeCodeFileFocusRankerTests
             if (_throw is not null)
                 throw _throw;
             var idx = Math.Min(CallCount - 1, _responses.Length - 1);
-            return Task.FromResult(new LlmResult(_responses[idx], 100, 20, 0, 0.01m));
+            return Task.FromResult(new LlmResult(_responses[idx], 100, 20, 0, 89414, 0.01m));
         }
     }
 
@@ -74,7 +74,7 @@ public sealed class ClaudeCodeFileFocusRankerTests
         {
             Interlocked.Increment(ref _callCount);
             await _gate.Task.ConfigureAwait(false);
-            return new LlmResult(_response, 100, 20, 0, 0.01m);
+            return new LlmResult(_response, 100, 20, 0, 89414, 0.01m);
         }
     }
 
@@ -130,6 +130,18 @@ public sealed class ClaudeCodeFileFocusRankerTests
         result.Fallback.Should().BeFalse();
         result.Entries.Single(e => e.Path == "a.cs").Level.Should().Be(FocusLevel.High);
         provider.CallCount.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task Records_cache_creation_input_tokens_on_the_ok_audit_record()
+    {
+        // #379: the cold-call input volume billed as cache-creation must reach the audit log.
+        var diff = Diff(F("a.cs", FileChangeStatus.Modified, "@@ logic @@"));
+        var provider = new FakeLlmProvider("""[{"path":"a.cs","score":"high","rationale":"core"}]""");
+        var log = new FakeAiInteractionLog();
+        await Build(provider, diff, log: log).RankAsync(Pr, default);
+        log.Records.Should().Contain(r =>
+            r.Outcome == AiInteractionOutcome.Ok && r.CacheCreationInputTokens == 89414);
     }
 
     [Fact]

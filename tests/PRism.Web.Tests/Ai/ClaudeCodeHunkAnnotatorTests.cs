@@ -45,7 +45,7 @@ public sealed class ClaudeCodeHunkAnnotatorTests
             LastSystemPrompt = request.SystemPrompt;
             if (_throw is not null) throw _throw;
             var idx = Math.Min(CallCount - 1, _responses.Length - 1);
-            return Task.FromResult(new LlmResult(_responses[idx], 100, 20, 0, 0.01m));
+            return Task.FromResult(new LlmResult(_responses[idx], 100, 20, 0, 89414, 0.01m));
         }
     }
 
@@ -146,6 +146,19 @@ public sealed class ClaudeCodeHunkAnnotatorTests
         result.Should().ContainSingle();
         result[0].Path.Should().Be("a.cs");
         result[0].Tone.Should().Be(AnnotationTone.HeadsUp);
+    }
+
+    [Fact]
+    public async Task Records_cache_creation_input_tokens_on_the_ok_audit_record()
+    {
+        // #379: the cold-call input volume billed as cache-creation must reach the audit log.
+        var diff = Diff(F("a.cs", "@@ logic @@"));
+        var provider = new FakeLlmProvider("""[{"path":"a.cs","hunkIndex":0,"body":"x","tone":"calm"}]""");
+        var log = new FakeAiInteractionLog();
+        await Build(provider, diff, OneHigh, log: log).AnnotateAsync(Pr, string.Empty, 0, default);
+        log.Records.Should().Contain(r =>
+            r.Component == "hunkAnnotations" && r.Outcome == AiInteractionOutcome.Ok
+            && r.CacheCreationInputTokens == 89414);
     }
 
     [Fact]
