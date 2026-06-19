@@ -28,6 +28,8 @@ interface Props {
   // #219 when false, render flat InboxRows instead of nested repo accordions.
   // Defaults true so callers/tests that omit it keep the grouped default.
   groupByRepo?: boolean;
+  // #508/#548 PRs whose enrichment has settled (chip arrived or chip-less).
+  settled?: ReadonlySet<string>;
 }
 
 export function InboxSection({
@@ -38,6 +40,7 @@ export function InboxSection({
   defaultOpen = true,
   forceOpen,
   groupByRepo = true,
+  settled = new Set<string>(),
 }: Props) {
   // A filter-revealed section opens expanded (forceOpen), but a manual collapse
   // during the session still wins. Once the filter releases the section
@@ -90,6 +93,7 @@ export function InboxSection({
                 showCategoryChip={showCategoryChip}
                 maxDiff={maxDiff}
                 defaultOpen={repoDefaultOpen}
+                settled={settled}
               />
             ))
           ) : (
@@ -102,6 +106,7 @@ export function InboxSection({
                   enrichment={enrichments[id]}
                   showCategoryChip={showCategoryChip}
                   maxDiff={maxDiff}
+                  settled={settled}
                 />
               );
             })

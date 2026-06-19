@@ -5,3 +5,6 @@ export const AI_WORKING_LABEL = 'AI is working…';
  *  (decorative glyph). On the empty result there is no per-row "AI focus" signal either,
  *  so this sr-only label is the only thing announcing that AI analyzed the files. */
 export const AI_TREE_ANALYZED_LABEL = 'AI has analyzed these files';
+/** Inbox chip slot loading suffix (#508, #548): appended to the row aria-label while
+ *  enrichment is in flight so screen readers announce the transient state. */
+export const AI_INBOX_ENRICHING_LABEL = 'Categorizing this pull request…';

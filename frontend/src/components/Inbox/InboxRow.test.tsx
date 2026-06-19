@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Routes, Route, useLocation } from 'react-router-dom';
 import { OpenTabsProvider, useOpenTabs } from '../../contexts/OpenTabsContext';
 import { InboxRow } from './InboxRow';
+import { prId } from './groupByRepo';
 import type { PrInboxItem, InboxItemEnrichment } from '../../api/types';
 
 const PR: PrInboxItem = {
@@ -41,7 +42,13 @@ function renderInboxRow(pr: PrInboxItem = PR, props: Partial<Parameters<typeof I
   return render(
     <MemoryRouter>
       <OpenTabsProvider>
-        <InboxRow pr={pr} showCategoryChip={false} maxDiff={100} {...props} />
+        <InboxRow
+          pr={pr}
+          showCategoryChip={false}
+          maxDiff={100}
+          settled={new Set<string>()}
+          {...props}
+        />
       </OpenTabsProvider>
     </MemoryRouter>,
   );
@@ -58,7 +65,13 @@ describe('InboxRow click → opens tab', () => {
             <Route
               path="/"
               element={
-                <InboxRow pr={PR} enrichment={undefined} showCategoryChip={false} maxDiff={100} />
+                <InboxRow
+                  pr={PR}
+                  enrichment={undefined}
+                  showCategoryChip={false}
+                  maxDiff={100}
+                  settled={new Set<string>()}
+                />
               }
             />
             <Route path="/pr/:owner/:repo/:number" element={<div>PR Detail</div>} />
@@ -78,7 +91,13 @@ describe('InboxRow avatar', () => {
     render(
       <MemoryRouter initialEntries={['/']}>
         <OpenTabsProvider>
-          <InboxRow pr={PR} enrichment={undefined} showCategoryChip={false} maxDiff={100} />
+          <InboxRow
+            pr={PR}
+            enrichment={undefined}
+            showCategoryChip={false}
+            maxDiff={100}
+            settled={new Set<string>()}
+          />
         </OpenTabsProvider>
       </MemoryRouter>,
     );
@@ -178,7 +197,13 @@ describe('InboxRow showRepo', () => {
     return render(
       <MemoryRouter>
         <OpenTabsProvider>
-          <InboxRow pr={PR} showCategoryChip={false} maxDiff={100} showRepo={showRepo} />
+          <InboxRow
+            pr={PR}
+            showCategoryChip={false}
+            maxDiff={100}
+            showRepo={showRepo}
+            settled={new Set<string>()}
+          />
         </OpenTabsProvider>
       </MemoryRouter>,
     );
@@ -275,6 +300,7 @@ describe('InboxRow Draft chip', () => {
       {
         showCategoryChip: true,
         enrichment: { prId: 'x', categoryChip: 'Feature', hoverSummary: null },
+        settled: new Set([prId(PR)]),
       },
     );
     expect(screen.getByText('Feature')).toBeInTheDocument();
@@ -288,6 +314,7 @@ describe('InboxRow chip + badge placement (on the meta line, not the metrics tai
     renderInboxRow(PR, {
       showCategoryChip: true,
       enrichment: { prId: 'x', categoryChip: 'Refactor', hoverSummary: null },
+      settled: new Set([prId(PR)]),
     });
     const chip = screen.getByText('Refactor');
     // chip lives in the elastic meta line so it's always visible, and is NOT in
@@ -436,6 +463,7 @@ describe('InboxRow AI chip: provenance in aria-label', () => {
     renderInboxRow(PR, {
       showCategoryChip: true,
       enrichment: { prId: 'acme/api#99', categoryChip: 'Refactor', hoverSummary: 's' },
+      settled: new Set([prId(PR)]),
     });
     const row = screen.getByRole('button');
     expect(row).toHaveAccessibleName(/AI-generated/); // provenance via accessible name
@@ -449,5 +477,94 @@ describe('InboxRow AI chip: provenance in aria-label', () => {
       enrichment: { prId: 'acme/api#99', categoryChip: 'Refactor', hoverSummary: 's' },
     });
     expect(screen.getByRole('button')).not.toHaveAccessibleName(/AI-generated/);
+  });
+});
+
+// ---- Task 6 (#508, #548): chip-slot working marker while enrichment is unsettled ----
+
+const ID = prId(PR); // 'acme/api#99'
+
+function renderRow(
+  opts: {
+    done?: boolean;
+    showCategoryChip?: boolean;
+    enrichment?: InboxItemEnrichment;
+    settled?: ReadonlySet<string>;
+  } = {},
+) {
+  const pr: PrInboxItem = opts.done ? { ...PR, mergedAt: new Date().toISOString() } : PR;
+  return render(
+    <MemoryRouter>
+      <OpenTabsProvider>
+        <InboxRow
+          pr={pr}
+          showCategoryChip={opts.showCategoryChip ?? false}
+          maxDiff={100}
+          enrichment={opts.enrichment}
+          settled={opts.settled ?? new Set<string>()}
+        />
+      </OpenTabsProvider>
+    </MemoryRouter>,
+  );
+}
+
+describe('InboxRow chip-slot working marker (#508, #548)', () => {
+  it('shows a working marker in the chip slot while enrichment is unsettled', () => {
+    renderRow({ showCategoryChip: true, enrichment: undefined, settled: new Set<string>() });
+    expect(screen.getByTestId('ai-marker')).toHaveAttribute('data-ai-state', 'working');
+  });
+
+  it('renders the chip (idle marker) once settled with a chip', () => {
+    renderRow({
+      showCategoryChip: true,
+      enrichment: { prId: ID, categoryChip: 'Refactor', hoverSummary: null },
+      settled: new Set([ID]),
+    });
+    expect(screen.getByText('Refactor')).toBeInTheDocument();
+    expect(screen.getByTestId('ai-marker')).toHaveAttribute('data-ai-state', 'idle');
+  });
+
+  it('renders nothing in the chip slot once settled with no chip', () => {
+    renderRow({ showCategoryChip: true, enrichment: undefined, settled: new Set([ID]) });
+    expect(screen.queryByTestId('ai-marker')).toBeNull();
+  });
+
+  it('renders nothing when the chip feature is off, even while unsettled', () => {
+    renderRow({ showCategoryChip: false, enrichment: undefined, settled: new Set<string>() });
+    expect(screen.queryByTestId('ai-marker')).toBeNull();
+  });
+
+  it('announces the in-flight state on the row aria-label while loading', () => {
+    renderRow({ showCategoryChip: true, enrichment: undefined, settled: new Set<string>() });
+    expect(screen.getByRole('button')).toHaveAccessibleName(/categoriz/i);
+  });
+
+  it('announces the in-flight state on a merged/closed (done) PR too — both aria-label branches', () => {
+    renderRow({
+      done: true,
+      showCategoryChip: true,
+      enrichment: undefined,
+      settled: new Set<string>(),
+    });
+    expect(screen.getByRole('button')).toHaveAccessibleName(/categoriz/i);
+  });
+
+  it('draft PR does not show category working marker even while unsettled', () => {
+    render(
+      <MemoryRouter>
+        <OpenTabsProvider>
+          <InboxRow
+            pr={{ ...PR, isDraft: true }}
+            showCategoryChip={true}
+            maxDiff={100}
+            enrichment={undefined}
+            settled={new Set<string>()}
+          />
+        </OpenTabsProvider>
+      </MemoryRouter>,
+    );
+    // Draft chip wins — no AI working marker
+    expect(screen.getByText('Draft')).toBeInTheDocument();
+    expect(screen.queryByTestId('ai-marker')).toBeNull();
   });
 });

@@ -46,6 +46,13 @@ export function InboxPage() {
   // fetched sections don't change, keeping the `maxDiff` memo (and the derived
   // filter state) from recomputing on unrelated re-renders.
   const sections = useMemo(() => data?.sections ?? [], [data?.sections]);
+  // #508/#548 — settled set: PRs whose enrichment has resolved (chip arrived OR chip-less).
+  // Belt-and-suspenders: type is non-optional, but guard a stale-backend deploy that
+  // predates aiEnrichmentSettled (older snapshot served while FE is fresh).
+  const settled = useMemo(
+    () => new Set(data?.aiEnrichmentSettled ?? []),
+    [data?.aiEnrichmentSettled],
+  );
   const allEmpty = sections.length > 0 && sections.every((s) => s.items.length === 0);
 
   const [filterState, setFilterState] = useState<FilterBarState | null>(null);
@@ -146,6 +153,7 @@ export function InboxPage() {
                   defaultOpen={s.id !== 'recently-closed'}
                   forceOpen={filterActive && s.id !== 'recently-closed'}
                   groupByRepo={preferences?.inbox.groupByRepo ?? true}
+                  settled={settled}
                 />
               ))}
             {data.tokenScopeFooterEnabled && <InboxFooter />}

@@ -11,6 +11,8 @@ interface Props {
   showCategoryChip: boolean;
   maxDiff: number;
   defaultOpen: boolean;
+  // #508/#548 PRs whose enrichment has settled (chip arrived or chip-less).
+  settled?: ReadonlySet<string>;
 }
 
 export function RepoGroupAccordion({
@@ -19,6 +21,7 @@ export function RepoGroupAccordion({
   showCategoryChip,
   maxDiff,
   defaultOpen,
+  settled = new Set<string>(),
 }: Props) {
   // defaultOpen seeds the initial state only — it derives from a static
   // !isRecentlyClosed flag that can't change at runtime, so the snapshot
@@ -64,6 +67,7 @@ export function RepoGroupAccordion({
                 maxDiff={maxDiff}
                 showRepo={false}
                 grouped
+                settled={settled}
               />
             );
           })}

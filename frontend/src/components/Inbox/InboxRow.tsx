@@ -4,7 +4,8 @@ import { useOpenTabs } from '../../contexts/OpenTabsContext';
 import { formatAge } from '../../utils/relativeTime';
 import { Avatar } from '../Avatar/Avatar';
 import { AiMarker } from '../Ai/AiMarker';
-import { AI_PROVENANCE_LABEL } from '../Ai/aiStrings';
+import { AI_PROVENANCE_LABEL, AI_INBOX_ENRICHING_LABEL } from '../Ai/aiStrings';
+import { prId } from './groupByRepo';
 import { DiffBar } from './DiffBar';
 import {
   PR_GLYPH_PATH,
@@ -46,6 +47,7 @@ interface Props {
   maxDiff: number;
   showRepo?: boolean;
   grouped?: boolean;
+  settled: ReadonlySet<string>;
 }
 
 export function InboxRow({
@@ -55,6 +57,7 @@ export function InboxRow({
   maxDiff,
   showRepo = true,
   grouped = false,
+  settled,
 }: Props) {
   const navigate = useNavigate();
   const { addTab } = useOpenTabs();
@@ -89,13 +92,33 @@ export function InboxRow({
   // so the AI provenance rides the row aria-label instead.
   const aiSuffix = showCategoryChip && enrichment?.categoryChip ? ` · ${AI_PROVENANCE_LABEL}` : '';
 
+  // #508/#548: per-row chip state. Draft short-circuits to the draft chip in the render
+  // so we gate chipState AFTER that branch wins — a draft open PR must not show a category
+  // working marker. The draft-chip branch is `pr.isDraft && !isDone` in the JSX, so we
+  // mirror that condition here.
+  const id = prId(pr);
+  const chipState: 'off' | 'loading' | 'ready' | 'empty' =
+    pr.isDraft && !isDone
+      ? 'off'
+      : !showCategoryChip
+        ? 'off'
+        : !settled.has(id)
+          ? 'loading'
+          : enrichment?.categoryChip
+            ? 'ready'
+            : 'empty';
+
+  // Loading suffix rides the aria-label (the marker is decorative when loading so the
+  // button's own aria-label is the only SR announcement). Must append to BOTH branches.
+  const aiLoadingSuffix = chipState === 'loading' ? ` · ${AI_INBOX_ENRICHING_LABEL}` : '';
+
   // On an open row the state word is glyphState ('draft' for an open draft, else
   // 'open'); merged/closed rows use doneState. Unread / CI suffixes unchanged.
   const ariaLabel = isDone
-    ? `${pr.title} · ${pr.repo} · ${doneState}${aiSuffix}`
+    ? `${pr.title} · ${pr.repo} · ${doneState}${aiSuffix}${aiLoadingSuffix}`
     : `${pr.title} · ${pr.repo} · ${glyphState} · iteration ${pr.iterationNumber}${
         hasUnseenActivity ? ' · unread' : ''
-      }${ciSuffix}${aiSuffix}`;
+      }${ciSuffix}${aiSuffix}${aiLoadingSuffix}`;
 
   return (
     <button
@@ -132,23 +155,37 @@ export function InboxRow({
                 <span className={styles.draftChip}>Draft</span>
                 <span className={styles.dotsep}>·</span>
               </span>
-            ) : (
-              showCategoryChip &&
-              enrichment?.categoryChip && (
-                <span className={styles.chipWrap}>
-                  {/* #283 visual AI-preview marker. The fake category is visual-only (the row's
+            ) : chipState === 'loading' ? (
+              <span className={styles.chipWrap}>
+                {/* #508/#548 — working marker while enrichment is in flight. Decorative:
+                    the aria-loading suffix on the row button carries the SR announcement. */}
+                <span
+                  className={`${styles.chip} ${styles.chipLoading}`}
+                  data-testid="inbox-chip-loading"
+                >
+                  <AiMarker
+                    variant="inline"
+                    state="working"
+                    decorative
+                    className={styles.chipMarker}
+                  />
+                </span>
+                <span className={styles.dotsep}>·</span>
+              </span>
+            ) : chipState === 'ready' && enrichment?.categoryChip ? (
+              <span className={styles.chipWrap}>
+                {/* #283 visual AI-preview marker. The category is visual-only (the row's
                     aria-label omits it and the button swallows descendant labels), so this is a
                     sighted-user cue, not an a11y mechanism. The marker is fixed-width (flex:none)
                     so the category text — not the marker — absorbs any width pressure, and it
                     hides together with the chip below the 560px breakpoint. */}
-                  <span className={styles.chip}>
-                    <AiMarker variant="inline" decorative className={styles.chipMarker} />
-                    {enrichment.categoryChip}
-                  </span>
-                  <span className={styles.dotsep}>·</span>
+                <span className={styles.chip}>
+                  <AiMarker variant="inline" decorative className={styles.chipMarker} />
+                  {enrichment.categoryChip}
                 </span>
-              )
-            )}
+                <span className={styles.dotsep}>·</span>
+              </span>
+            ) : null}
             {showRepo && (
               <>
                 <span className={styles.mono}>{pr.repo}</span>
