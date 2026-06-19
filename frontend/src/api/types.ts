@@ -243,6 +243,11 @@ export interface PrDetailDto {
   timelineCapHit: boolean;
 }
 
+// Shared four-value AI load state (spec §1). "off" is NOT a state — it is the
+// useAiGate(...) capability gate; a disabled hook renders nothing. Surfaces map
+// their hook's richer state down to this for the AiMarker / skeleton cue.
+export type AiLoadState = 'loading' | 'ready' | 'empty' | 'error';
+
 export interface PrSummary {
   body: string;
   category: string;

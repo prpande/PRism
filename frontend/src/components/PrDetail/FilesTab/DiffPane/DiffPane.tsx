@@ -176,7 +176,8 @@ export function DiffPane({
   lineWrap = false,
 }: DiffPaneProps) {
   const annotationsEnabled = useAiGate('hunkAnnotations');
-  const allAnnotations = useAiHunkAnnotations(prRef, annotationsEnabled);
+  const aiAnnotations = useAiHunkAnnotations(prRef, annotationsEnabled);
+  const allAnnotations = aiAnnotations.annotations;
 
   const annotationsForFile = useMemo(() => {
     if (!allAnnotations || !selectedPath) return null;

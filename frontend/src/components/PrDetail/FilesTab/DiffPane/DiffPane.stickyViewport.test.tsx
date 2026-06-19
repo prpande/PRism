@@ -7,7 +7,7 @@ import type { FileChange, ReviewThreadDto } from '../../../../api/types';
 // them so it renders standalone in jsdom. This harness exists to prove every
 // full-span comment/composer cell is wrapped in `.diffStickyViewport` (#390).
 vi.mock('../../../../hooks/useAiGate', () => ({ useAiGate: () => false }));
-vi.mock('../../../../hooks/useAiHunkAnnotations', () => ({ useAiHunkAnnotations: () => null }));
+vi.mock('../../../../hooks/useAiHunkAnnotations', () => ({ useAiHunkAnnotations: () => ({ state: 'empty', annotations: null }) }));
 vi.mock('../../../../hooks/useWholeFileContent', () => ({
   useWholeFileContent: () => ({
     fetchStatus: 'idle',

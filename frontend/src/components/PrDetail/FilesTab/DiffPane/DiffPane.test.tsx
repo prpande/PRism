@@ -62,7 +62,7 @@ const sampleThread: ReviewThreadDto = {
 describe('DiffPane', () => {
   beforeEach(() => {
     vi.mocked(useAiGate).mockReturnValue(false);
-    vi.mocked(useAiHunkAnnotations).mockReturnValue(null);
+    vi.mocked(useAiHunkAnnotations).mockReturnValue({ state: 'empty', annotations: null });
     vi.mocked(useWholeFileContent).mockReturnValue({
       fetchStatus: 'idle',
       headContent: null,
@@ -453,14 +453,17 @@ describe('DiffPane', () => {
 
   it('renders AI annotation row with colSpan=4 in split mode', () => {
     vi.mocked(useAiGate).mockReturnValue(true);
-    vi.mocked(useAiHunkAnnotations).mockReturnValue([
-      {
-        path: 'src/main.ts',
-        hunkIndex: 0,
-        body: 'Consider naming this clearer.',
-        tone: 'calm',
-      },
-    ]);
+    vi.mocked(useAiHunkAnnotations).mockReturnValue({
+      state: 'ready',
+      annotations: [
+        {
+          path: 'src/main.ts',
+          hunkIndex: 0,
+          body: 'Consider naming this clearer.',
+          tone: 'calm',
+        },
+      ],
+    });
     render(
       <DiffPane
         prRef={samplePrRef}
@@ -677,7 +680,7 @@ describe('DiffPane whole-file mode', () => {
 
   beforeEach(() => {
     vi.mocked(useAiGate).mockReturnValue(false);
-    vi.mocked(useAiHunkAnnotations).mockReturnValue(null);
+    vi.mocked(useAiHunkAnnotations).mockReturnValue({ state: 'empty', annotations: null });
     vi.mocked(useWholeFileContent).mockReturnValue({
       fetchStatus: 'idle',
       headContent: null,
@@ -814,9 +817,12 @@ describe('DiffPane whole-file mode', () => {
       baseContent: null,
       failureReason: null,
     });
-    vi.mocked(useAiHunkAnnotations).mockReturnValue([
-      { path: 'src/a.ts', hunkIndex: 0, body: 'Annotation for hunk 0', tone: 'calm' },
-    ]);
+    vi.mocked(useAiHunkAnnotations).mockReturnValue({
+      state: 'ready',
+      annotations: [
+        { path: 'src/a.ts', hunkIndex: 0, body: 'Annotation for hunk 0', tone: 'calm' },
+      ],
+    });
     const file = makeModifiedFile([
       { oldStart: 2, oldLines: 1, newStart: 2, newLines: 1, body: '@@ -2,1 +2,1 @@\n-old\n+b' },
     ]);
