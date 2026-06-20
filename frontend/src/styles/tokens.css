@@ -66,6 +66,13 @@
   --tree-w: 280px;
   --ask-ai-drawer-width: 400px;
 
+  /* Caps the centred prose column on the PR-detail Overview + Hotspots tabs so line
+     length stays readable on wide screens while the column still grows with the
+     viewport (#470). Pair with: width: min(80%, var(--pr-detail-content-max)). The
+     80% governs the side-gutter at laptop widths; this cap takes over from 1600px up
+     (the exact crossover: 1280 / 0.8 = 1600). */
+  --pr-detail-content-max: 1280px;
+
   /* default accent: muted indigo */
   --accent-h: 245;
   --accent-c: 0.085;

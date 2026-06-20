@@ -5,7 +5,11 @@
 }
 
 .overviewGrid {
-  max-width: 920px;
+  /* Fluid up to a readability ceiling (#470): the 80% governs the side-gutter on
+     laptop widths; --pr-detail-content-max caps line length on wide screens. `width`
+     (not max-width) is required so the percentage keeps an intentional gutter below
+     the cap instead of stretching edge-to-edge. margin:0 auto centres the surplus. */
+  width: min(80%, var(--pr-detail-content-max));
   margin: 0 auto;
   padding: var(--s-6);
   display: flex;
