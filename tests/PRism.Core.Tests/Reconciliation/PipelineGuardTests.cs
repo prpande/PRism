@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Logging;
 using PRism.Core.Reconciliation;
 using PRism.Core.Reconciliation.Pipeline;
 using PRism.Core.State;
@@ -218,6 +219,34 @@ public class PipelineGuardTests
     }
 
     [Fact]
+    public async Task SourceThrows_LogsWarningWithDraftId()
+    {
+        // #323 item 2: the per-draft catch-all must not swallow the transport exception
+        // silently — a GitHub 500 / rate-limit during reconcile renders as Stale(NoMatch),
+        // identical to a genuine no-match. Logging the draft id + exception at Warning is the
+        // only thing that distinguishes the two in production.
+        var draft = MakeDraft(id: "d-throws", path: "src/Bad.cs", line: 12);
+        var fake = new ThrowingFakeFileContentSource(
+            throwForPath: "src/Bad.cs",
+            files: new(),
+            reachableShas: new() { OldSha, NewSha });
+        var session = SessionWith(draft);
+        var logger = new CapturingLogger();
+
+        var result = await new DraftReconciliationPipeline(logger)
+            .ReconcileAsync(session, NewSha, fake, CancellationToken.None);
+
+        // Behavior unchanged: still Stale(NoMatch).
+        var d = Assert.Single(result.Drafts);
+        Assert.Equal(DraftStatus.Stale, d.Status);
+        Assert.Equal(StaleReason.NoMatch, d.StaleReason);
+
+        // New: the swallowed exception is logged at Warning, carrying the draft id.
+        var warning = Assert.Single(logger.Entries, e => e.Level == LogLevel.Warning);
+        Assert.Contains("d-throws", warning.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task PrRootDraft_NullFilePath_PassesThroughUnchanged()
     {
         // PR-root drafts (FilePath null) skip the per-draft IO pipeline entirely.
@@ -365,5 +394,18 @@ public class PipelineGuardTests
             ct.ThrowIfCancellationRequested();
             return Task.FromResult(false);
         }
+    }
+
+    private sealed class CapturingLogger : ILogger<DraftReconciliationPipeline>
+    {
+        public List<(LogLevel Level, string Message)> Entries { get; } = new();
+        public IDisposable BeginScope<TState>(TState state) where TState : notnull => NullScope.Instance;
+        public bool IsEnabled(LogLevel logLevel) => true;
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+        {
+            ArgumentNullException.ThrowIfNull(formatter);
+            Entries.Add((logLevel, formatter(state, exception)));
+        }
+        private sealed class NullScope : IDisposable { public static readonly NullScope Instance = new(); public void Dispose() { } }
     }
 }
