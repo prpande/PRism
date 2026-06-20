@@ -11,7 +11,7 @@ public sealed class DraftReconciliationPipeline
     private readonly ILogger _logger;
 
     // Optional logger: the pipeline is `new()`-ed directly (not DI) at the reload endpoint
-    // + ~30 test sites, so an optional param keeps every call site valid. The reload endpoint
+    // and the unit-test sites, so an optional param keeps every call site valid. The reload endpoint
     // passes a real logger; tests get NullLogger.
     public DraftReconciliationPipeline(ILogger<DraftReconciliationPipeline>? logger = null)
         => _logger = logger ?? NullLogger<DraftReconciliationPipeline>.Instance;

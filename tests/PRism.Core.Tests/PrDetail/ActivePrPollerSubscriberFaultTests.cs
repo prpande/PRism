@@ -48,7 +48,9 @@ public class ActivePrPollerSubscriberFaultTests
         });
 
         await poller.TickAsync(T0, default);
-        // Second tick well past any erroneous 60s backoff window, with the SAME snapshot.
+        // Second tick with the SAME snapshot. The exact offset is irrelevant: with the fix no
+        // backoff is ever scheduled (NextRetryAt stays null), so the second poll always runs; on
+        // main the spurious backoff would gate it regardless of how far ahead this tick is.
         await poller.TickAsync(T0.AddSeconds(30), default);
 
         throwerInvoked.Should().BeTrue("the real bus must actually invoke the throwing subscriber (guards against a vacuous no-op-bus test)");
