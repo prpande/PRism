@@ -82,6 +82,14 @@
      on the table. Keep the base token here for the table baseline. */
   font-size: var(--text-sm);
   line-height: 1.55;
+  /* #554: gutter column width, derived from the file's widest line number
+     (--diff-gutter-digits, set by DiffPane). digits × 1ch sizes the number run
+     (1ch == one monospace digit, since the table is var(--font-mono)); the
+     +2.25rem reserves the left-hand hover affordance chip plus cell padding so
+     the always-visible number never collides with it, at rest or on hover.
+     Inherited down to the <col> elements (split fixed layout) and the gutter
+     <td>s (unified auto layout) so both modes size identically. */
+  --diff-gutter-w: calc(var(--diff-gutter-digits, 2) * 1ch + 2.25rem);
 }
 .diffHunkHeader {
   display: block;
@@ -97,13 +105,25 @@
   user-select: none;
   width: 1%;
   white-space: nowrap;
-  min-width: 3em;
+  /* #554: width tracks the file's widest line number (see --diff-gutter-w on
+     .diffTable). border-box so the reserved chip padding on .diffGutterNew is
+     counted inside this width rather than widening the column. */
+  box-sizing: border-box;
+  min-width: var(--diff-gutter-w);
+}
+/* #554: line number is always-visible flow text; the comment affordance is an
+   additive overlay (see .diffCommentAffordance). Right-aligned via .diffGutter. */
+.diffGutterNum {
+  font-variant-numeric: tabular-nums;
 }
 .diffGutterOld {
   border-right: 1px solid var(--border-1);
 }
 .diffGutterNew {
   position: relative;
+  /* Reserve the left-hand chip zone so the always-visible right-aligned number
+     never sits under the hover affordance. Width math lives in --diff-gutter-w. */
+  padding-left: 1.5rem;
 }
 .diffContent {
   padding: 0 var(--s-2);
@@ -168,14 +188,17 @@
 
 /* Diff-line add/remove tinting lives in tokens.css as GLOBAL rules on the literal
    class strings production already emits (`diff-line diff-line--insert` /
-   `diff-line diff-line--delete`, see DiffPane.tsx:193). See Step 10.4. The module
+   `diff-line diff-line--delete`, see DiffPane.tsx). See Step 10.4. The module
    CSS scopes only the diff-pane-specific surfaces. */
 
 /* Comment-affordance gutter button.
-   Intentional: when a line is commentable, the line number is rendered inside
-   the affordance button (opacity: 0 at rest → 1 on hover). Mirrors GitHub's
-   diff-pane pattern. Non-commentable lines render the line number directly
-   in the gutter cell. */
+   #554: the line number is ALWAYS rendered as flow text in the gutter cell
+   (.diffGutterNum); this is an additive affordance overlaid on the reserved
+   left-hand zone (opacity: 0 at rest → 1 on hover), like GitHub. It used to
+   contain the number itself, which made every line number invisible at rest —
+   glaring on all-insert (added) files where there is no old-side number to
+   fall back on. The visible mark is a filled, accent-colored comment glyph
+   (no chip background, so the accent fill reads against the gutter). */
 .diffCommentAffordance {
   position: absolute;
   left: 2px;
@@ -186,11 +209,10 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  background: var(--accent);
-  color: var(--accent-text);
+  background: none;
+  color: var(--accent);
   border: none;
-  border-radius: 3px;
-  font-size: 10px;
+  padding: 0;
   cursor: pointer;
   opacity: 0;
   transition: opacity var(--t-fast);
@@ -209,7 +231,7 @@
 }
 
 /* Slice 1 — split-mode rules. The previously-no-op `.diff-pane--split`
-   className from DiffPane.tsx:195 is finally load-bearing. See spec § 6.3
+   className from DiffPane.tsx is finally load-bearing. See spec § 6.3
    at docs/specs/2026-06-01-real-side-by-side-diff-rendering-design.md.
 
    Single-combined `:global(...)` form (rather than nested `:global()`)
