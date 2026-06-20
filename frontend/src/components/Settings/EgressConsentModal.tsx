@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Modal } from '../Modal/Modal';
 import { Spinner } from '../Spinner';
-import { PrismGlyph } from '../Ai/PrismGlyph';
+import { PrismThinking } from '../Ai/PrismThinking';
 import { getEgressDisclosure, postAiConsent, type EgressDisclosure } from '../../api/aiConsent';
 import { EgressDisclosureBody, EgressDisclosureSkeleton } from './EgressDisclosureBody';
 import styles from './EgressConsentModal.module.css';
@@ -91,7 +91,11 @@ export function EgressConsentModal({ open, onAccept, onDecline }: Props) {
     <Modal
       open={open}
       title="Enable Live AI"
-      titleIcon={<PrismGlyph />}
+      // The title mark spins for the whole modal lifecycle — this is the Live-AI
+      // enablement flow, so the spin is branding for "real AI", not a per-request
+      // progress cue. It intentionally keeps spinning on a disclosure-fetch failure
+      // (the error is surfaced in the body); the glyph is decorative either way.
+      titleIcon={<PrismThinking className={styles.titleGlyph} />}
       align="center"
       onClose={onDecline}
       defaultFocus="cancel"
@@ -110,7 +114,7 @@ export function EgressConsentModal({ open, onAccept, onDecline }: Props) {
         </div>
       )}
       {submitError && <ErrorBox message="Couldn't enable Live AI. Please try again." />}
-      <div className="modal-actions row gap-2">
+      <div className={`modal-actions ${styles.actions}`}>
         <button
           type="button"
           className={`btn ${styles.declineBtn}`}

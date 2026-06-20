@@ -1,3 +1,24 @@
+/* Accent-colour the title Prism mark so it reads as the AI brand glyph, matching the
+   /welcome benefit-row prism (also --accent). Without this it inherits the title's
+   --text-1 and renders as a plain dark icon. The title TEXT stays --text-1; only the
+   glyph (currentColor) picks this up. */
+.titleGlyph {
+  color: var(--accent);
+  /* A touch larger than the default 18px so the AI mark anchors the dialog title.
+     Overrides the component's width/height attrs (CSS wins); applies to both the
+     static and spinning variants. */
+  width: 24px;
+  height: 24px;
+}
+
+/* Centre the segmented control in the dialog rather than letting it sit flush-left at
+   its natural width (#4 — left-aligned read "out of place"). The control keeps its
+   intrinsic width; only its horizontal placement changes. */
+.control {
+  display: flex;
+  justify-content: center;
+}
+
 /* Selected-segment tints (soft, not loud). Applied via data-pending on the control wrapper.
    IMPORTANT: do NOT target SegmentedControl's `.segOn` class — it is CSS-modules-hashed
    (e.g. `_segOn_x1y2`) so a literal `:global(.segOn)` selector matches nothing and the tint
@@ -48,6 +69,10 @@
   border-radius: 50%;
   margin-top: 0.45em;
 }
+/* Legend dots sit at the same lightness band as the app's "regular" state colours
+   (~0.55 L), not the darkened `-fg` text variants. Preview already rides --accent;
+   Live uses the base --success (0.55) rather than --success-fg (0.36), which read
+   markedly darker than the accent dot beside it. Off stays the muted neutral. */
 .dotOff {
   background: var(--text-3);
 }
@@ -55,7 +80,7 @@
   background: var(--accent);
 }
 .dotLive {
-  background: var(--success-fg);
+  background: var(--success);
 }
 .currentPill {
   margin-left: var(--s-2);
