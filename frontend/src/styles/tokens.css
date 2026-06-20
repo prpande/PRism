@@ -5,15 +5,6 @@
 
 @import url('https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500;600&display=swap');
 
-/* Registered so the AI working-marker halo blur interpolates smoothly per-frame.
-   An UN-registered custom property (or a raw `filter` blur) animates in Chromium's
-   discrete filter steps, which reads as a blink; a registered <length> tweens. #508 */
-@property --ai-glow-blur {
-  syntax: '<length>';
-  inherits: false;
-  initial-value: 0px;
-}
-
 :root {
   /* type */
   --font-sans: "Geist", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
@@ -126,17 +117,26 @@
   --accent-text: oklch(0.99 0 0);
   --accent-ring: oklch(0.55 var(--accent-c) var(--accent-h) / 0.35);
   /* AI marker states (#508). Idle = the existing accent (no visual change to
-     existing #489 markers). Working = the SAME accent hue, energised: brighter +
-     higher chroma + a glow (in AiMarker.module.css). Keeping the accent hue means
-     the cue stays on-brand for any chosen accent (B1 decision — no foreign hue);
+     existing #489 markers). Working = the SAME accent hue, energised: a spinning
+     sparkle whose brightness pulses (in AiMarker.module.css). Keeping the accent hue
+     means the cue stays on-brand for any chosen accent (B1 decision — no foreign hue);
      working↔idle stays distinct under prefers-reduced-motion via the lightness/
-     chroma lift + static glow rather than a hue shift. */
+     chroma lift rather than a hue shift. */
   --ai-idle-color: var(--accent);
-  --ai-working-color: oklch(0.62 calc(var(--accent-c) * 1.5) var(--accent-h));
-  /* Working halo = the accent's COMPLEMENT (hue + 180°), so it reads against any
-     accent instead of vanishing as a same-hue glow. Theme-aware lightness: mid +
-     saturated on light (pops on white), bright on dark. B1 choice (#508). */
-  --ai-working-glow: oklch(0.6 0.19 calc(var(--accent-h) + 180));
+  /* Energised chroma shared by the three working lightness steps below, so "same chroma,
+     stepped lightness" is structural rather than a hand-copied multiplier. */
+  --ai-working-c: calc(var(--accent-c) * 1.5);
+  --ai-working-color: oklch(0.62 var(--ai-working-c) var(--accent-h));
+  /* Spin-marker brightness-pulse endpoints: same hue/chroma as --ai-working-color, stepped
+     in lightness. -dim is the resting beat, -bright the mid-spin flash; the pulse runs
+     rest→flash→rest within each spin (#508). The pulse is theme-aware by DIRECTION, not by
+     keyframe: on this white background "more prominent" means DARKER, so the flash (-bright)
+     drops to a bold low-L indigo while the rest (-dim) sits at a clearly-visible higher L.
+     Dark inverts both (rest dimmer, flash lighter) — see [data-theme="dark"] below. Naming a
+     darker value "-bright" reads odd in isolation but keeps the keyframe role stable across
+     themes so AiMarker.module.css needs no per-theme branch. */
+  --ai-working-dim: oklch(0.66 var(--ai-working-c) var(--accent-h));
+  --ai-working-bright: oklch(0.46 var(--ai-working-c) var(--accent-h));
   --ai-idle-opacity: 0.55;
 
   /* state */
@@ -228,10 +228,14 @@
   --accent-ring: oklch(0.72 var(--accent-c) var(--accent-h) / 0.45);
   --ai-idle-color: var(--accent);
   /* Same accent hue as idle, lifted in lightness (0.72→0.82) + chroma so working↔idle stays
-     distinguishable under prefers-reduced-motion via brightness/glow, not a hue shift (B1 decision). */
-  --ai-working-color: oklch(0.82 calc(var(--accent-c) * 1.4) var(--accent-h));
-  /* Complement glow, brighter on dark so it pops on the dark surface (#508 B1). */
-  --ai-working-glow: oklch(0.88 0.15 calc(var(--accent-h) + 180));
+     distinguishable under prefers-reduced-motion via brightness, not a hue shift (B1 decision). */
+  --ai-working-c: calc(var(--accent-c) * 1.4);
+  --ai-working-color: oklch(0.82 var(--ai-working-c) var(--accent-h));
+  /* Spin-marker pulse endpoints (dark): same hue/chroma, stepped lightness (#508). On a dark
+     background "more prominent" means LIGHTER, so the flash (-bright) lifts above the resting
+     -dim — the opposite direction from light (see :root above). */
+  --ai-working-dim: oklch(0.70 var(--ai-working-c) var(--accent-h));
+  --ai-working-bright: oklch(0.94 var(--ai-working-c) var(--accent-h));
   --ai-idle-opacity: 0.72; /* lifted vs light so the dimmed idle marker keeps ≥3:1 (WCAG 1.4.11) */
 
   --success: oklch(0.72 0.13 150);
