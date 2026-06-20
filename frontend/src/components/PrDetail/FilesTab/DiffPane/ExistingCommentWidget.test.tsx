@@ -38,6 +38,15 @@ describe('ExistingCommentWidget', () => {
     expect(within(cards[1]).getByText('prpande')).toBeInTheDocument();
   });
 
+  it('renders inline comment cards at comfortable density (Overview parity)', () => {
+    render(<ExistingCommentWidget threads={[thread()]} />);
+    const cards = screen.getAllByTestId('inline-comment-card');
+    expect(cards).toHaveLength(2);
+    for (const card of cards) {
+      expect(card).toHaveAttribute('data-density', 'comfortable');
+    }
+  });
+
   it('shows a Resolved tag on resolved threads', () => {
     render(<ExistingCommentWidget threads={[thread({ isResolved: true })]} />);
     expect(screen.getByLabelText('Resolved thread')).toBeInTheDocument();

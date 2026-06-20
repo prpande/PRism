@@ -424,6 +424,9 @@ a:hover { text-decoration: underline; }
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+.markdown-body img {
+  max-width: 100%;
+}
 
 /* #465 — shared compact treatment for AI-generated markdown (summary, hunk
    annotation, hotspot rationale). Layered on the global `.markdown-body` base
