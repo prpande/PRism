@@ -69,6 +69,34 @@ describe('AiSummaryCard', () => {
     expect(screen.getByTestId('sample-badge-stub')).toBeInTheDocument();
   });
 
+  it('mounts the SampleBadge inside the shared header row (next to the AI label)', () => {
+    render(
+      <AiSummaryCard summary={{ body: 'b', category: 'fix' }} loading={false} error={false} />,
+    );
+    const head = screen.getByTestId('ai-summary-head');
+    expect(within(head).getByTestId('sample-badge-stub')).toBeInTheDocument();
+    expect(within(head).getByText('AI Summary')).toBeInTheDocument();
+  });
+
+  it('renders the category chip below the header row (sibling, not inside it)', () => {
+    // The category chip falls to its own line under the header in BOTH modes — the chip is a
+    // following sibling of the header row, never a child of it.
+    render(
+      <AiSummaryCard summary={{ body: 'b', category: 'fix' }} loading={false} error={false} />,
+    );
+    const head = screen.getByTestId('ai-summary-head');
+    const chip = screen.getByTestId('ai-summary-category');
+    expect(within(head).queryByTestId('ai-summary-category')).not.toBeInTheDocument();
+    expect(head.compareDocumentPosition(chip) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it('Live + stale: the status cluster shares the header row (not its own line)', () => {
+    render(<AiSummaryCard {...baseProps} summary={{ body: 'b', category: 'fix' }} isStale live />);
+    const head = screen.getByTestId('ai-summary-head');
+    expect(within(head).getByText(/out of date/i)).toBeInTheDocument();
+    expect(within(head).getByRole('button', { name: /regenerate summary/i })).toBeInTheDocument();
+  });
+
   it('Live + stale: shows the Out of date chip + Regenerate over the present body', () => {
     render(
       <AiSummaryCard
@@ -160,8 +188,8 @@ describe('AiSummaryCard', () => {
     );
     expect(screen.queryByText(/out of date/i)).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /regenerate summary/i })).not.toBeInTheDocument();
-    // The whole Live-only status region must be absent in Preview (it would otherwise steal the
-    // SampleBadge adjacency margin and present an empty live region to AT).
+    // The whole Live-only status region must be absent in Preview, so AT is not handed an empty
+    // live region in a mode that never produces stale/regenerate updates.
     expect(screen.queryByRole('status')).not.toBeInTheDocument();
   });
 

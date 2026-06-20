@@ -13,13 +13,6 @@
   font-size: calc(var(--text-sm) * var(--content-scale));
 }
 
-/* Restore the vertical gap the legacy "preview" chip used to provide between the
-   sample marker and the body (SampleBadge carries no margin of its own). The
-   adjacent-sibling form self-disables in Off/Live, where the badge is absent. */
-.aiSummaryCard [data-sample-badge] + * {
-  margin-top: var(--s-2);
-}
-
 .aiSummaryBody {
   color: var(--text-1);
   /* Extra breathing room between the category pill and the summary that follows. */
@@ -44,11 +37,25 @@
   font-size: var(--text-sm);
 }
 
+/* The shared header row: AI label + Preview Sample badge + Live status region, all on one
+   vertically-centred line. Rendered in every mode so Preview and Live lay out identically and the
+   category chip + body fall below it. The bottom margin is the gap above the category chip; when
+   there is no chip it collapses with `.aiSummaryBody`'s top margin. */
 .aiSummaryHead {
   display: flex;
   align-items: center;
   gap: var(--s-2);
-  margin-bottom: 4px;
+  margin-bottom: var(--s-2);
+}
+
+/* Live-only status cluster (stale chip + Regenerate) sharing the header row, pinned to the
+   right-hand edge of the card so it sits opposite the AI label. `margin-left: auto` is inert when
+   the cluster is empty (non-stale Live), so it has no effect outside the stale state. */
+.aiSummaryStatus {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+  margin-left: auto;
 }
 
 .aiSummaryLabel {

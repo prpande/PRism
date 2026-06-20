@@ -126,8 +126,8 @@ describe('AiSummaryCard', () => {
     );
     expect(screen.queryByText(/out of date/i)).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /regenerate summary/i })).not.toBeInTheDocument();
-    // The whole Live-only status region must be absent in Preview (it would otherwise steal the
-    // SampleBadge adjacency margin and present an empty live region to AT).
+    // The whole Live-only status region must be absent in Preview, so AT is not handed an empty
+    // live region in a mode that never produces stale/regenerate updates.
     expect(screen.queryByRole('status')).not.toBeInTheDocument();
   });
 
