@@ -62,13 +62,6 @@ describe('AiSummaryCard', () => {
     expect(screen.queryByTestId('ai-summary-category')).not.toBeInTheDocument();
   });
 
-  it('mounts the SampleBadge slot in the content branch', () => {
-    render(
-      <AiSummaryCard summary={{ body: 'b', category: 'fix' }} loading={false} error={false} />,
-    );
-    expect(screen.getByTestId('sample-badge-stub')).toBeInTheDocument();
-  });
-
   it('mounts the SampleBadge inside the shared header row (next to the AI label)', () => {
     render(
       <AiSummaryCard summary={{ body: 'b', category: 'fix' }} loading={false} error={false} />,
@@ -90,14 +83,7 @@ describe('AiSummaryCard', () => {
     expect(head.compareDocumentPosition(chip) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
-  it('Live + stale: the status cluster shares the header row (not its own line)', () => {
-    render(<AiSummaryCard {...baseProps} summary={{ body: 'b', category: 'fix' }} isStale live />);
-    const head = screen.getByTestId('ai-summary-head');
-    expect(within(head).getByText(/out of date/i)).toBeInTheDocument();
-    expect(within(head).getByRole('button', { name: /regenerate summary/i })).toBeInTheDocument();
-  });
-
-  it('Live + stale: shows the Out of date chip + Regenerate over the present body', () => {
+  it('Live + stale: shows the Out of date chip + Regenerate over the present body, on the header row', () => {
     render(
       <AiSummaryCard
         {...baseProps}
@@ -107,8 +93,10 @@ describe('AiSummaryCard', () => {
       />,
     );
     expect(screen.getByText('present body')).toBeInTheDocument(); // body retained
-    expect(screen.getByText(/out of date/i)).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /regenerate summary/i })).toBeInTheDocument();
+    // The stale chip + Regenerate share the header row (not their own line below it).
+    const head = screen.getByTestId('ai-summary-head');
+    expect(within(head).getByText(/out of date/i)).toBeInTheDocument();
+    expect(within(head).getByRole('button', { name: /regenerate summary/i })).toBeInTheDocument();
   });
 
   it('Live + stale chip lives in a status region (announced)', () => {
