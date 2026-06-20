@@ -31,7 +31,7 @@ internal sealed class FakeInboxRefreshOrchestrator : IInboxRefreshOrchestrator
     public Task<bool> WaitForFirstSnapshotAsync(TimeSpan timeout, CancellationToken ct)
         => Task.FromResult(Current != null);
 
-    public Task RefreshAsync(CancellationToken ct, bool hardRefresh = false)
+    public Task RefreshAsync(CancellationToken ct, bool hardRefresh = false, bool forceNotify = false)
     {
         Interlocked.Increment(ref _refreshCalls);
         return RefreshOverride?.Invoke(ct) ?? Task.CompletedTask;

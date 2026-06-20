@@ -1129,4 +1129,38 @@ public sealed class InboxRefreshOrchestratorTests
         sut.Current!.Enrichments.Should().HaveCount(enrichmentsBefore, "no AI-mode delta means no clear");
         bus.Published.OfType<InboxUpdated>().Should().BeEmpty("no AI-mode delta means no spurious churn");
     }
+
+    [Fact]
+    public async Task OnConfigChanged_LiveToPreview_NotifiesFE_AfterSynchronousRepopulate()
+    {
+        // Live→Preview regression (#508/#548 follow-up): the mode-change handler clears the AI
+        // fields, then its fire-and-forget RefreshAsync re-populates with the SYNCHRONOUS
+        // placeholder enricher (Preview settles every PR in the main refresh path — it never
+        // goes through OnInboxEnrichmentsReady). The PR set is unchanged, so ComputeDiff
+        // (enrichment-blind) reports no change and the refresh used to publish NOTHING — leaving
+        // the FE stranded on the empty settled set with the working glyph on every row. The
+        // refill MUST be announced, mirroring OnInboxEnrichmentsReady's unconditional publish.
+        var (sut, bus, config) = BuildSeededForAiModeChange(AiMode.Live);
+        using var _ = sut;
+
+        await sut.RefreshAsync(CancellationToken.None);
+        // Live resolves Noop in the harness → empty settled, mirroring the cleared start state.
+        sut.Current!.AiEnrichmentSettled.Should().BeEmpty();
+        bus.Published.Clear();
+
+        // Flip Live → Preview and raise Changed (synchronous, mirrors the PUT thread). All fakes
+        // resolve synchronously, so the fire-and-forget RefreshAsync poke runs to completion here.
+        config.Current = config.Current with
+        {
+            Ui = config.Current.Ui with { Ai = config.Current.Ui.Ai with { Mode = AiMode.Preview } }
+        };
+        config.RaiseChanged();
+
+        // The placeholder enricher settled every open PR…
+        sut.Current!.AiEnrichmentSettled.Should().NotBeEmpty(
+            "Preview's synchronous placeholder enricher settles every open PR");
+        // …and the FE must be told, or it never refetches the now-settled snapshot.
+        bus.Published.OfType<InboxUpdated>().Should().NotBeEmpty(
+            "the re-populated settled set must be announced even though ComputeDiff is enrichment-blind");
+    }
 }
