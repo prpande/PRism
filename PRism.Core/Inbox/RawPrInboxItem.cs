@@ -23,4 +23,6 @@ public sealed record RawPrInboxItem(
     int ChangedFiles,
     DateTimeOffset? MergedAt = null,
     DateTimeOffset? ClosedAt = null,
-    string? AvatarUrl = null);
+    string? AvatarUrl = null,
+    bool IsDraft = false,
+    string? Description = null);

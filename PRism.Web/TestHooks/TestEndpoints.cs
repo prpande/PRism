@@ -43,6 +43,8 @@ internal static class TestEndpoints
 
     internal sealed record SetPrStateRequest(string State);
 
+    internal sealed record SetDraftRequest(bool IsDraft);
+
     internal sealed record MarkPrViewedRequest(string Owner, string Repo, int Number, string TabId);
 
     internal sealed record EmitPrUpdatedRequest(
@@ -361,6 +363,24 @@ internal static class TestEndpoints
                 return Results.BadRequest(new { error = "state-invalid", state = req.State, message = ex.Message });
             }
             return Results.Ok(new { ok = true, state = store.PrState });
+        });
+
+        // #501 e2e-only. Flags the scenario PR as a draft so FakePrReader / FakeSectionQueryRunner
+        // emit IsDraft=true, driving the header glyph+marker and the inbox draft chip in baselines.
+        app.MapPost("/test/set-draft", async (SetDraftRequest req, IServiceProvider sp, IInboxRefreshOrchestrator orch, CancellationToken ct) =>
+        {
+            var store = sp.GetService<FakeReviewBackingStore>();
+            if (store is null) return StoreMissing("/test/set-draft");
+            store.SetDraft(req.IsDraft);
+            // The inbox snapshot is built at refresh time (see /test/seed-inbox) and reads
+            // IsDraftPr through FakeSectionQueryRunner. Flipping the flag alone leaves an
+            // already-seeded snapshot stale, so the draft change never surfaces on the inbox
+            // row (the PR-detail path reads the store live and is unaffected). Re-refresh so
+            // the snapshot reflects the new draft state regardless of whether set-draft runs
+            // before or after seed-inbox — mirrors the mutate-then-RefreshAsync pattern in
+            // /test/seed-inbox and /test/reset.
+            await orch.RefreshAsync(ct).ConfigureAwait(false);
+            return Results.NoContent();
         });
 
         // ----- /test/submit/* — drive the FakeReviewSubmitter (plan Task 61) -----

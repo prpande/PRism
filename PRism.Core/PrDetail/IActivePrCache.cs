@@ -31,4 +31,5 @@ public interface IActivePrCache
 public sealed record ActivePrSnapshot(
     string HeadSha,
     long? HighestIssueCommentId,
-    DateTimeOffset ObservedAt);
+    DateTimeOffset ObservedAt,
+    string BaseSha = "");

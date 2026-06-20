@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using PRism.Core.Ai;
 using PRism.Core.Json;
 using PRism.Core.State;
 using PRism.Core.Storage;
@@ -27,14 +28,15 @@ public sealed class ConfigStore : IConfigStore, IDisposable
     // clean ConfigPatchException → 400 from the endpoint, NOT an InvalidCastException → 500
     // (the old `(string)value!` path) or a silent `Convert.ToBoolean(null) == false` flip
     // (the old `Convert.ToBoolean` path). Caught by Copilot review on PR #69.
-    private enum ConfigFieldType { String, Bool }
+    private enum ConfigFieldType { String, Bool, Int }
 
     private static readonly Dictionary<string, ConfigFieldType> _allowedFields =
         new(StringComparer.Ordinal)
         {
             ["theme"]                            = ConfigFieldType.String,
             ["accent"]                           = ConfigFieldType.String,
-            ["aiPreview"]                        = ConfigFieldType.Bool,
+            ["aiPreview"]                        = ConfigFieldType.Bool,    // legacy FE toggle — translated to ui.ai.mode below
+            ["ui.ai.mode"]                       = ConfigFieldType.String,  // tri-state (off|preview|live)
             ["density"]                          = ConfigFieldType.String,
             ["contentScale"]                     = ConfigFieldType.String,
             ["inbox.sections.review-requested"]  = ConfigFieldType.Bool,
@@ -53,6 +55,23 @@ public sealed class ConfigStore : IConfigStore, IDisposable
             ["inbox.showActivityRail"]           = ConfigFieldType.Bool,
             // #219 toggle: group the Inbox by repo (default) vs flat. Apply-switch arm below.
             ["inbox.groupByRepo"]                = ConfigFieldType.Bool,
+            // #496 AI Settings tab — user-configurable numeric knobs. Clamped on write
+            // (AiConfigBounds) in the apply switch below; surfaced + read-clamped in PRism.Web.
+            ["ui.ai.providerTimeoutSeconds"]     = ConfigFieldType.Int,
+            ["ui.ai.hunkAnnotationCap"]          = ConfigFieldType.Int,
+            // #525 best-effort summary character cap. Clamped on write (AiConfigBounds.ClampSummaryChars)
+            // in the apply switch below; surfaced + read-clamped in PRism.Web and fed hot into the summarizer.
+            ["ui.ai.summaryMaxChars"]            = ConfigFieldType.Int,
+            // #485 UX-suppression flag for the first-run AI onboarding overlay. Set once by the FE
+            // after the user dismisses the dialog; never read by any AI seam or egress gate.
+            ["ui.ai.onboardingSeen"]             = ConfigFieldType.Bool,
+            // #536 per-feature AI on/off toggles. Only the four Live-gated seams are settable;
+            // dormant keys (inboxRanking etc.) are intentionally absent so they are rejected here
+            // (unknown field → ConfigPatchException → 400) before reaching the switch.
+            ["ui.ai.features.summary"]           = ConfigFieldType.Bool,
+            ["ui.ai.features.fileFocus"]         = ConfigFieldType.Bool,
+            ["ui.ai.features.hunkAnnotations"]   = ConfigFieldType.Bool,
+            ["ui.ai.features.inboxEnrichment"]   = ConfigFieldType.Bool,
         };
 
     // #262 PR3: inbox.defaultSort is a string-typed key with a CLOSED value set (unlike
@@ -131,6 +150,28 @@ public sealed class ConfigStore : IConfigStore, IDisposable
         RaiseChanged();
     }
 
+    public async Task RecordAiConsentAsync(string providerId, string disclosureVersion, CancellationToken ct)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(providerId);
+        ArgumentException.ThrowIfNullOrEmpty(disclosureVersion);
+
+        await _gate.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            var ai = _current.Ui.Ai with
+            {
+                Consent = new AiConsentConfig(providerId, disclosureVersion, DateTimeOffset.UtcNow),
+            };
+            _current = _current with { Ui = _current.Ui with { Ai = ai } };
+            await WriteToDiskAsync(ct).ConfigureAwait(false);
+        }
+        finally
+        {
+            _gate.Release();
+        }
+        RaiseChanged();
+    }
+
     public async Task PatchAsync(IReadOnlyDictionary<string, object?> patch, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(patch);
@@ -154,6 +195,9 @@ public sealed class ConfigStore : IConfigStore, IDisposable
             case ConfigFieldType.Bool when value is not bool:
                 throw new ConfigPatchException(
                     $"field '{key}' expects a bool value (got {DescribeValue(value)})");
+            case ConfigFieldType.Int when value is not int:
+                throw new ConfigPatchException(
+                    $"field '{key}' expects an integer value (got {DescribeValue(value)})");
         }
 
         // Closed-set value validation BEFORE the gate (mirrors the per-key type check above).
@@ -190,7 +234,8 @@ public sealed class ConfigStore : IConfigStore, IDisposable
             {
                 "theme"     => _current with { Ui = ui with { Theme  = (string)value! } },
                 "accent"    => _current with { Ui = ui with { Accent = (string)value! } },
-                "aiPreview" => _current with { Ui = ui with { AiPreview = (bool)value! } },
+                "aiPreview"  => _current with { Ui = ui with { Ai = ui.Ai with { Mode = (bool)value! ? AiMode.Preview : AiMode.Off } } },
+                "ui.ai.mode" => _current with { Ui = ui with { Ai = ui.Ai with { Mode = ParseAiMode((string)value!) } } },
                 "density"   => _current with { Ui = ui with { Density = (string)value! } },
                 "contentScale" => _current with { Ui = ui with { ContentScale = (string)value! } },
                 "inbox.sections.review-requested" =>
@@ -213,6 +258,22 @@ public sealed class ConfigStore : IConfigStore, IDisposable
                     _current with { Inbox = _current.Inbox with { ShowActivityRail = (bool)value! } },
                 "inbox.groupByRepo" =>
                     _current with { Inbox = _current.Inbox with { GroupByRepo = (bool)value! } },
+                "ui.ai.providerTimeoutSeconds" =>
+                    _current with { Ui = ui with { Ai = ui.Ai with { ProviderTimeoutSeconds = AiConfigBounds.ClampTimeout((int)value!) } } },
+                "ui.ai.hunkAnnotationCap" =>
+                    _current with { Ui = ui with { Ai = ui.Ai with { HunkAnnotationCap = AiConfigBounds.ClampCap((int)value!) } } },
+                "ui.ai.summaryMaxChars" =>
+                    _current with { Ui = ui with { Ai = ui.Ai with { SummaryMaxChars = AiConfigBounds.ClampSummaryChars((int)value!) } } },
+                "ui.ai.onboardingSeen" =>
+                    _current with { Ui = ui with { Ai = ui.Ai with { OnboardingSeen = (bool)value! } } },
+                "ui.ai.features.summary" =>
+                    _current with { Ui = ui with { Ai = ui.Ai with { Features = ui.Ai.Features.With("summary", (bool)value!) } } },
+                "ui.ai.features.fileFocus" =>
+                    _current with { Ui = ui with { Ai = ui.Ai with { Features = ui.Ai.Features.With("fileFocus", (bool)value!) } } },
+                "ui.ai.features.hunkAnnotations" =>
+                    _current with { Ui = ui with { Ai = ui.Ai with { Features = ui.Ai.Features.With("hunkAnnotations", (bool)value!) } } },
+                "ui.ai.features.inboxEnrichment" =>
+                    _current with { Ui = ui with { Ai = ui.Ai with { Features = ui.Ai.Features.With("inboxEnrichment", (bool)value!) } } },
                 _ => throw new ConfigPatchException($"unknown field: {key}")
             };
             await WriteToDiskAsync(ct).ConfigureAwait(false);
@@ -235,6 +296,27 @@ public sealed class ConfigStore : IConfigStore, IDisposable
         bool      => "bool",
         var other => other.GetType().Name,
     };
+
+    // Parse the `ui.ai.mode` string patch value into AiMode. An unknown value throws
+    // ConfigPatchException (→ 400 via the endpoint mapping). Deliberately does NOT echo the
+    // user-supplied `value` in the message — matches DescribeValue's redaction discipline.
+    // Uses OrdinalIgnoreCase comparison rather than `value.ToLowerInvariant() switch` because
+    // CA1308 (analyzers AllEnabledByDefault + TWAE) rejects ToLowerInvariant for normalization;
+    // OrdinalIgnoreCase is the codebase's string-comparison idiom (e.g. ActivePrPoller,
+    // SubmitPipeline) and is case-insensitive without allocating a lowercased string. The
+    // hardcoded off/preview/live strings stay in lockstep with the on-disk kebab serialization
+    // only while AiMode members remain single words (kebab == lowercase); a future multi-word
+    // member (e.g. "live-read-only") must match KebabCaseJsonNamingPolicy here and the wire projection.
+    private static AiMode ParseAiMode(string value)
+    {
+        if (string.Equals(value, "off", StringComparison.OrdinalIgnoreCase))
+            return AiMode.Off;
+        if (string.Equals(value, "preview", StringComparison.OrdinalIgnoreCase))
+            return AiMode.Preview;
+        if (string.Equals(value, "live", StringComparison.OrdinalIgnoreCase))
+            return AiMode.Live;
+        throw new ConfigPatchException("ui.ai.mode must be one of: off, preview, live.");  // do NOT echo `value`
+    }
 
     private async Task ReadFromDiskAsync(CancellationToken ct)
     {
@@ -275,6 +357,7 @@ public sealed class ConfigStore : IConfigStore, IDisposable
             // let the strongly-typed Deserialize below surface the shape through the
             // existing JsonException catch. Caught by Copilot post-open code review (PR #53).
             bool rewritten = TryRewriteLegacyGithubShape(rootNode);
+            rewritten |= TryRewriteLegacyAiPreviewShape(rootNode);
             if (rewritten)
             {
                 raw = rootNode!.ToJsonString();
@@ -319,6 +402,41 @@ public sealed class ConfigStore : IConfigStore, IDisposable
             if (parsed.Github.Accounts is null || parsed.Github.Accounts.Count == 0)
             {
                 parsed = parsed with { Github = AppConfig.Default.Github };
+            }
+
+            // Nested backfill: a legacy `ui.ai` with `mode` only (post-PR2 shape) deserializes
+            // Consent/Features to null. The AiConsentState/AiFeatureState DI seeds read them, so
+            // backfill defaults. Symmetric to the Inbox.Sections nested backfill above.
+            if (parsed.Ui.Ai is null)
+            {
+                parsed = parsed with { Ui = parsed.Ui with { Ai = AppConfig.Default.Ui.Ai } };
+            }
+            else
+            {
+                var ai = parsed.Ui.Ai;
+                if (ai.Consent is null || ai.Features is null)
+                {
+                    parsed = parsed with { Ui = parsed.Ui with { Ai = ai with
+                    {
+                        Consent  = ai.Consent  ?? AppConfig.Default.Ui.Ai.Consent,
+                        Features = ai.Features ?? AppConfig.Default.Ui.Ai.Features,
+                    } } };
+                }
+            }
+
+            // One-time onboarding backfill (spec §8.1). Runs ONLY when the key is absent on disk
+            // (OnboardingSeen is null). Once present, the stored value is authoritative — never
+            // recomputed (a per-load recompute would re-show the overlay forever to a Preview-keeper
+            // whose seen-write didn't persist). Mirrors the Consent/Features key-absence backfills above.
+            if (parsed.Ui.Ai is not null && parsed.Ui.Ai.OnboardingSeen is null)
+            {
+                var ai = parsed.Ui.Ai;
+                var consent = new AiConsentState();
+                consent.Set(ai.Consent ?? AppConfig.Default.Ui.Ai.Consent);
+                var seen = consent.IsConsented(AiProviderIds.Claude, AiDisclosure.CurrentVersion)
+                           || ai.Mode == AiMode.Off;
+                parsed = parsed with { Ui = parsed.Ui with { Ai = ai with { OnboardingSeen = seen } } };
+                rewritten = true;
             }
 
             _current = parsed;
@@ -406,6 +524,29 @@ public sealed class ConfigStore : IConfigStore, IDisposable
         github.Remove("host");
         github.Remove("local-workspace");
         github["accounts"] = new JsonArray(account);
+        return true;
+    }
+
+    /// <summary>
+    /// Migrates the pre-v2 <c>ui.ai-preview</c> (bool) into the v2 <c>ui.ai.mode</c> nested shape
+    /// (true → "preview", false → "off"). Defensive per PR #53: a non-bool value is left untouched
+    /// so Deserialize/backfill handles it (never throws InvalidOperationException out of the catch).
+    /// Returns true if it rewrote the node (caller persists back).
+    /// </summary>
+    private static bool TryRewriteLegacyAiPreviewShape(JsonNode? rootNode)
+    {
+        if (rootNode is not JsonObject root) return false;
+        if (root["ui"] is not JsonObject ui) return false;
+        if (ui["ai-preview"] is not JsonValue legacy) return false;
+        if (ui["ai"] is JsonObject already && already["mode"] is JsonValue modeVal && modeVal.TryGetValue<string>(out _)) { ui.Remove("ai-preview"); return true; } // already migrated (has a real STRING mode); drop the stale key. A non-string mode (e.g. 42/null) is NOT "migrated" — fall through and rebuild from the legacy bool so ai-preview intent survives (PR #242 review).
+        if (!legacy.TryGetValue<bool>(out var on)) return false;             // non-bool → leave for the Default fallback
+        // A present-but-incomplete ui["ai"] — a malformed non-object (e.g. a JSON string) OR an empty/mode-less object
+        // ({}) — is NOT short-circuited above; it falls through to the overwrite below and is rebuilt from the legacy
+        // bool, so a corrupt OR empty `ai` value cannot silently discard the user's ai-preview intent
+        // (ce-doc-review rounds 1+2, adversarial edge cases). The round-1 `is JsonObject` check missed the empty-{} case.
+
+        ui["ai"] = new JsonObject { ["mode"] = on ? "preview" : "off" };
+        ui.Remove("ai-preview");
         return true;
     }
 

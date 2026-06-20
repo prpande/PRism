@@ -1,5 +1,14 @@
 import { useState, useCallback, useMemo, useRef } from 'react';
-import type { FileChange, FileChangeStatus, FileFocus, FocusLevel } from '../../../api/types';
+import type {
+  FileChange,
+  FileChangeStatus,
+  FileFocus,
+  FileFocusStatus,
+  FocusLevel,
+} from '../../../api/types';
+import { AiMarker } from '../../Ai/AiMarker';
+import { AI_TREE_ANALYZED_LABEL } from '../../Ai/aiStrings';
+import { fileFocusStatusToMarkerState } from '../../Ai/fileFocusMarkerState';
 import { buildTree, type TreeNode, type FileTreeNode, type DirectoryTreeNode } from './treeBuilder';
 import { useTreeHScroll } from '../../../hooks/useTreeHScroll';
 import styles from './FileTree.module.css';
@@ -12,6 +21,13 @@ export interface FileTreeProps {
   onToggleViewed: (path: string) => void;
   isLoading?: boolean;
   focusEntries: FileFocus[] | null;
+  focusStatus: FileFocusStatus;
+  // #508 (B1) — the PR-wide hunk-annotation fetch (lifted to FilesTab) is still in
+  // flight. The one header marker spans BOTH AI passes: it stays "working" while
+  // focus OR annotations are loading, so the cue doesn't drop to idle the moment
+  // focus resolves while annotations are still arriving. Default false for callers
+  // that don't wire annotations (tests / non-FilesTab).
+  annotationsLoading?: boolean;
   aiPreview: boolean;
 }
 
@@ -113,6 +129,8 @@ export function FileTree({
   onToggleViewed,
   isLoading = false,
   focusEntries,
+  focusStatus,
+  annotationsLoading = false,
   aiPreview,
 }: FileTreeProps) {
   const tree = useMemo(() => buildTree(files), [files]);
@@ -148,6 +166,26 @@ export function FileTree({
     return m;
   }, [focusEntries]);
 
+  // One header cue for the whole tree (spec §3 — never per-row). Working while EITHER
+  // AI pass is in flight — the shared file-focus fetch OR the PR-wide hunk-annotation
+  // fetch — so the cue spans the whole "AI working" window instead of dropping to idle
+  // the instant focus resolves while annotations are still loading. A PERSISTENT idle
+  // "AI is on here" marker once focus has run (ok/empty/fallback) and annotations are
+  // no longer loading — idle on empty is the truthful "AI ran, flagged nothing" signal
+  // that dots alone cannot express. Hidden when AI is off (no-changes/not-subscribed)
+  // or focus errored (and nothing is loading).
+  // Header marker spans BOTH AI passes (file-focus ranking + hunk annotation): stays
+  // `working` while either loads, else reflects focus status via the shared reduction.
+  // Behavior identical to the Slice-1 inline form — fileFocusStatusToMarkerState('loading')
+  // === 'working', so the original `focusStatus === 'loading' || annotationsLoading` OR is
+  // preserved transitively. The helper is NOT the sole authority here; annotationsLoading
+  // overrides it. Do not strip the annotationsLoading arm.
+  const headerMarkerState: 'working' | 'idle' | null = aiPreview
+    ? annotationsLoading
+      ? 'working'
+      : fileFocusStatusToMarkerState(focusStatus)
+    : null;
+
   // #214 — synthetic, bottom-pinned horizontal scrollbar. The clipped tree column
   // (.fileTreeScroll) is shifted via translateX from this bar's scrollLeft, so the bar
   // (a sticky footer below) is reachable without scrolling the tree to its end. Refs stay
@@ -162,16 +200,44 @@ export function FileTree({
     if (isLoading) return null;
     return (
       <div className={`file-tree ${styles.fileTree}`} data-testid="file-tree">
-        <div className={`file-tree-header ${styles.fileTreeHeader}`}>Files</div>
+        <div className={`file-tree-header ${styles.fileTreeHeader}`}>
+          <span className={styles.fileTreeHeaderLabel}>Files</span>
+        </div>
         <p className={`file-tree-empty muted ${styles.fileTreeEmpty}`}>No files in this diff.</p>
       </div>
     );
   }
 
   return (
-    <div className={`file-tree ${styles.fileTree}`} data-testid="file-tree">
+    <div
+      className={`file-tree ${styles.fileTree}`}
+      data-testid="file-tree"
+      // #492 — drives the AI column width AND the synthetic-hscroll spacer reservation
+      // in lockstep (CSS), so the fixed AI gutter appears only in Preview/Live and the
+      // scrollbar keeps spanning the tree column only. Set from the prop at render — no
+      // post-mount flash.
+      data-ai-on={aiPreview ? '1' : '0'}
+    >
       <div className={`file-tree-header ${styles.fileTreeHeader}`}>
-        Files · {viewedCount}/{files.length} viewed
+        <span className={styles.fileTreeHeaderLabel}>
+          Files · {viewedCount}/{files.length} viewed
+        </span>
+        {headerMarkerState && (
+          <span data-testid="file-tree-ai-progress" data-ai-state={headerMarkerState}>
+            <AiMarker
+              variant="inline"
+              state={headerMarkerState}
+              decorative
+              className={`${styles.fileTreeHeaderAi}${headerMarkerState === 'idle' ? ` ${styles.fileTreeHeaderAiIdle}` : ''}`}
+            />
+            {/* The working marker carries a `title` tooltip; the idle marker is otherwise
+                silent to AT (decorative glyph, no per-row focus signal on an empty result),
+                so give it an sr-only label. */}
+            {headerMarkerState === 'idle' && (
+              <span className="sr-only">{AI_TREE_ANALYZED_LABEL}</span>
+            )}
+          </span>
+        )}
       </div>
       <div className={styles.fileTreeBody}>
         <div
@@ -192,11 +258,29 @@ export function FileTree({
                   isViewed={viewedPaths.has(row.node.path)}
                   onSelectFile={onSelectFile}
                   focusLevel={focusByPath?.get(row.node.path) ?? null}
-                  aiPreview={aiPreview}
                 />
               ),
             )}
           </div>
+        </div>
+        {/* #492 — AI focus column. A fixed column OUTSIDE .fileTreeScroll (like the
+            checkbox column), so the dot stays visible at any horizontal scroll position
+            instead of riding off-screen at the end of a long filename. Rendered from the
+            same flat `rows` list so row i lines up across all three columns. Collapses to
+            0 width when AI is off (data-ai-on on the root), and is aria-hidden — the
+            spoken "AI focus: <level>" signal lives in the row after the filename. */}
+        <div className={`file-tree-ai-col ${styles.fileTreeAiCol}`} aria-hidden="true">
+          {rows.map((row) =>
+            row.kind === 'file' ? (
+              <AiSlot
+                key={row.key}
+                focusLevel={focusByPath?.get(row.node.path) ?? null}
+                aiPreview={aiPreview}
+              />
+            ) : (
+              <div key={row.key} className={styles.fileTreeAiSlot} />
+            ),
+          )}
         </div>
         {/* Checkbox column — a separate object that never scrolls horizontally, so the
             checkboxes stay fixed while names scroll. It shares the outer pane's vertical
@@ -252,14 +336,12 @@ function FileCell({
   isViewed,
   onSelectFile,
   focusLevel,
-  aiPreview,
 }: {
   row: FileRow;
   isSelected: boolean;
   isViewed: boolean;
   onSelectFile: (path: string) => void;
   focusLevel: FocusLevel | null;
-  aiPreview: boolean;
 }) {
   const node = row.node;
   return (
@@ -299,6 +381,30 @@ function FileCell({
       >
         {node.name}
       </span>
+      {/* #492 — the VISUAL dot moved to the fixed .file-tree-ai-col (so it can't scroll
+          off with a long name). The spoken signal stays here, after the filename, so the
+          screen-reader reading order (status word → name → AI focus) is unchanged. */}
+      {focusLevel && focusLevel !== 'low' && (
+        <span className="sr-only">{` AI focus: ${focusLevel}`}</span>
+      )}
+    </div>
+  );
+}
+
+// #492 — one slot per file row in the fixed .file-tree-ai-col. The `.file-tree-ai`
+// span and its inner High/Medium dot are unchanged from the old in-row markup (same
+// data-on gate, title, aria-hidden); only the location moved. Directory rows render a
+// bare .fileTreeAiSlot (no .file-tree-ai), so the `count === files.length` invariant
+// holds. Two gates compose intentionally (spec Mechanics §5): the column-level
+// data-ai-on gate on the root collapses the whole gutter when AI is off, and this
+// per-span data-on is the original, untouched marker gate kept in place by the issue's
+// scope guard ("don't change the data-on Preview/Live gating"). When AI is off the
+// column is already width-0, so the per-span collapse isn't visible — `aiPreview` is
+// still threaded here only to preserve that pre-existing gate verbatim, not because
+// the slot needs it to hide.
+function AiSlot({ focusLevel, aiPreview }: { focusLevel: FocusLevel | null; aiPreview: boolean }) {
+  return (
+    <div className={styles.fileTreeAiSlot}>
       <span
         className={`file-tree-ai ${styles.fileTreeAi}`}
         data-on={aiPreview ? '1' : '0'}
@@ -311,9 +417,6 @@ function FileCell({
           />
         )}
       </span>
-      {focusLevel && focusLevel !== 'low' && (
-        <span className="sr-only">{` AI focus: ${focusLevel}`}</span>
-      )}
     </div>
   );
 }

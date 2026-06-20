@@ -130,7 +130,7 @@ public sealed class PrDetailLoader : IDisposable
         var doneNow = evt.IsMerged || evt.IsClosed;
         var cached = TryGetCachedSnapshot(evt.PrRef);
         var doneCached = cached is not null && (cached.Detail.Pr.IsMerged || cached.Detail.Pr.IsClosed);
-        if (evt.HeadShaChanged || evt.CommentCountChanged || doneNow != doneCached)
+        if (evt.HeadShaChanged || evt.BaseShaChanged || evt.CommentCountChanged || doneNow != doneCached)
             Invalidate(evt.PrRef);
     }
 

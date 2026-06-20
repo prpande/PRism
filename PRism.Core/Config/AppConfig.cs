@@ -1,4 +1,5 @@
 using System.Diagnostics.CodeAnalysis;
+using PRism.Core.Ai;
 using PRism.Core.State;
 
 namespace PRism.Core.Config;
@@ -21,7 +22,11 @@ public sealed record AppConfig(
         new ReviewConfig(true, true),
         new IterationsConfig(60, ClusteringDisabled: false),
         new LoggingConfig("info", true, 30),
-        new UiConfig("system", "indigo", true, "comfortable", "m"),
+        // #283 flipped the out-of-the-box AI default Off → Preview (preview summaries on,
+        // zero egress). P1 keeps consent unrecorded (None) and every per-feature gate on
+        // (AllOn): Live egress still demands explicit opt-in + per-provider consent on top
+        // of this default. ContentScale "m" (#135) carried in from the merged base.
+        new UiConfig("system", "indigo", new AiConfig(AiMode.Preview, AiConsentConfig.None, AiFeaturesConfig.AllOn), "comfortable", "m"),
         new GithubConfig(new[]
         {
             new GithubAccountConfig(
@@ -76,7 +81,30 @@ public sealed record InboxSectionsConfig(
 public sealed record ReviewConfig(bool BlockSubmitOnStaleDrafts, bool RequireVerdictReconfirmOnNewIteration);
 public sealed record IterationsConfig(int ClusterGapSeconds, bool ClusteringDisabled = false);
 public sealed record LoggingConfig(string Level, bool StateEvents, int StateEventsRetentionFiles);
-public sealed record UiConfig(string Theme, string Accent, bool AiPreview, string Density = "comfortable", string ContentScale = "m");
+public sealed record UiConfig(string Theme, string Accent, AiConfig Ai, string Density = "comfortable", string ContentScale = "m");
+
+/// <summary>AI mode config (spec §4). Persisted at <c>ui.ai.mode</c>. <paramref name="HunkAnnotationCap"/>
+/// (#414) bounds the per-PR hunk-annotation count. <paramref name="ProviderTimeoutSeconds"/> (#496) is the
+/// user-configurable Claude CLI provider timeout, read hot per AI call and clamped to
+/// <see cref="AiConfigBounds"/>. Both are trailing-defaulted params so existing positional
+/// <c>new AiConfig(Mode, Consent, Features)</c> call sites (AppConfig.Default + test fixtures) keep
+/// compiling. STJ-net10 honors the constructor default for a missing key (proven by
+/// ConfigStoreHunkAnnotationCapTests.Missing_cap_key_binds_to_the_constructor_default). The annotator
+/// clamps a non-positive cap to 10 on read. <paramref name="SummaryMaxChars"/> (#525) is the
+/// best-effort summary character cap fed into the summarizer prompt, read hot per call and clamped to
+/// <see cref="AiConfigBounds"/> (default 1000).</summary>
+public sealed record AiConfig(
+    AiMode Mode,
+    AiConsentConfig Consent,
+    AiFeaturesConfig Features,
+    int HunkAnnotationCap = 10,
+    int ProviderTimeoutSeconds = 240,
+    int SummaryMaxChars = 1000,
+    // UX-suppression flag for the first-run AI onboarding overlay ONLY.
+    // null = key absent on disk (pre-feature config) → Task-2 backfill computes it once.
+    // MUST NOT be read by any AI seam, capability resolver, or egress gate.
+    // AiConsentState.IsConsented(...) remains the sole authoritative egress gate.
+    bool? OnboardingSeen = null);
 
 public sealed record GithubConfig(IReadOnlyList<GithubAccountConfig> Accounts)
 {

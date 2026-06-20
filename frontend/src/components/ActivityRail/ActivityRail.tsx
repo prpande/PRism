@@ -193,7 +193,9 @@ export function ActivityRail({ data, isLoading, error }: UseActivityResult) {
     <aside className={styles.rail} aria-label="Activity" data-testid="activity-rail">
       <section className={styles.section} aria-label="Activity">
         <header className={styles.head}>
-          <span className={styles.title}>Activity</span>
+          <span className={styles.titleGroup}>
+            <span className={styles.title}>Activity</span>
+          </span>
           <span className={styles.muted}>last 24h</span>
           <button
             type="button"

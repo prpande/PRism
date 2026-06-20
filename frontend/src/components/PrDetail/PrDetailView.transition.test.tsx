@@ -41,9 +41,12 @@ vi.mock('../../hooks/usePreferences', () => ({
 vi.mock('../../hooks/useCapabilities', () => ({
   useCapabilities: () => ({ capabilities: null, error: null, refetch: vi.fn() }),
 }));
-vi.mock('../../hooks/useAiSummary', () => ({ useAiSummary: () => null }));
-vi.mock('../../hooks/useAiFileFocus', () => ({ useAiFileFocus: () => null }));
-vi.mock('../../hooks/useAiDraftSuggestions', () => ({ useAiDraftSuggestions: () => null }));
+vi.mock('../../hooks/useAiSummary', () => ({
+  useAiSummary: () => ({ summary: null, loading: false, error: false }),
+}));
+vi.mock('../../hooks/useAiDraftSuggestions', () => ({
+  useAiDraftSuggestions: () => ({ state: 'empty', suggestions: null }),
+}));
 
 const openPrDto: PrDetailDto = makePrDetailDto({
   pr: makePr({ title: 'Refactor the renewal worker', author: 'amelia.cho', headSha: 'abc123' }),

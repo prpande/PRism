@@ -70,6 +70,8 @@ Implementation: the chat orchestrator tracks `(headShaAtSessionStart, shifts: [{
 
 ### `ILlmProvider` and `IStreamingLlmProvider` — LLM access
 
+> **Note (2026-06-14, #404).** The `IStreamingLlmProvider` / `IStreamingLlmSession` / `StreamingSessionOptions` / `LlmEvent` sketch below is **superseded** by the reconciled-against-shipped-reality contract in [`docs/specs/2026-06-14-streaming-llm-provider-design.md`](../specs/2026-06-14-streaming-llm-provider-design.md), which is authoritative for what P0-1b actually ships. Key departures from this sketch: no `ProviderId` on the interface (the shipped `ILlmProvider` dropped it for the `ProviderCapabilityDescriptor` pattern); the streaming terminal event is `LlmTurnComplete` (not a second `LlmResult`) with flattened token fields; and `StreamingSessionOptions` is trimmed to its consumed fields (`AddDirs`/`ResumeSessionId`/`McpConfigPath` deferred to the slices that introduce them).
+
 Two interfaces for one-shot vs sustained chat:
 
 ```csharp

@@ -14,7 +14,7 @@ internal static class PreferencesEndpoints
         app.MapGet("/api/preferences", (IConfigStore config, LogsPathInfo logsPath) =>
             Results.Ok(BuildResponse(config, logsPath)));
 
-        app.MapPost("/api/preferences", async (HttpContext ctx, IConfigStore config, LogsPathInfo logsPath, AiPreviewState aiState) =>
+        app.MapPost("/api/preferences", async (HttpContext ctx, IConfigStore config, LogsPathInfo logsPath, AiModeState aiState) =>
         {
             var read = await HttpJson.TryReadJsonObjectAsync(ctx, ctx.RequestAborted).ConfigureAwait(false);
             if (read.Error == JsonReadError.InvalidJson)
@@ -33,6 +33,12 @@ internal static class PreferencesEndpoints
                 JsonValueKind.String => props[0].Value.GetString(),
                 JsonValueKind.True => true,
                 JsonValueKind.False => false,
+                // #496: a FRACTIONAL JSON number (e.g. 3.5) OR one outside Int32 range (e.g. 99999999999)
+                // makes TryGetInt32 return false → null, which ConfigStore's Int guard rejects as 400
+                // (consistent with the existing null-on-unsupported-kind path). NOTE TryGetInt32 ACCEPTS
+                // an integer-valued decimal like 300.0 / 3e2 (returns 300) — harmless, since the value is
+                // then clamped and the bounded UI never emits decimals; do NOT add a test asserting 300.0→400.
+                JsonValueKind.Number => props[0].Value.TryGetInt32(out var n) ? n : (object?)null,
                 _ => null,
             };
 
@@ -45,9 +51,9 @@ internal static class PreferencesEndpoints
                 return Results.BadRequest(new PreferencesError(Error: ex.Message));
             }
 
-            // Mirror ui.aiPreview into the AiPreviewState holder (also handled by the Changed
+            // Mirror ui.ai.mode into the AiModeState holder (also handled by the Changed
             // subscription, but doing it here makes the response synchronous with the change).
-            aiState.IsOn = config.Current.Ui.AiPreview;
+            aiState.Mode = config.Current.Ui.Ai.Mode;
 
             return Results.Ok(BuildResponse(config, logsPath));
         });
@@ -62,8 +68,39 @@ internal static class PreferencesEndpoints
     {
         var ui = config.Current.Ui;
         var sections = config.Current.Inbox.Sections;
+        var feat = ui.Ai.Features.Enabled;
+        bool On(string k) => !feat.TryGetValue(k, out var v) || v;   // fail-open: missing → true
         return new PreferencesResponse(
-            Ui: new UiPreferencesDto(ui.Theme, ui.Accent, ui.AiPreview, ui.Density, ui.ContentScale),
+            Ui: new UiPreferencesDto(
+                    ui.Theme,
+                    ui.Accent,
+#pragma warning disable CA1308 // lowercase mode names (off|preview|live) are the wire contract surfaced to the renderer. ToLowerInvariant()==kebab holds only while every AiMode member is a single word; in lockstep with ConfigStore.ParseAiMode + KebabCaseJsonNamingPolicy. A future multi-word member (e.g. LiveReadOnly) must move this to the kebab serializer so wire ("live-read-only") and parse stay aligned.
+                    AiMode: ui.Ai.Mode.ToString().ToLowerInvariant(),
+#pragma warning restore CA1308
+                    ui.Density,
+                    ui.ContentScale,
+                    // #496: clamp for display so the shown value == the effective value even after a
+                    // hand-edited config.json that bypassed PatchAsync (ReadFromDiskAsync does not normalize).
+                    // The cap uses ClampCapForRead (NOT ClampCap) so the display matches the annotator's
+                    // read semantics exactly — including the legacy `<=0 → 10` corner.
+                    ProviderTimeoutSeconds: AiConfigBounds.ClampTimeout(ui.Ai.ProviderTimeoutSeconds),
+                    HunkAnnotationCap: AiConfigBounds.ClampCapForRead(ui.Ai.HunkAnnotationCap),
+                    // #525: same read-clamp the summarizer stamps onto PrSummary.GeneratedMaxChars, so the
+                    // displayed cap and the card's stale-detection comparison can never disagree (D6).
+                    SummaryMaxChars: AiConfigBounds.ClampSummaryCharsForRead(ui.Ai.SummaryMaxChars),
+                    // #485: null (key absent on disk / pre-feature) projects as false so the FE always
+                    // gets a concrete bool; Task-2 backfill computes and persists the real value on first load.
+                    OnboardingSeen: ui.Ai.OnboardingSeen ?? false,
+                    Features: new AiFeaturesDto(
+                        Summary:             On("summary"),
+                        FileFocus:           On("fileFocus"),
+                        HunkAnnotations:     On("hunkAnnotations"),
+                        PreSubmitValidators: On("preSubmitValidators"),
+                        ComposerAssist:      On("composerAssist"),
+                        DraftSuggestions:    On("draftSuggestions"),
+                        DraftReconciliation: On("draftReconciliation"),
+                        InboxEnrichment:     On("inboxEnrichment"),
+                        InboxRanking:        On("inboxRanking"))),
             Inbox: new InboxPreferencesDto(
                 new InboxSectionsDto(
                     ReviewRequested: sections.ReviewRequested,

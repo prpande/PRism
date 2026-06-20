@@ -2,6 +2,16 @@
   /* Single-line rows of a fixed height so the scrolling tree column and the fixed
      checkbox column stay aligned row-for-row. */
   --tree-row-h: 32px;
+  /* #492 — occupied width of the fixed AI focus column when AI is on. Kept tight
+     (just wide enough for the 6px dot + its 2px high-focus halo) so the AI signal
+     sits close to the viewed checkbox as a compact metadata pair and the filename
+     keeps the room. Collapses to 0 when off via [data-ai-on='0']. */
+  --ai-col-w: 12px;
+  /* Width of the fixed viewed-checkbox column: the 14px .fileTreeViewedCheckbox box
+     plus .fileTreeCheckSlot's var(--s-1) padding each side. Named here so the
+     synthetic-hscroll spacer reserves it by reference (below) instead of re-spelling
+     the literal — keep this in sync with .fileTreeCheckSlot / .fileTreeViewedCheckbox. */
+  --check-col-w: calc(14px + 2 * var(--s-1));
   display: flex;
   flex-direction: column;
   background: var(--surface-1);
@@ -12,11 +22,36 @@
   overflow: visible;
 }
 .fileTreeHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-2);
   padding: var(--s-3) var(--s-4);
   border-bottom: 1px solid var(--border-1);
   font-size: var(--text-sm);
   font-weight: 500;
   color: var(--text-1);
+}
+.fileTreeHeaderLabel {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+  /* Label clips before the marker is lost when the count string is long. */
+  min-width: 0;
+  flex-shrink: 1;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+/* Base layout for the header marker; never shrinks away. */
+.fileTreeHeaderAi {
+  flex: none;
+}
+/* Persistent post-load marker reads as dull/"on here", not active. Opacity is a
+   theme-aware token (--ai-idle-opacity: 0.55 light / 0.72 dark from Task 3) so the
+   dimmed glyph keeps ≥3:1 against the dark surface (WCAG 1.4.11). */
+.fileTreeHeaderAiIdle {
+  opacity: var(--ai-idle-opacity);
 }
 .fileTreeEmpty {
   /* Composes with .muted global */
@@ -84,11 +119,40 @@
      the bar gets a scrollable track. */
   height: 1px;
 }
-/* Reserves the static-checkbox-column width (.fileTreeCheckSlot = 14px box + var(--s-3)
-   padding each side) so the bar spans only the tree column. */
+/* Reserves the static right-gutter width so the synthetic bar spans only the tree
+   column. Off: just the checkbox column (--check-col-w). On (#492): plus the AI column
+   (--ai-col-w), in lockstep with .fileTreeAiCol so the bar stays aligned under
+   .fileTreeScroll. Both widths are named tokens on .fileTree, so the spacer is an
+   honest sum of the two columns it reserves rather than a re-spelled literal. */
 .fileTreeHScrollSpacerCol {
   flex: 0 0 auto;
-  width: calc(14px + 2 * var(--s-3));
+  width: var(--check-col-w);
+}
+.fileTree[data-ai-on='1'] .fileTreeHScrollSpacerCol {
+  width: calc(var(--check-col-w) + var(--ai-col-w));
+}
+/* #492 — fixed AI focus column, between the scrolling tree and the checkbox column.
+   Like .fileTreeCheckCol it lives outside .fileTreeScroll, so the dot never scrolls
+   off-screen. Collapses to 0 width when AI is off (driven by data-ai-on on the root),
+   so non-AI users (the default) see no empty gutter; the synthetic-hscroll spacer is
+   widened in lockstep below so the scrollbar keeps spanning the tree column only. */
+.fileTreeAiCol {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  width: 0;
+  overflow: hidden;
+}
+.fileTree[data-ai-on='1'] .fileTreeAiCol {
+  width: var(--ai-col-w);
+  overflow: visible;
+}
+.fileTreeAiSlot {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: var(--tree-row-h);
+  flex: none;
 }
 .fileTreeCheckCol {
   flex: 0 0 auto;
@@ -102,7 +166,10 @@
   align-items: center;
   justify-content: center;
   height: var(--tree-row-h);
-  padding: 0 var(--s-3);
+  /* #492 — var(--s-1) (was var(--s-3)) tightens the checkbox gutter in BOTH AI modes,
+     reclaiming horizontal room for filenames and pairing the checkbox closely with the
+     AI dot when AI is on. Keep --check-col-w (above) in sync with this padding. */
+  padding: 0 var(--s-1);
   flex: none;
 }
 
@@ -169,11 +236,11 @@
   color: var(--info-fg);
 }
 
-/* PR9b-ai-gating § 4.3. Column slot — always emitted in JSX, collapses when
-   AI gate is off. Ports handoff `screens.css:580-581` to prevent row layout
-   shift on aiPreview toggle. */
+/* PR9b-ai-gating § 4.3. Per-row dot box inside the fixed AI column (#492). Always
+   emitted in JSX, collapses to 0 when the AI gate is off (data-on). Width matches
+   --ai-col-w so the dot centers in the tight gutter without overflowing the slot. */
 .fileTreeAi {
-  width: 16px;
+  width: var(--ai-col-w);
   display: inline-flex;
   justify-content: center;
   flex: none;

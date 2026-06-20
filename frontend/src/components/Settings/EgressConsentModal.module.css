@@ -1,0 +1,44 @@
+.lead {
+  margin: 0 0 var(--s-2);
+  line-height: 1.55;
+}
+
+.errBox {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s-2);
+  /* Symmetric vertical margin: `.modal-actions` has no top margin, so a top-only
+     margin would butt the error box directly against the buttons. */
+  margin: var(--s-3) 0;
+  padding: var(--s-3);
+  background: var(--danger-soft);
+  border: 1px solid var(--danger);
+  border-radius: var(--radius-2);
+  color: var(--danger-fg);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+}
+.errIcon {
+  flex: 0 0 auto;
+  margin-top: 1px;
+}
+
+/* Decline: composer-discard semantics — neutral outline at rest, soft-red fill
+   on hover. Mirrors `.composer-frame .composer-discard` without the frame dep. */
+.declineBtn {
+  border: 1px solid var(--border-2);
+  background: var(--surface-1);
+  color: var(--danger-fg);
+}
+.declineBtn:hover:not(:disabled) {
+  background: var(--danger-soft);
+  border-color: var(--danger);
+  color: var(--danger-fg);
+}
+
+/* Reserve width so the at-rest "Enable Live" → submitting "spinner + Enabling…"
+   swap doesn't reflow the button (and shift Decline). 7.5rem comfortably covers
+   both states. */
+.enableBtn {
+  min-width: 7.5rem;
+}

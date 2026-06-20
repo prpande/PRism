@@ -22,3 +22,9 @@ dotnet_diagnostic.CA2007.severity = none
 
 # CancellationTokenSource.Cancel() is intentionally synchronous in test setup (pre-cancel before act)
 dotnet_diagnostic.CA1849.severity = none
+
+# Test fakes/helpers routinely expose List<T> properties for assertion (e.g. StdinWrites capture lists)
+dotnet_diagnostic.CA1002.severity = none
+
+# Test helper methods (e.g. EmitLines) are not public API; null-guard boilerplate adds noise without value
+dotnet_diagnostic.CA1062.severity = none

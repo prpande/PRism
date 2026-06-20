@@ -17,4 +17,6 @@ public sealed record ActivePrUpdated(
     string? NewHeadSha,
     int CommentCountDelta,
     bool IsMerged = false,
-    bool IsClosed = false) : IReviewEvent;
+    bool IsClosed = false,
+    bool BaseShaChanged = false,
+    string? NewBaseSha = null) : IReviewEvent;

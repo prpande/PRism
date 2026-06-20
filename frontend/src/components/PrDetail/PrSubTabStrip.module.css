@@ -58,3 +58,23 @@
   background: var(--warning-soft) !important;
   color: var(--warning-fg) !important;
 }
+
+/* AI marker hover/focus affordance on the Hotspots tab (#489, owner B1).
+   Mirrors how the tab LABEL responds to hover: muted while the tab is idle,
+   full strength on hover / keyboard focus / when active — the same instant
+   (no-transition) brightness shift the label uses (.prTab color: --text-3 →
+   --text-1). Targets the stable [data-ai-marker] attribute since the shared
+   AiMarker's own module classes are hashed and out of reach here. Scoped to
+   this surface; the shared AiMarker stays static elsewhere. No transition or
+   transform, so no reduced-motion guard is needed. */
+.prTab [data-ai-marker] {
+  /* Pull the leading sparkle closer to the "Hotspots" label than the tab's
+     uniform 8px flex gap would (the label↔count-badge spacing stays at 8px). */
+  margin-inline-end: -4px;
+  opacity: 0.6;
+}
+.prTab:hover [data-ai-marker],
+.prTab:focus-visible [data-ai-marker],
+.prTab.isActive [data-ai-marker] {
+  opacity: 1;
+}

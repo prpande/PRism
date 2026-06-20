@@ -32,6 +32,8 @@ export type PrUpdatedEvent = {
   prRef: string;
   newHeadSha?: string;
   headShaChanged: boolean;
+  baseShaChanged: boolean;
+  newBaseSha?: string;
   commentCountDelta: number;
   isMerged: boolean;
   isClosed: boolean;

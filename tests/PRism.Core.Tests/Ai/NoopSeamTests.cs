@@ -24,7 +24,8 @@ public class NoopSeamTests
     {
         IFileFocusRanker s = new NoopFileFocusRanker();
         var result = await s.RankAsync(Ref, CancellationToken.None);
-        result.Should().BeEmpty();
+        result.Entries.Should().BeEmpty();
+        result.Fallback.Should().BeFalse();
     }
 
     [Fact]

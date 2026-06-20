@@ -15,9 +15,13 @@ function prefs(overrides: Partial<PreferencesResponse['ui']> = {}): PreferencesR
     ui: {
       theme: 'system',
       accent: 'indigo',
-      aiPreview: false,
+      aiMode: 'off',
       density: 'comfortable',
       contentScale: 'm',
+      providerTimeoutSeconds: 240,
+      hunkAnnotationCap: 10,
+      summaryMaxChars: 1000,
+      onboardingSeen: false,
       ...overrides,
     },
     inbox: {

@@ -48,6 +48,11 @@ export async function resetBackendState(request: APIRequestContext): Promise<voi
     { aiPreview: false },
     { contentScale: 'm' },
     { 'inbox.showActivityRail': false },
+    // #485 first-run onboarding overlay: patch onboardingSeen=true on every spec
+    // reset so all real-backend specs represent a returning user (dialog hidden).
+    // The onboarding e2e spec (ai-onboarding-overlay.spec.ts) deliberately skips
+    // resetBackendState for the fresh-user test and handles its own state setup.
+    { 'ui.ai.onboardingSeen': true },
   ]) {
     const resp = await request.post(`${BACKEND_ORIGIN}/api/preferences`, {
       headers: { 'Content-Type': 'application/json', Origin: BACKEND_ORIGIN },

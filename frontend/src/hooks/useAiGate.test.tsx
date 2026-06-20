@@ -13,7 +13,7 @@ describe('useAiGate', () => {
     vi.mocked(usePreferences).mockReset();
   });
 
-  it('returns false when both capability and aiPreview are off', () => {
+  it('returns false when both capability and aiMode is off', () => {
     vi.mocked(useCapabilities).mockReturnValue({
       capabilities: {
         summary: false,
@@ -31,7 +31,7 @@ describe('useAiGate', () => {
     });
     vi.mocked(usePreferences).mockReturnValue({
       preferences: {
-        ui: { theme: 'system', accent: 'indigo', aiPreview: false, density: 'comfortable' },
+        ui: { theme: 'system', accent: 'indigo', aiMode: 'off', density: 'comfortable' },
         inbox: {} as never,
         github: {} as never,
       },
@@ -44,7 +44,7 @@ describe('useAiGate', () => {
     expect(result.current).toBe(false);
   });
 
-  it('returns false when capability is off but aiPreview is on', () => {
+  it('returns false when capability is off but aiMode is preview', () => {
     vi.mocked(useCapabilities).mockReturnValue({
       capabilities: {
         summary: false,
@@ -62,7 +62,7 @@ describe('useAiGate', () => {
     });
     vi.mocked(usePreferences).mockReturnValue({
       preferences: {
-        ui: { theme: 'system', accent: 'indigo', aiPreview: true, density: 'comfortable' },
+        ui: { theme: 'system', accent: 'indigo', aiMode: 'preview', density: 'comfortable' },
         inbox: {} as never,
         github: {} as never,
       },
@@ -75,7 +75,7 @@ describe('useAiGate', () => {
     expect(result.current).toBe(false);
   });
 
-  it('returns false when capability is on but aiPreview is off', () => {
+  it('returns false when capability is on but aiMode is off', () => {
     vi.mocked(useCapabilities).mockReturnValue({
       capabilities: {
         summary: true,
@@ -93,7 +93,7 @@ describe('useAiGate', () => {
     });
     vi.mocked(usePreferences).mockReturnValue({
       preferences: {
-        ui: { theme: 'system', accent: 'indigo', aiPreview: false, density: 'comfortable' },
+        ui: { theme: 'system', accent: 'indigo', aiMode: 'off', density: 'comfortable' },
         inbox: {} as never,
         github: {} as never,
       },
@@ -106,7 +106,7 @@ describe('useAiGate', () => {
     expect(result.current).toBe(false);
   });
 
-  it('returns true only when both capability and aiPreview are on', () => {
+  it('returns true only when both capability and aiMode is preview', () => {
     vi.mocked(useCapabilities).mockReturnValue({
       capabilities: {
         summary: true,
@@ -124,7 +124,7 @@ describe('useAiGate', () => {
     });
     vi.mocked(usePreferences).mockReturnValue({
       preferences: {
-        ui: { theme: 'system', accent: 'indigo', aiPreview: true, density: 'comfortable' },
+        ui: { theme: 'system', accent: 'indigo', aiMode: 'preview', density: 'comfortable' },
         inbox: {} as never,
         github: {} as never,
       },
@@ -145,7 +145,7 @@ describe('useAiGate', () => {
     });
     vi.mocked(usePreferences).mockReturnValue({
       preferences: {
-        ui: { theme: 'system', accent: 'indigo', aiPreview: true, density: 'comfortable' },
+        ui: { theme: 'system', accent: 'indigo', aiMode: 'preview', density: 'comfortable' },
         inbox: {} as never,
         github: {} as never,
       },
@@ -204,7 +204,7 @@ describe('useAiGate', () => {
     });
     vi.mocked(usePreferences).mockReturnValue({
       preferences: {
-        ui: { theme: 'system', accent: 'indigo', aiPreview: true, density: 'comfortable' },
+        ui: { theme: 'system', accent: 'indigo', aiMode: 'preview', density: 'comfortable' },
         inbox: {} as never,
         github: {} as never,
       },

@@ -6,6 +6,7 @@ This file is the **Claude Code** entry point for this repository. Shared guidanc
 
 | File | Contents |
 |------|----------|
+| [`v2-ai-effort.md`](.ai/docs/v2-ai-effort.md) | **Read first for v2 AI work** — branching model (base=V2), what's shipped, substrate facts, cross-cutting gotchas; points to the backlog/epic |
 | [`repo-overview.md`](.ai/docs/repo-overview.md) | Top-level tree, doc map pointer |
 | [`development-process.md`](.ai/docs/development-process.md) | TDD, commands / publish targets, pre-push checklist |
 | [`architectural-invariants.md`](.ai/docs/architectural-invariants.md) | Non-negotiable architecture decisions |

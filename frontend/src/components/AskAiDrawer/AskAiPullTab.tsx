@@ -2,6 +2,7 @@ import { useEffectiveLocation } from '../../hooks/useEffectiveLocation';
 import { useAiGate } from '../../hooks/useAiGate';
 import { useAskAiDrawer } from '../../contexts/AskAiDrawerContext';
 import { parsePrRefFromPathname } from './parsePrRefFromPathname';
+import { AiMarker } from '../Ai/AiMarker';
 import styles from './AskAiPullTab.module.css';
 
 export function AskAiPullTab() {
@@ -23,9 +24,7 @@ export function AskAiPullTab() {
       onClick={toggle}
     >
       <span className={styles.label}>{label}</span>
-      <span className="ai-icon" aria-hidden="true">
-        ✨
-      </span>
+      <AiMarker variant="inline" decorative className="ai-icon" />
     </button>
   );
 }

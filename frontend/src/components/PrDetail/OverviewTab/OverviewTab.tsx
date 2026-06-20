@@ -1,8 +1,8 @@
 import { useMemo } from 'react';
-import { usePreferences } from '../../../hooks/usePreferences';
 import { useFileDiff } from '../../../hooks/useFileDiff';
 import { useAiSummary } from '../../../hooks/useAiSummary';
-import { useAiGate } from '../../../hooks/useAiGate';
+import { useAiGate, useIsLiveMode } from '../../../hooks/useAiGate';
+import { usePreferences } from '../../../hooks/usePreferences';
 import { usePrDetailContext } from '../prDetailContext';
 import { buildAllRange } from '../range';
 import { AiSummaryCard } from './AiSummaryCard';
@@ -14,14 +14,29 @@ import { prRootDraft } from '../draftKinds';
 import styles from './OverviewTab.module.css';
 
 export function OverviewTab() {
-  const { prRef, prDetail, draftSession, readOnly, onSelectSubTab } = usePrDetailContext();
+  const { prRef, prDetail, draftSession, readOnly, onSelectSubTab, subscribed, baseShaChanged } =
+    usePrDetailContext();
+  const aiOn = useAiGate('summary');
+  const live = useIsLiveMode();
   const { preferences } = usePreferences();
 
-  const aiPreview = preferences?.ui.aiPreview ?? false; // still needed for PrDescription prop
-  const aiOn = useAiGate('summary');
-
   const diff = useFileDiff(prRef, buildAllRange(prDetail.pr));
-  const aiSummary = useAiSummary(prRef, aiOn);
+  const {
+    summary: aiSummary,
+    loading: aiLoading,
+    error: aiError,
+    isStale: aiStale,
+    regenerating: aiRegenerating,
+    regenerateError: aiRegenerateError,
+    regenerate: aiRegenerate,
+    // #525 null while preferences load → useAiSummary suppresses cap-staleness until the cap is known.
+  } = useAiSummary(
+    prRef,
+    aiOn,
+    subscribed,
+    baseShaChanged,
+    preferences?.ui.summaryMaxChars ?? null,
+  );
 
   const filesCount = diff.data?.files.length ?? 0;
   const threadsCount = prDetail.reviewComments.length;
@@ -75,8 +90,17 @@ export function OverviewTab() {
 
   return (
     <div className={`${styles.overviewTab} ${styles.overviewGrid}`} data-testid="overview-tab">
-      <AiSummaryCard summary={aiSummary} />
-      <PrDescription title={prDetail.pr.title} body={prDetail.pr.body} aiPreview={aiPreview} />
+      <AiSummaryCard
+        summary={aiSummary}
+        loading={aiLoading}
+        error={aiError}
+        isStale={aiStale}
+        regenerating={aiRegenerating}
+        regenerateError={aiRegenerateError}
+        onRegenerate={aiRegenerate}
+        live={live}
+      />
+      <PrDescription title={prDetail.pr.title} body={prDetail.pr.body} aiPreview={aiOn} />
       <StatsTiles
         filesCount={filesCount}
         draftsCount={draftsCount}

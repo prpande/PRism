@@ -9,7 +9,8 @@ internal sealed record InboxResponse(
     IReadOnlyDictionary<string, InboxItemEnrichment> Enrichments,
     DateTimeOffset LastRefreshedAt,
     bool TokenScopeFooterEnabled,
-    bool CiProbeComplete);
+    bool CiProbeComplete,
+    IReadOnlyCollection<string> AiEnrichmentSettled);
 
 internal sealed record InboxSectionDto(
     string Id,

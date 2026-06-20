@@ -42,7 +42,8 @@ internal sealed class FakeSectionQueryRunner : ISectionQueryRunner
                         Deletions: 0,
                         HeadSha: _store.CurrentHeadSha,
                         CommitCount: _store.Iterations.Count,
-                        ChangedFiles: 0);
+                        ChangedFiles: 0,
+                        IsDraft: _store.IsDraftPr);
                     result[id] = new[] { item };
                 }
                 else

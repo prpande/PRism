@@ -197,6 +197,46 @@ describe('useActivePrUpdates', () => {
     expect(result.current.commentCountDelta).toBe(0);
   });
 
+  it('latches baseShaChanged from a pr-updated frame', async () => {
+    globalThis.fetch = vi.fn().mockImplementation(() => Promise.resolve(jsonOk())) as typeof fetch;
+    const { result } = renderHook(() => useActivePrUpdates(ref), { wrapper });
+    await waitFor(() => expect(FakeEventSource.instances).toHaveLength(1));
+    act(() =>
+      FakeEventSource.instance.dispatch('pr-updated', {
+        prRef: refStr,
+        headShaChanged: false,
+        baseShaChanged: true,
+        newBaseSha: 'base2',
+        commentCountDelta: 0,
+      }),
+    );
+    expect(result.current.hasUpdate).toBe(true);
+    expect(result.current.baseShaChanged).toBe(true);
+  });
+
+  it('keeps baseShaChanged latched once true', async () => {
+    globalThis.fetch = vi.fn().mockImplementation(() => Promise.resolve(jsonOk())) as typeof fetch;
+    const { result } = renderHook(() => useActivePrUpdates(ref), { wrapper });
+    await waitFor(() => expect(FakeEventSource.instances).toHaveLength(1));
+    act(() =>
+      FakeEventSource.instance.dispatch('pr-updated', {
+        prRef: refStr,
+        headShaChanged: false,
+        baseShaChanged: true,
+        commentCountDelta: 0,
+      }),
+    );
+    act(() =>
+      FakeEventSource.instance.dispatch('pr-updated', {
+        prRef: refStr,
+        headShaChanged: false,
+        baseShaChanged: false,
+        commentCountDelta: 0,
+      }),
+    );
+    expect(result.current.baseShaChanged).toBe(true);
+  });
+
   it('clear() resets aggregated state', async () => {
     globalThis.fetch = vi.fn().mockImplementation(() => Promise.resolve(jsonOk())) as typeof fetch;
     const { result } = renderHook(() => useActivePrUpdates(ref), { wrapper });

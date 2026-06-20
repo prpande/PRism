@@ -1,6 +1,8 @@
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
+using PRism.AI.ClaudeCode;
 using PRism.Core;
+using PRism.Core.Config;
 using PRism.Core.Hosting;
 using PRism.GitHub;
 using PRism.Web.Composition;
@@ -67,7 +69,44 @@ var useUnprotectedTokenCache =
      || Environment.GetEnvironmentVariable("PRISM_E2E_REAL_INJECT") == "1");
 builder.Services.AddPrismCore(dataDir, useUnprotectedTokenCache);
 builder.Services.AddPrismGitHub();
+
+var llmCwd = Path.Combine(dataDir, "llm-cwd");      // stable, NON-git working dir
+var llmUsageDir = Path.Combine(dataDir, "llm-usage");
+Directory.CreateDirectory(llmCwd);                  // probe needs a stable cwd to exist before it can spawn; idempotent, owner-scoped
+// Do NOT eagerly create llmUsageDir — JsonlTokenUsageTracker creates AND owner-chmods it in its CONSTRUCTOR.
+// The tracker is a singleton whose factory runs on FIRST resolution, which happens when an AI seam is first
+// invoked (the seams resolve ITokenUsageTracker and call RecordAsync). So the dir is materialized lazily on
+// first AI use; eager-creating it here would litter an empty owner-scoped dir on installs that never use AI.
+builder.Services.AddPrismClaudeCode(
+    // Hard wall-clock ceiling per provider call. The 60s default was too tight for the hunk-annotation
+    // seam (owner live-validation 2026-06-14: it consistently timed out at 60s → 503, dark in Live, while
+    // summary/file-focus finished well under). Annotation is the slowest seam (reason over every hunk +
+    // write prose), so the shared ceiling is raised to a generous interim value; the synchronous one-shot
+    // model is the real constraint and is tracked for the lazy/streamed load (#477). Tuned from the measured
+    // p100 latency — see docs/specs/2026-06-14-ai-hunk-annotator-keystone-design.md.
+    // #496: factory so the per-call timeout is read HOT from IConfigStore (no restart). The live
+    // default (240s) is AiConfig.ProviderTimeoutSeconds; TimeoutProvider clamps it via ClampTimeout on
+    // each call. options.Timeout is intentionally NOT set here — TimeoutProvider overrides it on this
+    // path, so the static property is never read (claude[bot] #3: avoid a misleading dead assignment).
+    sp => new ClaudeCodeProviderOptions
+    {
+        WorkingDirectory = llmCwd,
+        TimeoutProvider = () => TimeSpan.FromSeconds(
+            AiConfigBounds.ClampTimeout(
+                sp.GetRequiredService<IConfigStore>().Current.Ui.Ai.ProviderTimeoutSeconds)),
+    },
+    llmUsageDir);
 builder.Services.AddPrismAi();
+// #517 — durable AI-usage rollup. The store is the read source for GET /api/ai/usage; the tailer
+// folds new ai-interactions.log lines into it on a 60s timer (fully decoupled from the AI record
+// path). llmUsageDir holds the rollup file (same owner-restricted dir as token-usage.jsonl); the
+// log lives under LogsPathInfo.Path (= dataDir/logs), where JsonlAiInteractionLog writes it.
+builder.Services.AddSingleton(sp => new PRism.Web.Ai.AiUsageRollupStore(llmUsageDir, sp.GetRequiredService<TimeProvider>()));
+builder.Services.AddHostedService(sp => new PRism.Web.Ai.AiUsageRollupTailer(
+    sp.GetRequiredService<PRism.Web.Ai.AiUsageRollupStore>(),
+    Path.Combine(sp.GetRequiredService<PRism.Web.Logging.LogsPathInfo>().Path, "ai-interactions.log"),
+    sp.GetRequiredService<TimeProvider>(),
+    sp.GetRequiredService<ILogger<PRism.Web.Ai.AiUsageRollupTailer>>()));
 builder.Services.AddPrismWeb();
 builder.Services.AddSingleton<SessionTokenProvider>();
 // TimeProvider is an ActivityProvider ctor dependency (clock for cache TTL + the
@@ -350,6 +389,7 @@ app.MapPrCommentEndpoints();
 app.MapSubmitInFlight();
 app.MapPrDraftsDiscardAllEndpoint();
 app.MapAi();
+app.MapAiConsent();
 app.MapFeedback();
 
 if (builder.Environment.IsEnvironment("Test"))

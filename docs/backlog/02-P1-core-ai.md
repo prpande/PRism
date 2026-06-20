@@ -22,7 +22,7 @@ These can be implemented in any order once P0-1 (LLM provider) and P0-2 (cache) 
 **Implementation notes.**
 - New project `PRism.AI.Summarizer` with `ClaudeCodeSummarizer : IPrSummarizer`.
 - Inputs: `IReviewContext.CurrentPr`, `Diff`, `Iterations`. For iteration scope, restrict to the iteration's diff range.
-- System prompt: "You are a senior engineer summarizing this PR for a reviewer. Be concise (3-5 sentences). Focus on intent and risk areas. Do not flatter; do not catastrophize. If the PR title says one thing but the diff shows another, note the mismatch."
+- System prompt: "You are a senior engineer summarizing this PR for a reviewer. Be concise and scannable — prefer a short bulleted markdown list of intent and risk areas; use fenced code for code and inline code for symbols; do not pad. Plain prose is fine when it reads better. Do not flatter; do not catastrophize. If the PR title says one thing but the diff shows another, note the mismatch."
 - Wrap user-controlled content (PR title, description, file paths) in delimiter tags per P0-5 sanitizer.
 - Cache key: `summary:claude-code:<pr_ref>:<head_sha>:<scope>`. Invalidate on `PrUpdated` event.
 - Render in `<AiSummarySlot>` as a card: collapsed shows the first sentence, expandable to full summary; small "stale" badge if generated against a now-superseded `head_sha`.
@@ -54,34 +54,21 @@ These can be implemented in any order once P0-1 (LLM provider) and P0-2 (cache) 
 - **Estimated effort**: M
 - **Capability flag**: `ai.fileFocus`
 - **Seam**: `IFileFocusRanker` (replaces `NoopFileFocusRanker`)
-- **UI slot**: `<AiFileFocusBadges>` in file tree
+- **UI slot**: new **Hotspots** sub-tab + minimal Files-tree wayfinding dots
 
-**Description.** For each file in the PR, return a focus score (high / medium / low) with a one-line rationale. Renders as a colored dot next to each file in the tree. Helps the reviewer pick what to read first in a 50-file PR.
+**Description.** `ClaudeCodeFileFocusRanker` ranks each changed file `high | medium | low` with a concise bulleted-markdown rationale using a structured-output harness (parse → validate → dedup → backfill → retry-once → all-medium fallback). The primary surface is a dedicated **Hotspots tab** (filtered high/medium, rationale inline, click-through to the file diff) for triage/navigate. A minimal monochrome dot in the Files tree acts as lightweight wayfinding. Rationale is shown **inline** in the tab, not as a Files-tab hover tooltip. Spec: [`docs/specs/2026-06-13-v2-ai-p1-2-file-focus-design.md`](../specs/2026-06-13-v2-ai-p1-2-file-focus-design.md).
+
+**Shipped scope (P1-2, #408).** Ranker + Hotspots tab + wayfinding dots + inline rationale. Tracker: #408.
+
+**Deferred out (tracked):**
+- **#414** (P2-4 hunk annotator): per-hunk flagging, Hotspots row→hunk expansion, inline DiffPane markers, lazy/streamed load.
+- **#468** (per-hunk review-tracking + completion): per-hunk mark-reviewed, persisted `aiState.reviewedHunks`, per-hunk progress + completion.
 
 **Why it's at this priority.** Large PRs are the highest pain point reviewers report. A reliable ranker turns "where do I even start" into "start here."
 
-**Implementation notes.**
-- New project `PRism.AI.FileFocus`.
-- Inputs: `IReviewContext.Diff` (file paths, hunks, line counts).
-- System prompt: "Rank each file by how much reviewer attention it deserves. Output JSON array of `{ path, score, rationale }`. Score is one of `high`, `medium`, `low`. Rationale is one sentence. High = changes business logic, security, data integrity, public APIs. Medium = significant but localized changes. Low = formatting, lockfiles, generated code, trivial changes."
-- Cache per PR `head_sha` (rankings invalidate on new commits).
-- Rendered as colored dot + hover tooltip showing rationale.
-- Optional: the highest-priority file is auto-selected when the user opens the PR (config-flag controlled, default off).
-
-**Prompt-engineering pitfalls.**
-- Don't pass full file content — just hunks and metadata. Saves tokens.
-- Output schema enforcement: use `--output-format json` and validate against schema; fall back to "all medium" if the LLM returns malformed output.
-- Avoid ranking purely by line count — a 5-line auth change is high-priority; a 500-line markdown update is low.
-
-**Acceptance criteria sketch.**
-- For a PR with mixed file types (auth code + lockfile + docs), the ranker classifies sensibly.
-- Rendering doesn't shift layout (badges appear in pre-reserved column).
-- On schema-violation output, falls back gracefully without crashing.
-- Hover tooltip displays the per-file rationale clearly.
-
 **Connections.**
 - Pairs well with: P1-1 summarizer (ranker output can inform summary emphasis).
-- Pairs well with: P2-1 hunk annotator (high-priority files attract more annotation effort).
+- Pairs well with: P2-4 hunk annotator (high-priority files attract more annotation effort).
 
 ---
 
@@ -114,7 +101,7 @@ These can be implemented in any order once P0-1 (LLM provider) and P0-2 (cache) 
 **Acceptance criteria sketch.**
 - Ranker produces deterministic ordering for the same input within a 10-minute window (caching ensures this).
 - Toggling the capability flag off restores chronological/default order.
-- Rank rationale is human-readable.
+- Rank rationale is human-readable concise bulleted markdown.
 
 **Connections.**
 - Pairs well with: P1-4 inbox enricher.

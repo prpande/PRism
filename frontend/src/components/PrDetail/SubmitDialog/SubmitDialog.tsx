@@ -51,7 +51,7 @@ interface Props {
   // Cross-tab ownership: a peer tab claimed this PR. Disables the Edit toggle
   // (with the other-tab tooltip) and short-circuits the editor's autosave.
   readOnly?: boolean;
-  // Canned validator results when aiPreview is on; [] otherwise (the header
+  // Canned validator results when AI mode is Preview; [] otherwise (the header
   // does the gating — mirrors AiSummaryCard).
   validatorResults: ValidatorResult[];
   submitState: SubmitState;

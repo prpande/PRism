@@ -255,6 +255,39 @@ public class InboxEndpointsTests
     }
 
     [Fact]
+    public async Task Get_inbox_aiEnrichmentSettled_serializes_with_camelCase_key()
+    {
+        // Verifies Step 10 of the task brief: AiEnrichmentSettled on the snapshot
+        // must serialize to "aiEnrichmentSettled" (camelCase) under the Api serializer,
+        // mirroring the existing CiProbeComplete→ciProbeComplete precedent.
+        // Also verifies that the set's contents round-trip as a JSON array of strings.
+        var prId = "foo/bar#1";
+        var settled = new HashSet<string>(StringComparer.Ordinal) { prId };
+        var fakeOrch = new FakeInboxRefreshOrchestrator
+        {
+            Current = new InboxSnapshot(
+                new Dictionary<string, IReadOnlyList<PrInboxItem>>(),
+                new Dictionary<string, InboxItemEnrichment>(),
+                DateTimeOffset.UtcNow) with { AiEnrichmentSettled = settled },
+        };
+
+        using var factory = new PRismWebApplicationFactory();
+        factory.FakeOrchestrator = fakeOrch;
+        var client = factory.CreateClient();
+
+        var resp = await client.GetAsync(new Uri("/api/inbox", UriKind.Relative));
+
+        resp.StatusCode.Should().Be(HttpStatusCode.OK);
+        var body = await resp.Content.ReadFromJsonAsync<JsonElement>();
+        // Key must be camelCase (not AiEnrichmentSettled or ai-enrichment-settled)
+        body.TryGetProperty("aiEnrichmentSettled", out var settledProp).Should().BeTrue(
+            "AiEnrichmentSettled must serialize to 'aiEnrichmentSettled' under the camelCase Api serializer");
+        var ids = settledProp.EnumerateArray().Select(e => e.GetString()).ToList();
+        ids.Should().ContainSingle().Which.Should().Be(prId,
+            "the settled PR-ID must round-trip in the array");
+    }
+
+    [Fact]
     public async Task Get_inbox_overlays_live_viewed_state_without_a_refresh()
     {
         // Snapshot baked with a STALE viewed head (as if the user had not yet viewed at the

@@ -1,5 +1,4 @@
 import { render, screen, waitFor, fireEvent } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { AppearancePane } from './AppearancePane';
 
@@ -11,7 +10,6 @@ vi.mock('../../../hooks/usePreferences', () => ({
         theme: 'dark',
         accent: 'indigo',
         density: 'comfortable',
-        aiPreview: false,
         contentScale: 'm',
       },
       inbox: { sections: {} },
@@ -20,17 +18,25 @@ vi.mock('../../../hooks/usePreferences', () => ({
     set,
   }),
 }));
-beforeEach(() => set.mockClear());
-afterEach(() => document.documentElement.removeAttribute('data-content-scale'));
+
+beforeEach(() => {
+  set.mockClear();
+});
+afterEach(() => {
+  document.documentElement.removeAttribute('data-content-scale');
+  vi.clearAllMocks();
+});
 
 describe('AppearancePane', () => {
-  it('renders theme/accent/density/AI controls', () => {
+  it('renders theme/accent/density controls and NOT the AI-mode control', () => {
     render(<AppearancePane />);
     expect(screen.getByRole('radiogroup', { name: 'Theme' })).toBeInTheDocument();
     expect(screen.getByRole('radiogroup', { name: 'Accent' })).toBeInTheDocument();
     expect(screen.getByRole('radiogroup', { name: 'Density' })).toBeInTheDocument();
-    expect(screen.getByRole('switch', { name: /AI preview/i })).toBeInTheDocument();
     expect(screen.getByRole('slider', { name: 'Content font size' })).toBeInTheDocument();
+    expect(screen.queryByRole('radiogroup', { name: 'AI mode' })).toBeNull();
+    // The AI-mode relocation also dropped "AI mode" from the pane subtitle (now AiPane's concern).
+    expect(screen.queryByText(/AI mode/i)).toBeNull();
   });
 
   it('writes the contentScale preference on slider change', async () => {
@@ -53,11 +59,5 @@ describe('AppearancePane', () => {
       expect(document.documentElement.hasAttribute('data-content-scale')).toBe(false),
     );
     expect(set).toHaveBeenCalledWith('contentScale', 'xl');
-  });
-
-  it('writes the theme preference on change', async () => {
-    render(<AppearancePane />);
-    await userEvent.click(screen.getByRole('radio', { name: 'Light' }));
-    await waitFor(() => expect(set).toHaveBeenCalledWith('theme', 'light'));
   });
 });

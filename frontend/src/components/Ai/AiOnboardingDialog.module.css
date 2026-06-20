@@ -1,0 +1,81 @@
+/* Selected-segment tints (soft, not loud). Applied via data-pending on the control wrapper.
+   IMPORTANT: do NOT target SegmentedControl's `.segOn` class — it is CSS-modules-hashed
+   (e.g. `_segOn_x1y2`) so a literal `:global(.segOn)` selector matches nothing and the tint
+   silently no-ops. Target the STABLE ARIA attribute the selected radio already carries:
+   `[aria-checked='true']` (rendered by SegmentedControl on the selected button). No SegmentedControl
+   change is needed for the tint. Verify the tint renders live in BOTH themes before generating
+   the Task 8 visual baseline (a passing-but-untinted baseline would bake in the bug). */
+.control[data-pending='off'] [role='radio'][aria-checked='true'] {
+  background: var(--surface-3);
+  color: var(--text-1);
+}
+.control[data-pending='preview'] [role='radio'][aria-checked='true'] {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.control[data-pending='live'] [role='radio'][aria-checked='true'] {
+  background: var(--success-soft);
+  color: var(--success-fg);
+}
+
+.legend {
+  margin-top: var(--s-3);
+  padding: var(--s-4);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-3);
+  /* --ai-tint-gradient is NOT a defined token; use the .ai-tint class pattern from tokens.css
+     (linear-gradient(135deg, var(--surface-1), color-mix(in oklch, var(--accent-soft) 40%, var(--surface-1))))
+     inlined here as padding-box/border-box compositing to keep the border-radius clip. */
+  background:
+    linear-gradient(var(--surface-1), var(--surface-1)) padding-box,
+    linear-gradient(
+        135deg,
+        color-mix(in oklch, var(--accent-soft) 40%, var(--surface-1)),
+        transparent
+      )
+      border-box;
+}
+.legendRow {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s-2);
+  padding: var(--s-1) 0;
+}
+.dot {
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-top: 0.45em;
+}
+.dotOff {
+  background: var(--text-3);
+}
+.dotPreview {
+  background: var(--accent);
+}
+.dotLive {
+  background: var(--success-fg);
+}
+.currentPill {
+  margin-left: var(--s-2);
+  padding: 0 var(--s-2);
+  font-size: var(--text-xs);
+  border-radius: var(--radius-2);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.lead {
+  margin: 0 0 var(--s-3);
+  line-height: 1.55;
+}
+.actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-3);
+  margin-top: var(--s-4);
+}
+.offBtn {
+  color: var(--danger-fg);
+} /* secondary chrome + danger-fg text, NOT a red fill */

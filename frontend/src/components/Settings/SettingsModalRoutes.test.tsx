@@ -4,6 +4,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { SettingsModalRoutes } from './SettingsModalRoutes';
 
 vi.mock('./panes/AppearancePane', () => ({ AppearancePane: () => <div>appearance-pane</div> }));
+vi.mock('./panes/AiPane', () => ({ AiPane: () => <h2>AI</h2> }));
 vi.mock('./panes/InboxPane', () => ({ InboxPane: () => <div>inbox-pane</div> }));
 vi.mock('./panes/GitHubConnectionPane', () => ({
   GitHubConnectionPane: () => <div>ghc-pane</div>,
@@ -76,6 +77,15 @@ describe('SettingsModalRoutes', () => {
     );
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     expect(screen.getByText('welcome-page')).toBeInTheDocument();
+  });
+
+  it('renders the AI pane at /settings/ai', async () => {
+    render(
+      <MemoryRouter initialEntries={['/settings/ai']}>
+        <SettingsModalRoutes isAuthed unauthedTarget="/setup" />
+      </MemoryRouter>,
+    );
+    expect(await screen.findByRole('heading', { name: 'AI' })).toBeInTheDocument();
   });
 
   it('falls back to appearance for an unknown section', () => {

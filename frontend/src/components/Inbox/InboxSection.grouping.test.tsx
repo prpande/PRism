@@ -24,6 +24,7 @@ function prFor(owner: string, repo: string, n: number): PrInboxItem {
     lastSeenCommentId: null,
     mergedAt: null,
     closedAt: null,
+    isDraft: false,
   };
 }
 function makeSection(id: string, items: PrInboxItem[]): InboxSectionDto {

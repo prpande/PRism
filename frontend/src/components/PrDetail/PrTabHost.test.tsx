@@ -93,6 +93,7 @@ vi.mock('../../hooks/useActivePrUpdates', () => ({
     commentCountDelta: 0,
     isMerged: false,
     isClosed: false,
+    subscribed: true,
     clear: vi.fn(),
   }),
 }));
@@ -142,9 +143,12 @@ vi.mock('../../hooks/useFileDiff', () => ({
 vi.mock('../../hooks/useUnionDiff', () => ({
   useUnionDiff: () => ({ data: null, isLoading: false, showSkeleton: false, error: null }),
 }));
-vi.mock('../../hooks/useAiSummary', () => ({ useAiSummary: () => null }));
-vi.mock('../../hooks/useAiFileFocus', () => ({ useAiFileFocus: () => null }));
-vi.mock('../../hooks/useAiDraftSuggestions', () => ({ useAiDraftSuggestions: () => null }));
+vi.mock('../../hooks/useAiSummary', () => ({
+  useAiSummary: () => ({ summary: null, loading: false, error: false }),
+}));
+vi.mock('../../hooks/useAiDraftSuggestions', () => ({
+  useAiDraftSuggestions: () => ({ state: 'empty', suggestions: null }),
+}));
 vi.mock('../../hooks/useFilesTabShortcuts', () => ({ useFilesTabShortcuts: () => {} }));
 vi.mock('../../hooks/useFirstActivePrPollComplete', () => ({
   useFirstActivePrPollComplete: () => true,
@@ -296,8 +300,9 @@ describe('parsePrRoute', () => {
     });
   });
 
-  test('extracts files/drafts sub-tab segments and clamps unknown ones to overview', () => {
+  test('extracts files/hotspots/drafts sub-tab segments and clamps unknown ones to overview', () => {
     expect(parsePrRoute('/pr/acme/api/7/files')?.subTab).toBe('files');
+    expect(parsePrRoute('/pr/acme/api/7/hotspots')?.subTab).toBe('hotspots');
     expect(parsePrRoute('/pr/acme/api/7/drafts')?.subTab).toBe('drafts');
     expect(parsePrRoute('/pr/acme/api/7/garbage')?.subTab).toBe('overview');
   });
