@@ -1,5 +1,16 @@
 .commentWidget {
   padding: var(--s-3) var(--s-4) var(--s-4);
+  /* Escape .diffTable's var(--font-mono) cascade so comment prose renders in
+     the sans body font (Overview parity). Code descendants stay mono via the
+     global `code, pre, .mono` rule. This also gives the `ch` measure below a
+     sans context. */
+  font-family: var(--font-sans);
+  /* #522 — bound the inline-comment column to a readable measure, left-anchored.
+     70ch reuses PrHeader's prose measure; scaling by --content-scale keeps the
+     character measure constant as the #135 content-scale control changes text
+     size (the markdown body is content-scale-scaled). Upper bound only — a
+     narrow split pane simply takes the available width. */
+  max-width: calc(70ch * var(--content-scale));
 }
 .commentThread {
   display: flex;
