@@ -1,8 +1,13 @@
 .skeleton {
+  /* Occupy the same centred, capped column as the loaded Overview (#470) so the
+     first-load skeleton doesn't sprawl full-width while the real content is
+     constrained. Mirrors .overviewGrid: same width rule, centring, and padding. */
+  width: min(80%, var(--pr-detail-content-max));
+  margin: 0 auto;
   display: flex;
   flex-direction: column;
-  gap: 18px;
-  padding: 16px 0;
+  gap: var(--s-4);
+  padding: var(--s-6);
 }
 .summary {
   border-radius: 10px;

@@ -31,27 +31,44 @@ at 1280 / 1440 / 1920 in both themes. Owner sign-off on the screenshots:
   running-prose measure (~1150px at the cap) is an accepted trade for this slice; a tighter
   prose measure is deferred as a possible follow-up, not bolted on here.
 - **Scope includes Hotspots.** Same token and same **width rule** (`width: min(80%, …)`), so
-  the triage surface stays visually paired with the Overview rather than diverging. "Same rule"
-  refers to the width/cap only — the per-tab padding (below) intentionally stays different.
+  the triage surface stays visually paired with the Overview rather than diverging.
+
+### Scope additions from live validation (2026-06-20)
+
+During the owner's live B1 validation on the running build, three follow-on inconsistencies
+surfaced — all caused by the width change exposing loading/spacing states that didn't mirror
+the loaded column. Folded into this slice (same visual concern, same area):
+
+- **Overview loading skeleton was full-width.** `PrDetailSkeleton` renders *outside*
+  `.overviewGrid` and had no width cap, so on first load it sprawled edge-to-edge while the
+  loaded Overview is constrained. Fix: `.skeleton` mirrors `.overviewGrid` (same width rule,
+  `margin: 0 auto`, `--s-6` padding).
+- **Hotspots loading skeleton read as "not wide enough."** It rendered bare `.skeletonRow`s
+  without the `.card` wrapper the loaded state uses, so it had no full-width bordered backdrop.
+  Fix: wrap the skeleton rows in `.card`.
+- **Padding unified to `--s-6` (reverses the earlier per-tab decision).** Owner directed that
+  the Hotspots cards + container start at the same offset from the sub-tab bar as Overview.
+  `.hotspots` padding `--s-3` → `--s-6`. (Supersedes the original "padding stays per-tab" note.)
 
 ### Unchanged on purpose
 
-- **Padding stays per-tab:** Overview keeps `--s-6`, Hotspots keeps `--s-3`. The new width
-  read comfortably at both paddings in the live check; no revisit needed this slice.
 - **No narrow-screen floor / `@media`.** The desktop app isn't targeted below laptop width;
   at very narrow widths `80%` degrades gracefully (proportional gutter). Adding a `min()` floor
   or breakpoints is unwarranted complexity.
 
 ## Acceptance criteria
 
-- [ ] Overview column scales with viewport and visibly reduces side margins at 1440 / 1920.
-- [ ] A max width still bounds line length (cap = 1280) so prose stays readable on ultrawide.
-- [ ] Cap is a token (`--pr-detail-content-max`), not a hardcoded `920px`. No `920` literal
+- [x] Overview column scales with viewport and visibly reduces side margins at 1440 / 1920.
+- [x] A max width still bounds line length (cap = 1280) so prose stays readable on ultrawide.
+- [x] Cap is a token (`--pr-detail-content-max`), not a hardcoded `920px`. No `920` literal
       remains in either module.
-- [ ] Hotspots column uses the same token + rule.
-- [ ] Verified live at 1280 / 1440 / 1920 in both themes.
-- [ ] `pr-detail-overview.png` visual baseline regenerated **and committed** (linux canonical
+- [x] Hotspots column uses the same token + rule.
+- [x] Verified live at 1280 / 1440 / 1920 in both themes.
+- [x] `pr-detail-overview.png` visual baseline regenerated **and committed** (linux canonical
       from the CI artifact + win32 from a local build on a private port, per Test plan).
+- [x] Overview loading skeleton (`PrDetailSkeleton`) capped to the same column (no full-width sprawl).
+- [x] Hotspots loading skeleton wrapped in `.card` so it fills the column like the loaded state.
+- [x] Hotspots container padding unified to `--s-6` so cards start at the same offset as Overview.
 
 ## Implementation
 
@@ -59,7 +76,9 @@ at 1280 / 1440 / 1920 in both themes. Owner sign-off on the screenshots:
 |------|--------|
 | `frontend/src/styles/tokens.css` | Add `--pr-detail-content-max: 1280px;` in the `density` block, with a comment naming the pairing rule and #470. |
 | `frontend/src/components/PrDetail/OverviewTab/OverviewTab.module.css` | `.overviewGrid`: `max-width: 920px` → `width: min(80%, var(--pr-detail-content-max))`. |
-| `frontend/src/components/PrDetail/HotspotsTab/HotspotsTab.module.css` | `.hotspots`: same swap; update the anticipatory comment to record the resolution. |
+| `frontend/src/components/PrDetail/HotspotsTab/HotspotsTab.module.css` | `.hotspots`: same swap; padding `--s-3` → `--s-6`; update the anticipatory comment to record the resolution. |
+| `frontend/src/components/PrDetail/PrDetailSkeleton.module.css` | `.skeleton`: cap to the column (`width: min(80%, var(--pr-detail-content-max))`, `margin: 0 auto`, `--s-6` padding) so the first-load skeleton mirrors the Overview column. |
+| `frontend/src/components/PrDetail/HotspotsTab/HotspotsTab.tsx` | Wrap the loading-skeleton rows in `.card` to match the loaded backdrop. |
 
 ## Test plan
 

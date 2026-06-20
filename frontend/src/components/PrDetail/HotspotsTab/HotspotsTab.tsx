@@ -79,18 +79,22 @@ export function HotspotsTab() {
           aria-label="AI hotspots loading"
           aria-busy="true"
         >
-          {[0, 1, 2].map((i) => (
-            <div key={i} className={styles.skeletonRow} data-testid="hotspots-skeleton-row">
-              <span className={styles.skeletonGlyph} data-testid="hotspots-skeleton-glyph" />
-              <span className={styles.skeletonStack}>
-                <span
-                  className={styles.skeletonHeadline}
-                  data-testid="hotspots-skeleton-headline"
-                />
-                <span className={styles.skeletonPath} data-testid="hotspots-skeleton-path" />
-              </span>
-            </div>
-          ))}
+          {/* Wrap in .card so the skeleton fills the column with the same bordered
+              backdrop as the loaded state (#470) — bare rows read as "not wide enough". */}
+          <div className={styles.card}>
+            {[0, 1, 2].map((i) => (
+              <div key={i} className={styles.skeletonRow} data-testid="hotspots-skeleton-row">
+                <span className={styles.skeletonGlyph} data-testid="hotspots-skeleton-glyph" />
+                <span className={styles.skeletonStack}>
+                  <span
+                    className={styles.skeletonHeadline}
+                    data-testid="hotspots-skeleton-headline"
+                  />
+                  <span className={styles.skeletonPath} data-testid="hotspots-skeleton-path" />
+                </span>
+              </div>
+            ))}
+          </div>
         </div>
       );
     }
