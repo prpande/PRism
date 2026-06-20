@@ -71,7 +71,9 @@
   /* Pull the leading sparkle closer to the "Hotspots" label than the tab's
      uniform 8px flex gap would (the label↔count-badge spacing stays at 8px). */
   margin-inline-end: -4px;
-  opacity: 0.6;
+  /* Resting tab marker only lightly muted vs the active/hover 1.0 — at the old 0.6
+     the accent glyph washed out on the light tab-strip surface (owner feedback). */
+  opacity: 0.85;
 }
 .prTab:hover [data-ai-marker],
 .prTab:focus-visible [data-ai-marker],

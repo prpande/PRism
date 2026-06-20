@@ -5,7 +5,7 @@ import { AiMarker } from './AiMarker';
 import { AI_PROVENANCE_LABEL } from './aiStrings';
 
 describe('AiMarker', () => {
-  it('provenance (default) renders the sparkle plus an sr-only label', () => {
+  it('provenance (default) renders the Prism glyph plus an sr-only label', () => {
     render(<AiMarker />);
     const marker = screen.getByTestId('ai-marker');
     expect(marker.querySelector('svg')).not.toBeNull();
@@ -13,7 +13,7 @@ describe('AiMarker', () => {
     expect(marker).not.toHaveAttribute('title');
   });
 
-  it('decorative renders the sparkle with no sr-only label and no title', () => {
+  it('decorative renders the Prism glyph with no sr-only label and no title', () => {
     render(<AiMarker decorative />);
     const marker = screen.getByTestId('ai-marker');
     expect(marker.querySelector('svg')).not.toBeNull();

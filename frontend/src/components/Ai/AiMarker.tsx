@@ -1,4 +1,5 @@
-import { SparkIcon } from './SparkIcon';
+import { PrismGlyph } from './PrismGlyph';
+import { PrismThinking } from './PrismThinking';
 import { AI_PROVENANCE_LABEL, AI_WORKING_LABEL } from './aiStrings';
 import styles from './AiMarker.module.css';
 
@@ -7,8 +8,10 @@ export interface AiMarkerProps {
    *  'inline' = baseline glyph for buttons / nav / headers;
    *  'lead' = larger glyph placed before a text label (headings / sub-tabs). */
   variant?: 'superscript' | 'inline' | 'lead';
-  /** 'idle' (default) = static provenance glyph (#489). 'working' = AI in flight:
-   *  a distinct hue (--ai-working-color) plus a pulse that drops under reduced-motion. */
+  /** 'idle' (default) = the static Prism-pyramid provenance glyph (#489). 'working' =
+   *  AI in flight: the pyramid spins on its vertical axis with a breathing sparkle
+   *  (PrismThinking), in a distinct energised hue (--ai-working-color). Both freeze to
+   *  the resting glyph under prefers-reduced-motion. */
   state?: 'idle' | 'working';
   /** Identity use: decorative glyph only, no sr-only label. Use where adjacent
    *  visible "AI…" text already announces provenance/progress. Default false. */
@@ -39,7 +42,11 @@ export function AiMarker({
       data-testid="ai-marker"
       title={working ? AI_WORKING_LABEL : undefined}
     >
-      <SparkIcon className={styles.glyph} />
+      {working ? (
+        <PrismThinking className={styles.glyph} />
+      ) : (
+        <PrismGlyph className={styles.glyph} />
+      )}
       {!decorative && (
         <span className="sr-only">{working ? AI_WORKING_LABEL : AI_PROVENANCE_LABEL}</span>
       )}

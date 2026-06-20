@@ -74,6 +74,3 @@ export function PanelsIcon() {
     </svg>
   );
 }
-
-// SparkIcon now lives in the shared Ai module (#489); re-export so /welcome is unchanged.
-export { SparkIcon } from '../components/Ai/SparkIcon';

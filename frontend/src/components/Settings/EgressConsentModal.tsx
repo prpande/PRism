@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Modal } from '../Modal/Modal';
 import { Spinner } from '../Spinner';
-import { SparkIcon } from '../Ai/SparkIcon';
+import { PrismGlyph } from '../Ai/PrismGlyph';
 import { getEgressDisclosure, postAiConsent, type EgressDisclosure } from '../../api/aiConsent';
 import { EgressDisclosureBody, EgressDisclosureSkeleton } from './EgressDisclosureBody';
 import styles from './EgressConsentModal.module.css';
@@ -91,7 +91,7 @@ export function EgressConsentModal({ open, onAccept, onDecline }: Props) {
     <Modal
       open={open}
       title="Enable Live AI"
-      titleIcon={<SparkIcon />}
+      titleIcon={<PrismGlyph />}
       align="center"
       onClose={onDecline}
       defaultFocus="cancel"
