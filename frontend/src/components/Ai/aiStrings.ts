@@ -1,6 +1,10 @@
 /** Single source of truth for AI marker accessible labels — provenance (#489) and working state (#508). */
 export const AI_PROVENANCE_LABEL = 'AI-generated';
 export const AI_WORKING_LABEL = 'AI is working…';
+/** Idle/settled marker hover tooltip (#508 follow-up): the at-rest counterpart to
+ *  AI_WORKING_LABEL. Surfaced as the native `title` on the idle glyph so a hover over
+ *  a finished AI surface confirms the work is done (parallels "AI is working…"). */
+export const AI_IDLE_DONE_LABEL = 'AI effort completed';
 /** File-tree header idle marker (#508): the persistent "AI ran here" cue is visual-only
  *  (decorative glyph). On the empty result there is no per-row "AI focus" signal either,
  *  so this sr-only label is the only thing announcing that AI analyzed the files. */

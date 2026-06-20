@@ -2,7 +2,15 @@ import type { FC } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import styles from './WelcomePage.module.css';
 import { LockIcon, PanelsIcon } from './welcomeIcons';
-import { PrismGlyph } from '../components/Ai/PrismGlyph';
+import { PrismGlyph, DECORATIVE_PRISM_STROKE } from '../components/Ai/PrismGlyph';
+
+// The shared PrismGlyph's default stroke scales to a sub-pixel hairline at the 18px
+// benefit-row size, reading thinner and paler than the 1.5px LockIcon/PanelsIcon
+// beside it. DECORATIVE_PRISM_STROKE lands the edges at the same visual weight (and
+// enlarges the sparkle proportionally) without touching the AiMarker default.
+function WelcomePrismIcon() {
+  return <PrismGlyph strokeWidth={DECORATIVE_PRISM_STROKE} />;
+}
 
 // Welcome copy (#222) — the human rewrite of #212's placeholder. Plain and warm,
 // not faux-marketing. The leading icons are monochrome and decorative (aria-hidden,
@@ -17,7 +25,7 @@ const BENEFITS: ReadonlyArray<{ Icon: FC; text: string }> = [
     text: 'A workspace made for reviewing: the diff, the file tree, and your comments in one focused place.',
   },
   {
-    Icon: PrismGlyph,
+    Icon: WelcomePrismIcon,
     text: 'AI that surfaces the hunks worth a closer look, still in active development.',
   },
 ];

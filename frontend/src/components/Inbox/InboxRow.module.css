@@ -256,6 +256,12 @@
 .draftChip {
   display: inline-flex;
   align-items: center;
+  /* Match the AI category chip's height (#9). That chip is taller than its text-2xs
+     copy because it embeds the 1rem (16px) Prism marker; the draft chip has only text,
+     so without a floor it reads shorter beside it. 1rem glyph + 2px×2 padding = 20px
+     (border-box), the AI chip's natural height. */
+  min-height: 20px;
+  box-sizing: border-box;
   padding: 2px 8px;
   background: var(--info-soft);
   color: var(--info-fg);
