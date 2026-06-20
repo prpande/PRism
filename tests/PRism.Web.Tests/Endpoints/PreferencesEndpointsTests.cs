@@ -34,8 +34,8 @@ public class PreferencesEndpointsTests
         var ui = body.GetProperty("ui");
         ui.GetProperty("theme").GetString().Should().Be("system");
         ui.GetProperty("accent").GetString().Should().Be("indigo");
-        // AI defaults ON: default ui.ai.mode = Preview → derived aiPreview = true.
-        ui.GetProperty("aiPreview").GetBoolean().Should().BeTrue();
+        // AI defaults ON: default ui.ai.mode = Preview. aiMode is the single wire surface
+        // for AI mode (the derived legacy aiPreview bool was removed at the V2→main merge).
         ui.GetProperty("aiMode").GetString().Should().Be("preview");
         ui.GetProperty("density").GetString().Should().Be("comfortable");
         ui.GetProperty("contentScale").GetString().Should().Be("m");
@@ -155,11 +155,13 @@ public class PreferencesEndpointsTests
     // POST { "aiPreview": true } must drive mode=Preview; GET must expose both the
     // legacy aiPreview bool and the new aiMode string; AiModeState must follow synchronously.
     [Fact]
-    public async Task POST_legacy_aiPreview_true_sets_mode_preview_and_GET_reflects_both()
+    public async Task POST_legacy_aiPreview_true_sets_mode_preview()
     {
         using var factory = new PRismWebApplicationFactory();
         var client = factory.CreateClient();
 
+        // The legacy flat write key { aiPreview: true } is still accepted on POST and
+        // maps to ui.ai.mode = preview. aiMode is the single GET surface for AI mode.
         var post = await client.PostAsync(new Uri("/api/preferences", UriKind.Relative),
             JsonContent.Create(new { aiPreview = true }));
         post.IsSuccessStatusCode.Should().BeTrue();
@@ -167,15 +169,14 @@ public class PreferencesEndpointsTests
         var prefs = await client.GetAsync(new Uri("/api/preferences", UriKind.Relative));
         var body = await prefs.Content.ReadFromJsonAsync<JsonElement>();
         var ui = body.GetProperty("ui");
-        ui.GetProperty("aiPreview").GetBoolean().Should().BeTrue();   // FE still reads this
-        ui.GetProperty("aiMode").GetString().Should().Be("preview");  // new field for PR3
+        ui.GetProperty("aiMode").GetString().Should().Be("preview");
 
         // The runtime AiModeState followed the POST synchronously.
         factory.Services.GetRequiredService<AiModeState>().Mode.Should().Be(AiMode.Preview);
     }
 
     [Fact]
-    public async Task POST_ui_ai_mode_live_sets_mode_and_derives_aiPreview_true()
+    public async Task POST_ui_ai_mode_live_sets_mode()
     {
         using var factory = new PRismWebApplicationFactory();
         var client = factory.CreateClient();
@@ -188,7 +189,6 @@ public class PreferencesEndpointsTests
         var prefs = await client.GetAsync(new Uri("/api/preferences", UriKind.Relative));
         var body = await prefs.Content.ReadFromJsonAsync<JsonElement>();
         body.GetProperty("ui").GetProperty("aiMode").GetString().Should().Be("live");
-        body.GetProperty("ui").GetProperty("aiPreview").GetBoolean().Should().BeTrue();
     }
 
     // #275: GET /api/preferences surfaces inbox.sectionOrder (defaults to canonical),

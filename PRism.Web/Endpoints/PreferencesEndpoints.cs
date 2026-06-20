@@ -74,7 +74,6 @@ internal static class PreferencesEndpoints
             Ui: new UiPreferencesDto(
                     ui.Theme,
                     ui.Accent,
-                    AiPreview: ui.Ai.Mode != AiMode.Off,
 #pragma warning disable CA1308 // lowercase mode names (off|preview|live) are the wire contract surfaced to the renderer. ToLowerInvariant()==kebab holds only while every AiMode member is a single word; in lockstep with ConfigStore.ParseAiMode + KebabCaseJsonNamingPolicy. A future multi-word member (e.g. LiveReadOnly) must move this to the kebab serializer so wire ("live-read-only") and parse stay aligned.
                     AiMode: ui.Ai.Mode.ToString().ToLowerInvariant(),
 #pragma warning restore CA1308

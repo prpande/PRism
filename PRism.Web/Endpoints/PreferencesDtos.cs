@@ -27,7 +27,7 @@ internal sealed record AiFeaturesDto(
     bool InboxEnrichment, bool InboxRanking);
 
 internal sealed record UiPreferencesDto(
-    string Theme, string Accent, bool AiPreview, string AiMode, string Density, string ContentScale,
+    string Theme, string Accent, string AiMode, string Density, string ContentScale,
     int ProviderTimeoutSeconds, int HunkAnnotationCap, int SummaryMaxChars, bool OnboardingSeen,
     AiFeaturesDto Features);
 
