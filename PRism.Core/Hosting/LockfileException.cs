@@ -8,5 +8,6 @@ public sealed class LockfileException : Exception
     public LockfileException(string message) : base(message) { }
     public LockfileException(string message, Exception inner) : base(message, inner) { }
     public LockfileException(LockfileFailure reason, string message) : base(message) { Reason = reason; }
+    public LockfileException(LockfileFailure reason, string message, Exception inner) : base(message, inner) { Reason = reason; }
     public LockfileFailure Reason { get; }
 }

@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using Microsoft.Extensions.Logging;
 using PRism.Core;
 using PRism.Core.Contracts;
 using PRism.Core.Events;
@@ -48,6 +49,7 @@ internal static class PrReloadEndpoints
         IPrReader reviewService,
         IActivePrCache activePrCache,
         IReviewEventBus bus,
+        ILoggerFactory loggerFactory,
         CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(httpContext);
@@ -90,7 +92,7 @@ internal static class PrReloadEndpoints
                 return Results.NotFound(new { error = "session-not-found" });
 
             var fileSource = new ReviewServiceFileContentSource(reviewService, prRef);
-            var pipeline = new DraftReconciliationPipeline();
+            var pipeline = new DraftReconciliationPipeline(loggerFactory.CreateLogger<DraftReconciliationPipeline>());
             var result = await pipeline.ReconcileAsync(
                 session, request.HeadSha, fileSource, ct,
                 renames: null, deletedPaths: null,

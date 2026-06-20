@@ -1,4 +1,5 @@
-using System.Diagnostics.CodeAnalysis;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 
 using PRism.Core.Reconciliation.Pipeline.Steps;
 using PRism.Core.State;
@@ -7,8 +8,14 @@ namespace PRism.Core.Reconciliation.Pipeline;
 
 public sealed class DraftReconciliationPipeline
 {
-    [SuppressMessage("Performance", "CA1822:Mark members as static",
-        Justification = "Pipeline is the DI seam consumed by PR3's reload endpoint; instance method preserves the registration shape even though the current implementation is stateless.")]
+    private readonly ILogger _logger;
+
+    // Optional logger: the pipeline is `new()`-ed directly (not DI) at the reload endpoint
+    // + ~30 test sites, so an optional param keeps every call site valid. The reload endpoint
+    // passes a real logger; tests get NullLogger.
+    public DraftReconciliationPipeline(ILogger<DraftReconciliationPipeline>? logger = null)
+        => _logger = logger ?? NullLogger<DraftReconciliationPipeline>.Instance;
+
     public async Task<ReconciliationResult> ReconcileAsync(
         ReviewSessionState session,
         string newHeadSha,
@@ -195,7 +202,7 @@ public sealed class DraftReconciliationPipeline
                 throw;
             }
 #pragma warning disable CA1031 // Do not catch general exception types
-            catch (Exception)
+            catch (Exception ex)
 #pragma warning restore CA1031
             {
                 // Per-draft isolation at the IFileContentSource boundary. PR3 wires the
@@ -203,6 +210,9 @@ public sealed class DraftReconciliationPipeline
                 // on draft N should not abort reconciliation for the other N-1 drafts.
                 // Treat as Stale (NoMatch) — the user re-anchors or retries Reload manually.
                 // Preserve original location metadata so PR3 renders the row in place.
+                // #323 item 2: log the swallowed exception so a transport failure is
+                // distinguishable from a genuine no-match (both render Stale(NoMatch)).
+                s_draftReconcileFaulted(_logger, draft.Id, ex);
                 reconciledDrafts.Add(MakeStale(
                     draft,
                     StaleReason.NoMatch,
@@ -295,4 +305,9 @@ public sealed class DraftReconciliationPipeline
         cache[sha] = reachable;
         return reachable;
     }
+
+    private static readonly Action<ILogger, string, Exception?> s_draftReconcileFaulted =
+        LoggerMessage.Define<string>(LogLevel.Warning,
+            new EventId(1, "DraftReconcileFaulted"),
+            "Draft {DraftId} reconciliation failed; treating as Stale (NoMatch)");
 }
