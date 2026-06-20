@@ -1159,8 +1159,44 @@ public sealed class InboxRefreshOrchestratorTests
         // The placeholder enricher settled every open PR…
         sut.Current!.AiEnrichmentSettled.Should().NotBeEmpty(
             "Preview's synchronous placeholder enricher settles every open PR");
-        // …and the FE must be told, or it never refetches the now-settled snapshot.
-        bus.Published.OfType<InboxUpdated>().Should().NotBeEmpty(
+        // …and the FE must be told, or it never refetches the now-settled snapshot. The refill
+        // carries NewOrUpdatedPrCount == 0: no PR landed via this path, so the FE must not pop the
+        // "N new PRs" banner for an enrichment-only refresh.
+        var published = bus.Published.OfType<InboxUpdated>().ToList();
+        published.Should().NotBeEmpty(
             "the re-populated settled set must be announced even though ComputeDiff is enrichment-blind");
+        published.Should().OnlyContain(u => u.NewOrUpdatedPrCount == 0,
+            "an enrichment-only refill announces a refetch but reports no new/updated PRs");
+    }
+
+    [Fact]
+    public async Task OnConfigChanged_LiveToOff_NotifiesFE_AfterRefill()
+    {
+        // Live→Off companion to the Live→Preview regression. Off resolves the SYNCHRONOUS Noop
+        // enricher, which settles nothing — so unlike Preview there is no chip to land. The refill
+        // must STILL be announced so the FE refetches the mode-changed snapshot (in Off the FE then
+        // hides chips entirely). Seeding Live (= Noop, empty settled) isolates the forceNotify
+        // publish: the clear branch is a no-op, so the only InboxUpdated that can exist is the refill.
+        var (sut, bus, config) = BuildSeededForAiModeChange(AiMode.Live);
+        using var _ = sut;
+
+        await sut.RefreshAsync(CancellationToken.None);
+        sut.Current!.AiEnrichmentSettled.Should().BeEmpty();
+        bus.Published.Clear();
+
+        config.Current = config.Current with
+        {
+            Ui = config.Current.Ui with { Ai = config.Current.Ui.Ai with { Mode = AiMode.Off } }
+        };
+        config.RaiseChanged();
+
+        // Off settles nothing — the working glyph is moot (the FE hides chips) but the snapshot
+        // refetch must still be announced, with NewOrUpdatedPrCount == 0 (no PR landed).
+        sut.Current!.AiEnrichmentSettled.Should().BeEmpty("Off uses the Noop enricher — no chips");
+        var published = bus.Published.OfType<InboxUpdated>().ToList();
+        published.Should().NotBeEmpty(
+            "an AI-mode change to Off must announce the refill even though ComputeDiff is enrichment-blind");
+        published.Should().OnlyContain(u => u.NewOrUpdatedPrCount == 0,
+            "an enrichment-only refill reports no new/updated PRs");
     }
 }

@@ -288,7 +288,9 @@ public sealed partial class InboxRefreshOrchestrator : IInboxRefreshOrchestrator
                 // touching the PR set, so ComputeDiff (enrichment-blind) sees no change. Publish
                 // anyway — otherwise the FE never refetches the now-settled snapshot. All section
                 // keys, count 0 (no chip "landed" via this path); same shape as the mode-change
-                // clear publish in OnConfigChanged.
+                // clear publish in OnConfigChanged. On Preview→Live this fires one extra
+                // InboxUpdated(empty settled) before OnInboxEnrichmentsReady streams the real
+                // results — a harmless, intentional intermediate refetch.
                 _events.Publish(new InboxUpdated(newSnap.Sections.Keys.ToArray(), 0));
             }
 
