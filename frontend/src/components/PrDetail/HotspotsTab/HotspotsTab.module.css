@@ -1,8 +1,9 @@
 .hotspots {
-  /* Centered, capped column matching the Overview tab (#470) so the triage
-     surface doesn't sprawl edge-to-edge next to the constrained Overview. Same
-     920px cap as .overviewGrid; revisit together if #470 fluidizes the cap. */
-  max-width: 920px;
+  /* Centred, capped column matching the Overview tab (#470) so the triage surface
+     doesn't sprawl edge-to-edge next to it. #470 fluidized the cap: shares the same
+     width rule + token as .overviewGrid (the former fixed cap is now var(--pr-detail-content-max)).
+     Padding intentionally stays --s-3 (denser than Overview's --s-6). */
+  width: min(80%, var(--pr-detail-content-max));
   margin: 0 auto;
   padding: var(--s-3);
   display: flex;
