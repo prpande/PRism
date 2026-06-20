@@ -135,6 +135,28 @@ public class LockfileManagerTests
         ReadLockPid(dir.Path).Should().Be(9999);
     }
 
+    // #323 item 4a: the take-over `File.Delete` calls inside Acquire must not leak a raw
+    // IOException where every other failure surfaces as LockfileException. Holding the lockfile
+    // open exclusively forces File.Delete to throw on Windows (the CI runner + the AV-retry
+    // platform). Linux unlinks open files, so the delete would succeed there — skip the
+    // mechanism rather than assert a platform-specific failure.
+    [Fact]
+    public void Acquire_wraps_delete_failure_as_LockfileException_not_raw_IOException()
+    {
+        if (!OperatingSystem.IsWindows()) return; // Linux/macOS allow deleting an open file
+
+        using var dir = new TempDataDir();
+        var path = Path.Combine(dir.Path, "state.json.lock");
+        // Exclusive handle: the atomic-create fails (file exists), TryRead fails (locked) → the
+        // unreadable-lockfile take-over branch runs File.Delete, which throws IOException.
+        using var holder = new FileStream(path, FileMode.Create, FileAccess.ReadWrite, FileShare.None);
+
+        Action act = () => LockfileManager.Acquire(dir.Path, currentBinaryPath: "/path/to/PRism", currentPid: 12345);
+
+        act.Should().Throw<LockfileException>()
+            .Where(e => e.Reason == LockfileFailure.AnotherInstanceRunning);
+    }
+
     private static void WriteLock(string dataDir, int pid, string binaryPath)
     {
         File.WriteAllText(Path.Combine(dataDir, "state.json.lock"),

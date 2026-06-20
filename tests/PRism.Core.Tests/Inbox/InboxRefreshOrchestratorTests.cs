@@ -401,6 +401,23 @@ public sealed class InboxRefreshOrchestratorTests
     }
 
     [Fact]
+    public async Task WaitForFirstSnapshot_throws_when_token_already_canceled()
+    {
+        // #323 item 4b: WaitForFirstSnapshotAsync now races the first-snapshot task with
+        // Task.WaitAsync(timeout, ct) (no leaked Task.Delay timer). WaitAsync throws on
+        // cancellation rather than returning false — a canceled request token surfaces as
+        // OperationCanceledException, which the ASP.NET host translates to a client-disconnect.
+        // (The timeout path still returns false; see the test above.)
+        using var sut = Build();
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        var act = async () => await sut.WaitForFirstSnapshotAsync(TimeSpan.FromSeconds(10), cts.Token);
+
+        await act.Should().ThrowAsync<OperationCanceledException>();
+    }
+
+    [Fact]
     public async Task RefreshAsync_when_AuthoredByMe_disabled_omits_authored_by_me_section()
     {
         // Coverage for the simplified ResolveVisibleSections gating (ci-failing removed):

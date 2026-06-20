@@ -52,7 +52,7 @@ public static class LockfileManager
         if (existing is null)
         {
             // Torn JSON or unreadable; treat as missing.
-            File.Delete(path);
+            DeleteForTakeover(path);
             if (!TryAtomicCreate(path, currentBinaryPath, currentPid))
                 throw new LockfileException(LockfileFailure.AnotherInstanceRunning,
                     "PRism is already running.");
@@ -64,10 +64,26 @@ public static class LockfileManager
                 $"PRism is already running (PID {existing.Pid}). Use that instance, or stop it first.");
 
         // Stale lockfile (dead PID, or PID recycled to a different process). Take over.
-        File.Delete(path);
+        DeleteForTakeover(path);
         if (!TryAtomicCreate(path, currentBinaryPath, currentPid))
             throw new LockfileException(LockfileFailure.AnotherInstanceRunning, "PRism is already running.");
         return new LockfileHandle(path);
+    }
+
+    // Delete a lockfile we've decided to take over. A delete failure (another process holds
+    // the file open) must surface as LockfileException(AnotherInstanceRunning) like every other
+    // Acquire failure — not leak a raw IOException/UnauthorizedAccessException out of Acquire.
+    private static void DeleteForTakeover(string path)
+    {
+        try
+        {
+            File.Delete(path);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            throw new LockfileException(LockfileFailure.AnotherInstanceRunning,
+                "PRism is already running.", ex);
+        }
     }
 
     private static bool TryAtomicCreate(string path, string binaryPath, int pid)
