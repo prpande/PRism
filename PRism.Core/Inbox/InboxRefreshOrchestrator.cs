@@ -88,7 +88,8 @@ public sealed partial class InboxRefreshOrchestrator : IInboxRefreshOrchestrator
 #pragma warning restore CA2012
     }
 
-    public async Task RefreshAsync(CancellationToken ct, bool hardRefresh = false)
+    // forceNotify is documented on the interface; see the else-if branch in the publish step below.
+    public async Task RefreshAsync(CancellationToken ct, bool hardRefresh = false, bool forceNotify = false)
     {
         await _writerLock.WaitAsync(ct).ConfigureAwait(false);
         var sw = System.Diagnostics.Stopwatch.StartNew();
@@ -280,6 +281,17 @@ public sealed partial class InboxRefreshOrchestrator : IInboxRefreshOrchestrator
                 _events.Publish(new InboxUpdated(
                     diff.ChangedSectionIds.ToArray(),
                     diff.NewOrUpdatedPrCount));
+            }
+            else if (forceNotify)
+            {
+                // An AI-mode-change refresh re-populates the enrichments/settled set without
+                // touching the PR set, so ComputeDiff (enrichment-blind) sees no change. Publish
+                // anyway — otherwise the FE never refetches the now-settled snapshot. All section
+                // keys, count 0 (no chip "landed" via this path); same shape as the mode-change
+                // clear publish in OnConfigChanged. On Preview→Live this fires one extra
+                // InboxUpdated(empty settled) before OnInboxEnrichmentsReady streams the real
+                // results — a harmless, intentional intermediate refetch.
+                _events.Publish(new InboxUpdated(newSnap.Sections.Keys.ToArray(), 0));
             }
 
             // Snapshot is committed + event published above. Now re-surface a CI rate-limit
@@ -489,8 +501,10 @@ public sealed partial class InboxRefreshOrchestrator : IInboxRefreshOrchestrator
         // thread, so the preferences PUT is never blocked. (If a poller handle is reachable from the
         // orchestrator, prefer InboxPoller.RequestImmediateRefresh() — verify the wiring in-step;
         // today the dependency runs poller→orchestrator, so RefreshAsync is the reachable path.)
+        // forceNotify: a synchronous enricher (Preview/Off) settles in this one refresh, so its refill
+        // must be announced even though the PR set didn't change (see the publish step in RefreshAsync).
 #pragma warning disable CA2012 // fire-and-forget by design; see comment above
-        _ = RefreshAsync(CancellationToken.None);
+        _ = RefreshAsync(CancellationToken.None, forceNotify: true);
 #pragma warning restore CA2012
     }
 
