@@ -25,7 +25,7 @@ public sealed partial class InboxRefreshOrchestrator : IInboxRefreshOrchestrator
     private readonly ILogger<InboxRefreshOrchestrator> _log;
 
     private InboxSnapshot? _current;
-    private TaskCompletionSource _firstSnapshotTcs = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly TaskCompletionSource _firstSnapshotTcs = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly SemaphoreSlim _writerLock = new(1, 1);
     private int _coldStartKicked;
     private readonly IDisposable _enrichmentSub;
@@ -68,9 +68,18 @@ public sealed partial class InboxRefreshOrchestrator : IInboxRefreshOrchestrator
     public async Task<bool> WaitForFirstSnapshotAsync(TimeSpan timeout, CancellationToken ct)
     {
         if (Volatile.Read(ref _current) != null) return true;
-        var task = _firstSnapshotTcs.Task;
-        var completed = await Task.WhenAny(task, Task.Delay(timeout, ct)).ConfigureAwait(false);
-        return completed == task;
+        try
+        {
+            // WaitAsync disposes its internal timer the moment the snapshot task completes, so the
+            // snapshot-wins path no longer roots a Task.Delay timer for the full timeout (#323 4b).
+            await _firstSnapshotTcs.Task.WaitAsync(timeout, ct).ConfigureAwait(false);
+            return true;
+        }
+        catch (TimeoutException)
+        {
+            return false;
+        }
+        // ct cancellation propagates as OperationCanceledException (request abort → client-disconnect).
     }
 
     /// <inheritdoc/>
