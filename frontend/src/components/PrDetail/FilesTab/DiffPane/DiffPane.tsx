@@ -159,6 +159,41 @@ export interface DiffPaneProps {
   annotations?: HunkAnnotation[] | null;
 }
 
+// New-side gutter cell. #554: the line number is ALWAYS rendered as visible flow
+// text; the comment affordance is an additive hover glyph (a filled, accent-colored
+// comment bubble; its aria-label carries the line number, so the click contract
+// that many e2e specs query by `name: /add comment on line N/` is unchanged).
+// Previously the number lived *inside* the opacity-0 affordance button, so on
+// all-insert (added) files — which have no old-side number — the entire gutter
+// looked blank until hover.
+function NewGutterCell({
+  lineNum,
+  onComment,
+}: {
+  lineNum: number | null | undefined;
+  onComment?: () => void;
+}) {
+  return (
+    <td className={`diff-gutter diff-gutter--new ${styles.diffGutter} ${styles.diffGutterNew}`}>
+      <span className={`diff-gutter-num ${styles.diffGutterNum}`}>{lineNum ?? ''}</span>
+      {lineNum != null && onComment && (
+        <button
+          type="button"
+          className={`diff-comment-affordance ${styles.diffCommentAffordance}`}
+          aria-label={`Add comment on line ${lineNum}`}
+          onClick={onComment}
+        >
+          {/* Filled Octicon comment-16 (solid bubble), accent-colored via CSS.
+              The aria-label carries the accessible name, so the glyph is hidden. */}
+          <svg viewBox="0 0 16 16" width="12" height="12" fill="currentColor" aria-hidden="true">
+            <path d="M1.75 1h12.5c.966 0 1.75.784 1.75 1.75v9.5A1.75 1.75 0 0 1 14.25 13H8.061l-2.574 2.573A1.458 1.458 0 0 1 3 14.543V13H1.75A1.75 1.75 0 0 1 0 11.25v-9.5C0 1.784.784 1 1.75 1Z" />
+          </svg>
+        </button>
+      )}
+    </td>
+  );
+}
+
 function findAdjacentPair(lines: DiffLine[], idx: number): DiffLine | null {
   const line = lines[idx];
   if (line.type === 'delete') {
@@ -292,6 +327,18 @@ export function DiffPane({
     }
     return out;
   }, [file, wholeFileEnabled, wholeFile.fetchStatus, wholeFile.headContent, wholeFile.baseContent]);
+
+  // #554: gutter width tracks the widest line number in the file so 3-4 digit
+  // numbers aren't clipped. Exposed as a CSS var consumed by --diff-gutter-w
+  // (DiffPane.module.css). Floor of 2 keeps a stable minimum gutter width.
+  const gutterDigits = useMemo(() => {
+    let max = 0;
+    for (const l of allLines) {
+      if (l.oldLineNum && l.oldLineNum > max) max = l.oldLineNum;
+      if (l.newLineNum && l.newLineNum > max) max = l.newLineNum;
+    }
+    return Math.max(2, String(max).length);
+  }, [allLines]);
 
   // AI annotation re-anchoring map for whole-file mode: maps row idx → annotations
   // that should render before that row (first non-header line after each hunk-header).
@@ -713,6 +760,7 @@ export function DiffPane({
     <div
       className={`diff-pane ${modeClass}${wrapClass} ${styles.diffPane}`}
       data-testid="diff-pane"
+      style={{ '--diff-gutter-digits': gutterDigits } as React.CSSProperties}
     >
       <div className={`diff-pane-header ${styles.diffPaneHeader}`} data-testid="diff-pane-header">
         <span className={`diff-pane-path ${styles.diffPanePath}`}>{selectedPath}</span>
@@ -766,9 +814,11 @@ export function DiffPane({
           <table ref={tableRef} className={`diff-table ${styles.diffTable}`}>
             {isSplit && (
               <colgroup>
-                <col style={{ width: '3em' }} />
+                {/* #554: gutter columns size from --diff-gutter-w (digit-count
+                    derived) so wide line numbers aren't clipped in fixed layout. */}
+                <col style={{ width: 'var(--diff-gutter-w)' }} />
                 <col />
-                <col style={{ width: '3em' }} />
+                <col style={{ width: 'var(--diff-gutter-w)' }} />
                 <col />
               </colgroup>
             )}
@@ -902,20 +952,7 @@ function DiffLineRow({
         <td className={`diff-gutter diff-gutter--old ${styles.diffGutter} ${styles.diffGutterOld}`}>
           {line.oldLineNum ?? ''}
         </td>
-        <td className={`diff-gutter diff-gutter--new ${styles.diffGutter} ${styles.diffGutterNew}`}>
-          {commentLineNum !== null && canComment ? (
-            <button
-              type="button"
-              className={`diff-comment-affordance ${styles.diffCommentAffordance}`}
-              aria-label={`Add comment on line ${commentLineNum}`}
-              onClick={handleClick}
-            >
-              {line.newLineNum ?? line.oldLineNum ?? ''}
-            </button>
-          ) : (
-            (line.newLineNum ?? '')
-          )}
-        </td>
+        <NewGutterCell lineNum={line.newLineNum} onComment={canComment ? handleClick : undefined} />
         {/* The hunk-header row's <td> inherits the scaled font-size from the
             row, but its visible content is a fixed-size `.diffHunkHeader` span —
             so a font-size assertion against this cell would pass for the wrong
@@ -1020,20 +1057,10 @@ function SplitDiffLineRow({
             fallback={normalizeEol(content ?? '')}
           />
         </td>
-        <td className={`diff-gutter diff-gutter--new ${styles.diffGutter} ${styles.diffGutterNew}`}>
-          {newLineNum != null && onLineClick ? (
-            <button
-              type="button"
-              className={`diff-comment-affordance ${styles.diffCommentAffordance}`}
-              aria-label={`Add comment on line ${newLineNum}`}
-              onClick={handleClick}
-            >
-              {newLineNum}
-            </button>
-          ) : (
-            (newLineNum ?? '')
-          )}
-        </td>
+        <NewGutterCell
+          lineNum={newLineNum}
+          onComment={newLineNum != null && onLineClick ? handleClick : undefined}
+        />
         <td
           data-side="new"
           className={`diff-content ${styles.diffContent}`}
@@ -1110,20 +1137,10 @@ function SplitDiffLineRow({
           data-side="old"
           className={`diff-content ${styles.diffContent} ${styles.diffCellEmpty}`}
         ></td>
-        <td className={`diff-gutter diff-gutter--new ${styles.diffGutter} ${styles.diffGutterNew}`}>
-          {newLineNum != null && onLineClick ? (
-            <button
-              type="button"
-              className={`diff-comment-affordance ${styles.diffCommentAffordance}`}
-              aria-label={`Add comment on line ${newLineNum}`}
-              onClick={handleClick}
-            >
-              {newLineNum}
-            </button>
-          ) : (
-            (newLineNum ?? '')
-          )}
-        </td>
+        <NewGutterCell
+          lineNum={newLineNum}
+          onComment={newLineNum != null && onLineClick ? handleClick : undefined}
+        />
         <td
           data-side="new"
           className={`diff-content ${styles.diffContent}`}
@@ -1172,20 +1189,10 @@ function SplitDiffLineRow({
             newText={newText ?? ''}
           />
         </td>
-        <td className={`diff-gutter diff-gutter--new ${styles.diffGutter} ${styles.diffGutterNew}`}>
-          {newLineNum != null && onLineClick ? (
-            <button
-              type="button"
-              className={`diff-comment-affordance ${styles.diffCommentAffordance}`}
-              aria-label={`Add comment on line ${newLineNum}`}
-              onClick={handleClick}
-            >
-              {newLineNum}
-            </button>
-          ) : (
-            (newLineNum ?? '')
-          )}
-        </td>
+        <NewGutterCell
+          lineNum={newLineNum}
+          onComment={newLineNum != null && onLineClick ? handleClick : undefined}
+        />
         <td
           data-side="new"
           className={`diff-content ${styles.diffContent}`}
