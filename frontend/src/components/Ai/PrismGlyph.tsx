@@ -39,7 +39,6 @@ export function PrismGlyph({ size = 18, sparkle = true, className }: PrismGlyphP
             stroke="currentColor"
             strokeWidth={3.2}
             strokeLinecap="round"
-            strokeLinejoin="round"
           />
         );
       })}

@@ -32,6 +32,11 @@ export function PrismThinking({
   const sparkRef = useRef<SVGPathElement | null>(null);
 
   useEffect(() => {
+    // Read prefers-reduced-motion once at mount. Known limitation: toggling the OS
+    // setting mid-mount won't take effect until the component remounts — accepted
+    // here (the same trade-off React Spring / Framer Motion make for rAF loops), and
+    // these markers remount frequently as AI state flips working↔idle. Not worth a
+    // change-listener + rAF-restart for that edge case.
     const mq = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)');
     const reduced = mq ? mq.matches : false;
     const { S, cx, cy } = FIT;

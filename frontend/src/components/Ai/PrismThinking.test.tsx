@@ -1,5 +1,5 @@
 import { render } from '@testing-library/react';
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { PrismThinking } from './PrismThinking';
 import { EDGES } from './prismGeometry';
 
@@ -19,8 +19,11 @@ describe('PrismThinking', () => {
     expect(container.querySelector('path')).toBeNull();
   });
 
-  it('mounts and unmounts cleanly (cancels its animation frame)', () => {
+  it('cancels its pending animation frame on unmount', () => {
+    const cancelSpy = vi.spyOn(window, 'cancelAnimationFrame');
     const { unmount } = render(<PrismThinking />);
     expect(() => unmount()).not.toThrow();
+    expect(cancelSpy).toHaveBeenCalled();
+    cancelSpy.mockRestore();
   });
 });

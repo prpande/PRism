@@ -19,9 +19,11 @@ export interface Point {
   y: number;
   z: number;
 }
-export type EdgeKey = 'A' | 'B' | 'C' | 'D' | 'E';
+// The five vertex labels (A apex + B/C/D/E base corners). NB: an EDGE is a *pair*
+// of these keys (see EDGES) — this type names a vertex, not an edge.
+export type VertexKey = 'A' | 'B' | 'C' | 'D' | 'E';
 
-export const VERTS: Record<EdgeKey, Vertex> = {
+export const VERTS: Record<VertexKey, Vertex> = {
   A: { x: 0, y: 1.84, z: 0 }, // apex
   B: { x: -1, y: 0, z: 0 }, // left
   C: { x: 1, y: 0, z: 0 }, // right
@@ -30,9 +32,9 @@ export const VERTS: Record<EdgeKey, Vertex> = {
 };
 
 // Typed vertex keys, so callers iterate without re-casting `for…in` keys each time.
-export const VERT_KEYS = Object.keys(VERTS) as EdgeKey[];
+export const VERT_KEYS = Object.keys(VERTS) as VertexKey[];
 
-export const EDGES: ReadonlyArray<readonly [EdgeKey, EdgeKey]> = [
+export const EDGES: ReadonlyArray<readonly [VertexKey, VertexKey]> = [
   ['A', 'B'],
   ['A', 'C'],
   ['A', 'D'],
@@ -77,8 +79,8 @@ export function projectAll(
   S: number,
   cx: number,
   cy: number,
-): Record<EdgeKey, Point> {
-  const P = {} as Record<EdgeKey, Point>;
+): Record<VertexKey, Point> {
+  const P = {} as Record<VertexKey, Point>;
   for (const k of VERT_KEYS) P[k] = project(VERTS[k], theta, e, S, cx, cy);
   return P;
 }
