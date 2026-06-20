@@ -113,62 +113,66 @@ export function AiSummaryCard({
       className={`ai-summary-card ${styles.aiSummaryCard} overview-card overview-card-hero ai-tint`}
       data-testid="ai-summary-card"
     >
-      <span className={styles.aiSummaryLabel}>
-        <AiMarker variant="lead" decorative />
-        AI Summary
-      </span>
-      <SampleBadge />
-      {/* Live-only status region. Rendered ONLY when `live` so that in Preview/Off the empty div does
-          not sit between SampleBadge and the body and steal the `[data-sample-badge] + *` margin
-          (ce-doc-review design-lens — Preview is the only mode where SampleBadge renders). In Live,
-          SampleBadge renders null, so there is no adjacency conflict. The region is always present
-          WITHIN Live so a later-inserted chip / "Summary updated" text is announced. */}
-      {live && (
-        <div className={styles.aiSummaryHead} role="status" aria-live="polite">
-          {showStale && (
-            <>
-              <span className="chip chip-status-stale" data-testid="ai-summary-stale-chip">
-                Out of date
-              </span>
-              <button
-                type="button"
-                className="btn btn-icon"
-                aria-label="Regenerate summary"
-                title="Regenerate summary"
-                disabled={regenerating}
-                onClick={onRegenerate}
-                data-testid="ai-summary-regenerate"
-              >
-                {regenerating ? (
-                  <Spinner decorative size="sm" />
-                ) : (
-                  <svg
-                    width="14"
-                    height="14"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="1.8"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    aria-hidden="true"
-                    focusable="false"
-                  >
-                    <path d="M21 12a9 9 0 1 1-2.64-6.36" />
-                    <path d="M21 3v6h-6" />
-                  </svg>
-                )}
-              </button>
-              {regenerateError && (
-                <span className={styles.aiSummaryError} data-testid="ai-summary-regenerate-error">
-                  Couldn't regenerate — try again.
+      {/* Single header row, rendered identically in Preview and Live so both modes share one
+          layout: the AI-summary label, the Preview-only Sample badge, and the Live-only status
+          region (stale chip + Regenerate) all sit on one vertically-centered flex row. The
+          category chip and body fall below the header in BOTH modes. */}
+      <div className={styles.aiSummaryHead} data-testid="ai-summary-head">
+        <span className={styles.aiSummaryLabel}>
+          <AiMarker variant="lead" decorative />
+          AI Summary
+        </span>
+        <SampleBadge />
+        {/* Live-only status region. Always present WITHIN Live (even when not stale) so a
+            later-inserted "Out of date" chip / "Summary updated" announce is surfaced to AT via the
+            polite live region. Absent in Preview/Off, where there is nothing to announce. */}
+        {live && (
+          <span className={styles.aiSummaryStatus} role="status" aria-live="polite">
+            {showStale && (
+              <>
+                <span className="chip chip-status-stale" data-testid="ai-summary-stale-chip">
+                  Out of date
                 </span>
-              )}
-            </>
-          )}
-          {announce && <span className="sr-only">{announce}</span>}
-        </div>
-      )}
+                <button
+                  type="button"
+                  className="btn btn-icon"
+                  aria-label="Regenerate summary"
+                  title="Regenerate summary"
+                  disabled={regenerating}
+                  onClick={onRegenerate}
+                  data-testid="ai-summary-regenerate"
+                >
+                  {regenerating ? (
+                    <Spinner decorative size="sm" />
+                  ) : (
+                    <svg
+                      width="14"
+                      height="14"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.8"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      aria-hidden="true"
+                      focusable="false"
+                    >
+                      <path d="M21 12a9 9 0 1 1-2.64-6.36" />
+                      <path d="M21 3v6h-6" />
+                    </svg>
+                  )}
+                </button>
+                {regenerateError && (
+                  <span className={styles.aiSummaryError} data-testid="ai-summary-regenerate-error">
+                    Couldn't regenerate — try again.
+                  </span>
+                )}
+              </>
+            )}
+            {announce && <span className="sr-only">{announce}</span>}
+          </span>
+        )}
+      </div>
       {label && (
         <span className={styles.chip} data-testid="ai-summary-category">
           {label}
