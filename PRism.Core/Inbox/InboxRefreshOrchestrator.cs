@@ -88,10 +88,7 @@ public sealed partial class InboxRefreshOrchestrator : IInboxRefreshOrchestrator
 #pragma warning restore CA2012
     }
 
-    // forceNotify: publish InboxUpdated even when ComputeDiff (which is enrichment-blind) reports
-    // no PR-set change. Set by the AI-mode-change path, whose refresh re-populates only the AI
-    // enrichments/settled set — without this the FE is never told the refill landed and Live→Preview
-    // strands every chip-eligible row on the working marker (#508/#548 follow-up).
+    // forceNotify is documented on the interface; see the else-if branch in the publish step below.
     public async Task RefreshAsync(CancellationToken ct, bool hardRefresh = false, bool forceNotify = false)
     {
         await _writerLock.WaitAsync(ct).ConfigureAwait(false);
@@ -290,7 +287,8 @@ public sealed partial class InboxRefreshOrchestrator : IInboxRefreshOrchestrator
                 // An AI-mode-change refresh re-populates the enrichments/settled set without
                 // touching the PR set, so ComputeDiff (enrichment-blind) sees no change. Publish
                 // anyway — otherwise the FE never refetches the now-settled snapshot. All section
-                // keys, count 0 (no chip "landed" via this path); mirrors OnInboxEnrichmentsReady.
+                // keys, count 0 (no chip "landed" via this path); same shape as the mode-change
+                // clear publish in OnConfigChanged.
                 _events.Publish(new InboxUpdated(newSnap.Sections.Keys.ToArray(), 0));
             }
 
@@ -501,9 +499,8 @@ public sealed partial class InboxRefreshOrchestrator : IInboxRefreshOrchestrator
         // thread, so the preferences PUT is never blocked. (If a poller handle is reachable from the
         // orchestrator, prefer InboxPoller.RequestImmediateRefresh() — verify the wiring in-step;
         // today the dependency runs poller→orchestrator, so RefreshAsync is the reachable path.)
-        // forceNotify so the refill is announced even when it doesn't change the PR set — a synchronous
-        // enricher (Preview placeholder / Off noop) settles entirely in this refresh and would otherwise
-        // never reach the FE (ComputeDiff is enrichment-blind), stranding Live→Preview on the glyph.
+        // forceNotify: a synchronous enricher (Preview/Off) settles in this one refresh, so its refill
+        // must be announced even though the PR set didn't change (see the publish step in RefreshAsync).
 #pragma warning disable CA2012 // fire-and-forget by design; see comment above
         _ = RefreshAsync(CancellationToken.None, forceNotify: true);
 #pragma warning restore CA2012
