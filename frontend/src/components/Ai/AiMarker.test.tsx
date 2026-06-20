@@ -31,25 +31,25 @@ describe('AiMarker', () => {
     rerender(<AiMarker variant="lead" />);
     expect(screen.getByTestId('ai-marker').className).toMatch(/lead/);
   });
-});
 
-it('renders the working class, sr-only label, and a native title tooltip when state=working', () => {
-  render(<AiMarker state="working" />);
-  const marker = screen.getByTestId('ai-marker');
-  expect(marker.className).toMatch(/working/);
-  expect(screen.getByText('AI is working…')).toBeInTheDocument();
-  expect(marker).toHaveAttribute('title', 'AI is working…');
-});
+  it('renders the working class, sr-only label, and a native title tooltip when state=working', () => {
+    render(<AiMarker state="working" />);
+    const marker = screen.getByTestId('ai-marker');
+    expect(marker.className).toMatch(/working/);
+    expect(screen.getByText('AI is working…')).toBeInTheDocument();
+    expect(marker).toHaveAttribute('title', 'AI is working…');
+  });
 
-it('omits the sr-only label when working and decorative, but KEEPS the title tooltip', () => {
-  render(<AiMarker state="working" decorative />);
-  // decorative drops the sr-only label only; the hover tooltip is the visible
-  // affordance and stays (e.g. the decorative file-tree header working marker).
-  expect(screen.queryByText('AI is working…')).not.toBeInTheDocument();
-  expect(screen.getByTestId('ai-marker')).toHaveAttribute('title', 'AI is working…');
-});
+  it('omits the sr-only label when working and decorative, but KEEPS the title tooltip', () => {
+    render(<AiMarker state="working" decorative />);
+    // decorative drops the sr-only label only; the hover tooltip is the visible
+    // affordance and stays (e.g. the decorative file-tree header working marker).
+    expect(screen.queryByText('AI is working…')).not.toBeInTheDocument();
+    expect(screen.getByTestId('ai-marker')).toHaveAttribute('title', 'AI is working…');
+  });
 
-it('defaults to idle with no working class', () => {
-  render(<AiMarker />);
-  expect(screen.getByTestId('ai-marker').className).not.toMatch(/working/);
+  it('defaults to idle with no working class', () => {
+    render(<AiMarker />);
+    expect(screen.getByTestId('ai-marker').className).not.toMatch(/working/);
+  });
 });

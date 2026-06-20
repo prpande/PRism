@@ -24,8 +24,19 @@ const BASE_SPARKLE_SCALE = 0.72;
  *  100-unit viewBox at ~16px (1em), so this lands the edges at ~0.8 device-px. The
  *  former 3.2 scaled to a ~0.5px hairline that antialiased to half-coverage and read
  *  far paler than its (already accent-saturated) colour token — the "AI glyph looks
- *  too light" report (#10). The heavier default also enlarges the sparkle (#7). */
-const DEFAULT_STROKE = 5;
+ *  too light" report (#10). The heavier default also enlarges the sparkle (#7).
+ *  Exported so the animated sibling (PrismThinking) can size its resting sparkle to
+ *  the same default without re-encoding the magic number. */
+export const DEFAULT_STROKE = 5;
+
+/** The single source of truth for the sparkle's scale at a given edge weight. The
+ *  filled sparkle path doesn't grow with `strokeWidth` on its own, so it's scaled
+ *  linearly from the SPARKLE_REF_STROKE the original 0.72 was calibrated against.
+ *  Shared with PrismThinking so the static and animated marks stay in lock-step if
+ *  the default weight ever moves. */
+export function sparkleScaleFor(strokeWidth: number): number {
+  return BASE_SPARKLE_SCALE * (strokeWidth / SPARKLE_REF_STROKE);
+}
 
 /** Stroke weight for the prism when it stands alone as a decorative ~18px glyph
  *  (the /welcome benefit row, the AI onboarding modal title) rather than as the
@@ -51,7 +62,7 @@ export function PrismGlyph({
   // it with the stroke (against SPARKLE_REF_STROKE) so the mark stays proportionate at
   // any weight: the inline default (5) and the decorative weight (7.5) each get a
   // sparkle sized to their edges.
-  const sparkleScale = BASE_SPARKLE_SCALE * (strokeWidth / SPARKLE_REF_STROKE);
+  const sparkleScale = sparkleScaleFor(strokeWidth);
   return (
     <svg
       width={size}
