@@ -69,8 +69,10 @@ describe('AiSummaryCard', () => {
       />,
     );
     expect(screen.getByText('present body')).toBeInTheDocument();
-    expect(screen.getByText(/out of date/i)).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /regenerate summary/i })).toBeInTheDocument();
+    // The stale chip + Regenerate share the header row (structural parity with the unit test).
+    const head = screen.getByTestId('ai-summary-head');
+    expect(within(head).getByText(/out of date/i)).toBeInTheDocument();
+    expect(within(head).getByRole('button', { name: /regenerate summary/i })).toBeInTheDocument();
   });
 
   it('Live + stale chip lives in a status region (announced)', () => {

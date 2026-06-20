@@ -38,7 +38,7 @@
 }
 
 /* The shared header row: AI label + Preview Sample badge + Live status region, all on one
-   vertically-centred line. Rendered in every mode so Preview and Live lay out identically and the
+   vertically-centered line. Rendered in every mode so Preview and Live lay out identically and the
    category chip + body fall below it. The bottom margin is the gap above the category chip; when
    there is no chip it collapses with `.aiSummaryBody`'s top margin. */
 .aiSummaryHead {
