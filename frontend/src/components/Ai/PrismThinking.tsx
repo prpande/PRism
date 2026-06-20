@@ -1,5 +1,11 @@
 import { useRef, useEffect } from 'react';
 import { EDGES, TILT, SPARK_PATH, FIT, VERT_KEYS, projectAll } from './prismGeometry';
+import { DEFAULT_STROKE, sparkleScaleFor } from './PrismGlyph';
+
+/** Resting sparkle scale at the idle glyph's default edge weight. Derived from
+ *  PrismGlyph's shared formula rather than re-encoding the value, so the breathing
+ *  sparkle tracks the static mark if the default weight ever changes (#7). */
+const SPARKLE_BASE = sparkleScaleFor(DEFAULT_STROKE);
 
 export interface PrismThinkingProps {
   /** Pixel size; defaults to 18. A CSS width/height via `className` overrides it
@@ -70,15 +76,20 @@ export function PrismThinking({
         l.setAttribute('y2', b.y.toFixed(2));
         const zc = ((a.z + b.z) / 2 - zmin) / zr; // 0 far .. 1 near
         l.setAttribute('stroke-opacity', (0.45 + 0.55 * zc).toFixed(3));
-        l.setAttribute('stroke-width', (2.5 + 0.9 * zc).toFixed(2));
+        // Weight tracks the idle PrismGlyph default (~5): near edges ~5.6, far ~4.2,
+        // so the spinning mark reads at the same device weight as the resting glyph
+        // (the old 2.5–3.4 range antialiased to a pale hairline — #7/#10).
+        l.setAttribute('stroke-width', (4.2 + 1.4 * zc).toFixed(2));
       });
 
       if (sparkRef.current) {
         const ph = reduced ? 0.6 : 0.5 - 0.5 * Math.cos((2 * Math.PI * (t % 2.4)) / 2.4);
         const sc = 0.74 + 0.3 * ph;
+        // SPARKLE_BASE matches the idle glyph's sparkle at the heavier default stroke
+        // (#7), so the breathing sparkle stays proportionate to the thicker edges.
         sparkRef.current.setAttribute(
           'transform',
-          `translate(80 17) scale(${(0.72 * sc).toFixed(3)}) translate(-12 -12)`,
+          `translate(80 17) scale(${(SPARKLE_BASE * sc).toFixed(3)}) translate(-12 -12)`,
         );
         sparkRef.current.setAttribute('opacity', (0.45 + 0.55 * ph).toFixed(3));
       }
@@ -111,7 +122,7 @@ export function PrismThinking({
             lineRefs.current[i] = el;
           }}
           stroke="currentColor"
-          strokeWidth={3}
+          strokeWidth={DEFAULT_STROKE}
           strokeLinecap="round"
         />
       ))}

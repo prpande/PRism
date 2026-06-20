@@ -4,6 +4,8 @@
   color: var(--ai-idle-color);
   /* working→ready hue settle (spec §3). Dropped under reduced-motion below. */
   transition: color 150ms ease;
+  /* Anchor the enlarged hover/`title` hit-target pseudo-element below (both states). */
+  position: relative;
 }
 /* Working: AI is in flight. The motion (a true-3D Y-axis spin of the pyramid plus a
    breathing sparkle) is driven inside PrismThinking on a requestAnimationFrame loop,
@@ -11,21 +13,21 @@
    The accent-derived hue is preserved so the cue stays on-brand for any chosen accent. */
 .working {
   color: var(--ai-working-color);
-  /* Anchor the hover-target pseudo-element below. */
-  position: relative;
 }
-/* Enlarge the hover/`title` target far beyond the ~16px glyph so the "AI is working…"
-   tooltip is easy to summon. An invisible, absolutely-positioned pseudo-element pads the
-   hit region; because it's abspos it adds NO layout box, so there's no shift when the
-   marker toggles working↔idle. It must keep pointer-events (default) — the native title
-   fires when the cursor is over the element, and this pseudo-element is part of the
-   element's hit region. Only on .working (idle has no tooltip to summon).
+/* Enlarge the hover/`title` target far beyond the ~16px glyph so the tooltip ("AI is
+   working…" in flight, "AI effort completed" at rest) is easy to summon. An invisible,
+   absolutely-positioned pseudo-element pads the hit region; because it's abspos it adds
+   NO layout box, so there's no shift when the marker toggles working↔idle. It must keep
+   pointer-events (default) — the native title fires when the cursor is over the element,
+   and this pseudo-element is part of the element's hit region. Applied to BOTH states so
+   the idle tooltip is as summonable as the working one; clicks still bubble to any
+   interactive ancestor (e.g. the inbox row), so it adds hover reach without stealing them.
    Bottom is capped tighter than the other sides: the file-tree header marker sits one
    row above the (interactive) first tree row, and a full -10px would bleed past the
    header's bottom padding and swallow clicks at that row's top edge. -3px keeps the
    pseudo-element inside the header while the generous top/side padding still makes the
    tooltip easy to summon. */
-.working::after {
+.aiMarker::after {
   content: '';
   position: absolute;
   inset: -10px -10px -3px;

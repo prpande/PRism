@@ -3,6 +3,17 @@
   line-height: 1.55;
 }
 
+/* Accent-colour the title Prism mark (matches /welcome and the onboarding dialog).
+   Otherwise it inherits the title's --text-1 and reads as a plain dark icon; the
+   title text stays --text-1, only the glyph (currentColor) picks this up. */
+.titleGlyph {
+  color: var(--accent);
+  /* Match the onboarding title mark — a touch larger than the default 18px. CSS
+     width/height overrides the component attrs. */
+  width: 24px;
+  height: 24px;
+}
+
 .errBox {
   display: flex;
   align-items: flex-start;
@@ -41,4 +52,14 @@
    both states. */
 .enableBtn {
   min-width: 7.5rem;
+}
+
+/* Right-align the Decline / Enable Live pair (#6). The shared global `.row` is only
+   `display:flex; align-items:center` with no justification, so the buttons defaulted
+   flush-left; pin them to the trailing edge, the house convention for modal actions. */
+.actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--s-2);
 }

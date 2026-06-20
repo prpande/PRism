@@ -2,6 +2,7 @@ import { useEffect, useId, useRef, useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { Modal } from '../Modal/Modal';
 import { PrismGlyph } from './PrismGlyph';
+import { PrismThinking } from './PrismThinking';
 import { SegmentedControl } from '../controls/SegmentedControl';
 import { Spinner } from '../Spinner';
 import { usePreferences } from '../../hooks/usePreferences';
@@ -167,7 +168,17 @@ export function AiOnboardingDialog({ onDismiss }: { onDismiss: () => void }) {
     <Modal
       open={open}
       title="Set up AI for your reviews"
-      titleIcon={<PrismGlyph />}
+      // The title mark spins only once Live is selected — the spin is the app's
+      // "AI is working" cue, so it reads as real AI being engaged; Off/Preview show
+      // the static glyph. Both states render at the same weight so the toggle starts
+      // the spin without also jumping the stroke thickness.
+      titleIcon={
+        pending === 'live' ? (
+          <PrismThinking className={styles.titleGlyph} />
+        ) : (
+          <PrismGlyph className={styles.titleGlyph} />
+        )
+      }
       align="center"
       onClose={onEsc}
       defaultFocus="cancel"
