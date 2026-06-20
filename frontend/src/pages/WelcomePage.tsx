@@ -1,7 +1,8 @@
 import type { FC } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import styles from './WelcomePage.module.css';
-import { LockIcon, PanelsIcon, SparkIcon } from './welcomeIcons';
+import { LockIcon, PanelsIcon } from './welcomeIcons';
+import { PrismGlyph } from '../components/Ai/PrismGlyph';
 
 // Welcome copy (#222) — the human rewrite of #212's placeholder. Plain and warm,
 // not faux-marketing. The leading icons are monochrome and decorative (aria-hidden,
@@ -16,7 +17,7 @@ const BENEFITS: ReadonlyArray<{ Icon: FC; text: string }> = [
     text: 'A workspace made for reviewing: the diff, the file tree, and your comments in one focused place.',
   },
   {
-    Icon: SparkIcon,
+    Icon: PrismGlyph,
     text: 'AI that surfaces the hunks worth a closer look, still in active development.',
   },
 ];

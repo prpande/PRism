@@ -233,7 +233,7 @@
   white-space: nowrap;
 }
 
-/* #489 shared AiMarker (SparkIcon) inside the category chip — marks the chip as AI-derived.
+/* #489 shared AiMarker (Prism glyph) inside the category chip — marks the chip as AI-derived.
    Muted (--text-3), distinct from the chip's --accent category text. Fixed-width /
    non-shrinking so the category text absorbs any width pressure ("shorten category, not
    marker"). Hides with the chip below the 560px breakpoint. */
@@ -243,6 +243,14 @@
   color: var(--text-3);
   font-weight: 600;
   letter-spacing: 0.03em;
+}
+
+/* Hold the inbox-row markers (both the working-state marker and the ready category-chip
+   marker) at the compact 1rem size. The shared `.inline` variant was enlarged for the
+   roomier surfaces (file-tree header, Ask-AI, settings nav); the inbox chip is the one
+   inline context that must stay small, so pin it here via the stable marker data-attr. */
+.chipWrap [data-ai-marker] {
+  font-size: 1rem;
 }
 
 .draftChip {

@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { Modal } from '../Modal/Modal';
-import { SparkIcon } from './SparkIcon';
+import { PrismGlyph } from './PrismGlyph';
 import { SegmentedControl } from '../controls/SegmentedControl';
 import { Spinner } from '../Spinner';
 import { usePreferences } from '../../hooks/usePreferences';
@@ -167,7 +167,7 @@ export function AiOnboardingDialog({ onDismiss }: { onDismiss: () => void }) {
     <Modal
       open={open}
       title="Set up AI for your reviews"
-      titleIcon={<SparkIcon />}
+      titleIcon={<PrismGlyph />}
       align="center"
       onClose={onEsc}
       defaultFocus="cancel"
