@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Modal } from '../Modal/Modal';
 import { Spinner } from '../Spinner';
-import { PrismGlyph } from '../Ai/PrismGlyph';
+import { PrismThinking } from '../Ai/PrismThinking';
 import { getEgressDisclosure, postAiConsent, type EgressDisclosure } from '../../api/aiConsent';
 import { EgressDisclosureBody, EgressDisclosureSkeleton } from './EgressDisclosureBody';
 import styles from './EgressConsentModal.module.css';
@@ -91,7 +91,7 @@ export function EgressConsentModal({ open, onAccept, onDecline }: Props) {
     <Modal
       open={open}
       title="Enable Live AI"
-      titleIcon={<PrismGlyph />}
+      titleIcon={<PrismThinking className={styles.titleGlyph} />}
       align="center"
       onClose={onDecline}
       defaultFocus="cancel"
@@ -110,7 +110,7 @@ export function EgressConsentModal({ open, onAccept, onDecline }: Props) {
         </div>
       )}
       {submitError && <ErrorBox message="Couldn't enable Live AI. Please try again." />}
-      <div className="modal-actions row gap-2">
+      <div className={`modal-actions ${styles.actions}`}>
         <button
           type="button"
           className={`btn ${styles.declineBtn}`}

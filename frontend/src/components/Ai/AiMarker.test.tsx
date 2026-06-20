@@ -2,23 +2,25 @@
 import { render, screen } from '@testing-library/react';
 import { describe, it, expect } from 'vitest';
 import { AiMarker } from './AiMarker';
-import { AI_PROVENANCE_LABEL } from './aiStrings';
+import { AI_PROVENANCE_LABEL, AI_IDLE_DONE_LABEL } from './aiStrings';
 
 describe('AiMarker', () => {
-  it('provenance (default) renders the Prism glyph plus an sr-only label', () => {
+  it('provenance (default) renders the Prism glyph, an sr-only label, and an idle hover tooltip', () => {
     render(<AiMarker />);
     const marker = screen.getByTestId('ai-marker');
     expect(marker.querySelector('svg')).not.toBeNull();
     expect(marker).toHaveTextContent(AI_PROVENANCE_LABEL);
-    expect(marker).not.toHaveAttribute('title');
+    // Idle now carries a persistent hover tooltip confirming the AI work is done.
+    expect(marker).toHaveAttribute('title', AI_IDLE_DONE_LABEL);
   });
 
-  it('decorative renders the Prism glyph with no sr-only label and no title', () => {
+  it('decorative drops the sr-only label but KEEPS the idle hover tooltip', () => {
     render(<AiMarker decorative />);
     const marker = screen.getByTestId('ai-marker');
     expect(marker.querySelector('svg')).not.toBeNull();
     expect(marker).toHaveTextContent('');
-    expect(marker).not.toHaveAttribute('title');
+    // The tooltip is the visible affordance, so it stays even when decorative.
+    expect(marker).toHaveAttribute('title', AI_IDLE_DONE_LABEL);
   });
 
   it('applies the variant class (superscript default, inline + lead opt-in)', () => {

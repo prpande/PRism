@@ -1,6 +1,6 @@
 import { PrismGlyph } from './PrismGlyph';
 import { PrismThinking } from './PrismThinking';
-import { AI_PROVENANCE_LABEL, AI_WORKING_LABEL } from './aiStrings';
+import { AI_IDLE_DONE_LABEL, AI_PROVENANCE_LABEL, AI_WORKING_LABEL } from './aiStrings';
 import styles from './AiMarker.module.css';
 
 export interface AiMarkerProps {
@@ -32,15 +32,16 @@ export function AiMarker({
     .filter(Boolean)
     .join(' ');
   return (
-    // Native `title` hover tooltip on the working marker (#508) — "AI is working…".
-    // Native title is PRism's house tooltip chrome (used app-wide), so this matches by
-    // construction. Working state only; the idle provenance marker carries its own label.
+    // Native `title` hover tooltip on BOTH states (#508 + follow-up): "AI is working…"
+    // in flight, "AI effort completed" at rest. Native title is PRism's house tooltip
+    // chrome (used app-wide), so this matches by construction. The idle tooltip confirms
+    // a finished AI surface on hover (the at-rest counterpart of the working cue).
     <span
       className={cls}
       data-ai-marker=""
       data-ai-state={state}
       data-testid="ai-marker"
-      title={working ? AI_WORKING_LABEL : undefined}
+      title={working ? AI_WORKING_LABEL : AI_IDLE_DONE_LABEL}
     >
       {working ? (
         <PrismThinking className={styles.glyph} />
