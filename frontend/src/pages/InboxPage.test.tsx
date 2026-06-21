@@ -219,6 +219,68 @@ describe('InboxPage', () => {
     expect(screen.getByRole('button', { name: /try again/i })).toBeInTheDocument();
   });
 
+  it('suppresses the load-error modal while the keep-alive host is inactive — #563', () => {
+    // A hidden, errored Inbox must not keep the ErrorModal open: Modal would hold
+    // live document Escape/Tab handlers over the PR in view. active=false → the
+    // modal renders closed (no handlers); active=true restores it.
+    setHooks({ data: null, isLoading: false, error: new Error('boom') });
+    const { rerender } = render(
+      <MemoryRouter initialEntries={['/']}>
+        <OpenTabsProvider>
+          <InboxPage active={false} />
+        </OpenTabsProvider>
+      </MemoryRouter>,
+    );
+    expect(screen.queryByText(/couldn.t load inbox/i)).not.toBeInTheDocument();
+
+    rerender(
+      <MemoryRouter initialEntries={['/']}>
+        <OpenTabsProvider>
+          <InboxPage active={true} />
+        </OpenTabsProvider>
+      </MemoryRouter>,
+    );
+    expect(screen.getByText(/couldn.t load inbox/i)).toBeInTheDocument();
+  });
+
+  it('refetches the inbox when the keep-alive host re-shows it (active false→true) — #563/#285', () => {
+    // Under keep-alive the Inbox isn't remounted on return from a PR, so its
+    // mount-effect GET doesn't re-fire. The page refetches on the hidden→visible
+    // transition so freshness that doesn't ride an inbox-updated frame (e.g. a
+    // mark-viewed unread-bar clear) is picked up. No fire on first mount.
+    const { reload } = setHooks({ data: sampleData });
+    const { rerender } = render(
+      <MemoryRouter initialEntries={['/']}>
+        <OpenTabsProvider>
+          <InboxPage active={false} />
+        </OpenTabsProvider>
+      </MemoryRouter>,
+    );
+    reload.mockClear(); // ignore any incidental mount-time calls; isolate the transition
+    rerender(
+      <MemoryRouter initialEntries={['/']}>
+        <OpenTabsProvider>
+          <InboxPage active={true} />
+        </OpenTabsProvider>
+      </MemoryRouter>,
+    );
+    expect(reload).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not refetch on first mount when already active (no spurious GET) — #563', () => {
+    const { reload } = setHooks({ data: sampleData });
+    render(
+      <MemoryRouter initialEntries={['/']}>
+        <OpenTabsProvider>
+          <InboxPage active={true} />
+        </OpenTabsProvider>
+      </MemoryRouter>,
+    );
+    // useInbox owns the mount fetch; the activation transition must NOT also fire
+    // on first mount (would double-fetch the inbox on every cold load).
+    expect(reload).not.toHaveBeenCalled();
+  });
+
   it('renders sections + rows when data is present', () => {
     setHooks({ data: sampleData });
     renderPage();
@@ -607,6 +669,23 @@ describe('InboxPage — onboarding overlay gate (#485)', () => {
       </MemoryRouter>,
     );
     expect(screen.getByTestId('onboarding-dialog')).toBeInTheDocument();
+  });
+
+  it('does NOT mount the overlay when the keep-alive host is inactive (hidden) — #563', () => {
+    // The host renders InboxPage hidden (display:none) when off `/`. display:none
+    // does NOT unmount the dialog, and Modal keeps its Escape/Tab handlers on
+    // `document` while `open`, so gating on `active` is what prevents a hidden
+    // Inbox from hijacking keys over a PR. active=false must drop the dialog.
+    prefs.onboardingSeen = false;
+    applyPrefs();
+    render(
+      <MemoryRouter initialEntries={['/']}>
+        <OpenTabsProvider>
+          <InboxPage active={false} />
+        </OpenTabsProvider>
+      </MemoryRouter>,
+    );
+    expect(screen.queryByTestId('onboarding-dialog')).not.toBeInTheDocument();
   });
 
   it('does NOT mount the overlay when onboardingSeen is true', () => {

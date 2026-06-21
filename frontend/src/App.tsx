@@ -10,7 +10,7 @@ import { HostChangeModal } from './components/HostChangeModal/HostChangeModal';
 import { LoadingScreen } from './components/LoadingScreen';
 import { SetupPage } from './pages/SetupPage';
 import { WelcomePage } from './pages/WelcomePage';
-import { InboxPage } from './pages/InboxPage';
+import { InboxHost } from './components/Inbox/InboxHost';
 import { PrTabHost } from './components/PrDetail/PrTabHost';
 import { isSettingsPath } from './hooks/useEffectiveLocation';
 import { SettingsModalRoutes } from './components/Settings/SettingsModalRoutes';
@@ -157,10 +157,13 @@ function AppShell() {
               }
             />
             <Route path="/setup" element={<SetupPage />} />
-            <Route
-              path="/"
-              element={isAuthed ? <InboxPage /> : <Navigate to={unauthedTarget} replace />}
-            />
+            {/* #563: the Inbox leaves the route table — the persistent InboxHost
+                below (sibling to PrTabHost) renders one keep-alive InboxPage and
+                shows it only on `/`, so the Inbox survives navigating to a PR /
+                opening a modal and back with its scroll + filter + expansion state
+                intact. The route stays as a null auth gate so the catch-all doesn't
+                redirect a valid `/` and unauthed users still bounce to setup/welcome. */}
+            <Route path="/" element={isAuthed ? null : <Navigate to={unauthedTarget} replace />} />
             {/* PR-detail views no longer live in the route table. The /pr route
                 renders null; the persistent PrTabHost below renders one
                 keep-alive PrDetailView per open tab and shows the one matching
@@ -173,6 +176,7 @@ function AppShell() {
             <Route path="*" element={<Navigate to={isAuthed ? '/' : unauthedTarget} replace />} />
           </Routes>
           {isAuthed && <PrTabHost />}
+          {isAuthed && <InboxHost />}
         </div>
       </div>
       <SettingsModalRoutes isAuthed={isAuthed} unauthedTarget={unauthedTarget} />
