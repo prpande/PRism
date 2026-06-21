@@ -14,6 +14,8 @@ import {
 } from '../../../../hooks/useDraftSession';
 import { useDraftBackedDisclosure } from '../../../../hooks/useDraftBackedDisclosure';
 import type { OptimisticComment } from '../optimisticComment';
+import { ThreadDisclosureHeader } from './ThreadDisclosureHeader';
+import { stripMarkdown } from '../../HotspotsTab/stripMarkdown';
 
 export interface ExistingCommentWidgetReplyContext {
   prRef: PrReference;
@@ -46,20 +48,36 @@ export interface ExistingCommentWidgetReplyContext {
   optimisticByThread?: Record<string, OptimisticComment[]>;
 }
 
+export interface ThreadCollapseControl {
+  isCollapsed: (threadId: string, isResolved: boolean) => boolean;
+  toggle: (threadId: string, isResolved: boolean) => void;
+}
+
 export interface ExistingCommentWidgetProps {
   threads: ReviewThreadDto[];
   // When omitted, the widget renders read-only (no Reply button, no composer).
   // Tests of pure thread rendering omit this; FilesTab provides it.
   replyContext?: ExistingCommentWidgetReplyContext;
+  // When omitted, all threads render fully expanded (back-compat).
+  collapse?: ThreadCollapseControl;
 }
 
-export function ExistingCommentWidget({ threads, replyContext }: ExistingCommentWidgetProps) {
+export function ExistingCommentWidget({
+  threads,
+  replyContext,
+  collapse,
+}: ExistingCommentWidgetProps) {
   if (threads.length === 0) return null;
 
   return (
     <div className={`comment-widget ${styles.commentWidget}`} data-testid="comment-widget">
       {threads.map((thread) => (
-        <ThreadView key={thread.threadId} thread={thread} replyContext={replyContext} />
+        <ThreadView
+          key={thread.threadId}
+          thread={thread}
+          replyContext={replyContext}
+          collapse={collapse}
+        />
       ))}
     </div>
   );
@@ -68,9 +86,11 @@ export function ExistingCommentWidget({ threads, replyContext }: ExistingComment
 function ThreadView({
   thread,
   replyContext,
+  collapse,
 }: {
   thread: ReviewThreadDto;
   replyContext: ExistingCommentWidgetReplyContext | undefined;
+  collapse: ThreadCollapseControl | undefined;
 }) {
   // Hydrate from any existing draft reply against this thread. A user who
   // returns to the page mid-flow sees a "Reply (saved draft)" affordance
@@ -103,75 +123,92 @@ function ThreadView({
     (o) => !thread.comments.some((c) => c.databaseId != null && c.databaseId === o.postedCommentId),
   );
 
+  const collapsed = collapse?.isCollapsed(thread.threadId, thread.isResolved) ?? false;
+  const bodyId = `thread-body-${thread.threadId}`;
+  const first = thread.comments[0];
+  const snippet = collapsed && first ? stripMarkdown(first.body).slice(0, 200) : undefined;
+
   return (
     <div
       className={`comment-thread${thread.isResolved ? ' comment-thread--resolved' : ''} ${styles.commentThread}${thread.isResolved ? ` ${styles.commentThreadResolved}` : ''}`}
       data-thread-id={thread.threadId}
     >
-      {thread.comments.map((comment, i) => (
-        <CommentCard
-          key={comment.commentId}
-          author={comment.author}
-          avatarUrl={comment.avatarUrl}
-          createdAt={comment.createdAt}
-          body={comment.body}
-          density="comfortable"
-          data-testid="inline-comment-card"
-          bandEnd={
-            thread.isResolved && i === 0 ? (
-              <span aria-label="Resolved thread">Resolved</span>
-            ) : undefined
-          }
-        />
-      ))}
+      <ThreadDisclosureHeader
+        collapsed={collapsed}
+        onToggle={() => collapse?.toggle(thread.threadId, thread.isResolved)}
+        bodyId={bodyId}
+        author={first?.author}
+        avatarUrl={first?.avatarUrl}
+        snippet={snippet || undefined}
+        commentCount={thread.comments.length}
+        isResolved={thread.isResolved}
+        filePath={thread.filePath}
+        lineNumber={thread.lineNumber}
+      />
 
-      {optimisticForThread.map((o) => (
-        <CommentCard
-          key={o.clientId}
-          author={o.author}
-          createdAt={o.createdAt}
-          body={o.body}
-          density="comfortable"
-          className="comment-card--posting"
-          data-testid="inline-comment-card-optimistic"
-        />
-      ))}
+      {!collapsed && (
+        <div id={bodyId}>
+          {thread.comments.map((comment) => (
+            <CommentCard
+              key={comment.commentId}
+              author={comment.author}
+              avatarUrl={comment.avatarUrl}
+              createdAt={comment.createdAt}
+              body={comment.body}
+              density="comfortable"
+              data-testid="inline-comment-card"
+            />
+          ))}
 
-      {replyContext && !composerOpen && (
-        <div className={`comment-thread-actions ${styles.commentThreadActions}`}>
-          <CollapsedComposerAffordance
-            label={existingDraft ? 'Continue draft…' : 'Reply…'}
-            ariaLabel={`Reply to thread on ${thread.filePath} line ${thread.lineNumber}`}
-            hasDraft={!!existingDraft}
-            readOnly={replyContext.readOnly}
-            onOpen={handleReplyClick}
-          />
-        </div>
-      )}
+          {optimisticForThread.map((o) => (
+            <CommentCard
+              key={o.clientId}
+              author={o.author}
+              createdAt={o.createdAt}
+              body={o.body}
+              density="comfortable"
+              className="comment-card--posting"
+              data-testid="inline-comment-card-optimistic"
+            />
+          ))}
 
-      {replyContext && composerOpen && (
-        <ReplyComposer
-          prRef={replyContext.prRef}
-          prState={replyContext.prState}
-          parentThreadId={thread.threadId}
-          initialBody={existingDraft?.bodyMarkdown ?? ''}
-          draftId={draftReplyId}
-          onDraftIdChange={setDraftReplyId}
-          registerOpenComposer={replyContext.registerOpenComposer}
-          onClose={handleComposerClose}
-          readOnly={replyContext.readOnly ?? false}
-          anyOtherDraftsStaged={computeAnyOtherDraftsStaged(
-            replyContext.draftComments ?? [],
-            replyContext.draftReplies,
-            draftReplyId,
-            replyContext.postingInProgress ?? false,
+          {replyContext && !composerOpen && (
+            <div className={`comment-thread-actions ${styles.commentThreadActions}`}>
+              <CollapsedComposerAffordance
+                label={existingDraft ? 'Continue draft…' : 'Reply…'}
+                ariaLabel={`Reply to thread on ${thread.filePath} line ${thread.lineNumber}`}
+                hasDraft={!!existingDraft}
+                readOnly={replyContext.readOnly}
+                onOpen={handleReplyClick}
+              />
+            </div>
           )}
-          beginPosting={replyContext.beginPosting}
-          endPosting={replyContext.endPosting}
-          onPosted={(id, postedBody) =>
-            replyContext.onReplyPosted?.(thread.threadId, id, postedBody)
-          }
-        />
+
+          {replyContext && composerOpen && (
+            <ReplyComposer
+              prRef={replyContext.prRef}
+              prState={replyContext.prState}
+              parentThreadId={thread.threadId}
+              initialBody={existingDraft?.bodyMarkdown ?? ''}
+              draftId={draftReplyId}
+              onDraftIdChange={setDraftReplyId}
+              registerOpenComposer={replyContext.registerOpenComposer}
+              onClose={handleComposerClose}
+              readOnly={replyContext.readOnly ?? false}
+              anyOtherDraftsStaged={computeAnyOtherDraftsStaged(
+                replyContext.draftComments ?? [],
+                replyContext.draftReplies,
+                draftReplyId,
+                replyContext.postingInProgress ?? false,
+              )}
+              beginPosting={replyContext.beginPosting}
+              endPosting={replyContext.endPosting}
+              onPosted={(id, postedBody) =>
+                replyContext.onReplyPosted?.(thread.threadId, id, postedBody)
+              }
+            />
+          )}
+        </div>
       )}
     </div>
   );

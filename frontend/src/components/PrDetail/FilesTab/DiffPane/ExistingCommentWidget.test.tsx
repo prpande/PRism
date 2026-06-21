@@ -1,5 +1,6 @@
 import { render, screen, within } from '@testing-library/react';
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
+import userEvent from '@testing-library/user-event';
 import { ExistingCommentWidget } from './ExistingCommentWidget';
 import type { ReviewThreadDto } from '../../../../api/types';
 
@@ -79,5 +80,53 @@ describe('ExistingCommentWidget', () => {
   it('shows a Resolved tag on resolved threads', () => {
     render(<ExistingCommentWidget threads={[thread({ isResolved: true })]} />);
     expect(screen.getByLabelText('Resolved thread')).toBeInTheDocument();
+  });
+});
+
+function collapseStub(collapsed: boolean, toggle = () => {}) {
+  return { isCollapsed: () => collapsed, toggle };
+}
+
+describe('ExistingCommentWidget — collapse', () => {
+  it('collapsed: renders the disclosure summary, not the cards or reply affordance', () => {
+    render(
+      <ExistingCommentWidget
+        threads={[thread({ isResolved: true })]}
+        collapse={collapseStub(true)}
+      />,
+    );
+    expect(screen.getByTestId('thread-disclosure')).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.queryByTestId('inline-comment-card')).not.toBeInTheDocument();
+  });
+
+  it('expanded: renders the cards and an aria-expanded=true header', () => {
+    render(<ExistingCommentWidget threads={[thread()]} collapse={collapseStub(false)} />);
+    expect(screen.getByTestId('thread-disclosure')).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getAllByTestId('inline-comment-card').length).toBeGreaterThan(0);
+  });
+
+  it('no collapse prop: threads render fully expanded (back-compat)', () => {
+    render(<ExistingCommentWidget threads={[thread()]} />);
+    expect(screen.getAllByTestId('inline-comment-card').length).toBeGreaterThan(0);
+  });
+
+  it('toggling the disclosure calls collapse.toggle(threadId, isResolved)', async () => {
+    const toggle = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <ExistingCommentWidget
+        threads={[thread({ threadId: 't1', isResolved: true })]}
+        collapse={collapseStub(true, toggle)}
+      />,
+    );
+    await user.click(screen.getByTestId('thread-disclosure'));
+    expect(toggle).toHaveBeenCalledWith('t1', true);
+  });
+
+  it('collapsed snippet derives from the first comment body, stripped', () => {
+    const t = thread({ isResolved: true });
+    t.comments[0].body = '## Heading\nfirst line of prose';
+    render(<ExistingCommentWidget threads={[t]} collapse={collapseStub(true)} />);
+    expect(screen.getByTestId('thread-snippet')).toHaveTextContent('Heading');
   });
 });
