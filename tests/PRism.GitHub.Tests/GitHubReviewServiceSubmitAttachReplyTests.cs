@@ -2,6 +2,7 @@ using System.Net;
 using System.Text.Json;
 using FluentAssertions;
 using PRism.Core.Contracts;
+using PRism.Core.Submit;
 using PRism.GitHub.Tests.TestHelpers;
 
 namespace PRism.GitHub.Tests;
@@ -36,10 +37,21 @@ public class GitHubReviewServiceSubmitAttachReplyTests
     }
 
     [Fact]
-    public async Task AttachReplyAsync_OnGraphqlError_ThrowsGitHubGraphQLException()
+    public async Task AttachReplyAsync_OnNotFound_ThrowsReviewThreadNotFound()  // real GitHub shape: top-level type:NOT_FOUND
     {
         var handler = new RecordingHttpMessageHandler(
-            HttpStatusCode.OK, """{"data":null,"errors":[{"message":"Could not resolve to a node with the global id of 'PRRT_parent_thread'."}]}""");
+            HttpStatusCode.OK, """{"data":null,"errors":[{"type":"NOT_FOUND","message":"Could not resolve to a node with the global id of 'PRRT_parent_thread'."}]}""");
+        var svc = NewService(handler);
+
+        Func<Task> act = () => svc.AttachReplyAsync(Ref, "PRR_x", "PRRT_y", "body", CancellationToken.None);
+        await act.Should().ThrowAsync<ReviewThreadNotFoundException>();
+    }
+
+    [Fact]
+    public async Task AttachReplyAsync_OnNonNotFoundGraphqlError_ThrowsGitHubGraphQLException()  // guard: translation is code-scoped, not a blanket rewrap
+    {
+        var handler = new RecordingHttpMessageHandler(
+            HttpStatusCode.OK, """{"data":null,"errors":[{"type":"FORBIDDEN","message":"Resource not accessible by integration."}]}""");
         var svc = NewService(handler);
 
         Func<Task> act = () => svc.AttachReplyAsync(Ref, "PRR_x", "PRRT_y", "body", CancellationToken.None);
