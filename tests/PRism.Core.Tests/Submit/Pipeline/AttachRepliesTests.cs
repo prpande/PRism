@@ -41,6 +41,34 @@ public class AttachRepliesTests
         Assert.Null(fake.GetPending(Ref));  // Finalized.
     }
 
+    // #323 item 3 — a parent thread deleted on github.com *between* the Step-4 snapshot re-fetch and
+    // the AttachReplyAsync call (the snapshot still shows it, so parent-is-null at :440 does NOT fire).
+    // The adapter raises ReviewThreadNotFoundException; the pipeline must demote the reply to Stale by
+    // exception TYPE. The injected message avoids every old IsParentThreadGone trigger ("NOT_FOUND" /
+    // "parent thread" / "could not be found"), so pre-fix the message-sniff misses → generic catch →
+    // reply stays Draft (the red); only the typed catch demotes.
+    [Fact]
+    public async Task AttachReply_ParentThreadDeletedMidCall_DemotesReplyToStale()
+    {
+        var fake = new InMemoryReviewSubmitter();
+        fake.SeedPendingReview(Ref, PendingWithParent("PRRT_parent"));  // parent PRESENT in the snapshot
+        fake.InjectFailure(nameof(IReviewSubmitter.AttachReplyAsync),
+            new ReviewThreadNotFoundException("thread missing"));
+
+        var session = SessionFactory.With(headSha: "head1", pendingReviewId: "PRR_x",
+            replies: new[] { SessionFactory.Reply("r1", "PRRT_parent") });  // unstamped, parent present
+        var store = new InMemoryAppStateStore();
+        store.SeedSession(SessionKey, session);
+        var pipeline = new SubmitPipeline(fake, store);
+
+        var outcome = await pipeline.SubmitAsync(Ref, session, SubmitEvent.Comment, "head1", NoopProgress.Instance, CancellationToken.None);
+
+        var failed = Assert.IsType<SubmitOutcome.Failed>(outcome);
+        Assert.Equal(SubmitStep.AttachReplies, failed.FailedStep);
+        Assert.Equal(DraftStatus.Stale, failed.NewSession.DraftReplies.Single(r => r.Id == "r1").Status);
+        Assert.Equal(DraftStatus.Stale, store.Session(SessionKey)!.DraftReplies.Single(r => r.Id == "r1").Status);
+    }
+
     [Fact]
     public async Task Step4SnapshotRefetchReturnsNull_ReturnsRetryableFailure_DoesNotDemoteReplies()
     {
