@@ -80,16 +80,10 @@ public sealed class GitHubGraphQLException : Exception
 
             var sb = new StringBuilder("GitHub GraphQL: ");
 
-            // .extensions.code carries machine-readable categories (FORBIDDEN, NOT_FOUND, ...) —
-            // useful for downstream branching and for users grep-ing logs by category.
-            string? code = null;
-            if (first.TryGetProperty("extensions", out var ext)
-                && ext.ValueKind == JsonValueKind.Object
-                && ext.TryGetProperty("code", out var c)
-                && c.ValueKind == JsonValueKind.String)
-            {
-                code = c.GetString();
-            }
+            // Machine-readable category (FORBIDDEN, NOT_FOUND, ...) — useful for downstream branching
+            // and for users grep-ing logs by category. Shared with IsFirstErrorNotFound via FirstErrorCode
+            // (passing the already-parsed `first` so this path does not re-parse errorsJson).
+            var code = FirstErrorCode(first);
             if (!string.IsNullOrEmpty(code)) sb.Append('[').Append(code).Append("] ");
 
             string? msg = first.TryGetProperty("message", out var m)
@@ -122,5 +116,41 @@ public sealed class GitHubGraphQLException : Exception
         {
             return "GitHub GraphQL request returned errors (unparseable payload).";
         }
+    }
+
+    // Reads one error object's machine-readable category. GitHub puts node-resolution failures in the
+    // top-level `type` field ("Could not resolve to a node" -> "NOT_FOUND"); rate-limit / permission
+    // shapes use `extensions.code`. Checks `type` first, then `extensions.code`. Null when neither is
+    // present. Takes the already-resolved first element so callers that have parsed the errors array
+    // (FormatErrorsMessage) don't re-parse; shared with IsFirstErrorNotFound.
+    private static string? FirstErrorCode(JsonElement first)
+    {
+        if (first.ValueKind != JsonValueKind.Object) return null;
+
+        if (first.TryGetProperty("type", out var t) && t.ValueKind == JsonValueKind.String
+            && t.GetString() is { Length: > 0 } type)
+            return type;
+
+        if (first.TryGetProperty("extensions", out var ext) && ext.ValueKind == JsonValueKind.Object
+            && ext.TryGetProperty("code", out var c) && c.ValueKind == JsonValueKind.String
+            && c.GetString() is { Length: > 0 } code)
+            return code;
+
+        return null;
+    }
+
+    // Used by the GitHub adapter to translate a deleted-thread NOT_FOUND into the typed PRism.Core
+    // ReviewThreadNotFoundException. Internal — PRism.GitHub.Tests sees it via InternalsVisibleTo.
+    internal static bool IsFirstErrorNotFound(string errorsJson)
+    {
+        if (string.IsNullOrEmpty(errorsJson)) return false;
+        try
+        {
+            using var doc = JsonDocument.Parse(errorsJson);
+            var root = doc.RootElement;
+            if (root.ValueKind != JsonValueKind.Array || root.GetArrayLength() == 0) return false;
+            return string.Equals(FirstErrorCode(root[0]), "NOT_FOUND", StringComparison.Ordinal);
+        }
+        catch (JsonException) { return false; }
     }
 }

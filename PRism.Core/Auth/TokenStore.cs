@@ -84,6 +84,15 @@ public sealed class TokenStore : ITokenStore
             throw new TokenStoreException(TokenStoreFailure.KeychainLibraryMissing,
                 "OS keychain library not installed. Install libsecret-1 (apt install libsecret-1-0 / dnf install libsecret), then restart PRism.", ex);
         }
+        // String-match rationale (#323 item 3b): MSAL's persistence layer surfaces keyring/libsecret
+        // failures as MsalCachePersistenceException (Microsoft.Identity.Client.Extensions.Msal) — the
+        // documented candidate type. We do NOT pin it via `catch (MsalCachePersistenceException)`
+        // because this catch wraps MsalCacheHelper.CreateAsync, whereas the keyring is first read at
+        // LoadUnencryptedTokenCache (outside this try); the exact type/message reaching here is
+        // environment-dependent and unverified (libsecret may surface a raw interop error), and
+        // whether this "agent unavailable" branch is even reachable on the CreateAsync path needs a
+        // Linux keyring repro. Until then we discriminate on Message text. Follow-ups (both need a
+        // Linux repro): (1) narrow to the confirmed exception type; (2) confirm branch reachability.
         catch (Exception ex) when (ex.Message.Contains("DBus", StringComparison.OrdinalIgnoreCase) || ex.Message.Contains("no provider", StringComparison.OrdinalIgnoreCase))
         {
             throw new TokenStoreException(TokenStoreFailure.KeychainAgentUnavailable,

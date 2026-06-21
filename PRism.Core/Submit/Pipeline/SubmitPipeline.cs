@@ -458,7 +458,7 @@ public sealed class SubmitPipeline
             {
                 throw;
             }
-            catch (Exception ex) when (IsParentThreadGone(ex))
+            catch (ReviewThreadNotFoundException ex)
             {
                 current = await DemoteReplyAndPersistAsync(sessionKey, current, reply.Id, done, total, progress, ct).ConfigureAwait(false);
                 throw new SubmitFailedException(SubmitStep.AttachReplies,
@@ -504,18 +504,6 @@ public sealed class SubmitPipeline
                 .Where(c => string.Equals(PipelineMarker.Extract(c.BodyMarkdown), replyId, StringComparison.Ordinal))
                 .OrderBy(c => c.CommentId, StringComparer.Ordinal)
                 .ToList();
-
-    // TODO: this matches the InMemoryReviewSubmitter fake's "NOT_FOUND: parent thread …" message,
-    // not GitHub's actual GraphQL error shape — GitHubGraphQLException puts the error text in
-    // ErrorsJson, not Message, and PRism.Core can't reference that type. In production the snapshot
-    // `parent is null` branch (Step 4 re-fetches before AttachReplyAsync) catches a genuinely-deleted
-    // parent, and a deletion that races the call self-heals on the next attempt via that branch — so
-    // a false negative here is a slightly cryptic first-attempt message, not a stranded reply. A
-    // typed not-found exception in PRism.Core, thrown by the adapter, is the proper fix (deferred).
-    private static bool IsParentThreadGone(Exception ex)
-        => ex.Message.Contains("NOT_FOUND", StringComparison.OrdinalIgnoreCase)
-        || ex.Message.Contains("parent thread", StringComparison.OrdinalIgnoreCase)
-        || ex.Message.Contains("could not be found", StringComparison.OrdinalIgnoreCase);
 
     // Wraps an IReviewSubmitter (or head-sha) call so any adapter/transport failure becomes a
     // SubmitFailedException carrying the step + the session as it stands at the failure, plus emits

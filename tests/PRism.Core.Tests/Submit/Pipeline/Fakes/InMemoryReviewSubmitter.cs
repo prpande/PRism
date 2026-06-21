@@ -62,7 +62,7 @@ internal sealed class InMemoryReviewSubmitter : IReviewSubmitter
         ConsumeFailureOrContinue(nameof(AttachReplyAsync));
         var pending = RequirePending(reference);
         var thread = pending.Threads.FirstOrDefault(t => t.Id == parentThreadId)
-            ?? throw new HttpRequestException($"NOT_FOUND: parent thread {parentThreadId}");
+            ?? throw new ReviewThreadNotFoundException($"parent thread {parentThreadId}");  // matches the real adapter's typed throw
         var commentId = $"PRRC_{_nextId++}";
         thread.Replies.Add(new InMemoryComment(commentId, replyBody));
         AttachReplyCallCount++;
