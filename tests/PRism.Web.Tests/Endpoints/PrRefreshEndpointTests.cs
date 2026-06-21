@@ -14,7 +14,7 @@ public class PrRefreshEndpointTests
 
     private static PrDetailDto MakeDetail(string headSha) =>
         new(
-            Pr: new Pr(Pr1, "Test PR", "body", "alice", "OPEN", headSha, "base1",
+            Pr: new Pr(Pr1, "Test PR", "body", "alice", PrState.Open, headSha, "base1",
                 "feat/x", "main", "MERGEABLE", "passing", false, false, DateTimeOffset.UtcNow, null),
             ClusteringQuality: ClusteringQuality.Ok, Iterations: null, Commits: Array.Empty<CommitDto>(),
             RootComments: Array.Empty<IssueCommentDto>(), ReviewComments: Array.Empty<ReviewThreadDto>(),

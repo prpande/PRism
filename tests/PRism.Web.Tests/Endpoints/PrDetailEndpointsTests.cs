@@ -25,7 +25,7 @@ public class PrDetailEndpointsTests
                 Title: "Test PR",
                 Body: "body",
                 Author: "alice",
-                State: "OPEN",
+                State: PrState.Open,
                 HeadSha: headSha,
                 BaseSha: baseSha,
                 HeadBranch: "feat/x",

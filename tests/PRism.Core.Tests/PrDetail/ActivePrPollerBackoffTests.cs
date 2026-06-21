@@ -24,7 +24,7 @@ public class ActivePrPollerBackoffTests
         return (poller, review, bus, registry, cache);
     }
 
-    private static ActivePrPollSnapshot Snapshot(string headSha = "h1", string baseSha = "b1", int commentCount = 0, string prState = "OPEN") =>
+    private static ActivePrPollSnapshot Snapshot(string headSha = "h1", string baseSha = "b1", int commentCount = 0, PrState prState = PrState.Open) =>
         new(headSha, baseSha, "MERGEABLE", prState, commentCount, 0);
 
     [Fact]
@@ -174,12 +174,12 @@ public class ActivePrPollerBackoffTests
         var pr = new PrReference("o", "r", 1);
         registry.Add("sub1", pr);
 
-        review.SetSnapshot(pr, Snapshot(headSha: "h1", commentCount: 5, prState: "open"));
+        review.SetSnapshot(pr, Snapshot(headSha: "h1", commentCount: 5, prState: PrState.Open));
         await poller.TickAsync(T0, default);
         bus.Published.Should().ContainSingle("first poll publishes a hydration event");
 
         // Same head, same comment count — only the state flips open → merged.
-        review.SetSnapshot(pr, Snapshot(headSha: "h1", commentCount: 5, prState: "merged"));
+        review.SetSnapshot(pr, Snapshot(headSha: "h1", commentCount: 5, prState: PrState.Merged));
         await poller.TickAsync(T0.AddSeconds(30), default);
 
         bus.Published.Should().HaveCount(2, "the open→merged transition is a change even with identical head/comments");
@@ -202,12 +202,12 @@ public class ActivePrPollerBackoffTests
         registry.Add("sub1", pr);
 
         // Tick 1: first poll (open) → hydration event.
-        review.SetSnapshot(pr, Snapshot(headSha: "h1", commentCount: 5, prState: "open"));
+        review.SetSnapshot(pr, Snapshot(headSha: "h1", commentCount: 5, prState: PrState.Open));
         await poller.TickAsync(T0, default);
         bus.Published.Should().ContainSingle("first poll publishes a hydration event");
 
         // Tick 2: open→merged transition → one delta event (total 2).
-        review.SetSnapshot(pr, Snapshot(headSha: "h1", commentCount: 5, prState: "merged"));
+        review.SetSnapshot(pr, Snapshot(headSha: "h1", commentCount: 5, prState: PrState.Merged));
         await poller.TickAsync(T0.AddSeconds(30), default);
         bus.Published.Should().HaveCount(2, "the open→merged transition emits exactly one event");
 
@@ -223,11 +223,11 @@ public class ActivePrPollerBackoffTests
         var pr = new PrReference("o", "r", 1);
         registry.Add("sub1", pr);
 
-        review.SetSnapshot(pr, Snapshot(headSha: "h1", commentCount: 5, prState: "open"));
+        review.SetSnapshot(pr, Snapshot(headSha: "h1", commentCount: 5, prState: PrState.Open));
         await poller.TickAsync(T0, default);
         bus.Published.Should().ContainSingle();
 
-        review.SetSnapshot(pr, Snapshot(headSha: "h1", commentCount: 5, prState: "closed"));
+        review.SetSnapshot(pr, Snapshot(headSha: "h1", commentCount: 5, prState: PrState.Closed));
         await poller.TickAsync(T0.AddSeconds(30), default);
 
         bus.Published.Should().HaveCount(2);

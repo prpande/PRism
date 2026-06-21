@@ -17,7 +17,7 @@ public class ActivePrPollerSubscriberFaultTests
 {
     private static readonly DateTimeOffset T0 = new(2026, 5, 7, 0, 0, 0, TimeSpan.Zero);
 
-    private static ActivePrPollSnapshot Snapshot(string headSha = "h1", string baseSha = "b1", int commentCount = 0, string prState = "OPEN") =>
+    private static ActivePrPollSnapshot Snapshot(string headSha = "h1", string baseSha = "b1", int commentCount = 0, PrState prState = PrState.Open) =>
         new(headSha, baseSha, "MERGEABLE", prState, commentCount, 0);
 
     [Fact]

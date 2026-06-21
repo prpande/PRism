@@ -173,7 +173,7 @@ internal sealed class FakePrReader : IPrReader
     public Task<ActivePrPollSnapshot> PollActivePrAsync(PrReference reference, CancellationToken ct)
     {
         if (reference != FakeReviewBackingStore.Scenario)
-            return Task.FromResult(new ActivePrPollSnapshot("", "", "UNKNOWN", "OPEN", 0, 0));
+            return Task.FromResult(new ActivePrPollSnapshot("", "", "UNKNOWN", PrState.Open, 0, 0));
         lock (_store.Gate)
         {
             return Task.FromResult(new ActivePrPollSnapshot(_store.CurrentHeadSha, FakeReviewBackingStore.BaseSha, "MERGEABLE", _store.PrState, 0, 0));

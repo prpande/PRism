@@ -23,7 +23,7 @@ public sealed class PrDetailFakeReviewService : IReviewAuth, IPrDiscovery, IPrRe
     public Func<PrReference, DiffRangeRequest, DiffDto>? DiffFactory { get; set; }
     public Func<PrReference, string, string, FileContentResult>? FileContentFactory { get; set; }
 
-    public ActivePrPollSnapshot DefaultPollResponse { get; set; } = new("head1", "base1", "MERGEABLE", "OPEN", 0, 0);
+    public ActivePrPollSnapshot DefaultPollResponse { get; set; } = new("head1", "base1", "MERGEABLE", PrState.Open, 0, 0);
     public PrDetailDto? DefaultDetailResponse { get; set; }
     public ClusteringInput DefaultTimelineResponse { get; set; } = new(
         Commits: Array.Empty<ClusteringCommit>(),

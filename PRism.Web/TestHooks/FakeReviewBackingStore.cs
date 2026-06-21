@@ -50,12 +50,15 @@ internal sealed class FakeReviewBackingStore
     public string CurrentHeadSha { get; private set; }
     public DateTimeOffset Now { get; private set; }
 
-    // PR open/closed/merged state — "OPEN" | "CLOSED" | "MERGED". Mutated by POST /test/set-pr-state
+    // PR open/closed/merged state. Mutated by POST /test/set-pr-state
     // to drive the closed/merged bulk-discard surface (PR5: DiscardAllDraftsButton mounts only when
     // the PR is no longer open). Surfaced by FakePrReader.GetPrDetailAsync + PollActivePrAsync.
-    public string PrState { get; private set; }
-    public bool IsClosed => string.Equals(PrState, "CLOSED", StringComparison.Ordinal);
-    public bool IsMerged => string.Equals(PrState, "MERGED", StringComparison.Ordinal);
+    // The property and the enum type share the name `PrState` — this compiles by C#'s
+    // "Color Color" rule (§7.6.4.1): `PrState ==` binds to the property, `PrState.Closed`
+    // binds to the type. If you rename the property, update both sides.
+    public PrState PrState { get; private set; }
+    public bool IsClosed => PrState == PrState.Closed;
+    public bool IsMerged => PrState == PrState.Merged;
 
     // #501 e2e-only. When true, FakePrReader / FakeSectionQueryRunner emit IsDraft=true,
     // driving the header glyph+marker and the inbox draft chip in baselines.
@@ -92,7 +95,7 @@ internal sealed class FakeReviewBackingStore
         // CurrentHeadSha / PrState need a non-null seed for the null-safety analyzer, so Reset()
         // is the single source of truth for the canonical initial state.
         CurrentHeadSha = string.Empty;
-        PrState = "OPEN";
+        PrState = PrState.Open;
         Reset();
     }
 
@@ -105,7 +108,7 @@ internal sealed class FakeReviewBackingStore
         {
             Now = DateTimeOffset.UtcNow;
             CurrentHeadSha = Sha3;
-            PrState = "OPEN";
+            PrState = PrState.Open;
 
             FileContent.Clear();
             // BaseSha: src/Calc.cs is TREATED AS empty content at BaseSha for the
@@ -207,10 +210,15 @@ internal sealed class FakeReviewBackingStore
     public void SetPrState(string state)
     {
         ArgumentException.ThrowIfNullOrEmpty(state);
-        var normalized = state.ToUpperInvariant();
-        if (normalized is not ("OPEN" or "CLOSED" or "MERGED"))
-            throw new ArgumentException($"Unknown PR state '{state}'; expected OPEN | CLOSED | MERGED.", nameof(state));
-        lock (Gate) PrState = normalized;
+        PrState parsed = state.ToUpperInvariant() switch
+        {
+            "OPEN" => PrState.Open,
+            "CLOSED" => PrState.Closed,
+            "MERGED" => PrState.Merged,
+            _ => throw new ArgumentException(
+                $"Unknown PR state '{state}'; expected OPEN | CLOSED | MERGED.", nameof(state)),
+        };
+        lock (Gate) PrState = parsed;
     }
 
     // #501 e2e-only. Flags the scenario PR as a draft so FakePrReader / FakeSectionQueryRunner
