@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useInbox } from '../hooks/useInbox';
 import { useInboxUpdates } from '../hooks/useInboxUpdates';
+import { useActivationTransition } from '../hooks/useActivationTransition';
 import { useInboxRefresh } from '../hooks/useInboxRefresh';
 import { useToast } from '../components/Toast/useToast';
 import { useAiGate } from '../hooks/useAiGate';
@@ -29,6 +30,15 @@ import styles from './InboxPage.module.css';
 // so direct mounts (tests, any non-host caller) behave exactly as before.
 export function InboxPage({ active = true }: { active?: boolean } = {}) {
   const { data, error, isLoading, reload } = useInbox();
+  // #563 — under keep-alive the Inbox is no longer remounted on return from a PR,
+  // so its mount-effect GET /api/inbox doesn't re-fire. Refetch when the host
+  // re-shows this page (active false→true) so freshness that does NOT ride an
+  // `inbox-updated` SSE frame — e.g. a PR's unread bar clearing after mark-viewed
+  // (#285) — is picked up, exactly as the old remount-on-return did. Mirrors
+  // PrDetailView's refetch-on-activation. useActivationTransition never fires on
+  // first mount (useInbox's own mount fetch covers that) and is a no-op for direct
+  // callers where `active` is the default-true constant.
+  useActivationTransition(active, () => void reload());
   // #450 — an inbox-updated frame now silently auto-refreshes (debounced) instead of
   // surfacing the old reload banner. `announce` carries the screen-reader signal the
   // removed banner's role=status region used to provide.

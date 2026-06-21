@@ -243,6 +243,44 @@ describe('InboxPage', () => {
     expect(screen.getByText(/couldn.t load inbox/i)).toBeInTheDocument();
   });
 
+  it('refetches the inbox when the keep-alive host re-shows it (active false→true) — #563/#285', () => {
+    // Under keep-alive the Inbox isn't remounted on return from a PR, so its
+    // mount-effect GET doesn't re-fire. The page refetches on the hidden→visible
+    // transition so freshness that doesn't ride an inbox-updated frame (e.g. a
+    // mark-viewed unread-bar clear) is picked up. No fire on first mount.
+    const { reload } = setHooks({ data: sampleData });
+    const { rerender } = render(
+      <MemoryRouter initialEntries={['/']}>
+        <OpenTabsProvider>
+          <InboxPage active={false} />
+        </OpenTabsProvider>
+      </MemoryRouter>,
+    );
+    reload.mockClear(); // ignore any incidental mount-time calls; isolate the transition
+    rerender(
+      <MemoryRouter initialEntries={['/']}>
+        <OpenTabsProvider>
+          <InboxPage active={true} />
+        </OpenTabsProvider>
+      </MemoryRouter>,
+    );
+    expect(reload).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not refetch on first mount when already active (no spurious GET) — #563', () => {
+    const { reload } = setHooks({ data: sampleData });
+    render(
+      <MemoryRouter initialEntries={['/']}>
+        <OpenTabsProvider>
+          <InboxPage active={true} />
+        </OpenTabsProvider>
+      </MemoryRouter>,
+    );
+    // useInbox owns the mount fetch; the activation transition must NOT also fire
+    // on first mount (would double-fetch the inbox on every cold load).
+    expect(reload).not.toHaveBeenCalled();
+  });
+
   it('renders sections + rows when data is present', () => {
     setHooks({ data: sampleData });
     renderPage();
