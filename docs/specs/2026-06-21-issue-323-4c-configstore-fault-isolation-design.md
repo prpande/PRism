@@ -21,7 +21,7 @@ This is **currently unreachable, structurally open.** All five live `Changed` su
 So there is **no live crash to fix.** The value is:
 
 1. **Structural hardening** — any *future* subscriber that throws synchronously (or a backfill regression that lets `args.Config.Ui.Ai` go null) would leak as an unobserved task exception specifically on the watcher path. The synchronous API paths (`PatchAsync` etc.) would instead surface it to the request as a 500 — a different, observable failure — so the watcher path is the dangerous one.
-2. **Parity with the already-shipped item 1** — `ReviewEventBus.Publish` already does per-handler fault isolation (#323 item 1). `ConfigStore.Changed` is the sibling event dispatcher and should behave identically.
+2. **Parity with the already-shipped item 1** — `ReviewEventBus.Publish` already does per-handler fault isolation (#323 item 1). `ConfigStore.Changed` is the sibling event dispatcher and should isolate subscriber faults the same way. (Parity is on the isolation *mechanism*, not byte-for-byte — see the logging-style note in §2 for the one deliberate difference.)
 3. **#338** — the `Task.Delay(100)` literal is an explicit #338 "magic literals → named constants" checklist item.
 
 The "unreachable today" fact argues *for* fixing at the dispatch primitive: there is no surgical bug to confine, so the only real payoff is structural, and isolating at `RaiseChanged()` is what actually deletes the class.
@@ -42,7 +42,7 @@ public ConfigStore(string dataDir, ILogger<ConfigStore>? log = null)
 }
 ```
 
-The optional param defaulting to `NullLogger<ConfigStore>.Instance` keeps every existing `new ConfigStore(dir)` test call site (~13 sites across `PRism.Core.Tests` and `PRism.Web.Tests`) compiling and behaving identically — no test churn.
+The optional param defaulting to `NullLogger<ConfigStore>.Instance` keeps every existing `new ConfigStore(dir)` test call site (70+, all under `tests/PRism.Core.Tests/Config` and `tests/PRism.Core.Tests/Auth`; `PRism.Web.Tests` has none) compiling and behaving identically — no test churn.
 
 New usings: `Microsoft.Extensions.Logging`, `Microsoft.Extensions.Logging.Abstractions`.
 
@@ -96,7 +96,7 @@ private static readonly Action<ILogger, Exception?> s_subscriberFaulted =
 
 This protects **all four** call sites uniformly: `PatchAsync`, `SetDefaultAccountLoginAsync`, `RecordAiConsentAsync`, and `HandleFileChangedAsync`.
 
-**Logging style:** mirrors `ReviewEventBus`'s static `LoggerMessage.Define` field for sibling parity. #338 separately tracks converging all logging onto the nested-`Log` source generator; that convergence is out of scope here and would diverge 4c from its item-1 sibling.
+**Logging style:** mirrors `ReviewEventBus`'s static `LoggerMessage.Define` field idiom. One deliberate difference: the bus uses `Define<string>` with a `{EventType}` placeholder because it is generic over many event types; `ConfigStore.Changed` is a *single* fixed event type, so the message uses the zero-arg `LoggerMessage.Define` (no placeholder) — a `{EventType}` token here would always log the same constant and add no diagnostic value. The parity that matters (per-handler try/catch, OCE-rethrow, log+continue) is identical. #338 separately tracks converging all logging onto the nested-`Log` source generator; that convergence is out of scope here.
 
 ### 3. Completeness — absorb OCE on the fire-and-forget watcher path
 
@@ -164,13 +164,14 @@ These already surface via the `LastLoadError` property (a real, UI/health-readab
 
 - **No wire/DTO/UI change.** No serialized shape, endpoint, or frontend surface is touched.
 - **No behavior change for any current input.** No production subscriber throws today; the only observable difference is in the (currently unreachable) subscriber-throws case.
-- **One semantic shift, unobservable today:** on the *synchronous* API paths, a subscriber that throws a non-OCE exception during `RaiseChanged()` previously bubbled to a 500; under this change it is swallowed + logged and the write returns success. This is correct — the config write did persist; a downstream listener's failure to react is not the writer's failure, and it matches `ReviewEventBus` publisher semantics — but it is a real semantic change, masked only because no subscriber throws.
+- **One semantic shift, unobservable today:** on the *synchronous* API paths, a subscriber that throws a non-OCE exception during `RaiseChanged()` previously bubbled to a 500; under this change it is swallowed + logged and the write returns success. This is correct — the config write did persist; a downstream listener's failure to react is not the writer's failure, and it matches `ReviewEventBus` publisher semantics — but it is a real semantic change, masked only because no subscriber throws. Scoping note: the synchronous-path subscribers are specifically the three AI-state setters (`ServiceCollectionExtensions.cs:58/66/73`). For those, a swallowed throw would mean a `200` to the user while the in-memory `AiModeState`/consent/features gate stays stale — a config-vs-gate divergence, not a benign missed cache-invalidation. Still unreachable (the setters null-coalesce and `Ui.Ai` is backfilled non-null), but the logging is what makes such a fault diagnosable rather than silent.
 - **New internal dependency:** `ILogger<ConfigStore>`, threaded through DI. No new package; `Microsoft.Extensions.Logging.Abstractions` is already referenced transitively across `PRism.Core`.
 
 ## Acceptance criteria
 
 - [ ] `ConfigStore` takes an optional `ILogger<ConfigStore>` (→ `NullLogger` default); all existing `new ConfigStore(dir)` sites compile unchanged.
 - [ ] `RaiseChanged()` isolates each subscriber: a throwing subscriber neither propagates to the caller nor aborts dispatch to siblings; the fault is logged at `Error` with EventId `ConfigStoreSubscriberFaulted`.
+- [ ] **Intended behavioral change, explicitly signed off:** on the synchronous write paths (`PatchAsync` / `SetDefaultAccountLoginAsync` / `RecordAiConsentAsync`), a subscriber fault is isolated + logged and the write returns success — the prior 500 propagation is deliberately dropped, mirroring `ReviewEventBus`. This is intended, not a regression; a future reviewer should not revert it as a bug.
 - [ ] `OperationCanceledException` from a subscriber propagates out of the synchronous paths (cancellation contract preserved).
 - [ ] `OperationCanceledException` from a subscriber on the watcher path is absorbed into `LastLoadError`, not leaked.
 - [ ] `Task.Delay(100)` replaced by `Task.Delay(FileChangeDebounceMilliseconds)` (`const int = 100`); debounce behavior unchanged.
@@ -188,6 +189,8 @@ New tests in `tests/PRism.Core.Tests/Config/` exercising the real `ConfigStore.C
    - RED: no logger exists / no log emitted.
 3. **OCE rethrow (synchronous path):** a subscriber that throws `OperationCanceledException` causes the synchronous write to surface OCE.
    - RED: under naive broad-catch isolation, OCE would be swallowed.
+4. **OCE absorbed on the watcher path:** a subscriber that throws `OperationCanceledException` dispatched via the fire-and-forget watcher path (call `HandleFileChangedAsync` directly, or trigger a file-change) is absorbed into `LastLoadError` and does **not** surface as an unobserved task exception. This covers the novel §3 behavior, not just §2's synchronous rethrow.
+   - RED: with `RaiseChanged` rethrowing OCE but `HandleFileChangedAsync`'s catch filter unwidened, the OCE leaks (no `LastLoadError`, escapes the task).
 
 The debounce constant is a pure literal→`const` rename covered by existing watcher/debounce tests — no new test.
 
