@@ -187,3 +187,24 @@ The override map is sticky for the tab lifetime; the default underneath it can m
   - State persists across file switches within the PR tab; resets on close+reopen.
   - Keyboard: tab to the disclosure, Enter/Space toggles.
 - **e2e:** check `frontend/e2e` for any visual/parity baseline rendering an inline thread; none expected to change (parity fixtures render no threads — same as #522); regenerate the Linux baseline via the CI-artifact path if one shifts.
+
+## Design revision (2026-06-21, post-live-validation, owner-approved)
+
+The §2–§3 layout above is the original Variant A. After implementing it and validating live (real token store, `mindbody/Mindbody.Clients#973`, both themes × Unified/Split), the owner iterated the collapse UX through several rounds. The final, approved design deviates from the spec above as follows. Where this section conflicts with §2–§3, **this section governs.**
+
+1. **Toggle is a small rounded-square button beside the top header in both states; the comment body stays centered.** Not the single inline-chevron flex row of §3. Collapsed: the whole summary line is the click target (`.collapsed`), with the chevron in a rounded-square frame (`.chevronBox`) as a leading affordance. Expanded: a thin header row (`.expandedHeader`) holds a standalone square toggle button (`.toggle`) on the left and the Resolved pill on the right (pushed there by a spacer), with the thread cards in the body below. Both square frames share one rule (`.toggle, .chevronBox`) and use `border-radius: var(--radius-2)` to match the card body's corners — addresses the owner's "match the body of the cards" request and replaces the rejected circular/gutter-aligned variant.
+
+2. **Comment count is a glyph metric, not a `N comments` text pill.** Octicon `comment-16` (inbox parity) accent-tinted (`.countIcon` → `--accent`) + the number in `--text-xs` tabular-nums (`.count`). The §3 "count pill" prose form and its singular/plural visible text are dropped; the singular/plural distinction survives only in the `aria-label` (`1 comment` / `N comments`) for assistive tech. Count is still omitted entirely at `commentCount === 0`.
+
+3. **Resolved cue is a green pill, kept next to the count in the collapsed summary AND persisted into the expanded header.** The owner explicitly did **not** want it relocated off the collapsed line ("like we have it today"). The pill is the global **`chip chip-success`** utility (`--success-soft` dark-green bg + `--success-fg` bright text) — which reads as dark green in the dark theme and pale green in light — with a one-line local `.resolvedBadge` override (`flex:0 0 auto; font-weight:600`). This supersedes §3's "extract the `.bandEnd` recipe into a shared `metaPill`/`Badge`" constraint: the count is no longer a pill (it's the glyph metric of item 2), and the Resolved cue reuses the existing `chip-success` token rather than a new shared class. O2 is confirmed: the expanded header shows only the toggle + the Resolved pill (no author/snippet/count).
+
+4. **Three-tier elevation, re-tuned for the dark theme (supersedes §3's single `--surface-2` surface).** Dark `--surface-1`/`--surface-2` differ by only 0.025 L, so the §3 `--surface-2` band blended into the `--surface-1` code rows. Final:
+   - **Comment band** (`.diffCommentRow` / `.diffComposerRow`, the full-width `<td>` row) → **`--surface-3`** (dark 0.27 vs code 0.21 ≈ 0.06 gap), so the whole inline-comment section stands out from the code background — the owner's "needs a more different color than the regular code background, especially in dark mode" request.
+   - **Collapsed card** (`.collapsed`) → **`--surface-1`** + border, sitting one step *inset* from the surface-3 band so it stays distinct; hover tints toward the accent (`color-mix(... --accent)`), not toward surface-3.
+   - **Resolved pill** carries the only green (item 3).
+
+5. **Hover is gated to interactive elements only.** The collapsed card (click-to-expand) and the standalone toggle button get hover affordances; the **expanded** thread cards get **no** hover (per "no hover on an open thread card"). The old `.commentThreadResolved` opacity-dim was dropped — it would only mute the green pill, which is the intended standout.
+
+6. **Chevron matches the file-tree chevron specifically** (15px, `viewBox 0 0 16 16`, path `M6 4l4 4-4 4`, stroke 1.75) rather than the generic DiffPane inline-SVG of §3 — the owner asked for parity with the file-tree arrow's weight/size. Rotation: the expanded toggle's chevron points down via `transform: rotate(90deg)`; collapsed points right.
+
+The Resolved-pill swap to `chip chip-success` (item 3) and the dead-attribute / duplicate-rule cleanups landed in the `/simplify` pass; the green pill's live appearance is unchanged from the owner-approved screenshots (identical `--success-soft`/`--success-fg` tokens and `999px` radius), with only the shared chip's fixed `height:20px` + `0 7px` padding replacing the bespoke `1px 8px`.

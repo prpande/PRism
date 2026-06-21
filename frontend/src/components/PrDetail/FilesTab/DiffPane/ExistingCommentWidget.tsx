@@ -130,7 +130,7 @@ function ThreadView({
 
   return (
     <div
-      className={`comment-thread${thread.isResolved ? ' comment-thread--resolved' : ''} ${styles.commentThread}${thread.isResolved ? ` ${styles.commentThreadResolved}` : ''}`}
+      className={`comment-thread${thread.isResolved ? ' comment-thread--resolved' : ''} ${styles.commentThread}`}
       data-thread-id={thread.threadId}
     >
       <ThreadDisclosureHeader
@@ -147,7 +147,7 @@ function ThreadView({
       />
 
       {!collapsed && (
-        <div id={bodyId}>
+        <div id={bodyId} className={styles.body}>
           {thread.comments.map((comment) => (
             <CommentCard
               key={comment.commentId}

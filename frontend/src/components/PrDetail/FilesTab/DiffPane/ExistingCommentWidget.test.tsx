@@ -77,8 +77,13 @@ describe('ExistingCommentWidget', () => {
     expect(optimistic).toHaveAttribute('data-density', 'comfortable');
   });
 
-  it('shows a Resolved tag on resolved threads (in the disclosure header)', () => {
-    render(<ExistingCommentWidget threads={[thread({ isResolved: true })]} />);
+  it('shows a Resolved tag on resolved threads (in the collapsed summary)', () => {
+    render(
+      <ExistingCommentWidget
+        threads={[thread({ isResolved: true })]}
+        collapse={collapseStub(true)}
+      />,
+    );
     const header = screen.getByTestId('thread-disclosure');
     expect(within(header).getByLabelText('Resolved thread')).toBeInTheDocument();
   });
