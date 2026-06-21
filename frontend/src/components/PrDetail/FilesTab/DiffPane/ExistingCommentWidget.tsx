@@ -139,7 +139,7 @@ function ThreadView({
         bodyId={bodyId}
         author={first?.author}
         avatarUrl={first?.avatarUrl}
-        snippet={snippet || undefined}
+        snippet={snippet}
         commentCount={thread.comments.length}
         isResolved={thread.isResolved}
         filePath={thread.filePath}

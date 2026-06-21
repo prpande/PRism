@@ -56,26 +56,21 @@ export function ThreadDisclosureHeader({
           strokeLinejoin="round"
         />
       </svg>
-      {collapsed ? (
+      {collapsed && author != null && (
         <>
-          {author != null && <Avatar src={avatarUrl} login={author} size="sm" />}
-          {author != null && <span className={styles.author}>{author}</span>}
-          {snippet ? (
-            <span className={styles.snippet} data-testid="thread-snippet" title={snippet}>
-              {snippet}
-            </span>
-          ) : (
-            <span className={styles.spacer} />
-          )}
-          {count && <Badge className={styles.pill}>{count}</Badge>}
-          {resolvedBadge}
-        </>
-      ) : (
-        <>
-          <span className={styles.spacer} />
-          {resolvedBadge}
+          <Avatar src={avatarUrl} login={author} size="sm" />
+          <span className={styles.author}>{author}</span>
         </>
       )}
+      {collapsed && snippet ? (
+        <span className={styles.snippet} data-testid="thread-snippet" title={snippet}>
+          {snippet}
+        </span>
+      ) : (
+        <span className={styles.spacer} />
+      )}
+      {collapsed && count && <Badge className={styles.pill}>{count}</Badge>}
+      {resolvedBadge}
     </button>
   );
 }
