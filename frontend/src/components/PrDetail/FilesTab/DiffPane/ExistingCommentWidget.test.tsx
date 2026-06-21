@@ -38,6 +38,44 @@ describe('ExistingCommentWidget', () => {
     expect(within(cards[1]).getByText('prpande')).toBeInTheDocument();
   });
 
+  it('renders inline comment cards at comfortable density (Overview parity)', () => {
+    render(<ExistingCommentWidget threads={[thread()]} />);
+    const cards = screen.getAllByTestId('inline-comment-card');
+    expect(cards).toHaveLength(2);
+    for (const card of cards) {
+      expect(card).toHaveAttribute('data-density', 'comfortable');
+    }
+  });
+
+  it('renders the optimistic comment card at comfortable density', () => {
+    render(
+      <ExistingCommentWidget
+        threads={[thread()]}
+        replyContext={{
+          prRef: { owner: 'o', repo: 'r', number: 1 },
+          prState: 'open',
+          draftReplies: [],
+          registerOpenComposer: () => () => {},
+          onReplyComposerClose: () => {},
+          optimisticByThread: {
+            t1: [
+              {
+                clientId: 'opt1',
+                threadId: 't1',
+                body: 'optimistic',
+                author: 'amelia.cho',
+                createdAt: '2026-05-18T00:00:00Z',
+                postedCommentId: 999,
+              },
+            ],
+          },
+        }}
+      />,
+    );
+    const optimistic = screen.getByTestId('inline-comment-card-optimistic');
+    expect(optimistic).toHaveAttribute('data-density', 'comfortable');
+  });
+
   it('shows a Resolved tag on resolved threads', () => {
     render(<ExistingCommentWidget threads={[thread({ isResolved: true })]} />);
     expect(screen.getByLabelText('Resolved thread')).toBeInTheDocument();

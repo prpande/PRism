@@ -115,7 +115,7 @@ function ThreadView({
           avatarUrl={comment.avatarUrl}
           createdAt={comment.createdAt}
           body={comment.body}
-          density="compact"
+          density="comfortable"
           data-testid="inline-comment-card"
           bandEnd={
             thread.isResolved && i === 0 ? (
@@ -131,7 +131,7 @@ function ThreadView({
           author={o.author}
           createdAt={o.createdAt}
           body={o.body}
-          density="compact"
+          density="comfortable"
           className="comment-card--posting"
           data-testid="inline-comment-card-optimistic"
         />
