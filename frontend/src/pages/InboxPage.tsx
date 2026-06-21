@@ -22,7 +22,12 @@ import { NoFilterMatches } from '../components/Inbox/filters/NoFilterMatches';
 import type { FilterBarState } from '../components/Inbox/filters/FilterBar';
 import styles from './InboxPage.module.css';
 
-export function InboxPage() {
+// `active` reflects whether the keep-alive host (InboxHost) currently shows this
+// page (#563). It gates the page's Modal-based dialogs so a hidden-but-mounted
+// Inbox does not hold live document-level keydown handlers (Modal registers
+// Escape/Tab on `document` keyed on `open`, not on CSS visibility). Defaults true
+// so direct mounts (tests, any non-host caller) behave exactly as before.
+export function InboxPage({ active = true }: { active?: boolean } = {}) {
   const { data, error, isLoading, reload } = useInbox();
   // #450 — an inbox-updated frame now silently auto-refreshes (debounced) instead of
   // surfacing the old reload banner. `announce` carries the screen-reader signal the
@@ -43,7 +48,10 @@ export function InboxPage() {
   // becomes false and the overlay unmounts.
   const [onboardingDismissed, setOnboardingDismissed] = useState(false);
   const showOnboarding =
-    !onboardingDismissed && preferences != null && preferences.ui.onboardingSeen === false;
+    active &&
+    !onboardingDismissed &&
+    preferences != null &&
+    preferences.ui.onboardingSeen === false;
   const onboarding = showOnboarding ? (
     <AiOnboardingDialog onDismiss={() => setOnboardingDismissed(true)} />
   ) : null;
@@ -108,7 +116,7 @@ export function InboxPage() {
   if (error && !data)
     return (
       <ErrorModal
-        open
+        open={active}
         title="Couldn't load inbox"
         actions={
           <button

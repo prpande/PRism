@@ -219,6 +219,30 @@ describe('InboxPage', () => {
     expect(screen.getByRole('button', { name: /try again/i })).toBeInTheDocument();
   });
 
+  it('suppresses the load-error modal while the keep-alive host is inactive — #563', () => {
+    // A hidden, errored Inbox must not keep the ErrorModal open: Modal would hold
+    // live document Escape/Tab handlers over the PR in view. active=false → the
+    // modal renders closed (no handlers); active=true restores it.
+    setHooks({ data: null, isLoading: false, error: new Error('boom') });
+    const { rerender } = render(
+      <MemoryRouter initialEntries={['/']}>
+        <OpenTabsProvider>
+          <InboxPage active={false} />
+        </OpenTabsProvider>
+      </MemoryRouter>,
+    );
+    expect(screen.queryByText(/couldn.t load inbox/i)).not.toBeInTheDocument();
+
+    rerender(
+      <MemoryRouter initialEntries={['/']}>
+        <OpenTabsProvider>
+          <InboxPage active={true} />
+        </OpenTabsProvider>
+      </MemoryRouter>,
+    );
+    expect(screen.getByText(/couldn.t load inbox/i)).toBeInTheDocument();
+  });
+
   it('renders sections + rows when data is present', () => {
     setHooks({ data: sampleData });
     renderPage();
@@ -607,6 +631,23 @@ describe('InboxPage — onboarding overlay gate (#485)', () => {
       </MemoryRouter>,
     );
     expect(screen.getByTestId('onboarding-dialog')).toBeInTheDocument();
+  });
+
+  it('does NOT mount the overlay when the keep-alive host is inactive (hidden) — #563', () => {
+    // The host renders InboxPage hidden (display:none) when off `/`. display:none
+    // does NOT unmount the dialog, and Modal keeps its Escape/Tab handlers on
+    // `document` while `open`, so gating on `active` is what prevents a hidden
+    // Inbox from hijacking keys over a PR. active=false must drop the dialog.
+    prefs.onboardingSeen = false;
+    applyPrefs();
+    render(
+      <MemoryRouter initialEntries={['/']}>
+        <OpenTabsProvider>
+          <InboxPage active={false} />
+        </OpenTabsProvider>
+      </MemoryRouter>,
+    );
+    expect(screen.queryByTestId('onboarding-dialog')).not.toBeInTheDocument();
   });
 
   it('does NOT mount the overlay when onboardingSeen is true', () => {
