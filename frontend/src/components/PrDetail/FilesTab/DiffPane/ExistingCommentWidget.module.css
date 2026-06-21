@@ -16,18 +16,20 @@
   width: min(80%, var(--pr-detail-content-max));
   margin-inline: auto;
 }
-.commentThread {
+/* Header row (toggle + summary/pill) on top, comment body below — both span the
+   centred column so the body stays centred and the toggle sits at the header's
+   left edge in either state. `.body` (the expanded comment cards / affordance /
+   composer) shares the same column layout, hence one rule. */
+.commentThread,
+.body {
   display: flex;
   flex-direction: column;
   gap: var(--s-2);
 }
-.commentThreadResolved {
-  opacity: 0.72;
-  transition: opacity var(--t-fast);
-}
-.commentThreadResolved:hover {
-  opacity: 1;
-}
+/* Resolved cue is the green `chip chip-success` "Resolved" pill in
+   ThreadDisclosureHeader (shown in both collapsed and expanded states). There's
+   no opacity dim — it would only mute that pill. An expanded resolved thread
+   shows the plain cards with no hover, per "no hover on an open thread card". */
 .commentThreadActions {
   display: flex;
 }
