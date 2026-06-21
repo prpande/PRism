@@ -42,17 +42,19 @@ Code stays monospace via the **global** `code, pre, .mono { font-family: var(--f
 - **`.body img { max-width: 100% }`** is currently compact-only (`CommentCard.module.css:64-66`) and would be lost. Move it to a density-independent global `.markdown-body img { max-width: 100% }` (`tokens.css`) so wide images can't blow out the column in any context.
 - **`overflow-x: auto` on `.body`** is currently compact-only. Make it **unconditional** on the base `.body` rule so wide code/tables still scroll inside the card under comfortable density. `auto` only shows a scrollbar on actual overflow, so it is inert on Overview when content fits — verify in the Overview regression pass.
 
-### 3. Bounded reading-width measure (#522)
-On the same diff-context wrapper (change 1), add `max-width: calc(70ch * var(--content-scale))`, left-anchored:
+### 3. Centered, capped reading-width column (#522)
+On the same diff-context wrapper (change 1), set `width: min(80%, var(--pr-detail-content-max))` with `margin-inline: auto`.
 
-- **70ch**, reusing the prose measure already in the codebase (`PrHeader.module.css:27`) rather than inventing a new literal — within the 45–90ch readable range.
-- **`* var(--content-scale)`** so the column tracks the #135 content-scale control. A bare `ch` cap is anchored to the unscaled element `font-size`, but the markdown text is scaled by `--content-scale` (`.markdown-body`, `tokens.css:420`); at `xl` (1.4) a fixed cap would wrap at an effective ~50ch — too tight. Scaling the cap keeps the character measure constant across scales. Matches how `AiHunkAnnotation.module.css:21` expresses scale-aware sizing.
-- Bounding the **wrapper** (not each card) means the stacked cards, the reply affordance (`width:100%`), and the composer all share one column and stay aligned — fixing #522's empty band without the composer-wider-than-cards misalignment a card-level cap would cause.
-- The cap is an **upper** bound: in a narrow split-view pane the wrapper simply takes the available width. `white-space: pre-wrap` stays, so intentional breaks survive (GitHub-parity); the fixed-column comment's right gap collapses to a normal ragged edge. Trade-off: a narrower column means wide code fences scroll-in-card sooner than at full pane width — acceptable per #522's goal, confirmed in live validation.
+**Design revision (post-#470).** The original approach here was `max-width: calc(70ch * var(--content-scale))`, left-anchored — a bounded measure derived from `PrHeader`. Mid-flight, **#470 shipped** (`41cc6b72`), changing the PR-detail Overview **and** Hotspots columns from a fixed `max-width: 920px` to a **centered, fluid column with a shared readability cap**: `width: min(80%, var(--pr-detail-content-max))` (`--pr-detail-content-max: 1280px`, `tokens.css`). Because Overview's comment cards live inside that column, "match Overview" — #522's whole point — now means *match #470's treatment*, not the pre-#470 920px one. The 70ch left-anchored bound became the outlier (a ~603px left-hugging box beside a 1280px-capped centered Overview). Per the owner's live review, the column is now widened and centered to adopt #470's house idiom:
+
+- **`min(80%, var(--pr-detail-content-max))`** — reuses #470's shared token (no new literal). The 80% governs the side-gutter at laptop widths; the `1280px` cap takes over from ~1600px up. `width` (not `max-width`) so the percentage holds an intentional gutter below the cap instead of stretching edge-to-edge.
+- **`margin-inline: auto`** centers the column. The 80% resolves against the full diff-pane width: the wrapper's `.diffStickyViewport` ancestor is pane-wide via the comment row's `colSpan`, identical in Unified and Split, so one rule covers both modes.
+- The `--content-scale` factor is **dropped**: #470's cap is a fixed px ceiling (markdown prose still scales via `--content-scale` font-size), so the diff column matches Overview/Hotspots exactly rather than re-introducing a per-surface scale term.
+- Bounding the **wrapper** (not each card) still means the stacked cards, the reply affordance (`width:100%`), and the per-thread reply composer share one centered column and stay aligned. `white-space: pre-wrap` stays, so intentional breaks survive (GitHub-parity). Trade-off unchanged: a sub-pane-width column means wide code fences scroll-in-card sooner than at full pane width — acceptable per #522's goal, confirmed in live validation.
 
 ## Components & boundaries
 
-- **`ExistingCommentWidget.module.css`** — the diff-context home for both the sans reset and the bounded `calc(70ch * var(--content-scale))` measure on `.commentWidget`. Diff-only by construction, so Overview is untouched.
+- **`ExistingCommentWidget.module.css`** — the diff-context home for both the sans reset and the centered `width: min(80%, var(--pr-detail-content-max))` + `margin-inline: auto` column on `.commentWidget` (adopts #470's shared token). Diff-only by construction, so Overview is untouched.
 - **`ExistingCommentWidget.tsx`** — flips `density="compact"` → `"comfortable"` on both the real and optimistic `CommentCard`s.
 - **`CommentCard.module.css`** — make `overflow-x: auto` on `.body` unconditional (was compact-only); remove the compact-only `.body img` rule (moved to global). Keep `.body code` mono.
 - **`tokens.css`** — add `.markdown-body img { max-width: 100% }` (density-independent image cap).
@@ -61,7 +63,7 @@ On the same diff-context wrapper (change 1), add `max-width: calc(70ch * var(--c
 
 ## Open questions (resolve in planning/implementation)
 
-- **O3 — exact `ch` value.** 70ch is the starting target (reused from `PrHeader`); finalize against live screenshots (both themes, Unified + Split) during the live-validation pass before the PR is opened. O1 (overflow-x retention) and O2 (where the reset/measure live) are now resolved in the Design above.
+- **O3 — column width (RESOLVED post-#470).** Originally "finalize the exact `ch` value." Superseded: the column now adopts #470's `min(80%, var(--pr-detail-content-max))` centered idiom (see Design revision in §3), validated live (both themes, Unified + Split) at 80% = pane-width-fluid, 1280px cap, centered. O1 (overflow-x retention) and O2 (where the reset/measure live) were resolved in the Design above.
 
 ## Testing & verification
 
@@ -70,8 +72,8 @@ On the same diff-context wrapper (change 1), add `max-width: calc(70ch * var(--c
 - **Live validation (required before "done"):** run the app against the real token store, open a PR with inline review comments that include (a) a fixed-column-wrapped prose comment and (b) a comment with a code fence / inline code. Capture **before/after** screenshots in **both themes** and **both Unified and Split** modes. Confirm each:
   - Prose renders in sans; inline + fenced code stays mono.
   - No empty right band; no page-level horizontal scrollbar (coordinate with #514).
-  - Wide code/tables/images still scroll/cap inside the card; confirm the narrower 70ch column doesn't make common code fences scroll that previously fit.
-  - **Left-anchor alignment:** the bounded card's left edge aligns with the code column, not stuck to the sticky-viewport left edge — checked in wide Unified mode (where `.diffStickyViewport` is active) and in Split.
+  - Wide code/tables/images still scroll/cap inside the card; confirm the 80% column doesn't make common code fences scroll that previously fit.
+  - **Centering + width:** the wrapper is `min(80%, 1280px)` of the full diff pane with equal side gutters (centered via `margin-inline: auto`), identical in Unified and Split — verified by measuring left/right gap equality against the `.diffStickyViewport` ancestor. Matches Overview/Hotspots (#470).
   - **Composer/affordance alignment:** the reply affordance and `ReplyComposer` share the bounded column width with the cards above them (no wider-than-cards row).
   - **Resolved-thread treatment:** a multi-comment resolved thread's `opacity: 0.72` dimming still reads correctly at comfortable density in both themes (it's heavier now); hover-to-restore behavior intact.
   - **Content-scale:** sanity-check the column at a non-default `--content-scale` (e.g. `xl`) — the measure scales and prose isn't over-tight.

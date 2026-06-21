@@ -5,12 +5,16 @@
      global `code, pre, .mono` rule. This also gives the `ch` measure below a
      sans context. */
   font-family: var(--font-sans);
-  /* #522 — bound the inline-comment column to a readable measure, left-anchored.
-     70ch reuses PrHeader's prose measure; scaling by --content-scale keeps the
-     character measure constant as the #135 content-scale control changes text
-     size (the markdown body is content-scale-scaled). Upper bound only — a
-     narrow split pane simply takes the available width. */
-  max-width: calc(70ch * var(--content-scale));
+  /* #522 — centred, capped reading column for the inline-comment thread. Adopts
+     #470's PR-detail house idiom (Overview + Hotspots) so the diff cards match
+     Overview's *current* width treatment, not its pre-#470 920px one. The 80%
+     resolves against the full diff-pane width (the .diffStickyViewport ancestor
+     is pane-wide via colSpan, identical in Unified + Split); the shared
+     --pr-detail-content-max cap keeps line length readable from ~1600px up.
+     `width` (not max-width) so the percentage holds an intentional gutter below
+     the cap instead of stretching edge-to-edge; margin-inline:auto centres it. */
+  width: min(80%, var(--pr-detail-content-max));
+  margin-inline: auto;
 }
 .commentThread {
   display: flex;
