@@ -54,15 +54,13 @@
   font-size: var(--text-sm);
   color: var(--text-1);
   line-height: 1.55;
+  /* Wide content (code blocks, tables) scrolls inside the card rather than
+     clipping into the fixed-width diff gutter. `auto` only shows a scrollbar
+     on actual overflow, so it is inert on Overview when content fits. */
+  overflow-x: auto;
 }
 .card[data-density='compact'] .body {
   padding: var(--s-2) var(--s-3);
-  /* Wide content (code blocks, tables) scrolls inside the card instead of
-     clipping into the fixed-width diff gutter. */
-  overflow-x: auto;
-}
-.card[data-density='compact'] .body img {
-  max-width: 100%;
 }
 
 /* Prose rules ported verbatim from PrRootConversation.module.css so Overview's
