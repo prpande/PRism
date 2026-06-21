@@ -14,6 +14,8 @@ public sealed class ConfigStore : IConfigStore, IDisposable
     private readonly string _path;
     private readonly ILogger _log;
     private readonly SemaphoreSlim _gate = new(1, 1);
+    // Debounce window for FileSystemWatcher.Changed bursts (an editor save fires several events).
+    private const int FileChangeDebounceMilliseconds = 100;
     private FileSystemWatcher? _watcher;
     private AppConfig _current = AppConfig.Default;
     // Allowlist + expected-type table for PatchAsync. The bare `theme` / `accent` / `aiPreview`
@@ -613,11 +615,11 @@ public sealed class ConfigStore : IConfigStore, IDisposable
         _ = HandleFileChangedAsync();
     }
 
-    private async Task HandleFileChangedAsync()
+    internal async Task HandleFileChangedAsync()
     {
         try
         {
-            await Task.Delay(100).ConfigureAwait(false); // debounce save flurry
+            await Task.Delay(FileChangeDebounceMilliseconds).ConfigureAwait(false); // debounce save flurry
             await _gate.WaitAsync(CancellationToken.None).ConfigureAwait(false);
             try
             {
@@ -629,7 +631,12 @@ public sealed class ConfigStore : IConfigStore, IDisposable
             }
             RaiseChanged();
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException or ObjectDisposedException)
+        // OperationCanceledException is added because RaiseChanged rethrows a subscriber-thrown OCE
+        // (sibling parity with ReviewEventBus). This path is fire-and-forget with CancellationToken.None
+        // — there is no real cancellation in play — so a subscriber OCE is absorbed here rather than
+        // leaked as an unobserved task exception. Synchronous callers still see OCE propagate.
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException
+            or JsonException or ObjectDisposedException or OperationCanceledException)
         {
             LastLoadError = ex;
         }

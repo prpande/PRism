@@ -71,6 +71,25 @@ public sealed class ConfigStoreChangedFaultIsolationTests
             "cooperative cancellation is not swallowed by fault isolation");
     }
 
+    [Fact]
+    public async Task HandleFileChangedAsync_absorbs_a_subscriber_OperationCanceledException_into_LastLoadError()
+    {
+        using var dir = new TempDataDir();
+        using var store = new ConfigStore(dir.Path);
+
+        store.Changed += (_, _) => throw new OperationCanceledException();
+
+        // Invoke the fire-and-forget watcher path directly (internal via InternalsVisibleTo) so the
+        // assertion is deterministic — no FileSystemWatcher race. If the OCE were not absorbed it would
+        // escape the fire-and-forget task as an unobserved exception; awaiting it here surfaces the leak.
+        Func<Task> act = () => store.HandleFileChangedAsync();
+
+        await act.Should().NotThrowAsync(
+            "a subscriber OCE on the no-cancellation watcher path must be absorbed, not leaked");
+        store.LastLoadError.Should().BeOfType<OperationCanceledException>(
+            "the absorbed subscriber fault is recorded in LastLoadError");
+    }
+
     private sealed class CapturingLogger : ILogger<ConfigStore>
     {
         public List<(LogLevel Level, EventId EventId, Exception? Exception, string Message)> Entries { get; } = new();
