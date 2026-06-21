@@ -28,7 +28,7 @@ CLAUDE.md            ← Claude Code entry point + Claude-only workflows (links 
 
 | File | Purpose |
 |------|---------|
-| `v2-ai-effort.md` | **Read first for v2 AI work** — branching model (base=V2), shipped timeline, substrate facts, cross-cutting gotchas; map to the backlog/epic |
+| `v2-ai-effort.md` | **Read first for AI work** — the AI seams/effort, where work lands (now `main`; `V2` branch retired), shipped timeline, substrate facts, cross-cutting gotchas; map to the backlog/epic |
 | `repo-overview.md` | Top-level layout, projects, doc map pointer |
 | `development-process.md` | TDD, commands / publish targets, pre-push checklist |
 | `architectural-invariants.md` | Non-negotiable product/architecture decisions |

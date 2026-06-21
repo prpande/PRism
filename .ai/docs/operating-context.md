@@ -2,7 +2,7 @@
 
 - Most edits at this stage are feature code, polish, and per-slice design/plan markdown under `docs/specs/` and `docs/plans/`. When a spec change has cross-cutting consequences, search the corpus for the affected term — many spec sections reference each other and `docs/spec/00-verification-notes.md` cross-links throughout.
 - `docs/spec-review.md` is transient working notes from adversarial review passes; findings get absorbed into the spec proper. Don't edit it as if it were canonical.
-- `.github/workflows/` includes automation that mentions `@claude` on PRs — opening a PR may trigger automated Claude code review.
+- Claude code review is **opt-in, not automatic.** The `claude.yml` workflow fires only when an issue/PR comment (or an issue body/title) contains `@claude` — opening or pushing a PR does **not** trigger it. To request a bot review, comment `@claude review` on the PR.
 
 ## Spec and plan locations
 
