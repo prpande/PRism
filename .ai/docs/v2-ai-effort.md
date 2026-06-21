@@ -1,41 +1,41 @@
-# V2 AI Effort — Orientation for Any Agent/Machine
+# v2 AI Effort — Orientation for Any Agent/Machine
 
-> **Read this first if you're picking up v2 AI work.** It's a map, not a spec. The
+> **Read this first if you're picking up AI work.** It's a map, not a spec. The
 > authoritative detail lives in the backlog, the epic, and per-slice docs (linked below);
 > on any conflict, **the backlog `.md` wins**. This file captures the cross-cutting context
-> and the timeline that those sources don't.
+> and the timeline that those sources don't. ("v2" here = the **AI-augmented product
+> generation**, not a branch — the old `V2` branch is gone; see § 2.)
 
-## 1. What V2 is
+## 1. What the AI effort is
 
 PRism's AI features were scaffolded from the start as **9 capability-gated seams**
 (`IPrSummarizer`, `IFileFocusRanker`, `IHunkAnnotator`, `IDraftSuggester`, `IPreSubmitValidator`,
 `IComposerAssistant`, `IDraftReconciliator`, `IInboxItemEnricher`, `IInboxRanker`) with
-Noop + Placeholder implementations. **V2 lights them up** by swapping Placeholder for a real
-provider behind a tri-state gate — one seam (one class + a prompt + tests) at a time.
+Noop + Placeholder implementations. The effort **lights them up** by swapping Placeholder for a
+real provider behind a tri-state gate — one seam (one class + a prompt + tests) at a time.
 
 - **Substrate:** the **Claude Code CLI** (shell out to `claude -p --output-format json`),
   provider-agnostic behind `ILlmProvider`. Multi-provider by construction (Ollama/OpenAI admitted
   as new impls); a banned-symbol analyzer keeps provider specifics out of features.
 - **Tri-state `AiMode {Off, Preview, Live}`** — Off = no AI; Preview = labeled sample content
   (zero egress); Live = real provider, probed, consent-gated. **Default is Preview** (PR #283).
-- **Scope:** v2 = **Tier 1 (read)** + **Tier 2 (authoring)** seams. **PR chat with repo access is
-  v3** — it's net-new and drags in MCP host + repo clone + streaming + the heaviest privacy cost.
-  v2 needs only the **one-shot** CLI path (no streaming/MCP/`--add-dir`).
+- **Scope:** **Tier 1 (read)** + **Tier 2 (authoring)** seams. **PR chat with repo access is
+  later (v3)** — it's net-new and drags in MCP host + repo clone + streaming + the heaviest privacy
+  cost. The shipped seams need only the **one-shot** CLI path (no streaming/MCP/`--add-dir`).
 
-## 2. Branching & rollout — the #1 gotcha
+## 2. Where AI work lands (formerly the #1 gotcha)
 
-**`V2` is a long-lived branch forked from `main` that acts as the "AI-development main".**
+**AI work now lands on `main`. There is a single long-lived branch.**
 
-- **Every v2/AI PR's base MUST be `V2`, never `main`.** Feature branch off `V2` → PR → merge back to `V2`.
-- **`main` keeps shipping v1 to customers with *no* v2 pieces.** The AI substrate never reaches
-  `main` through day-to-day work.
-- **`main` → `V2` syncs** happen at a regular cadence (keeps V2 current with v1 hotfixes).
-- **`V2` → `main` happens only at a deliberate cutover**, when the v2 AI set is ready to ship.
-- ⚠️ **Automation default is wrong here:** `pr-autopilot` auto-detects PR base from `origin/HEAD`
-  (= `main`). **Always override base to `V2`.** (This once opened a PR that would have shipped the
-  dark AI substrate to customers; corrected by re-pointing to `V2`.)
-- **One fresh worktree + feature branch per increment**, off the latest `V2`. No single shared
+- The old **`V2`** branch (the "AI-development main" that kept the dark AI substrate off customer
+  `main`) was **merged into `main` and deleted** at the deliberate cutover (PR #552, 2026-06). It
+  no longer exists on the remote.
+- **Base every PR on `main`** — feature branch off the latest `main` → PR → merge back to `main`.
+  `pr-autopilot`'s auto-detected base (`origin/HEAD` = `main`) is now **correct**; no base override.
+- **One fresh worktree + feature branch per increment**, off the latest `main`. No single shared
   long-lived feature branch.
+- Historical note: PRs and design docs from before the cutover say "base = `V2`". That was correct
+  *then*; ignore it now.
 
 ## 3. Where the authoritative detail lives
 
@@ -51,12 +51,14 @@ provider behind a tri-state gate — one seam (one class + a prompt + tests) at 
 **Tier labels are words** (`ai:foundation`/`ai:core`/`ai:extended`), deliberately *not* `p0/p1/p2`,
 to avoid collision with the severity labels `priority:p1`/`priority:p2` (an orthogonal axis).
 
-## 4. What's shipped on `V2` so far (timeline)
+## 4. What's shipped so far (timeline)
+
+All of the below is now on `main` (it was built on the former `V2` branch and merged at the cutover).
 
 | Increment | What landed | PR(s) |
 |---|---|---|
-| **P0-PR1** — LLM provider substrate | `PRism.AI.ClaudeCode`: `ILlmProvider`/`ClaudeCodeLlmProvider` (one-shot), availability probe + identity assert, `PromptSanitizer`, `ITokenUsageTracker` — all dark | #218 |
-| **P0-PR2** — Capability model (dark) | binary→tri-state `AiSeamSelector`, per-flag `AiCapabilities` + `AiCapabilityResolver`, `ui.ai.mode` config + migration, `/api/capabilities` rewrite | #242, #250 |
+| **P0-PR1** — LLM provider substrate | `PRism.AI.ClaudeCode`: `ILlmProvider`/`ClaudeCodeLlmProvider` (one-shot), availability probe + identity assert, `PromptSanitizer`, `ITokenUsageTracker` | #218 |
+| **P0-PR2** — Capability model | binary→tri-state `AiSeamSelector`, per-flag `AiCapabilities` + `AiCapabilityResolver`, `ui.ai.mode` config + migration, `/api/capabilities` rewrite | #242, #250 |
 | **P0-PR3a** — FE mode migration | FE `aiPreview`→tri-state `aiMode`; Off\|Preview segmented control; define-once `SampleBadge` | #293 |
 | **P1 First-Light** — first real seam | live `ClaudeCodeSummarizer` (diff-grounded, PR-nature category), D111 spend gate, per-provider **egress consent** (folded into the Live predicate, backend-enforced), per-feature enablement seam, `JsonlAiInteractionLog` | #388 |
 | **P1b-1** — base-rebase freshness | summary cache re-keyed on `(prRef, baseSha, headSha)`, base-change producer + eviction, R7 CAS, Live-only "Out of date" chip + Regenerate | #458 |
@@ -83,20 +85,19 @@ epic. P0-1b streaming + P0-4 clone + P0-7 MCP are the chat (P2-2) prerequisites.
 
 ## 6. Cross-cutting conventions & gotchas (these bite every increment)
 
-- **Backend build/test:** every `dotnet build`/`dotnet test` needs `-p:NuGetAudit=false` (sandbox
-  audit feed is blocked → NU1900). CI-faithful test run: `dotnet test --settings .runsettings`
-  (excludes `Category=Integration` live-GitHub tests). Run ONE build/test at a time, foreground.
-- **The `rtk` proxy masks prettier/lint/vitest** — it can report "clean"/"pass" when they fail.
-  **Verify via the direct binary:** `node ./node_modules/prettier/bin/prettier.cjs --check .`,
-  `node ./node_modules/vitest/vitest.mjs run` (never `npx vitest`).
+The shared Windows-dev / Linux-CI false-green traps (rtk proxy masking lint/format, `npx vitest`,
+`tsc --noEmit` being vacuous, Windows `npm install` lockfile drift) and the CI-faithful **pre-push
+checklist** live in [`development-process.md`](development-process.md) § Tooling caveats / § Pre-push
+checklist — run that verbatim before every push. The AI/sandbox-specific additions:
+
+- **Backend build/test needs `-p:NuGetAudit=false`** (the sandbox audit feed is blocked → NU1900).
+  CI-faithful test run is `dotnet test --settings .runsettings` (excludes `Category=Integration`).
+  Run ONE build/test at a time, foreground.
 - **Two FE test trees:** co-located `src/**/*.test.tsx` **and** the legacy `frontend/__tests__/`
-  mirror — update **both**. A migration that enumerates only one leaves the other stale.
-- **`npm test` strips types** — also run `npm run build` / `tsc -b`, especially after shared-type
-  changes or dep bumps, or test-file type errors slip to CI.
-- **A clean merge can hide an interface break** — after a `main`→`V2` sync, *compile* the merged tree
-  (a new `IConfigStore`/seam implementer on the incoming side won't conflict-mark but breaks the build).
-- **CI gate = the repo's pre-push checklist** (FE lint/build/test + Release `dotnet build` +
-  `dotnet test --settings .runsettings`). Run it verbatim before pushing.
+  mirror (see [`frontend-conventions.md`](frontend-conventions.md) § Test layout). A migration that
+  enumerates only one leaves the other stale.
+- **A clean merge can hide an interface break** — after any `main` sync, *compile* the merged tree:
+  a new `IConfigStore`/seam implementer on the incoming side won't conflict-mark but breaks the build.
 - Known intermittent flakes (pass in isolation): **#280** (SSE client-abort), **#389** (files-tree
   baseline). File a tracking issue when a new flake surfaces; don't just re-run.
 
@@ -120,5 +121,5 @@ epic. P0-1b streaming + P0-4 clone + P0-7 MCP are the chat (P2-2) prerequisites.
 1. Open **epic #423** → pick a 🟢 root in Foundations/Core (or follow daily-use signal).
 2. `brainstorming` → design doc in `docs/specs/` → `writing-plans` → plan in `docs/plans/`
    (run `ce-doc-review` on each), file refined child issues linked on the root.
-3. Fresh worktree + feature branch off the latest `V2`. Implement (TDD). `/simplify`.
-4. `pr-autopilot` **with base overridden to `V2`**. Flip the epic line when it ships.
+3. Fresh worktree + feature branch off the latest `main`. Implement (TDD). `/simplify`.
+4. `pr-autopilot` (base `main` — the default is now correct). Flip the epic line when it ships.
