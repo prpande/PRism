@@ -53,6 +53,9 @@ internal sealed class FakeReviewBackingStore
     // PR open/closed/merged state. Mutated by POST /test/set-pr-state
     // to drive the closed/merged bulk-discard surface (PR5: DiscardAllDraftsButton mounts only when
     // the PR is no longer open). Surfaced by FakePrReader.GetPrDetailAsync + PollActivePrAsync.
+    // The property and the enum type share the name `PrState` — this compiles by C#'s
+    // "Color Color" rule (§7.6.4.1): `PrState ==` binds to the property, `PrState.Closed`
+    // binds to the type. If you rename the property, update both sides.
     public PrState PrState { get; private set; }
     public bool IsClosed => PrState == PrState.Closed;
     public bool IsMerged => PrState == PrState.Merged;
