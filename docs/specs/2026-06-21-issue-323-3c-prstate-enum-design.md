@@ -19,7 +19,7 @@ inconsistent casing, compared via fragile case-insensitive ordinal string equali
 
 | Representation | Casing | Where | Comparisons |
 |---|---|---|---|
-| `ActivePrPollSnapshot.PrState` | lowercase `open/closed/merged` | poller snapshot (`PRism.Core.Contracts/ActivePrPollSnapshot.cs:7`) | `ActivePrPoller.cs:136,148-149` (`OrdinalIgnoreCase`) |
+| `ActivePrPollSnapshot.PrState` | lowercase `open/closed/merged` | poller snapshot (`PRism.Core.Contracts/ActivePrPollSnapshot.cs:7`) | `ActivePrPoller.cs:135-136,148-149` (`OrdinalIgnoreCase`) |
 | `Pr.State` | **uppercase** `OPEN/CLOSED/MERGED` | raw GraphQL value (`PRism.Core.Contracts/Pr.cs:14`) | derived into bools at `GitHubPrParser.cs:134,139` |
 | `FakeReviewBackingStore.PrState` | uppercase | test/e2e fake (`PRism.Web/TestHooks/FakeReviewBackingStore.cs:56`) | `IsClosed`/`IsMerged` at `:57-58` |
 
@@ -49,9 +49,15 @@ are all **in-memory `ConcurrentDictionary`** instances, reconstructed from GitHu
 is therefore **no on-disk backward-compatibility concern** — no old JSON file holds an uppercase
 `"OPEN"` that a kebab-case enum read could fail on.
 
-**The single observable wire delta:** the dead `pr.state` JSON value flips `"OPEN"` → `"open"`
-(and `CLOSED`→`closed`). Read by no one. Documented in the PR as the sole wire change with the
-grep evidence.
+**The observable wire deltas (two, both unread):**
+1. The dead `pr.state` JSON value on `PrDetailDto.Pr` flips `"OPEN"` → `"open"` (and `CLOSED`→`closed`).
+   Zero FE consumers (grep-verified).
+2. The `/test/set-pr-state` OK response body — `TestEndpoints.cs:365` returns `state = store.PrState` —
+   flips the same way once `FakeReviewBackingStore.PrState` is the enum. Its only caller
+   (`s5-submit.ts:159` `setPrState`) returns `void` and discards the body, so the flip is unobserved.
+
+Both are read by no one; both are documented in the PR with the grep evidence so the wire-delta
+accounting is complete (not just `pr.state`).
 
 ## Design
 
@@ -100,8 +106,11 @@ Unknown/null `rawState` with `merged == false` → `Open`. This preserves today'
 
 ### 3. Producers converge on the parser
 
-- **REST** — `GitHubReviewService.PollActivePrAsync` (`:323-331`):
+- **REST** — `GitHubReviewService.PollActivePrAsync` (method at `:303`; snapshot construction `:324-330`, the
+  `PrState` assignment at `:328`):
   `PrState: PrStates.FromGitHub(pull.State, pull.Merged)` (was `pull.Merged ? "merged" : pull.State`).
+  `pull` is the raw `PollPullMeta` — its `State` stays a `string` (raw REST value); the enum conversion
+  happens only here, at snapshot construction, so `PollPullMeta` needs no type change.
 - **GraphQL** — `GitHubPrParser.ParsePr` (`:107-166`):
   ```csharp
   var prState = PrStates.FromGitHub(state, mergedAt.HasValue);
@@ -135,7 +144,10 @@ Unknown/null `rawState` with `merged == false` → `Open`. This preserves today'
   `s5-submit.ts:159` are unchanged), parsing case-insensitively (`OPEN`/`open` both accepted) into
   the enum; unknown still throws → 400 (existing behavior at `TestEndpoints.cs:361`).
 - `FakePrReader` returns the enum in both `Pr.State` (`:44`) and `ActivePrPollSnapshot.PrState`
-  (`:176,179`).
+  (`:176,179`). Note the non-scenario fallback at `:176` hard-codes the string `"OPEN"`
+  (`new ActivePrPollSnapshot("", "", "UNKNOWN", "OPEN", 0, 0)`) — it becomes `PrState.Open`. The
+  compiler flags it (CS1503) the moment `ActivePrPollSnapshot.PrState` is retyped; it is one of the
+  ~26 string-literal construction sites below.
 
 ## Testing strategy (TDD)
 
@@ -146,6 +158,20 @@ Unknown/null `rawState` with `merged == false` → `Open`. This preserves today'
 | `GitHubReviewServicePollActivePrTests` (update `:89,104,115`) | `snap.PrState.Should().Be(PrState.Open/Merged/Closed)` (was `.Be("open")`). |
 | `GitHubPrParser` PR-state tests | `State`/`IsMerged`/`IsClosed` consistent for OPEN/CLOSED/MERGED + merged-at-while-closed. |
 | Existing closed/merged e2e (`recently-closed-readonly`, `s5-submit-closed-merged-discard`) | unchanged — backstop that the read-only/discard behavior still works end-to-end. |
+
+**Fixture surface (mechanical, compiler-enforced).** Retyping `Pr.State` and `ActivePrPollSnapshot.PrState`
+breaks every string-literal construction site — ~26 across unit-test helpers, not just the three named
+above: `ActivePrPollerBackoffTests`, `ActivePrPollerSubscriberFaultTests`, `ActivePrCacheTests`,
+`PrDetailLoaderTests`, `PrDetailEndpointsTests`, `PrRefreshEndpointTests`, `SubmitEndpointFakes`, plus the
+`FakePrReader:176` fallback. All are CS1503 compile errors the implementer fixes mechanically; none change
+behavior.
+
+**Behavior-equivalence note (GraphQL bools).** Today's `GitHubPrParser.cs:134,139` derive `IsMerged`/`IsClosed`
+with `StringComparison.Ordinal` (case-sensitive `"MERGED"`/`"CLOSED"`); `FromGitHub` uses `OrdinalIgnoreCase`.
+For real GitHub inputs — GraphQL `PullRequestState` is uppercase-only — the result is identical (the test
+table locks every real case). The enum path is strictly *more* tolerant on malformed lowercase input; this is
+a non-regression, not a faithful bit-for-bit re-expression, and is called out so a future reader doesn't
+assume strict equivalence.
 
 **No frontend test or type changes** — the FE never reads the state string. (Verified per the global
 gotcha that a wire-value change can escape typed FE mocks: here the value is read nowhere, and e2e
@@ -165,13 +191,15 @@ route-mock bodies that include a `state` string remain harmless because nothing 
       on the wire unchanged for the frontend.
 - [ ] The `/test/set-pr-state` request contract is unchanged (string in, case-insensitive parse);
       existing closed/merged e2e specs pass untouched.
-- [ ] The only wire-value change is `pr.state` `OPEN`→`open` on a field with zero FE consumers,
-      documented in the PR.
+- [ ] Both wire-value changes — `pr.state` `OPEN`→`open` on `PrDetailDto.Pr`, and the
+      `/test/set-pr-state` response body's `state` field — are on fields with zero (resp. discarded) FE
+      consumers, both documented in the PR.
 - [ ] Backend build (Release, TreatWarningsAsErrors) and the full test suite are green.
 
 ## Risks & mitigations
 
-- **Dead-field wire flip (`pr.state` OPEN→open).** Mitigation: grep-verified zero FE consumers;
+- **Dead-field wire flips (`pr.state` OPEN→open on `PrDetailDto.Pr`, and the `/test/set-pr-state`
+  response body).** Mitigation: grep-verified zero FE consumers (resp. discarded response body); both
   documented in the PR. No mitigation code needed.
 - **e2e casing.** Mitigation: `SetPrState` keeps string input + case-insensitive parse; e2e specs
   untouched.
