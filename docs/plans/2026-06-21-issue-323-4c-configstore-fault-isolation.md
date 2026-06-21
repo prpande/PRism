@@ -28,7 +28,7 @@
 - Create: `tests/PRism.Core.Tests/Config/ConfigStoreChangedFaultIsolationTests.cs`
 
 **Interfaces:**
-- Consumes: `event EventHandler<ConfigChangedEventArgs>? Changed` (existing); `AppConfig Current`, `Exception? LastLoadError`, `Task InitAsync(CancellationToken)`, `Task PatchAsync(IReadOnlyDictionary<string, object?>, CancellationToken)` (existing); `TempDataDir` (`.Path`) from `PRism.Core.Tests.TestHelpers`.
+- Consumes: `event EventHandler<ConfigChangedEventArgs>? Changed` (existing); `AppConfig Current`, `Exception? LastLoadError`, `Task PatchAsync(IReadOnlyDictionary<string, object?>, CancellationToken)` (existing); `TempDataDir` (`.Path`) from `PRism.Core.Tests.TestHelpers`. (Tests deliberately skip `InitAsync` — see the test-class note — to keep the `FileSystemWatcher` off.)
 - Produces: `ConfigStore(string dataDir, ILogger<ConfigStore>? log = null)` — the second param is optional; all existing one-arg call sites are unaffected. `RaiseChanged()` becomes fault-isolating for ALL four call sites (`PatchAsync`, `SetDefaultAccountLoginAsync`, `RecordAiConsentAsync`, `HandleFileChangedAsync`).
 
 - [ ] **Step 1: Write the failing tests**
@@ -48,6 +48,10 @@ using Xunit;
 
 namespace PRism.Core.Tests.Config;
 
+// These tests deliberately do NOT call InitAsync, so no FileSystemWatcher is started. A live
+// watcher would fire a second, debounced RaiseChanged ~100ms after each PatchAsync disk write —
+// doubling the logged-fault count (test 2's ContainSingle) and racing LastLoadError (test 4).
+// Starting from AppConfig.Default is a sufficient baseline for every assertion here.
 public sealed class ConfigStoreChangedFaultIsolationTests
 {
     [Fact]
@@ -55,7 +59,6 @@ public sealed class ConfigStoreChangedFaultIsolationTests
     {
         using var dir = new TempDataDir();
         using var store = new ConfigStore(dir.Path);
-        await store.InitAsync(CancellationToken.None);
 
         var secondRan = false;
         store.Changed += (_, _) => throw new InvalidOperationException("subscriber boom");
@@ -75,7 +78,6 @@ public sealed class ConfigStoreChangedFaultIsolationTests
         using var dir = new TempDataDir();
         var logger = new CapturingLogger();
         using var store = new ConfigStore(dir.Path, logger);
-        await store.InitAsync(CancellationToken.None);
 
         var boom = new InvalidOperationException("subscriber boom");
         store.Changed += (_, _) => throw boom;
@@ -94,7 +96,6 @@ public sealed class ConfigStoreChangedFaultIsolationTests
     {
         using var dir = new TempDataDir();
         using var store = new ConfigStore(dir.Path);
-        await store.InitAsync(CancellationToken.None);
 
         store.Changed += (_, _) => throw new OperationCanceledException();
 
@@ -256,7 +257,7 @@ Expected: PASS — 3/3. (DI wiring has no dedicated unit test; it is verified by
 
 ```bash
 git add PRism.Core/Config/ConfigStore.cs PRism.Core/ServiceCollectionExtensions.cs tests/PRism.Core.Tests/Config/ConfigStoreChangedFaultIsolationTests.cs
-git commit -m "fix(#323): isolate ConfigStore.Changed subscriber faults + add ILogger seam
+git commit -m "refactor(core): isolate ConfigStore.Changed subscriber faults + add ILogger seam
 
 RaiseChanged now walks GetInvocationList with per-handler try/catch (rethrow OCE,
 log+continue), mirroring ReviewEventBus.Publish. Optional ILogger<ConfigStore>
@@ -274,7 +275,7 @@ real logger. Protects all four RaiseChanged call sites. Refs #323."
 
 **Interfaces:**
 - Consumes: the fault-isolating `RaiseChanged()` from Task 1 (it rethrows `OperationCanceledException`).
-- Produces: `internal async Task HandleFileChangedAsync()` — visibility widened from `private` so the test can invoke the fire-and-forget path deterministically (IVT to `PRism.Core.Tests` already exists). `private const int FileChangeDebounceMilliseconds = 100;`.
+- Produces: `internal async Task HandleFileChangedAsync()` — visibility widened from `private` so the test can invoke the fire-and-forget path deterministically. The FSW-trigger alternative (file-write + `Task.Delay` drain, as in `ConfigStoreMigrationTests`) is deliberately **rejected**: starting the live watcher is the exact flake vector these tests avoid (a debounced reload would fire a second `RaiseChanged`), so direct invocation is the only deterministic seam — which is what the `internal` widening buys. IVT to `PRism.Core.Tests` already exists (precedent: `LockfileManager`'s test seam). `private const int FileChangeDebounceMilliseconds = 100;`.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -286,7 +287,6 @@ Append to `tests/PRism.Core.Tests/Config/ConfigStoreChangedFaultIsolationTests.c
     {
         using var dir = new TempDataDir();
         using var store = new ConfigStore(dir.Path);
-        await store.InitAsync(CancellationToken.None);
 
         store.Changed += (_, _) => throw new OperationCanceledException();
 
@@ -381,7 +381,7 @@ Expected: PASS — 4/4 (the three from Task 1 plus the new watcher-path test).
 
 ```bash
 git add PRism.Core/Config/ConfigStore.cs tests/PRism.Core.Tests/Config/ConfigStoreChangedFaultIsolationTests.cs
-git commit -m "fix(#323): absorb subscriber OCE on the ConfigStore watcher path + name the debounce constant
+git commit -m "refactor(core): absorb subscriber OCE on the ConfigStore watcher path + name the debounce constant
 
 HandleFileChangedAsync now absorbs a subscriber-thrown OperationCanceledException
 (which RaiseChanged rethrows) into LastLoadError instead of leaking it as an
@@ -413,3 +413,7 @@ Run the full pre-push checklist from `.ai/docs/development-process.md`. At minim
 **2. Placeholder scan** — no TBD/TODO; every code step shows complete code; every run step has an exact command + expected result.
 
 **3. Type consistency** — `ConfigStore(string, ILogger<ConfigStore>?)`, `s_subscriberFaulted` (2-arg `Action<ILogger, Exception?>` ← zero-arg `LoggerMessage.Define`), `FileChangeDebounceMilliseconds`, `internal HandleFileChangedAsync`, `EventId(1, "ConfigStoreSubscriberFaulted")` are used identically wherever they appear across both tasks and the tests.
+
+**4. Commit-message format** — both task commits use a bare type/scope (`refactor(core):`) with `Refs #323` only; no `close/fix/resolve #323` adjacency in any commit (the conventional `fix(#N):` scope auto-closes — see [[github-conventional-fix-scope-autocloses]]). The single close trigger is `Closes #323` in the PR body. `#338` is referenced bare.
+
+**5. Test determinism** — all four tests start from `AppConfig.Default` and do not call `InitAsync`, so no `FileSystemWatcher` runs; this removes the debounced-second-dispatch flake vector (scope-guardian round 1) that would otherwise double test 2's log count and race test 4's `LastLoadError`.
