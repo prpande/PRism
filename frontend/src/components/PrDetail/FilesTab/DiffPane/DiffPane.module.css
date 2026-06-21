@@ -222,12 +222,17 @@
   opacity: 1;
 }
 
-/* Embedded comment + composer rows live as colspan-3 (unified) / colspan-4 (split) <tr>s */
+/* Embedded comment + composer rows live as colspan-3 (unified) / colspan-4 (split) <tr>s.
+   The band spans the full diff width and must read as its own region against the
+   code rows. --surface-2 is only ~0.025 L above the code's --surface-1 in dark
+   mode (they look near-identical); --surface-3 opens a real gap in both themes.
+   The collapsed summary card sits a step further out (surface-1 + border) so it
+   still stands clear of this band. */
 .diffCommentRow {
-  background: var(--surface-2);
+  background: var(--surface-3);
 }
 .diffComposerRow {
-  background: var(--surface-2);
+  background: var(--surface-3);
 }
 
 /* Slice 1 — split-mode rules. The previously-no-op `.diff-pane--split`

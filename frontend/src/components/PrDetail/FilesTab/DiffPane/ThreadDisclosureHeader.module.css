@@ -1,0 +1,124 @@
+/* Shared rounded-square toggle frame (matches the card body's radius). The
+   expanded `.toggle` IS this button; the collapsed `.chevronBox` mirrors it as
+   a leading affordance inside the larger summary button. */
+.toggle,
+.chevronBox {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 24px;
+  height: 24px;
+  border-radius: var(--radius-2);
+  border: 1px solid var(--border-1);
+  background: var(--surface-2);
+  color: var(--text-2);
+}
+
+/* Expanded header row: small toggle on the left, resolved pill on the right
+   (pushed there by .spacer), cards below. Not itself interactive. */
+.expandedHeader {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  width: 100%;
+}
+
+/* Expanded: a standalone interactive toggle button beside the thread's top
+   header. Interactive → it keeps a hover affordance. */
+.toggle {
+  padding: 0;
+  cursor: pointer;
+}
+.toggle:hover {
+  background: var(--surface-3);
+  border-color: var(--border-strong);
+}
+.toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Collapsed: the entire single-line summary is the click target. It sits as a
+   card (surface-1 + border) one step out from the surface-3 comment band, so it
+   stays distinct from the band; hover tints toward the accent. */
+.collapsed {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: var(--s-2) var(--s-3);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-2);
+  background: var(--surface-1);
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+  color: var(--text-2);
+  text-align: left;
+  cursor: pointer;
+}
+.collapsed:hover {
+  border-color: var(--accent);
+  background: color-mix(in oklch, var(--surface-1) 92%, var(--accent));
+}
+.collapsed:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.chevron {
+  flex: 0 0 auto;
+}
+/* Expanded toggle points down (the thread is open); collapsed points right. */
+.toggle .chevron {
+  transform: rotate(90deg);
+}
+
+.author {
+  flex: 0 0 auto;
+  max-width: 14ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+  color: var(--text-1);
+}
+.snippet {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-3);
+}
+.spacer {
+  flex: 1 1 auto;
+}
+
+/* Comment count as a glyph metric (inbox parity): accent-tinted icon + number,
+   not "N comments" prose. */
+.count {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  flex: 0 0 auto;
+  font-size: var(--text-xs);
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+.countIcon {
+  flex: none;
+  color: var(--accent);
+}
+
+/* Resolved pill — the shared `chip chip-success` utility (dark-green bg +
+   bright green text) is the resolved cue; the card itself stays neutral so
+   only the pill carries the green. These two lines are the only thread-local
+   overrides: don't shrink in the flex row, and a slightly heavier weight so
+   the status reads at a glance. Pushed to the trailing edge by the flexible
+   snippet/spacer before it. */
+.resolvedBadge {
+  flex: 0 0 auto;
+  font-weight: 600;
+}

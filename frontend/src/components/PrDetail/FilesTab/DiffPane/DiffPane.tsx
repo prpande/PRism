@@ -12,6 +12,7 @@ import type { InlineAnchor } from '../../Composer/InlineCommentComposer';
 import {
   ExistingCommentWidget,
   type ExistingCommentWidgetReplyContext,
+  type ThreadCollapseControl,
 } from './ExistingCommentWidget';
 import { DiffTruncationBanner } from './DiffTruncationBanner';
 import { WordDiffOverlay } from './WordDiffOverlay';
@@ -128,6 +129,9 @@ export interface DiffPaneProps {
   // `<ReplyComposer>`. Absent → DiffPane test harnesses render threads
   // read-only.
   replyContext?: ExistingCommentWidgetReplyContext;
+  // Collapse controller for review threads. Forwarded verbatim to each
+  // `<ExistingCommentWidget>`. Absent → all threads render expanded (default).
+  collapse?: ThreadCollapseControl;
   // D36 / #125 — when true, renders a <Spinner> in the diff-pane header. A real
   // element with an sr-only label (not CSS ::after) so screen readers announce
   // it (WCAG 2.1 F87).
@@ -218,6 +222,7 @@ export function DiffPane({
   onLineClick,
   renderComposerForLine,
   replyContext,
+  collapse,
   isLoading = false,
   wholeFileEnabled = false,
   onWholeFileFailed,
@@ -531,6 +536,7 @@ export function DiffPane({
               onLineClick={onLineClick}
               renderComposerForLine={renderComposerForLine}
               replyContext={replyContext}
+              collapse={collapse}
             />,
           );
           const annotations = annotationsForFile?.get(hunkCounter);
@@ -585,6 +591,7 @@ export function DiffPane({
           onLineClick={onLineClick}
           renderComposerForLine={renderComposerForLine}
           replyContext={replyContext}
+          collapse={collapse}
         />,
       );
     }
@@ -610,7 +617,11 @@ export function DiffPane({
           <tr key={`widget-${idx}`} className={`diff-comment-row ${styles.diffCommentRow}`}>
             <td colSpan={colSpan}>
               <div className={styles.diffStickyViewport}>
-                <ExistingCommentWidget threads={threads} replyContext={replyContext} />
+                <ExistingCommentWidget
+                  threads={threads}
+                  replyContext={replyContext}
+                  collapse={collapse}
+                />
               </div>
             </td>
           </tr>,
@@ -866,6 +877,7 @@ interface DiffLineRowProps {
   onLineClick?: (anchor: InlineAnchor) => void;
   renderComposerForLine?: (filePath: string, lineNumber: number) => React.ReactNode;
   replyContext?: ExistingCommentWidgetReplyContext;
+  collapse?: ThreadCollapseControl;
 }
 
 function DiffLineRow({
@@ -881,6 +893,7 @@ function DiffLineRow({
   onLineClick,
   renderComposerForLine,
   replyContext,
+  collapse,
 }: DiffLineRowProps) {
   const isAnchored = (threadsAtLine?.length ?? 0) > 0;
   const rowClass = `diff-line diff-line--${line.type}${isAnchored ? ' diff-line--commented' : ''}`;
@@ -969,7 +982,11 @@ function DiffLineRow({
         <tr className={`diff-comment-row ${styles.diffCommentRow}`}>
           <td colSpan={colSpan}>
             <div className={styles.diffStickyViewport}>
-              <ExistingCommentWidget threads={threadsAtLine} replyContext={replyContext} />
+              <ExistingCommentWidget
+                threads={threadsAtLine}
+                replyContext={replyContext}
+                collapse={collapse}
+              />
             </div>
           </td>
         </tr>

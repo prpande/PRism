@@ -1,5 +1,6 @@
 // CommentCard.tsx
 import { Avatar } from '../../Avatar/Avatar';
+import { Badge } from '../../Badge/Badge';
 import { MarkdownRenderer } from '../../Markdown/MarkdownRenderer';
 import styles from './CommentCard.module.css';
 
@@ -46,7 +47,7 @@ export function CommentCard({
         <time className={styles.time} dateTime={createdAt}>
           {new Date(createdAt).toLocaleDateString()}
         </time>
-        {bandEnd != null && <span className={styles.bandEnd}>{bandEnd}</span>}
+        {bandEnd != null && <Badge>{bandEnd}</Badge>}
       </header>
       <div className={styles.body}>
         <MarkdownRenderer source={body} />

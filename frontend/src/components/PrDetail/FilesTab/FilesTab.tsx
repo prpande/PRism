@@ -27,6 +27,7 @@ import { computeAnyOtherDraftsStaged } from '../../../hooks/useDraftSession';
 import type { OptimisticComment } from './optimisticComment';
 import { CommentCard } from '../Comment/CommentCard';
 import styles from './FilesTab.module.css';
+import type { ThreadCollapseControl } from './DiffPane/ExistingCommentWidget';
 
 // #302 — no viewer login on PrDetailDto; optimistic placeholders are by
 // construction the current user's.
@@ -75,6 +76,22 @@ function useViewportWidth() {
   }, []);
 
   return width;
+}
+
+export function effectiveCollapsed(
+  overrides: Record<string, boolean>,
+  threadId: string,
+  isResolved: boolean,
+): boolean {
+  return overrides[threadId] ?? isResolved;
+}
+
+export function nextOverrides(
+  overrides: Record<string, boolean>,
+  threadId: string,
+  isResolved: boolean,
+): Record<string, boolean> {
+  return { ...overrides, [threadId]: !(overrides[threadId] ?? isResolved) };
 }
 
 export function FilesTab() {
@@ -599,6 +616,17 @@ export function FilesTab() {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- depends on the stable draftSession.refetch useCallback, not the per-render draftSession object literal (#331)
   }, [draftSession.refetch]);
 
+  const [collapseOverrides, setCollapseOverrides] = useState<Record<string, boolean>>({});
+  const collapse = useMemo<ThreadCollapseControl>(
+    () => ({
+      isCollapsed: (threadId, isResolved) =>
+        effectiveCollapsed(collapseOverrides, threadId, isResolved),
+      toggle: (threadId, isResolved) =>
+        setCollapseOverrides((m) => nextOverrides(m, threadId, isResolved)),
+    }),
+    [collapseOverrides],
+  );
+
   const replyContext = useMemo(
     () => ({
       prRef,
@@ -757,6 +785,7 @@ export function FilesTab() {
             onLineClick={handleLineClick}
             renderComposerForLine={renderComposerForLine}
             replyContext={replyContext}
+            collapse={collapse}
             isLoading={diff.isLoading}
             wholeFileEnabled={wholeFileEnabled}
             onWholeFileFailed={handleWholeFileFailed}

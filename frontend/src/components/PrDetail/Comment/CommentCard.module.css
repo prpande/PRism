@@ -24,16 +24,6 @@
 .card[data-density='compact'] .band {
   padding: var(--s-1) var(--s-3);
 }
-.bandEnd {
-  margin-left: auto;
-  font-size: var(--text-2xs);
-  font-weight: 500;
-  color: var(--text-3);
-  background: var(--surface-3);
-  border-radius: 999px;
-  padding: 1px 8px;
-}
-
 .author {
   font-weight: 600;
   color: var(--text-1);
