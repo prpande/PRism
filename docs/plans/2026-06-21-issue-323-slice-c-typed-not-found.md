@@ -299,35 +299,49 @@ git commit -m "feat(github): adapter throws typed ReviewThreadNotFoundException 
 
 - [ ] **Step 1: Write the failing test**
 
-In `tests/PRism.Core.Tests/Submit/Pipeline/AttachRepliesTests.cs`, add a test for the race window the `:461` catch guards — the thread is **present** in the snapshot (so the `parent is null` short-circuit at `:440` does NOT fire), but `AttachReplyAsync` throws the typed exception (injected). Mirror the setup of the existing reply tests in this file (seed a pending review with the parent thread, create a reply whose `ParentThreadId` matches). Use the fake's one-shot `InjectFailure` seam:
+This test exercises the race window the `:461` catch guards — the thread is **present** in the snapshot (so the `parent is null` short-circuit at `:440` does NOT fire), but `AttachReplyAsync` throws the typed exception mid-call (injected). **The injected message deliberately avoids every `IsParentThreadGone` trigger** (`NOT_FOUND` / `parent thread` / `could not be found`) so the observable behavior differs by code path: on the pre-typed-catch pipeline the message-sniff misses → generic catch → reply stays `Draft`; only the typed catch demotes it to `Stale`. Modeled on `ForeignAuthorThreadDeletedTests` (same file directory), which seeds the *absent*-parent case; this seeds the parent **present**.
+
+> **Discriminator note.** The inner exception is NOT observable: `SubmitPipeline.cs:181` projects `SubmitFailedException` to `SubmitOutcome.Failed(sfe.Step, sfe.Message, sfe.SessionAtFailure)`, dropping the exception. So assert on the **`Stale` demote** (the real behavioral win — a production NOT_FOUND is now demoted on the *first* attempt instead of falling through to a generic retryable failure). Do **not** assert `AttachReplyCallCount` (the fake's `ConsumeFailureOrContinue` throws before the counter increments → stays 0). Task 2's adapter test proves the typed exception is produced for the real GitHub shape; this test proves the pipeline demotes on it. Together they cover the end-to-end fix.
+
+Add to `tests/PRism.Core.Tests/Submit/Pipeline/AttachRepliesTests.cs` (`SessionKey`/`Ref` already defined in that file; if not, copy them from `ForeignAuthorThreadDeletedTests`):
 
 ```csharp
 [Fact]
-public async Task AttachReplies_ParentThreadDeletedMidCall_DemotesReplyToStale()
+public async Task AttachReply_ParentThreadDeletedMidCall_DemotesReplyToStale()
 {
-    // Arrange: pending review with the parent thread PRESENT (so parent-is-null does not short-circuit),
-    // plus a draft reply targeting it. (Reuse this file's existing reply-scenario setup helpers.)
-    var (fake, session, store) = ReplyScenarioWithPresentParent();  // see sibling tests for the exact builder
+    var fake = new InMemoryReviewSubmitter();
+    // Pending review WITH the parent thread present, so the `parent is null` short-circuit (:440)
+    // does not fire and the pipeline calls AttachReplyAsync.
+    var pending = new InMemoryReviewSubmitter.InMemoryPendingReview("PRR_x", "head1", DateTimeOffset.UtcNow, "");
+    pending.Threads.Add(new InMemoryReviewSubmitter.InMemoryThread(
+        Id: "PRRT_present", FilePath: "f.cs", LineNumber: 1, Side: "RIGHT", CommitOid: "head1",
+        Body: "root", IsResolved: false, Replies: new List<InMemoryReviewSubmitter.InMemoryComment>()));
+    fake.SeedPendingReview(Ref, pending);
+    // Mid-call delete. Message avoids NOT_FOUND / "parent thread" / "could not be found" so the
+    // OLD IsParentThreadGone sniff does NOT match -> generic catch -> reply stays Draft (RED).
     fake.InjectFailure(nameof(IReviewSubmitter.AttachReplyAsync),
-        new ReviewThreadNotFoundException("parent thread PRRT_x gone"));
+        new ReviewThreadNotFoundException("thread missing"));
 
-    // Act
-    var outcome = await RunPipeline(fake, session, store);
+    var session = SessionFactory.With(headSha: "head1", pendingReviewId: "PRR_x",
+        replies: new[] { SessionFactory.Reply("r1", "PRRT_present") });  // unstamped, parent present
+    var store = new InMemoryAppStateStore();
+    store.SeedSession(SessionKey, session);
+    var pipeline = new SubmitPipeline(fake, store);
 
-    // Assert: demoted to Stale + SubmitFailedException(AttachReplies) with the typed exception as inner.
+    var outcome = await pipeline.SubmitAsync(Ref, session, SubmitEvent.Comment, "head1", NoopProgress.Instance, CancellationToken.None);
+
     var failed = Assert.IsType<SubmitOutcome.Failed>(outcome);
-    failed.Exception.Should().BeOfType<SubmitFailedException>()
-        .Which.InnerException.Should().BeOfType<ReviewThreadNotFoundException>();
-    failed.NewSession.DraftReplies.Single().Status.Should().Be(DraftStatus.Stale);
+    Assert.Equal(SubmitStep.AttachReplies, failed.FailedStep);
+    // Only the typed catch demotes for a message the sniff doesn't match. RED on main: reply stays Draft.
+    Assert.Equal(DraftStatus.Stale, failed.NewSession.DraftReplies.Single(r => r.Id == "r1").Status);
+    Assert.Equal(DraftStatus.Stale, store.Session(SessionKey)!.DraftReplies.Single(r => r.Id == "r1").Status);
 }
 ```
 
-> **Note on the assertion (do NOT assert `AttachReplyCallCount == 1`):** the fake's `ConsumeFailureOrContinue` throws the injected exception at the top of `AttachReplyAsync`, before the success counter increments — so the count stays 0. The discriminator from the `parent is null` path is the **inner exception**: `:444` throws `SubmitFailedException` with no inner; only the typed catch at `:465` attaches `ex`. Assert on `InnerException is ReviewThreadNotFoundException`. Match the exact outcome/builder shape (`SubmitOutcome.Failed`, session accessors) to the sibling tests already in this file.
-
 - [ ] **Step 2: Run the test to verify it fails**
 
-Run: `dotnet test tests/PRism.Core.Tests/PRism.Core.Tests.csproj --filter AttachReplies_ParentThreadDeletedMidCall`
-Expected: FAIL — on main the pipeline catches via `IsParentThreadGone(ex)`, which does not match a `ReviewThreadNotFoundException` (its message is "Parent review thread … no longer exists", containing "parent" but the test's injected message is "parent thread … gone" — regardless, the typed catch does not yet exist, so the exception falls to the generic catch and the inner is not asserted-as-typed). The `InnerException is ReviewThreadNotFoundException` assertion fails until the typed catch lands.
+Run: `dotnet test tests/PRism.Core.Tests/PRism.Core.Tests.csproj --filter AttachReply_ParentThreadDeletedMidCall`
+Expected: FAIL — the test compiles (`ReviewThreadNotFoundException` exists from Task 2) but the pipeline still has `IsParentThreadGone`, which does NOT match `"thread missing"` → the generic catch (`:468`) runs without demoting → the reply stays `DraftStatus.Draft`, so the `Stale` assertion fails. (This is the genuine red: the demote happens only once the typed catch lands in Step 3.)
 
 - [ ] **Step 3: Replace the catch + delete `IsParentThreadGone`**
 
@@ -428,6 +442,18 @@ Expected: all green (Core / GitHub / Web / etc.). Confirm `IsParentThreadGone` h
 
 **Spec coverage:** 3a typed exception (Tasks 1-3) ✓; 3a adapter `type`+`extensions.code` detection (Task 1) ✓; fake parity (Task 3) ✓; `IsParentThreadGone` deleted (Task 3) ✓; existing-fixture update (Task 2) ✓; 3b comment with candidate+caveat (Task 4) ✓; prReviewId/threadId conflation note (Task 2 inline comment) ✓; payload-shape confirmation (resolved, documented above) ✓; existing demote behavior unchanged (Task 3 Step 5) ✓.
 
-**Placeholder scan:** none — every code step shows full code; the one builder reference (`ReplyScenarioWithPresentParent`) is explicitly flagged to mirror this file's existing sibling-test setup, since the exact helper names are local to `AttachRepliesTests.cs` and must match what is already there.
+**Placeholder scan:** none — every code step shows full code. Task 3's test is fully concrete (modeled on `ForeignAuthorThreadDeletedTests`, using `SeedPendingReview` + the fake's `InMemoryPendingReview`/`InMemoryThread` nested types + `SessionFactory.With`/`.Reply` + `InMemoryAppStateStore` + `SubmitPipeline.SubmitAsync`, all verified to exist).
 
-**Type consistency:** `ReviewThreadNotFoundException` (3-ctor) defined Task 2, consumed Tasks 3-4; `IsFirstErrorNotFound(string)` defined Task 1, consumed Task 2; `FirstErrorCode` private, shared by `FormatErrorsMessage` + the predicate. `data` typed `JsonElement` (matches `PostSubmitGraphQLAsync`'s `Task<JsonElement>`).
+**Type consistency:** `ReviewThreadNotFoundException` (3-ctor) defined Task 2, consumed Tasks 3-4; `IsFirstErrorNotFound(string)` defined Task 1, consumed Task 2; `FirstErrorCode` private, shared by `FormatErrorsMessage` + the predicate. `data` typed `JsonElement` (matches `PostSubmitGraphQLAsync`'s `Task<JsonElement>`). `SubmitOutcome.Failed` accessors used are `FailedStep` / `ErrorMessage` / `NewSession` (no `Exception` member — the inner is dropped at `SubmitPipeline.cs:181`), matching `ForeignAuthorThreadDeletedTests`.
+
+## ce-doc-review (plan-level, focused feasibility pass)
+
+A single feasibility/correctness reviewer ran against the live code (proportionate: the spec already had the full 6-persona panel + human gate; this plan is its mechanical derivation). It caught three converging P1s on the original Task 3 test — all **Applied**:
+
+| Finding | Disposition | Note |
+|---|---|---|
+| Test asserted non-existent `SubmitOutcome.Failed.Exception` | **Applied** | Rewrote to `FailedStep`/`ErrorMessage`/`NewSession`. |
+| Inner exception unobservable (dropped at `SubmitPipeline.cs:181`) | **Applied** | Discriminator changed to the observable `Stale` demote. |
+| Test wouldn't go red ("parent thread" message matches `IsParentThreadGone`) | **Applied** | Injected message is now `"thread missing"`, which dodges all three sniff triggers. |
+
+Anchors, types, `InternalsVisibleTo`, formatter-refactor safety, and fake-parity-affects-no-existing-test were all **verified correct** by the reviewer.
