@@ -36,9 +36,12 @@ public class PrStatesTests
         JsonSerializer.Serialize(value, JsonSerializerOptionsFactory.Api).Should().Be(expectedJson);
     }
 
-    [Fact]
-    public void Serializes_kebab_case_on_storage_options()
+    [Theory]
+    [InlineData(PrState.Open, "\"open\"")]
+    [InlineData(PrState.Closed, "\"closed\"")]
+    [InlineData(PrState.Merged, "\"merged\"")]
+    public void Serializes_kebab_case_on_storage_options(PrState value, string expectedJson)
     {
-        JsonSerializer.Serialize(PrState.Merged, JsonSerializerOptionsFactory.Storage).Should().Be("\"merged\"");
+        JsonSerializer.Serialize(value, JsonSerializerOptionsFactory.Storage).Should().Be(expectedJson);
     }
 }

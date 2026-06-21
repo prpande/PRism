@@ -317,10 +317,10 @@ public sealed partial class GitHubReviewService : IPrDiscovery, IPrReader
         var commentCount = await commentsTask.ConfigureAwait(false);
         var reviewCount = await reviewsTask.ConfigureAwait(false);
 
-        // Normalize PrState to a lowercase 3-value state. REST `state` is already lowercase
-        // ("open"/"closed"); a merged PR reports "closed", so we promote it to "merged" when
-        // merged_at was present. PrState ∈ {"open","closed","merged"} — the poller diffs this
-        // to emit pr-updated on an open→done transition even when head-sha is unchanged.
+        // Normalize the raw REST `state` + merged flag into the `PrState` enum via `FromGitHub`.
+        // REST reports a merged PR as "closed", so `pull.Merged` is what distinguishes a merge
+        // from a plain close. The poller diffs the resulting `PrState` to emit pr-updated on an
+        // open→done transition even when head-sha is unchanged.
         return new ActivePrPollSnapshot(
             HeadSha: pull.HeadSha,
             BaseSha: pull.BaseSha,
