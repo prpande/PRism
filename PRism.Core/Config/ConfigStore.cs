@@ -1,5 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using PRism.Core.Ai;
 using PRism.Core.Json;
 using PRism.Core.State;
@@ -10,7 +12,10 @@ namespace PRism.Core.Config;
 public sealed class ConfigStore : IConfigStore, IDisposable
 {
     private readonly string _path;
+    private readonly ILogger _log;
     private readonly SemaphoreSlim _gate = new(1, 1);
+    // Debounce window for FileSystemWatcher.Changed bursts (an editor save fires several events).
+    private const int FileChangeDebounceMilliseconds = 100;
     private FileSystemWatcher? _watcher;
     private AppConfig _current = AppConfig.Default;
     // Allowlist + expected-type table for PatchAsync. The bare `theme` / `accent` / `aiPreview`
@@ -91,9 +96,10 @@ public sealed class ConfigStore : IConfigStore, IDisposable
     private static readonly string[] _workSectionIds =
         { "authored-by-me", "review-requested", "awaiting-author", "mentioned" };
 
-    public ConfigStore(string dataDir)
+    public ConfigStore(string dataDir, ILogger<ConfigStore>? log = null)
     {
         _path = Path.Combine(dataDir, "config.json");
+        _log  = log ?? NullLogger<ConfigStore>.Instance;
     }
 
     public AppConfig Current => _current;
@@ -101,7 +107,41 @@ public sealed class ConfigStore : IConfigStore, IDisposable
     public Exception? LastLoadError { get; private set; }
     public event EventHandler<ConfigChangedEventArgs>? Changed;
 
-    private void RaiseChanged() => Changed?.Invoke(this, new ConfigChangedEventArgs(_current));
+    private void RaiseChanged()
+    {
+        // Per-handler fault isolation (#323 item 4c), mirroring ReviewEventBus.Publish: one throwing
+        // subscriber must not abort dispatch to the remaining subscribers, nor propagate into the
+        // publisher. Critical because HandleFileChangedAsync invokes this fire-and-forget — an escaping
+        // exception there becomes an unobserved task exception. OperationCanceledException is rethrown so
+        // cooperative cancellation still aborts dispatch (the watcher path absorbs it; see
+        // HandleFileChangedAsync). Single fixed event type, so the log message omits the bus's
+        // {EventType} placeholder by design.
+        var handlers = Changed;
+        if (handlers is null) return;
+        var args = new ConfigChangedEventArgs(_current);
+        foreach (var d in handlers.GetInvocationList())
+        {
+            try
+            {
+                ((EventHandler<ConfigChangedEventArgs>)d)(this, args);
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+#pragma warning disable CA1031 // a faulting subscriber is isolated and logged, not propagated
+            catch (Exception ex)
+#pragma warning restore CA1031
+            {
+                s_subscriberFaulted(_log, ex);
+            }
+        }
+    }
+
+    private static readonly Action<ILogger, Exception?> s_subscriberFaulted =
+        LoggerMessage.Define(LogLevel.Error,
+            new EventId(1, "ConfigStoreSubscriberFaulted"),
+            "A ConfigStore.Changed subscriber threw; isolating the fault and continuing dispatch");
 
     public async Task InitAsync(CancellationToken ct)
     {
@@ -575,11 +615,11 @@ public sealed class ConfigStore : IConfigStore, IDisposable
         _ = HandleFileChangedAsync();
     }
 
-    private async Task HandleFileChangedAsync()
+    internal async Task HandleFileChangedAsync()
     {
         try
         {
-            await Task.Delay(100).ConfigureAwait(false); // debounce save flurry
+            await Task.Delay(FileChangeDebounceMilliseconds).ConfigureAwait(false); // debounce save flurry
             await _gate.WaitAsync(CancellationToken.None).ConfigureAwait(false);
             try
             {
@@ -591,7 +631,12 @@ public sealed class ConfigStore : IConfigStore, IDisposable
             }
             RaiseChanged();
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException or ObjectDisposedException)
+        // OperationCanceledException is added because RaiseChanged rethrows a subscriber-thrown OCE
+        // (sibling parity with ReviewEventBus). This path is fire-and-forget with CancellationToken.None
+        // — there is no real cancellation in play — so a subscriber OCE is absorbed here rather than
+        // leaked as an unobserved task exception. Synchronous callers still see OCE propagate.
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException
+            or JsonException or ObjectDisposedException or OperationCanceledException)
         {
             LastLoadError = ex;
         }
