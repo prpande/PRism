@@ -325,7 +325,7 @@ public sealed partial class GitHubReviewService : IPrDiscovery, IPrReader
             HeadSha: pull.HeadSha,
             BaseSha: pull.BaseSha,
             Mergeability: pull.Mergeability,
-            PrState: pull.Merged ? "merged" : pull.State,
+            PrState: PrStates.FromGitHub(pull.State, pull.Merged),
             CommentCount: commentCount,
             ReviewCount: reviewCount);
     }

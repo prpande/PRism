@@ -11,7 +11,7 @@ public sealed record Pr(
     string Title,
     string Body,
     string Author,
-    string State,
+    PrState State,
     string HeadSha,
     string BaseSha,
     string HeadBranch,

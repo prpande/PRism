@@ -4,6 +4,6 @@ public sealed record ActivePrPollSnapshot(
     string HeadSha,
     string BaseSha,
     string Mergeability,
-    string PrState,
+    PrState PrState,
     int CommentCount,
     int ReviewCount);

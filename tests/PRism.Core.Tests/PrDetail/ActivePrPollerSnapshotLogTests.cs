@@ -45,7 +45,7 @@ public class ActivePrPollerSnapshotLogTests
     }
 
     private static ActivePrPollSnapshot Snapshot(string headSha = "h1", string baseSha = "b1", int commentCount = 0) =>
-        new(headSha, baseSha, "MERGEABLE", "OPEN", commentCount, 0);
+        new(headSha, baseSha, "MERGEABLE", PrState.Open, commentCount, 0);
 
     [Fact]
     public async Task T_INV_1_emits_one_snapshot_line_per_successful_poll()

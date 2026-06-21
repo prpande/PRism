@@ -142,7 +142,7 @@ internal sealed class TestPrReader : IPrReader
     public ConcurrentDictionary<(string Path, string Sha), string> FileContents { get; } = new();
 
     public Task<ActivePrPollSnapshot> PollActivePrAsync(PrReference reference, CancellationToken ct)
-        => Task.FromResult(new ActivePrPollSnapshot(HeadSha, "base1", "MERGEABLE", "OPEN", 0, 0));
+        => Task.FromResult(new ActivePrPollSnapshot(HeadSha, "base1", "MERGEABLE", PrState.Open, 0, 0));
 
     public Task<FileContentResult> GetFileContentAsync(PrReference reference, string path, string sha, CancellationToken ct)
         => Task.FromResult(FileContents.TryGetValue((path, sha), out var c)

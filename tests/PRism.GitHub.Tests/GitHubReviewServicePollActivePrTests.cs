@@ -86,7 +86,7 @@ public class GitHubReviewServicePollActivePrTests
         var snap = await sut.PollActivePrAsync(new PrReference("o", "r", 1), CancellationToken.None);
 
         snap.HeadSha.Should().Be("head-1");
-        snap.PrState.Should().Be("open");
+        snap.PrState.Should().Be(PrState.Open);
         snap.Mergeability.Should().Be("clean");
         snap.CommentCount.Should().Be(17);
         snap.ReviewCount.Should().Be(4);
@@ -101,7 +101,7 @@ public class GitHubReviewServicePollActivePrTests
 
         var snap = await sut.PollActivePrAsync(new PrReference("o", "r", 1), CancellationToken.None);
 
-        snap.PrState.Should().Be("merged");
+        snap.PrState.Should().Be(PrState.Merged);
     }
 
     [Fact]
@@ -112,7 +112,7 @@ public class GitHubReviewServicePollActivePrTests
 
         var snap = await sut.PollActivePrAsync(new PrReference("o", "r", 1), CancellationToken.None);
 
-        snap.PrState.Should().Be("closed");
+        snap.PrState.Should().Be(PrState.Closed);
     }
 
     [Fact]

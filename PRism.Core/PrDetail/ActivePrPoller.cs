@@ -126,14 +126,10 @@ public sealed partial class ActivePrPoller : BackgroundService
                 var headChanged = state.LastHeadSha is { } prev && prev != snapshot.HeadSha;
                 var baseChanged = state.LastBaseSha is { } prevBase && prevBase != snapshot.BaseSha;
                 var commentChanged = state.LastCommentCount is { } prevCount && prevCount != snapshot.CommentCount;
-                // Close-state transition (open → merged/closed). The comparison is
-                // case-insensitive: the real poll path emits lowercase PrState
-                // ("open"/"closed"/"merged"), but fake review services hand-construct
-                // snapshots with uppercase "OPEN" — normalize the COMPARE so a fake's
-                // OPEN → OPEN does not register as a change. A clean merge leaves head-sha
-                // and comment-count unchanged, so without this the merged banner never fires.
-                var stateChanged = state.LastPrState is { } prevState
-                    && !string.Equals(prevState, snapshot.PrState, StringComparison.OrdinalIgnoreCase);
+                // Close-state transition (open → merged/closed). Both producers now hand an enum
+                // PrState, so this is exact enum inequality — the prior case-insensitive string
+                // compare (bridging fake-uppercase vs real-lowercase) is no longer needed.
+                var stateChanged = state.LastPrState is { } prevState && prevState != snapshot.PrState;
 
                 LogPollSnapshot(_logger, prRef, snapshot.HeadSha, state.LastHeadSha, firstPoll, headChanged, baseChanged, commentChanged, stateChanged);
 
@@ -142,11 +138,8 @@ public sealed partial class ActivePrPoller : BackgroundService
                     var commentCountDelta = state.LastCommentCount is { } priorCount
                         ? snapshot.CommentCount - priorCount
                         : 0;
-                    // Mutually exclusive: a merged PR is flagged IsMerged only. The snapshot
-                    // value may be lowercase (real path) or uppercase (fakes) — compare
-                    // case-insensitively.
-                    var isMerged = string.Equals(snapshot.PrState, "merged", StringComparison.OrdinalIgnoreCase);
-                    var isClosed = string.Equals(snapshot.PrState, "closed", StringComparison.OrdinalIgnoreCase);
+                    var isMerged = snapshot.PrState == PrState.Merged;
+                    var isClosed = snapshot.PrState == PrState.Closed;
                     // Load-bearing ordering: Publish MUST precede _cache.Update.
                     // The bus is synchronous, so eviction handlers (summarizer, loader) run
                     // against the pre-move snapshot. _cache.Update installs the new base AFTER

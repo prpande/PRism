@@ -131,12 +131,11 @@ internal static class GitHubPrParser
             ? mAt.GetDateTimeOffset() : null;
         DateTimeOffset? closedAt = pull.TryGetProperty("closedAt", out var cAt) && cAt.ValueKind != JsonValueKind.Null
             ? cAt.GetDateTimeOffset() : null;
-        var isMerged = string.Equals(state, "MERGED", StringComparison.Ordinal) || mergedAt.HasValue;
+        var prState = PrStates.FromGitHub(state, mergedAt.HasValue);
+        var isMerged = prState == PrState.Merged;
         // IsClosed means "closed without merging" — a separate state from merged.
         // Consumers that want "no longer open" should spell `IsMerged || IsClosed`.
-        // Treating MERGED as IsClosed=true forced the inverse spelling on every
-        // consumer and was a footgun (PR #19 review).
-        var isClosed = string.Equals(state, "CLOSED", StringComparison.Ordinal) && !isMerged;
+        var isClosed = prState == PrState.Closed;
 
         // Draft flag — additive (#501). The GraphQL query already selects isDraft;
         // read it null-safely (absent/null → false), mirroring the inbox path.
@@ -148,7 +147,7 @@ internal static class GitHubPrParser
             Title: GetStr("title"),
             Body: GetStr("body"),
             Author: author,
-            State: state,
+            State: prState,
             HeadSha: GetStr("headRefOid"),
             BaseSha: GetStr("baseRefOid"),
             HeadBranch: GetStr("headRefName"),
