@@ -50,7 +50,8 @@ public static class ServiceCollectionExtensions
         ArgumentNullException.ThrowIfNull(services);
         ArgumentException.ThrowIfNullOrEmpty(dataDir);
 
-        services.AddSingleton<IConfigStore>(_ => CreateConfigStore(dataDir));
+        services.AddSingleton<IConfigStore>(sp =>
+            CreateConfigStore(dataDir, sp.GetRequiredService<ILogger<ConfigStore>>()));
         services.AddSingleton<AiModeState>(sp =>
         {
             var config = sp.GetRequiredService<IConfigStore>();
@@ -155,9 +156,9 @@ public static class ServiceCollectionExtensions
 
     [SuppressMessage("Performance", "CA1849:Call async methods when in an async method",
         Justification = "DI factory delegates are synchronous; ConfigStore.InitAsync is awaited via GetAwaiter().GetResult() at host startup, which is the documented pattern for one-time async initialization inside a sync DI factory. Replacement with IHostedService is gated to ADR-P0-3 in the architectural-readiness spec.")]
-    private static ConfigStore CreateConfigStore(string dataDir)
+    private static ConfigStore CreateConfigStore(string dataDir, ILogger<ConfigStore> log)
     {
-        var store = new ConfigStore(dataDir);
+        var store = new ConfigStore(dataDir, log);
         store.InitAsync(CancellationToken.None).GetAwaiter().GetResult();
         return store;
     }
