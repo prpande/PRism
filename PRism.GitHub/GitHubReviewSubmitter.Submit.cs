@@ -128,10 +128,24 @@ internal sealed partial class GitHubReviewSubmitter
             }
             """;
 
-        var data = await PostSubmitGraphQLAsync(
-            mutation,
-            new { prReviewId = pendingReviewId, threadId = parentThreadId, body = replyBody },
-            ct).ConfigureAwait(false);
+        JsonElement data;
+        try
+        {
+            data = await PostSubmitGraphQLAsync(
+                mutation,
+                new { prReviewId = pendingReviewId, threadId = parentThreadId, body = replyBody },
+                ct).ConfigureAwait(false);
+        }
+        catch (GitHubGraphQLException ex) when (GitHubGraphQLException.IsFirstErrorNotFound(ex.ErrorsJson))
+        {
+            // NOT_FOUND here means the parent review thread was deleted on github.com between our
+            // snapshot re-fetch and this call. Surface a typed signal the submit pipeline catches by
+            // type (demote-to-Stale) instead of sniffing message text. NOT_FOUND on this mutation is
+            // ambiguous between a gone threadId and a gone prReviewId; conflating both as thread-gone
+            // is accepted — a gone pending review self-heals via the pipeline's next null-snapshot retry.
+            throw new ReviewThreadNotFoundException(
+                $"Parent review thread {parentThreadId} no longer exists on the pending review.", ex);
+        }
 
         if (!TryGetPath(data, out var idEl, "addPullRequestReviewThreadReply", "comment", "id")
             || idEl.GetString() is not { Length: > 0 } commentId)
