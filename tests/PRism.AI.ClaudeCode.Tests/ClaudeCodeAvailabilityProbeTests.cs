@@ -7,73 +7,84 @@ namespace PRism.AI.ClaudeCode.Tests;
 
 public sealed class ClaudeCodeAvailabilityProbeTests
 {
-    private static ClaudeCodeAvailabilityProbe Build(ProcessResult versionResult, bool identityMatches = true)
+    private static readonly IReadOnlyDictionary<string, string> Env =
+        new Dictionary<string, string> { ["PATH"] = "/usr/bin" };
+
+    private static ClaudeCodeAvailabilityProbe Build(
+        ProcessResult versionResult, ClaudeCliResolution? resolution = null, FakeCliProcessRunner? runner = null)
     {
-        var runner = new FakeCliProcessRunner(versionResult);
+        resolution ??= new ResolvedCli("/usr/bin/claude", Env);
         return new ClaudeCodeAvailabilityProbe(
-            runner,
-            new ClaudeCodeProviderOptions { ClaudeExecutable = "claude", WorkingDirectory = @"C:\tmp" },
-            identityMatches: () => identityMatches);
+            runner ?? new FakeCliProcessRunner(versionResult),
+            new ClaudeCodeProviderOptions { WorkingDirectory = @"C:\tmp" },
+            new FakeClaudeCliLocator(resolution));
     }
 
     [Fact]
-    public async Task Reports_available_when_version_succeeds_and_identity_matches()
+    public async Task Reports_available_when_version_succeeds()
     {
         var probe = Build(new ProcessResult(0, "2.1.150", "", false));
-        var result = await probe.ProbeAsync(CancellationToken.None);
-        result.Should().Be(LlmAvailability.Ok);
+        (await probe.ProbeAsync(CancellationToken.None)).Should().Be(LlmAvailability.Ok);
     }
 
     [Fact]
-    public async Task Reports_cli_not_installed_when_version_exits_with_not_found_stderr()
+    public async Task Maps_locator_NotFound_cli_not_installed()
     {
-        var probe = Build(new ProcessResult(-1, "", "The system cannot find the file specified", false));
-        var result = await probe.ProbeAsync(CancellationToken.None);
-        result.Available.Should().BeFalse();
-        result.ReasonCode.Should().Be(ClaudeReasonCodes.CliNotInstalled);
+        var probe = Build(new ProcessResult(0, "", "", false),
+            resolution: new NotFound(ClaudeReasonCodes.CliNotInstalled));
+        (await probe.ProbeAsync(CancellationToken.None)).ReasonCode.Should().Be(ClaudeReasonCodes.CliNotInstalled);
     }
 
     [Fact]
-    public async Task Reports_cli_not_installed_when_runner_throws_win32()
+    public async Task Maps_locator_NotFound_discovery_failed()
     {
-        var runner = new FakeCliProcessRunner(new Win32Exception("The system cannot find the file specified"));
-        var probe = new ClaudeCodeAvailabilityProbe(
-            runner,
-            new ClaudeCodeProviderOptions { ClaudeExecutable = "claude", WorkingDirectory = @"C:\tmp" },
-            identityMatches: () => true);
-        var result = await probe.ProbeAsync(CancellationToken.None);
-        result.ReasonCode.Should().Be(ClaudeReasonCodes.CliNotInstalled);
+        var probe = Build(new ProcessResult(0, "", "", false),
+            resolution: new NotFound(ClaudeReasonCodes.CliDiscoveryFailed));
+        (await probe.ProbeAsync(CancellationToken.None)).ReasonCode.Should().Be(ClaudeReasonCodes.CliDiscoveryFailed);
     }
 
     [Fact]
-    public async Task Reports_not_logged_in_when_stderr_says_so()
+    public async Task Maps_locator_NotFound_identity_mismatch_without_probing()
+    {
+        var runner = new FakeCliProcessRunner(new ProcessResult(0, "2.1.150", "", false));
+        var probe = Build(new ProcessResult(0, "2.1.150", "", false),
+            resolution: new NotFound(ClaudeReasonCodes.IdentityMismatch), runner: runner);
+        (await probe.ProbeAsync(CancellationToken.None)).ReasonCode.Should().Be(ClaudeReasonCodes.IdentityMismatch);
+        runner.Captured.Should().BeNull();   // no --version spawn on a NotFound
+    }
+
+    [Fact]
+    public async Task Reports_not_logged_in_from_version_output()
     {
         var probe = Build(new ProcessResult(1, "", "Not logged in · Please run /login", false));
-        var result = await probe.ProbeAsync(CancellationToken.None);
-        result.ReasonCode.Should().Be(ClaudeReasonCodes.NotLoggedIn);
+        (await probe.ProbeAsync(CancellationToken.None)).ReasonCode.Should().Be(ClaudeReasonCodes.NotLoggedIn);
     }
 
     [Fact]
-    public async Task Reports_not_logged_in_when_signature_is_on_stdout()
+    public async Task Invalidates_locator_when_version_throws_win32()
     {
-        var probe = Build(new ProcessResult(1, "Not logged in · Please run /login", "", false));
+        var locator = new FakeClaudeCliLocator(new ResolvedCli("/usr/bin/claude", Env));
+        var probe = new ClaudeCodeAvailabilityProbe(
+            new FakeCliProcessRunner(new Win32Exception("The system cannot find the file specified")),
+            new ClaudeCodeProviderOptions { WorkingDirectory = @"C:\tmp" }, locator);
+
         var result = await probe.ProbeAsync(CancellationToken.None);
-        result.ReasonCode.Should().Be(ClaudeReasonCodes.NotLoggedIn);
+
+        result.ReasonCode.Should().Be(ClaudeReasonCodes.CliNotInstalled);
+        locator.InvalidateCount.Should().Be(1);   // self-heal: re-discover next time
     }
 
     [Fact]
-    public async Task Reports_identity_mismatch_and_does_not_probe_version()
+    public async Task Invalidates_locator_on_node_not_found_signature()
     {
-        var probe = Build(new ProcessResult(0, "2.1.150", "", false), identityMatches: false);
-        var result = await probe.ProbeAsync(CancellationToken.None);
-        result.ReasonCode.Should().Be(ClaudeReasonCodes.IdentityMismatch);
-    }
+        var locator = new FakeClaudeCliLocator(new ResolvedCli("/usr/bin/claude", Env));
+        var probe = new ClaudeCodeAvailabilityProbe(
+            new FakeCliProcessRunner(new ProcessResult(127, "", "env: node: No such file or directory", false)),
+            new ClaudeCodeProviderOptions { WorkingDirectory = @"C:\tmp" }, locator);
 
-    [Fact]
-    public async Task Maps_unrecognized_failure_to_unknown()
-    {
-        var probe = Build(new ProcessResult(1, "", "some unexpected error", false));
         var result = await probe.ProbeAsync(CancellationToken.None);
-        result.ReasonCode.Should().Be(ClaudeReasonCodes.Unknown);
+
+        result.ReasonCode.Should().Be(ClaudeReasonCodes.CliNotInstalled);
+        locator.InvalidateCount.Should().Be(1);
     }
 }

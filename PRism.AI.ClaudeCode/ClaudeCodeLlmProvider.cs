@@ -22,12 +22,20 @@ namespace PRism.AI.ClaudeCode;
 /// <para>NOTE: <see cref="LlmRequest.SystemPrompt"/> is passed via <c>--append-system-prompt</c> and
 /// is NOT sanitized here. Sanitizing/length-capping user-edited instruction content is PR3's gate.</para>
 /// </summary>
-public sealed class ClaudeCodeLlmProvider(ICliProcessRunner runner, ClaudeCodeProviderOptions options)
+public sealed class ClaudeCodeLlmProvider(
+    ICliProcessRunner runner, ClaudeCodeProviderOptions options, IClaudeCliLocator locator)
     : ILlmProvider
 {
     public async Task<LlmResult> CompleteAsync(LlmRequest request, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(request);
+
+        var resolution = await locator.ResolveAsync(ct).ConfigureAwait(false);
+        if (resolution is NotFound notFound)
+            throw new LlmProviderException(
+                $"claude CLI is not available ({notFound.ReasonCode}).",
+                stderr: string.Empty, exitCode: -1);
+        var resolved = (ResolvedCli)resolution;
 
         // #496: evaluate the hot timeout ONCE per call, before building the spec.
         var timeout = options.TimeoutProvider();
@@ -48,9 +56,9 @@ public sealed class ClaudeCodeLlmProvider(ICliProcessRunner runner, ClaudeCodePr
         }
 
         var spec = new ProcessSpec(
-            FileName: options.ClaudeExecutable,
+            FileName: resolved.ExecutablePath,
             Arguments: args,
-            Environment: ClaudeCliEnvironment.BuildAllowlisted(),
+            Environment: resolved.Environment,
             WorkingDirectory: options.WorkingDirectory,
             StdinText: request.UserContent,
             Timeout: timeout);
@@ -62,6 +70,7 @@ public sealed class ClaudeCodeLlmProvider(ICliProcessRunner runner, ClaudeCodePr
         }
         catch (Win32Exception ex)
         {
+            locator.InvalidateResolved();   // self-heal: binary vanished post-resolve
             // Process.Start failed — executable not found / not on PATH (or an invalid working dir).
             // Empty stderr (no process ran); the native cause is preserved as InnerException.
             throw new LlmProviderException(
@@ -72,7 +81,11 @@ public sealed class ClaudeCodeLlmProvider(ICliProcessRunner runner, ClaudeCodePr
         if (result.TimedOut)
             throw new LlmProviderException("claude -p timed out.", result.Stderr, -1, timedOut: true);
         if (result.ExitCode != 0)
+        {
+            if (ClaudeExecSignatures.IsExecutableNotFound(result.Stderr))
+                locator.InvalidateResolved();   // npm `node` gone → re-discover next time
             throw new LlmProviderException($"claude -p failed (exit {result.ExitCode}).", result.Stderr, result.ExitCode);
+        }
 
         var envelope = JsonSerializer.Deserialize<ClaudeCliEnvelope>(result.Stdout, ClaudeCliEnvelope.Options)
             ?? throw new LlmProviderException("claude -p returned unparseable JSON.", stderr: string.Empty, exitCode: 0);

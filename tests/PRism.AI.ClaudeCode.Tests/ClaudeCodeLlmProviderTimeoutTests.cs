@@ -25,7 +25,8 @@ public sealed class ClaudeCodeLlmProviderTimeoutTests
             WorkingDirectory = Path.GetTempPath(),
             TimeoutProvider = () => TimeSpan.FromSeconds(seconds),
         };
-        var provider = new ClaudeCodeLlmProvider(runner, options);
+        var locator = new FakeClaudeCliLocator(new ResolvedCli("claude", ClaudeCliEnvironment.BuildAllowlisted()));
+        var provider = new ClaudeCodeLlmProvider(runner, options, locator);
 
         await provider.CompleteAsync(Req(), CancellationToken.None);
         runner.Captured!.Timeout.Should().Be(TimeSpan.FromSeconds(100));
@@ -44,7 +45,8 @@ public sealed class ClaudeCodeLlmProviderTimeoutTests
             WorkingDirectory = Path.GetTempPath(),
             Timeout = TimeSpan.FromSeconds(77),
         };
-        var provider = new ClaudeCodeLlmProvider(runner, options);
+        var locator = new FakeClaudeCliLocator(new ResolvedCli("claude", ClaudeCliEnvironment.BuildAllowlisted()));
+        var provider = new ClaudeCodeLlmProvider(runner, options, locator);
 
         await provider.CompleteAsync(Req(), CancellationToken.None);
         runner.Captured!.Timeout.Should().Be(TimeSpan.FromSeconds(77));

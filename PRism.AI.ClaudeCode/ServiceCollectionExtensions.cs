@@ -33,7 +33,20 @@ public static class ServiceCollectionExtensions
 
         services.AddSingleton(optionsFactory);
         services.AddSingleton<ICliProcessRunner, SystemCliProcessRunner>();
-        services.AddSingleton<ILlmProvider, ClaudeCodeLlmProvider>();
+        services.AddSingleton<ILoginShellEnvironmentReader, SystemLoginShellEnvironmentReader>();
+        // Discovery-state file lives alongside usage under the per-user dataDir's AI area.
+        services.AddSingleton(_ => new JsonClaudeCliStateStore(Path.Combine(usageDir, "cli-state")));
+        services.AddSingleton<IClaudeCliLocator>(sp => new ClaudeCliLocator(
+            sp.GetRequiredService<ILoginShellEnvironmentReader>(),
+            sp.GetRequiredService<JsonClaudeCliStateStore>(),
+            sp.GetRequiredService<ICliProcessRunner>(),
+            sp.GetRequiredService<ClaudeCodeProviderOptions>(),
+            identityMatches: ClaudeIdentity.SameOsUserAsCredentialStore,
+            clock: TimeProvider.System));
+        services.AddSingleton<ILlmProvider>(sp => new ClaudeCodeLlmProvider(
+            sp.GetRequiredService<ICliProcessRunner>(),
+            sp.GetRequiredService<ClaudeCodeProviderOptions>(),
+            sp.GetRequiredService<IClaudeCliLocator>()));
         services.AddSingleton<IStreamingCliProcessFactory, SystemStreamingCliProcessFactory>();
         services.AddSingleton<IStreamingLlmProvider>(sp => new ClaudeCodeStreamingProvider(
             sp.GetRequiredService<IStreamingCliProcessFactory>(),
@@ -46,7 +59,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton(sp => new ClaudeCodeAvailabilityProbe(
             sp.GetRequiredService<ICliProcessRunner>(),
             sp.GetRequiredService<ClaudeCodeProviderOptions>(),
-            identityMatches: ClaudeIdentity.SameOsUserAsCredentialStore));
+            sp.GetRequiredService<IClaudeCliLocator>()));
         services.AddSingleton<ILlmAvailabilityProbe>(
             sp => sp.GetRequiredService<ClaudeCodeAvailabilityProbe>());
         services.AddSingleton(ClaudeProviderDescriptor.Create());
