@@ -80,17 +80,25 @@ public sealed class JsonClaudeCliStateStore
         if (File.Exists(_path)) File.Delete(_path);
     }
 
-    /// <summary>Rebuild the allowlisted child env from the record's <c>path</c> + <c>managerVars</c>,
-    /// through the same filter as live discovery — the full env is never read from disk.</summary>
+    /// <summary>Rebuild the allowlisted child env for a persisted record. Base allowlist vars
+    /// (HOME/LANG/TMPDIR/…) are re-sourced from the LIVE sidecar process — they are never persisted
+    /// to disk, so the warm path must merge them in here: the child <c>claude</c> needs HOME to find
+    /// ~/.claude credentials (launchd sets HOME even on a minimal GUI PATH). The record contributes
+    /// the discovered PATH + manager vars, which override the base and are re-filtered through the
+    /// allowlist so a tampered on-disk record cannot inject an arbitrary/credential var. The full
+    /// captured env is still never read from disk.</summary>
     public static IReadOnlyDictionary<string, string> RebuildEnv(ClaudeCliStateRecord record)
     {
         ArgumentNullException.ThrowIfNull(record);
-        var captured = new Dictionary<string, string>(
+        var env = ClaudeCliEnvironment.BuildAllowlisted();   // live base vars; never sourced from disk
+
+        var fromRecord = new Dictionary<string, string>(
             OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal)
         {
             ["PATH"] = record.Path,
         };
-        foreach (var (k, v) in record.ManagerVars) captured[k] = v;
-        return ClaudeCliEnvironment.FilterCaptured(captured);
+        foreach (var (k, v) in record.ManagerVars) fromRecord[k] = v;
+        foreach (var (k, v) in ClaudeCliEnvironment.FilterCaptured(fromRecord)) env[k] = v;
+        return env;
     }
 }

@@ -22,7 +22,9 @@ internal sealed partial class ClaudeCliDiscoveryWarmup : IHostedService
     // reload), not just a mode change — and the event carries no previous value. Track the last-seen
     // mode so we only warm on a not-Live -> Live TRANSITION, not on every save while already Live.
     // A benign race here (duplicate Warm) is absorbed by the locator's single-flight + memoization.
-    private AiMode _lastMode;
+    // `volatile` because it is written on the hosting thread (StartAsync) and read/written on the
+    // ConfigStore.Changed event thread — the keyword guarantees cross-thread visibility on arm64.
+    private volatile AiMode _lastMode;
 
     public ClaudeCliDiscoveryWarmup(
         IClaudeCliLocator locator, IConfigStore config, ILogger<ClaudeCliDiscoveryWarmup> logger)

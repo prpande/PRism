@@ -57,14 +57,29 @@ public sealed class JsonClaudeCliStateStoreTests : IDisposable
     }
 
     [Fact]
-    public void RebuildEnv_yields_only_path_and_manager_vars()
+    public void RebuildEnv_merges_live_base_env_with_record_vars_and_re_filters()
     {
         var rec = SampleRecord();
         var env = JsonClaudeCliStateStore.RebuildEnv(rec);
 
+        // The record's discovered PATH + manager vars are present, and the discovered PATH overrides
+        // the sidecar's (minimal launchd) PATH.
         env["PATH"].Should().Be(rec.Path);
         env.Should().ContainKey("VOLTA_HOME");
-        env.Should().NotContainKey("ANTHROPIC_API_KEY");
+
+        // Live base allowlist vars (HOME/LANG/… — never persisted to disk) are merged in from the
+        // sidecar process so the warm-path child still has HOME to locate ~/.claude credentials
+        // (#582 P1: cold path had them via the captured env, warm path previously dropped them).
+        var liveBase = ClaudeCliEnvironment.BuildAllowlisted();
+        foreach (var (k, v) in liveBase)
+        {
+            env.Should().ContainKey(k);
+            if (k != "PATH") env[k].Should().Be(v);   // record PATH wins; other base vars pass through
+        }
+
+        // Security: a banned var on a tampered on-disk record is still dropped by the re-filter.
+        var tampered = rec with { ManagerVars = new Dictionary<string, string> { ["ANTHROPIC_API_KEY"] = "sk-leak" } };
+        JsonClaudeCliStateStore.RebuildEnv(tampered).Should().NotContainKey("ANTHROPIC_API_KEY");
     }
 
     [Fact]
