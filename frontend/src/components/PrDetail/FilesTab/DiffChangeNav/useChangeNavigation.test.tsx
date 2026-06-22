@@ -280,12 +280,12 @@ describe('useChangeNavigation', () => {
     // The double-click / counter-desync mechanism: goToChange snaps a change to
     // exactly SCROLL_MARGIN (8px) below the top edge, landing it on the activation
     // boundary. The browser settles scrollTop to an integer JUST UNDER the
-    // fractional target, so with the activation margin == the snap offset,
-    // computeCurrentIdx reads the change as "not reached" and a parked remeasure
-    // (content settling: syntax highlight / whole-file / AI) clobbers the pinned
-    // index back to -1. The next click then re-navigates to the SAME change
-    // (view doesn't move) — the user must click twice. A wider activation
-    // tolerance keeps the snapped change current.
+    // fractional target, so computeCurrentIdx reads the change as "not reached" and
+    // a parked remeasure (content settling: syntax highlight / whole-file / AI)
+    // would clobber the index back to -1 — the next click then re-navigates to the
+    // SAME change (view doesn't move) and the user must click twice. The pin keeps
+    // the snapped change current: while parked within PIN_RELEASE_PX of the target,
+    // derivePinAware returns the pinned index without consulting position.
     const rafSpy = vi.spyOn(window, 'requestAnimationFrame').mockImplementation((cb) => {
       cb(0);
       return 0;

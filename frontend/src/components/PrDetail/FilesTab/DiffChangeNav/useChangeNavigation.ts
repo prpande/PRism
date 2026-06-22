@@ -4,23 +4,14 @@ import type { DiffChange, ChangeTick } from './diffChanges';
 import { computeCurrentIdx, computeTicks } from './diffChanges';
 
 const SCROLL_MARGIN = 8;
-// Activation tolerance for deriving the current change from scroll position. MUST
-// exceed SCROLL_MARGIN: goToChange snaps a change to exactly SCROLL_MARGIN below
-// the top edge, landing it on the activation boundary, and the browser then settles
-// scrollTop to a device-pixel integer slightly BELOW the fractional target. With
-// the tolerance == SCROLL_MARGIN, computeCurrentIdx reads the snapped change as
-// "not reached" (off-by-one low) and a parked remeasure clobbers the pinned index
-// back to the previous change / -1 — the #577 double-click + counter desync. The
-// +4px absorbs sub-pixel row offsets and integer scroll rounding while staying
-// well under the minimum change spacing (~1 row), so the next change never
-// activates early.
-const ACTIVATION_MARGIN = SCROLL_MARGIN + 4;
 // How far the scroll must move from a jump's target before the deterministic pin
 // is released and position-derivation takes over. Larger than the arrival
 // tolerance (2px) and sub-pixel/integer scroll rounding, smaller than any
 // intentional scroll nudge (an arrow key scrolls tens of px). Lets changes
 // clustered in the final unscrollable viewport — which all share the same clamped
-// scroll position — stay individually addressable by the prev/next pin (#577).
+// scroll position — stay individually addressable by the prev/next pin, and keeps
+// a freshly-jumped change pinned through the sub-pixel/integer scroll rounding
+// that would otherwise let a parked remeasure clobber it back to -1 (#577).
 const PIN_RELEASE_PX = 8;
 // Safety net only: clears the programmatic-scroll flag if neither arrival-at-target
 // nor a user gesture has done so (generous, so it never fires mid-animation).
@@ -157,19 +148,24 @@ export function useChangeNavigation(
   currentIdxRef.current = currentIdx;
 
   // Position-derived current index, except the last jump's PIN wins while the
-  // scroll is still parked at that jump's target. Changes clustered in the final
-  // (unscrollable) viewport share one clamped scroll position, so deriving from
-  // position alone would downgrade the counter and a parked remeasure would wipe
-  // the pin. Once the scroll moves past PIN_RELEASE_PX from the target the pin is
-  // released and position drives again — covering keyboard scroll, which fires
-  // 'scroll' but no wheel/pointer gesture. (#577)
+  // scroll is still parked at that jump's target. The pin is the single source of
+  // truth for programmatic navigation: it disambiguates changes clustered in the
+  // final (unscrollable) viewport — which share one clamped scroll position — AND
+  // holds a freshly-jumped change through the sub-pixel/integer scroll rounding
+  // that would otherwise make computeCurrentIdx read it as "not reached" and let a
+  // parked remeasure clobber it back to -1. Once the scroll moves past
+  // PIN_RELEASE_PX from the target the pin releases and position drives again —
+  // covering keyboard scroll, which fires 'scroll' but no wheel/pointer gesture. A
+  // change is only ever snapped to startTop - SCROLL_MARGIN by a jump (which sets
+  // the pin), so computeCurrentIdx never sees that activation boundary unpinned and
+  // needs no extra slack beyond SCROLL_MARGIN. (#577)
   const derivePinAware = useCallback((startTops: number[], st: number): number => {
     const pin = pinnedIdxRef.current;
     if (pin >= 0 && Math.abs(st - targetTopRef.current) <= PIN_RELEASE_PX) {
       return Math.min(pin, startTops.length - 1); // clamp into bounds (shrink-safe)
     }
     pinnedIdxRef.current = -1;
-    return computeCurrentIdx(startTops, st, ACTIVATION_MARGIN);
+    return computeCurrentIdx(startTops, st, SCROLL_MARGIN);
   }, []);
 
   const remeasure = useCallback(() => {
