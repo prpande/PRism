@@ -11,7 +11,7 @@ internal static class ClaudeExecSignatures
     private static readonly string[] Signatures =
         ["env: node:", "node: No such file or directory", "node: command not found"];
 
-    public static bool IsExecutableNotFound(string output)
+    internal static bool IsExecutableNotFound(string output)
     {
         if (string.IsNullOrEmpty(output)) return false;
         foreach (var sig in Signatures)

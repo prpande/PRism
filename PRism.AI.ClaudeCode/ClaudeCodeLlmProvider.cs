@@ -82,7 +82,7 @@ public sealed class ClaudeCodeLlmProvider(
             throw new LlmProviderException("claude -p timed out.", result.Stderr, -1, timedOut: true);
         if (result.ExitCode != 0)
         {
-            if (ClaudeExecSignatures.IsExecutableNotFound(result.Stderr))
+            if (ClaudeExecSignatures.IsExecutableNotFound(result.Stderr + "\n" + result.Stdout))
                 locator.InvalidateResolved();   // npm `node` gone → re-discover next time
             throw new LlmProviderException($"claude -p failed (exit {result.ExitCode}).", result.Stderr, result.ExitCode);
         }

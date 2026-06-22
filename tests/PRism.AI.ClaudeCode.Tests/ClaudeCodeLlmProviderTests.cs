@@ -19,7 +19,6 @@ public sealed class ClaudeCodeLlmProviderTests
         var locator = new FakeClaudeCliLocator(new ResolvedCli("claude", ClaudeCliEnvironment.BuildAllowlisted()));
         var provider = new ClaudeCodeLlmProvider(runner, new ClaudeCodeProviderOptions
         {
-            ClaudeExecutable = "claude",
             WorkingDirectory = @"C:\ProgramData\PRism\llm-cwd",
         }, locator);
         return (provider, runner);
@@ -149,7 +148,6 @@ public sealed class ClaudeCodeLlmProviderTests
         var locator = new FakeClaudeCliLocator(new ResolvedCli("claude", ClaudeCliEnvironment.BuildAllowlisted()));
         var provider = new ClaudeCodeLlmProvider(runner, new ClaudeCodeProviderOptions
         {
-            ClaudeExecutable = "claude",
             WorkingDirectory = @"C:\ProgramData\PRism\llm-cwd",
         }, locator);
         var act = async () => await provider.CompleteAsync(Req(), CancellationToken.None);
