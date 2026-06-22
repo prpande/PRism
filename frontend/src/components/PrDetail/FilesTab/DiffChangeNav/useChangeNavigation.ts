@@ -8,6 +8,20 @@ const SCROLL_MARGIN = 8;
 // nor a user gesture has done so (generous, so it never fires mid-animation).
 const ANIM_CAP_MS = 1200;
 
+// Scroll offset that lands change `startTop` just below the top edge (by
+// SCROLL_MARGIN), clamped to the scrollable range. Shared by the deliberate
+// jump (goToChange) and the mid-jump re-aim (remeasure).
+function scrollTargetFor(startTop: number, scrollHeight: number, clientHeight: number): number {
+  const maxTop = Math.max(0, scrollHeight - clientHeight);
+  return Math.min(maxTop, Math.max(0, startTop - SCROLL_MARGIN));
+}
+
+// Programmatic scroll, honoring prefers-reduced-motion (instant instead of smooth).
+function scrollContainerTo(c: HTMLElement, top: number): void {
+  const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+  c.scrollTo({ top, behavior: reduce ? 'auto' : 'smooth' });
+}
+
 export interface ChangeNavState {
   total: number;
   currentIdx: number; // -1..total-1
@@ -79,9 +93,11 @@ export function useChangeNavigation(
   // and keying the reset on that churn wiped `currentIdx` mid-navigation (#577).
   // REQUIRED, and must change ONLY on a genuine view swap: a value that never
   // changes makes the reset fire once on mount and never again; a value that
-  // churns for the same view reintroduces #577. It is compared by value (a fresh
+  // churns for the same view reintroduces #577. Typed `string` (not `unknown`)
+  // so the compiler rejects passing the `changes` array or an object identity —
+  // the exact mistake this fix exists to prevent. Compared by value (a fresh
   // string with the same contents does NOT re-fire the reset).
-  resetKey: unknown,
+  resetKey: string,
 ): ChangeNavState {
   const [snap, setSnap] = useState<Measured>({
     startTops: [],
@@ -135,12 +151,10 @@ export function useChangeNavigation(
     const i = Math.min(currentIdxRef.current, last);
     if (i !== currentIdxRef.current) setCurrentIdx(i);
     if (i < 0) return;
-    const maxTop = Math.max(0, m.scrollHeight - m.clientHeight);
-    const top = Math.min(maxTop, Math.max(0, m.startTops[i] - SCROLL_MARGIN));
+    const top = scrollTargetFor(m.startTops[i], m.scrollHeight, m.clientHeight);
     if (Math.abs(top - targetTopRef.current) > 2) {
       targetTopRef.current = top;
-      const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
-      c.scrollTo({ top, behavior: reduce ? 'auto' : 'smooth' });
+      scrollContainerTo(c, top);
     }
   }, [containerRef, changes]);
 
@@ -213,16 +227,14 @@ export function useChangeNavigation(
       if (!c || i < 0 || i >= total) return;
       // Set the index up front so the counter advances deterministically.
       setCurrentIdx(i);
-      const maxTop = Math.max(0, c.scrollHeight - c.clientHeight);
-      const top = Math.min(maxTop, Math.max(0, snapRef.current.startTops[i] - SCROLL_MARGIN));
+      const top = scrollTargetFor(snapRef.current.startTops[i], c.scrollHeight, c.clientHeight);
       targetTopRef.current = top;
       animatingRef.current = true;
       window.clearTimeout(animCapRef.current);
       animCapRef.current = window.setTimeout(() => {
         animatingRef.current = false;
       }, ANIM_CAP_MS);
-      const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
-      c.scrollTo({ top, behavior: reduce ? 'auto' : 'smooth' });
+      scrollContainerTo(c, top);
     },
     [total, containerRef],
   );
