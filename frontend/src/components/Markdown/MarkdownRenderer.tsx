@@ -100,9 +100,13 @@ const components: Components = {
   // through setWindowOpenHandler → shell.openExternal (the OS default browser),
   // giving desktop defense-in-depth rather than being its sole mechanism. href is
   // already scheme-sanitized by urlTransform, so spreading props adds no new surface.
-  a({ children, ...props }) {
+  a({ href, title, children }) {
+    // Forward only the DOM-safe attributes a markdown link carries (href, title).
+    // Spreading react-markdown's full prop bag would leak its non-DOM `node`
+    // (mdast) prop as a stray node="[object Object]" attribute + a React
+    // unknown-prop warning on every link.
     return (
-      <a {...props} target="_blank" rel="noopener noreferrer">
+      <a href={href} title={title} target="_blank" rel="noopener noreferrer">
         {children}
       </a>
     );
