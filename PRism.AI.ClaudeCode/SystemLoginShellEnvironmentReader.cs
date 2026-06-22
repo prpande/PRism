@@ -80,6 +80,7 @@ public sealed class SystemLoginShellEnvironmentReader : ILoginShellEnvironmentRe
 
     private static string ResolveShell()
     {
+        // Reads the SIDECAR's $SHELL (not the cleared child env) — this selects which shell binary to spawn.
         var shell = Environment.GetEnvironmentVariable("SHELL");
         if (!string.IsNullOrEmpty(shell) && File.Exists(shell)) return shell;
         foreach (var candidate in new[] { "/bin/zsh", "/bin/bash", "/bin/sh" })

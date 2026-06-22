@@ -90,4 +90,15 @@ public sealed class LoginShellCaptureParseTests
         cap.Environment["VOLTA_HOME"].Should().Be("/v");
         cap.Environment.Should().HaveCount(2);   // the escape-prefixed line is dropped
     }
+
+    [Fact]
+    public void Returns_null_when_sentinels_out_of_order()
+    {
+        // S2 appears before S1 → the ordering guard must reject the capture.
+        var stdout = $"{S2}\n/usr/bin/claude\n{S1}\nPATH=/usr/bin\n{S3}\n";
+
+        var cap = SystemLoginShellEnvironmentReader.ParseCapture(stdout, S1, S2, S3);
+
+        cap.Should().BeNull();
+    }
 }
