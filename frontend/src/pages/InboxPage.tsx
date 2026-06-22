@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useInbox } from '../hooks/useInbox';
 import { useInboxUpdates } from '../hooks/useInboxUpdates';
+import { useActivationTransition } from '../hooks/useActivationTransition';
 import { useInboxRefresh } from '../hooks/useInboxRefresh';
 import { useToast } from '../components/Toast/useToast';
 import { useAiGate } from '../hooks/useAiGate';
@@ -22,8 +23,22 @@ import { NoFilterMatches } from '../components/Inbox/filters/NoFilterMatches';
 import type { FilterBarState } from '../components/Inbox/filters/FilterBar';
 import styles from './InboxPage.module.css';
 
-export function InboxPage() {
+// `active` reflects whether the keep-alive host (InboxHost) currently shows this
+// page (#563). It gates the page's Modal-based dialogs so a hidden-but-mounted
+// Inbox does not hold live document-level keydown handlers (Modal registers
+// Escape/Tab on `document` keyed on `open`, not on CSS visibility). Defaults true
+// so direct mounts (tests, any non-host caller) behave exactly as before.
+export function InboxPage({ active = true }: { active?: boolean } = {}) {
   const { data, error, isLoading, reload } = useInbox();
+  // #563 — under keep-alive the Inbox is no longer remounted on return from a PR,
+  // so its mount-effect GET /api/inbox doesn't re-fire. Refetch when the host
+  // re-shows this page (active false→true) so freshness that does NOT ride an
+  // `inbox-updated` SSE frame — e.g. a PR's unread bar clearing after mark-viewed
+  // (#285) — is picked up, exactly as the old remount-on-return did. Mirrors
+  // PrDetailView's refetch-on-activation. useActivationTransition never fires on
+  // first mount (useInbox's own mount fetch covers that) and is a no-op for direct
+  // callers where `active` is the default-true constant.
+  useActivationTransition(active, () => void reload());
   // #450 — an inbox-updated frame now silently auto-refreshes (debounced) instead of
   // surfacing the old reload banner. `announce` carries the screen-reader signal the
   // removed banner's role=status region used to provide.
@@ -43,7 +58,10 @@ export function InboxPage() {
   // becomes false and the overlay unmounts.
   const [onboardingDismissed, setOnboardingDismissed] = useState(false);
   const showOnboarding =
-    !onboardingDismissed && preferences != null && preferences.ui.onboardingSeen === false;
+    active &&
+    !onboardingDismissed &&
+    preferences != null &&
+    preferences.ui.onboardingSeen === false;
   const onboarding = showOnboarding ? (
     <AiOnboardingDialog onDismiss={() => setOnboardingDismissed(true)} />
   ) : null;
@@ -108,7 +126,7 @@ export function InboxPage() {
   if (error && !data)
     return (
       <ErrorModal
-        open
+        open={active}
         title="Couldn't load inbox"
         actions={
           <button
