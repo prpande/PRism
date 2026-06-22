@@ -150,7 +150,13 @@ export function useChangeNavigation(
     const last = m.startTops.length - 1;
     const i = Math.min(currentIdxRef.current, last);
     if (i !== currentIdxRef.current) setCurrentIdx(i);
-    if (i < 0) return;
+    if (i < 0) {
+      // The change set emptied mid-jump (nothing to arrive at): clear the
+      // animating flag now so scroll-derived tracking resumes immediately
+      // instead of waiting out ANIM_CAP_MS.
+      animatingRef.current = false;
+      return;
+    }
     const top = scrollTargetFor(m.startTops[i], m.scrollHeight, m.clientHeight);
     if (Math.abs(top - targetTopRef.current) > 2) {
       targetTopRef.current = top;

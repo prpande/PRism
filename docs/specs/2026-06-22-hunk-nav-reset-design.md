@@ -57,8 +57,10 @@ not the phantom annotation one.
 
 Key the index-reset on the **stable view identity**, not the array reference.
 
-`useChangeNavigation` gains a **required** `resetKey: unknown` parameter; the reset
-effect depends on `[resetKey]`. The call site passes
+`useChangeNavigation` gains a **required** `resetKey: string` parameter (typed
+`string`, not `unknown`, so the compiler rejects passing the `changes` array or an
+object identity — the exact mistake this fix prevents); the reset effect depends
+on `[resetKey]`. The call site passes
 `` `${selectedPath ?? ''}\n${wholeFileEnabled}` `` — the **same view identity** the
 existing scroll-reset already uses (`DiffPane.tsx` line ~372,
 `useEffect(... , [wholeFileEnabled, selectedPath])`); the two move in lockstep, a
