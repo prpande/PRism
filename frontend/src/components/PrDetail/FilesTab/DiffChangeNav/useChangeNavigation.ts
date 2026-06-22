@@ -4,6 +4,15 @@ import type { DiffChange, ChangeTick } from './diffChanges';
 import { computeCurrentIdx, computeTicks } from './diffChanges';
 
 const SCROLL_MARGIN = 8;
+// How far the scroll must move from a jump's target before the deterministic pin
+// is released and position-derivation takes over. Larger than the arrival
+// tolerance (2px) and sub-pixel/integer scroll rounding, smaller than any
+// intentional scroll nudge (an arrow key scrolls tens of px). Lets changes
+// clustered in the final unscrollable viewport — which all share the same clamped
+// scroll position — stay individually addressable by the prev/next pin, and keeps
+// a freshly-jumped change pinned through the sub-pixel/integer scroll rounding
+// that would otherwise let a parked remeasure clobber it back to -1 (#577).
+const PIN_RELEASE_PX = 8;
 // Safety net only: clears the programmatic-scroll flag if neither arrival-at-target
 // nor a user gesture has done so (generous, so it never fires mid-animation).
 const ANIM_CAP_MS = 1200;
@@ -109,14 +118,24 @@ export function useChangeNavigation(
   const [scrollTop, setScrollTop] = useState(0);
   // currentIdx is authoritative STATE, not re-derived from scrollTop each render.
   // A jump sets it directly (deterministic — independent of where the settled
-  // scrollTop rounds relative to the activation margin); a genuine MANUAL scroll
-  // recomputes it from position. The two are kept apart by `animatingRef`.
+  // scrollTop rounds relative to the activation margin, and able to address
+  // changes in the final unscrollable viewport that position can't distinguish);
+  // a genuine MANUAL scroll recomputes it from position. The two are reconciled
+  // by `animatingRef` (in flight) and `pinnedIdxRef` (parked at a jump target).
   const [currentIdx, setCurrentIdx] = useState(-1);
   // True while a programmatic scroll-to is in flight. Cleared on arrival at the
   // target, on a user scroll gesture (wheel/touch/pointer), or by the safety cap
   // — so trailing animation-frame scroll events never overwrite currentIdx.
   const animatingRef = useRef(false);
   const targetTopRef = useRef(0);
+  // The change index the last jump deterministically pinned, held until the user
+  // scrolls away from its target (PIN_RELEASE_PX). While pinned, position-derived
+  // recomputes (parked remeasure / scroll handler) yield to it instead of
+  // downgrading the counter — the fix for changes clustered in the final
+  // unscrollable viewport, whose shared clamped scroll position can't tell them
+  // apart, and for a parked remeasure landing on the activation boundary (#577).
+  // -1 = no active pin (manual scrolling drives the counter).
+  const pinnedIdxRef = useRef(-1);
   const animCapRef = useRef(0);
   const rafRef = useRef(0);
   // Latest measurement, read by the long-lived scroll/jump handlers without
@@ -128,6 +147,27 @@ export function useChangeNavigation(
   const currentIdxRef = useRef(currentIdx);
   currentIdxRef.current = currentIdx;
 
+  // Position-derived current index, except the last jump's PIN wins while the
+  // scroll is still parked at that jump's target. The pin is the single source of
+  // truth for programmatic navigation: it disambiguates changes clustered in the
+  // final (unscrollable) viewport — which share one clamped scroll position — AND
+  // holds a freshly-jumped change through the sub-pixel/integer scroll rounding
+  // that would otherwise make computeCurrentIdx read it as "not reached" and let a
+  // parked remeasure clobber it back to -1. Once the scroll moves past
+  // PIN_RELEASE_PX from the target the pin releases and position drives again —
+  // covering keyboard scroll, which fires 'scroll' but no wheel/pointer gesture. A
+  // change is only ever snapped to startTop - SCROLL_MARGIN by a jump (which sets
+  // the pin), so computeCurrentIdx never sees that activation boundary unpinned and
+  // needs no extra slack beyond SCROLL_MARGIN. (#577)
+  const derivePinAware = useCallback((startTops: number[], st: number): number => {
+    const pin = pinnedIdxRef.current;
+    if (pin >= 0 && Math.abs(st - targetTopRef.current) <= PIN_RELEASE_PX) {
+      return Math.min(pin, startTops.length - 1); // clamp into bounds (shrink-safe)
+    }
+    pinnedIdxRef.current = -1;
+    return computeCurrentIdx(startTops, st, SCROLL_MARGIN);
+  }, []);
+
   const remeasure = useCallback(() => {
     const c = containerRef.current;
     if (!c) return;
@@ -135,8 +175,10 @@ export function useChangeNavigation(
     setSnap(m);
     setScrollTop(c.scrollTop);
     // Keep currentIdx consistent with the new geometry while parked (not mid-jump).
+    // A still-active pin (jump target not yet scrolled away from) wins over
+    // position so a parked remeasure can't wipe it.
     if (!animatingRef.current) {
-      setCurrentIdx(computeCurrentIdx(m.startTops, c.scrollTop, SCROLL_MARGIN));
+      setCurrentIdx(derivePinAware(m.startTops, c.scrollTop));
       return;
     }
     // Mid-jump: a same-file `changes` recompute (whole-file load / parent
@@ -150,6 +192,7 @@ export function useChangeNavigation(
     const last = m.startTops.length - 1;
     const i = Math.min(currentIdxRef.current, last);
     if (i !== currentIdxRef.current) setCurrentIdx(i);
+    pinnedIdxRef.current = i; // keep the pin clamped in step with the jump
     if (i < 0) {
       // The change set emptied mid-jump (nothing to arrive at): clear the
       // animating flag now so scroll-derived tracking resumes immediately
@@ -162,7 +205,7 @@ export function useChangeNavigation(
       targetTopRef.current = top;
       scrollContainerTo(c, top);
     }
-  }, [containerRef, changes]);
+  }, [containerRef, changes, derivePinAware]);
 
   // Measure after paint + whenever the change list changes.
   useLayoutEffect(() => {
@@ -196,7 +239,7 @@ export function useChangeNavigation(
           if (Math.abs(st - targetTopRef.current) <= 2) animatingRef.current = false;
           return;
         }
-        setCurrentIdx(computeCurrentIdx(snapRef.current.startTops, st, SCROLL_MARGIN));
+        setCurrentIdx(derivePinAware(snapRef.current.startTops, st));
       });
     };
     // A user scroll gesture cancels the browser's smooth scroll, so stop treating
@@ -222,7 +265,7 @@ export function useChangeNavigation(
     // this re-runs against the now-mounted body. Without this the viewport
     // indicator never tracks live scrolling (the remeasure path re-runs on
     // `changes` and so sizes ticks correctly, masking the missing listener).
-  }, [containerRef, changes]);
+  }, [containerRef, changes, derivePinAware]);
 
   const total = changes.length;
   const hasOverflow = snap.scrollHeight > snap.clientHeight;
@@ -231,8 +274,10 @@ export function useChangeNavigation(
     (i: number) => {
       const c = containerRef.current;
       if (!c || i < 0 || i >= total) return;
-      // Set the index up front so the counter advances deterministically.
+      // Set the index up front so the counter advances deterministically, and pin
+      // it so a parked remeasure / clamped-scroll derive can't downgrade it.
       setCurrentIdx(i);
+      pinnedIdxRef.current = i;
       const top = scrollTargetFor(snapRef.current.startTops[i], c.scrollHeight, c.clientHeight);
       targetTopRef.current = top;
       animatingRef.current = true;
@@ -252,8 +297,10 @@ export function useChangeNavigation(
     (r: number) => {
       const c = containerRef.current;
       if (!c) return;
-      // Rail scrub is a manual position change — let scroll-derived tracking run.
+      // Rail scrub is a manual position change — release the pin and let
+      // scroll-derived tracking run.
       animatingRef.current = false;
+      pinnedIdxRef.current = -1;
       c.scrollTo({ top: r * c.scrollHeight, behavior: 'auto' });
     },
     [containerRef],
@@ -269,10 +316,11 @@ export function useChangeNavigation(
   // toggle), keyed on the stable `resetKey` rather than the `changes` array
   // reference. A same-file content recompute (new `changes` identity, same view)
   // no longer fires this — `currentIdx` is preserved and the `remeasure` path
-  // re-derives it from the live scroll position (#577). -1 and 0 both display as
-  // "1", so this never flickers the counter.
+  // re-derives it from the live scroll position (#577). The new view opens above
+  // its first change (currentIdx -1 → "— / M").
   useEffect(() => {
     animatingRef.current = false;
+    pinnedIdxRef.current = -1;
     setCurrentIdx(-1);
   }, [resetKey]);
 

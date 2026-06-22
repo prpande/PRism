@@ -113,6 +113,63 @@ would re-measure on every navigation step). This was raised as the issue's
 secondary suspect ("re-validate the mid-animation arrival logic against
 content-height changes") and is now handled, not deferred.
 
+## Update (B1 live validation): the deterministic pin is the missing source of truth
+
+Driving the running app against this PR's own multi-hunk `useChangeNavigation.ts`
+diff surfaced that the reset fix above was necessary but **not sufficient** — the
+counter still drifted from the click count and the view sometimes didn't move.
+Both symptoms share one root cause: after a jump, `currentIdx` was *re-derived
+from scroll position*, which clobbers the deterministic index `goToChange` set.
+Position-derivation fails in two ways:
+
+1. **Boundary under-count.** `goToChange(i)` snaps the change to exactly
+   `startTops[i] − SCROLL_MARGIN` (8px), landing it *on* the activation boundary.
+   The browser then settles `scrollTop` to a device-pixel integer a sub-pixel
+   **below** the fractional target, so `computeCurrentIdx` reads `startTops[i] <=
+   scrollTop + 8` as **false** and returns the *previous* change / −1. A parked
+   `remeasure` (content still settling) re-derived that and wiped the index → the
+   first "Next" landed change 1, then snapped back, so the next click re-navigated
+   to change 1 (the double-click). Measured live: `startTops[0] = 201.40625`,
+   target `193.40625`, settled `scrollTop = 193`, `201.40625 <= 201` → false → −1.
+
+2. **Final-viewport clustering (maxTop clamp).** Changes packed into the last,
+   unscrollable viewport all clamp to the **same** `scrollTop = maxTop`, so
+   position *cannot* distinguish them — `computeCurrentIdx` can only ever return
+   the last scroll-reachable change.
+
+**One fix covers both:** a `pinnedIdxRef` holds the last jump's index, and the
+derive paths (`remeasure` parked branch + scroll handler, via `derivePinAware`)
+yield to it while the scroll is within `PIN_RELEASE_PX` (8px) of the jump target —
+returning the pinned index *without consulting position at all*. So a snapped
+change can't be clobbered by rounding (case 1), and clustered tail changes stay
+individually addressable (case 2). Once the user scrolls away (including via
+keyboard, which fires `scroll` but no wheel/pointer gesture) the pin releases and
+position drives again at the standard `SCROLL_MARGIN`.
+
+A change is only ever snapped to `startTops[i] − SCROLL_MARGIN` by a *jump* (which
+sets the pin), so `computeCurrentIdx` never sees that activation boundary unpinned
+— position-derivation needs **no extra margin** beyond `SCROLL_MARGIN`. (An
+earlier iteration added an `ACTIVATION_MARGIN = SCROLL_MARGIN + 4` for case 1; the
+`/simplify` altitude pass showed the pin already intercepts that case before
+`computeCurrentIdx` runs, so the extra constant was removed as redundant.)
+
+### Display decision (reverses #486): em-dash above the first change
+
+`ChangeNavControls` previously clamped the "above the first change" state
+(`currentIdx === −1`) to `"1"` (no em-dash, #486). That made the *first* "Next"
+appear to do nothing — the number stayed `"1"` while the view jumped to change 1.
+The counter now reads `"— / M"` above the first change and `"1 / M"` only when
+actually on change 1, so every advance increments the counter in lockstep with the
+click. (Owner-approved during B1: the em-dash is the honest representation of "not
+yet on a hunk".)
+
+### Live proof (8-change file)
+
+`— / 8` → Next ×8 → `1…8 / 8` (each click advances exactly one; changes 6–8 share
+the clamped `scrollTop = 1871` because the view can't scroll further — correct);
+Prev ×3 → `7,6,5`; file-switch → `— / N`; at `4 / 8` Refresh PR (same-view
+recompute) holds `4 / 8`.
+
 ## Acceptance criteria
 
 1. Same file open, `changes` recomputes (new identity, same content/view) → counter
