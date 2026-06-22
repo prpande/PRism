@@ -26,6 +26,7 @@ public sealed class ClaudeCliEnvironmentTests
         env.Should().ContainKey("VOLTA_HOME");
         env.Should().ContainKey("NVM_DIR");
         env.Should().NotContainKey("RANDOM_UNLISTED");
+        env.Should().HaveCount(5);
     }
 
     [Fact]
