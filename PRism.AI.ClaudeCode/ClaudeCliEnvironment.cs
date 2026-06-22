@@ -26,7 +26,7 @@ internal static class ClaudeCliEnvironment
 
     /// <summary>POSIX env vars are case-sensitive; Windows is not. A case-collision must never admit
     /// an unlisted var (e.g. lowercase `nvm_dir`).</summary>
-    private static StringComparer KeyComparer =>
+    private static readonly StringComparer KeyComparer =
         OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
 
     /// <summary>Build the child env from the CURRENT process environment (Windows / fallback path).

@@ -24,8 +24,7 @@ public sealed class ClaudeCliLocator : IClaudeCliLocator, IDisposable
     private ResolvedCli? _resolved;                       // sticky positive snapshot (reference read = atomic)
     private NegativeEntry? _negative;                     // in-memory TTL only (single ref read = tear-free)
 
-    private static readonly string[] LadderRelativeToHome =
-        [".local/bin/claude"];
+    private const string HomeRelativeClaude = ".local/bin/claude";
     private static readonly string[] LadderAbsolute =
         ["/opt/homebrew/bin/claude", "/usr/local/bin/claude"];
 
@@ -151,7 +150,7 @@ public sealed class ClaudeCliLocator : IClaudeCliLocator, IDisposable
             home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
         var ladder = new List<string>();
         if (!string.IsNullOrEmpty(home))
-            foreach (var rel in LadderRelativeToHome) ladder.Add(Path.Combine(home, rel));
+            ladder.Add(Path.Combine(home, HomeRelativeClaude));
         ladder.AddRange(LadderAbsolute);
 
         foreach (var path in ladder)
