@@ -72,13 +72,17 @@ export function ChangeNavControls({
   onPrev,
   onNext,
 }: ChangeNavControlsProps) {
-  // Show a 1-based position, clamping the "above the first change" state
-  // (currentIdx === -1, scrolled above change 1) to "1" rather than an em dash:
-  // a "—" reads as broken (#486 review). prev stays disabled at the top via
-  // canPrev, and pressing next from the top still scrolls to change 1.
-  const position = Math.max(currentIdx, 0) + 1;
-  const display = String(position);
-  const announce = `change ${position} of ${total}`;
+  // Above the first change (currentIdx === -1: scrolled above change 1, or not yet
+  // navigated) the counter reads "— / M", visibly distinct from being ON change 1
+  // ("1 / M"). #486 originally clamped this to "1" to avoid a dash reading as
+  // broken, but that made the first "Next" appear to do nothing — the number
+  // stayed "1" while the view jumped to change 1. The em-dash makes every advance
+  // increment the counter in lockstep with the click (#577). prev stays disabled
+  // at the top via canPrev; pressing next from the top scrolls to change 1.
+  const atTop = currentIdx < 0;
+  const position = currentIdx + 1; // 1-based; only meaningful when !atTop
+  const display = atTop ? '—' : String(position);
+  const announce = atTop ? `before change 1 of ${total}` : `change ${position} of ${total}`;
   return (
     <div className={styles.cluster} role="group" aria-label="Change navigation">
       <span className={styles.lead} aria-hidden>
