@@ -90,6 +90,23 @@ function urlTransform(url: string): string | undefined {
 // parent re-render (theme toggle, status banner) would remount each
 // HighlightedCodeBlock and re-flash its load state.
 const components: Components = {
+  // #583: open links externally instead of navigating the app window away.
+  // Primarily for the BROWSER-TAB build, where a plain markdown link would
+  // otherwise navigate the whole tab away from the SPA — target="_blank" opens a
+  // new tab and leaves the SPA in place, and rel guards reverse-tabnabbing /
+  // referrer leakage. On the DESKTOP (Electron) build the catch-all is the main
+  // process will-navigate guard (#583), which prevents ANY plain anchor from
+  // escaping the window regardless of target; here target="_blank" routes the click
+  // through setWindowOpenHandler → shell.openExternal (the OS default browser),
+  // giving desktop defense-in-depth rather than being its sole mechanism. href is
+  // already scheme-sanitized by urlTransform, so spreading props adds no new surface.
+  a({ children, ...props }) {
+    return (
+      <a {...props} target="_blank" rel="noopener noreferrer">
+        {children}
+      </a>
+    );
+  },
   code({ className: codeClassName, children, ...props }) {
     const match = /language-(\w+)/.exec(codeClassName || '');
     const lang = match?.[1];

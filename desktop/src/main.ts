@@ -3,7 +3,7 @@ import * as path from "node:path";
 import * as fs from "node:fs";
 import { startSidecar, Sidecar } from "./sidecar";
 import { sidecarBinaryName } from "./platform";
-import { isOpenableUrl, windowOpenDecision } from "./urls";
+import { isOpenableUrl, navigationDecision, windowOpenDecision } from "./urls";
 import { attribute, formatSummary, Phase } from "./startupTimings";
 import { applicationMenuTemplate, editableContextMenuTemplate } from "./menu";
 
@@ -233,6 +233,23 @@ async function bootstrap(): Promise<void> {
     const { action, open } = windowOpenDecision(url);
     if (open) void shell.openExternal(url);
     return { action };
+  });
+
+  // will-navigate guard (#583). setWindowOpenHandler only fires for window.open /
+  // target="_blank"; a PLAIN in-window anchor click (e.g. an Overview/comment
+  // markdown link with no target) is a top-frame navigation that bypasses it and
+  // would navigate the BrowserWindow away from the SPA — a chromeless trap on macOS
+  // where the native traffic lights are hidden. This is the catch-all net: deny any
+  // cross-origin top-frame navigation and route it to the OS browser when https.
+  // appOrigin is captured ONCE here (sidecar is non-null at this point) and closed
+  // over — never derived lazily as `sidecar!.baseUrl` inside the handler, which a
+  // compile-time-only `!` would let throw during the shutdown window after
+  // before-quit nulls sidecar, silently defeating the guard before preventDefault().
+  const appOrigin = new URL(sidecar.baseUrl).origin;
+  mainWindow.webContents.on("will-navigate", (event, url) => {
+    const { prevent, open } = navigationDecision(url, appOrigin);
+    if (prevent) event.preventDefault();
+    if (open) void shell.openExternal(url);
   });
   mainWindow.webContents.on("context-menu", (_event, params) => {
     if (!params.isEditable || !mainWindow) return;
