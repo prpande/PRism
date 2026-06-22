@@ -101,6 +101,16 @@ test("navigationDecision prevents non-https cross-origin without opening", () =>
   });
 });
 
+test("navigationDecision prevents javascript: without opening (XSS guard)", () => {
+  // `new URL("javascript:…").origin` is the string "null" (never the app origin),
+  // and isOpenableUrl rejects the non-https scheme — so the canonical XSS payload
+  // is blocked and never handed to the OS shell.
+  assert.deepEqual(navigationDecision("javascript:alert(1)", APP_ORIGIN), {
+    prevent: true,
+    open: false,
+  });
+});
+
 test("navigationDecision prevents (never opens) an unparseable target", () => {
   assert.deepEqual(navigationDecision("not a url", APP_ORIGIN), {
     prevent: true,

@@ -149,7 +149,8 @@ of what HTML slips through. They are complementary, not redundant.
   `will-redirect`, which this design does not hook. That path is reachable only via an
   open-redirect on the loopback sidecar (none exists), so the markdown-link threat model is
   fully covered — noted so the "catch-all" framing isn't over-read and a future sidecar
-  redirect endpoint doesn't silently reopen the trap.
+  redirect endpoint doesn't silently reopen the trap. Tracked as #587 so the gap is
+  closed before any such endpoint lands.
 
 ## Open decision (B2 gate) — `mailto:` egress — **RESOLVED: Option A** (owner sign-off 2026-06-22)
 
@@ -171,7 +172,8 @@ Follow-up #584 tracks widening egress to `mailto:` (and a possible `http:`→`ht
   same-origin → `{prevent:false, open:false}`; cross-origin https → `{prevent:true,
   open:true}`; cross-origin http/file/javascript/mailto → `{prevent:true, open:false}`;
   unparseable → `{prevent:true, open:false}`.
-- `frontend/__tests__/` — assert a rendered markdown link carries `target="_blank"` and
+- `frontend/src/components/Markdown/MarkdownRenderer.links.test.tsx` (co-located with
+  the component) — assert a rendered markdown link carries `target="_blank"` and
   `rel="noopener noreferrer"` and preserves its `href`.
 - The `will-navigate` wiring in `main.ts` is covered behaviorally by the existing
   `desktop/test/shell.e2e.ts` seam where feasible; the decision logic lives in the
