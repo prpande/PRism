@@ -41,6 +41,7 @@ public sealed class JsonClaudeCliStateStore
         {
             var record = JsonSerializer.Deserialize<ClaudeCliStateRecord>(File.ReadAllText(_path), Json);
             if (record is null || record.Platform != CurrentPlatform) return null;
+            // NOTE: SchemaVersion is not validated yet — only v1 exists; add a check here when a v2 record shape lands.
             return record;
         }
         catch (JsonException)
