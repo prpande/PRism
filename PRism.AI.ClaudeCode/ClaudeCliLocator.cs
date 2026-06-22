@@ -112,7 +112,14 @@ public sealed class ClaudeCliLocator : IClaudeCliLocator, IDisposable
 
     private async Task<ClaudeCliResolution> ResolveUnixAsync(CancellationToken ct)
     {
-        // (Task 7 inserts the persisted-record warm-reuse check here.)
+        // Warm path: a persisted positive record is reused iff its executable still exists. NO spawn
+        // here — the node-manager-swap case (shim present, pinned node gone) is caught lazily when the
+        // next real spawn hits exec-not-found and calls InvalidateResolved (spec §6). Load() has
+        // already rejected a foreign-platform record.
+        var record = _store.Load();
+        if (record is not null && _pathExists(record.ExecutablePath))
+            return new ResolvedCli(record.ExecutablePath, JsonClaudeCliStateStore.RebuildEnv(record));
+
         return await DiscoverColdAsync(ct).ConfigureAwait(false);
     }
 
