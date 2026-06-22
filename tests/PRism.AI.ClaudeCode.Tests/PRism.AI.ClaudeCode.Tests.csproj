@@ -13,6 +13,7 @@
     <PackageReference Include="Xunit.SkippableFact" />
     <!-- Concrete DI package — BuildServiceProvider lives here, not in Abstractions. -->
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
+    <PackageReference Include="Microsoft.Extensions.TimeProvider.Testing" />
   </ItemGroup>
   <ItemGroup>
     <Using Include="Xunit" />

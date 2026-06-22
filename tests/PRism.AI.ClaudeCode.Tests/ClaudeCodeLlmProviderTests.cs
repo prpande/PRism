@@ -16,11 +16,11 @@ public sealed class ClaudeCodeLlmProviderTests
     private static (ClaudeCodeLlmProvider provider, FakeCliProcessRunner runner) Build(ProcessResult? result = null)
     {
         var runner = new FakeCliProcessRunner(result ?? Ok);
+        var locator = new FakeClaudeCliLocator(new ResolvedCli("claude", ClaudeCliEnvironment.BuildAllowlisted()));
         var provider = new ClaudeCodeLlmProvider(runner, new ClaudeCodeProviderOptions
         {
-            ClaudeExecutable = "claude",
             WorkingDirectory = @"C:\ProgramData\PRism\llm-cwd",
-        });
+        }, locator);
         return (provider, runner);
     }
 
@@ -145,11 +145,11 @@ public sealed class ClaudeCodeLlmProviderTests
     public async Task Missing_cli_Win32Exception_surfaces_as_LlmProviderException()
     {
         var runner = new FakeCliProcessRunner(new Win32Exception("The system cannot find the file specified"));
+        var locator = new FakeClaudeCliLocator(new ResolvedCli("claude", ClaudeCliEnvironment.BuildAllowlisted()));
         var provider = new ClaudeCodeLlmProvider(runner, new ClaudeCodeProviderOptions
         {
-            ClaudeExecutable = "claude",
             WorkingDirectory = @"C:\ProgramData\PRism\llm-cwd",
-        });
+        }, locator);
         var act = async () => await provider.CompleteAsync(Req(), CancellationToken.None);
         await act.Should().ThrowAsync<LlmProviderException>();
     }

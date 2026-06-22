@@ -22,6 +22,14 @@ public sealed class ClaudeCodeProviderOptions
     /// <see cref="Timeout"/>, which bounds full completions).</summary>
     public TimeSpan ProbeTimeout { get; init; } = TimeSpan.FromSeconds(10);
 
+    /// <summary>Wall-clock ceiling for the login-shell discovery capture (spec §4.2). Separate from
+    /// <see cref="ProbeTimeout"/>; a timeout falls to the degradation ladder.</summary>
+    public TimeSpan DiscoveryTimeout { get; init; } = TimeSpan.FromSeconds(10);
+
+    /// <summary>In-memory TTL for a discovery NEGATIVE result (spec §6). Never persisted; a restart
+    /// or a mid-session install recovers within this window.</summary>
+    public TimeSpan NegativeTtl { get; init; } = TimeSpan.FromSeconds(30);
+
     /// <summary>Hot source of the per-call timeout (#496). Defaults to the static <see cref="Timeout"/>
     /// so direct-constructor call sites and tests are unaffected. The Web composition root supplies a
     /// factory that reads (and clamps) the user-configured value from IConfigStore on each call, giving

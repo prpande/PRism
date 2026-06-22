@@ -5,6 +5,7 @@ using PRism.Core;
 using PRism.Core.Config;
 using PRism.Core.Hosting;
 using PRism.GitHub;
+using PRism.Web.Ai;
 using PRism.Web.Composition;
 using PRism.Web.Endpoints;
 using PRism.Web.Hosting;
@@ -97,6 +98,7 @@ builder.Services.AddPrismClaudeCode(
     },
     llmUsageDir);
 builder.Services.AddPrismAi();
+builder.Services.AddHostedService<ClaudeCliDiscoveryWarmup>();
 // #517 — durable AI-usage rollup. The store is the read source for GET /api/ai/usage; the tailer
 // folds new ai-interactions.log lines into it on a 60s timer (fully decoupled from the AI record
 // path). llmUsageDir holds the rollup file (same owner-restricted dir as token-usage.jsonl); the

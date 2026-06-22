@@ -1,3 +1,4 @@
+using PRism.AI.ClaudeCode;
 using PRism.AI.Contracts.Provider;
 
 namespace PRism.Web.Ai;
@@ -21,6 +22,13 @@ namespace PRism.Web.Ai;
 internal sealed class CachedLlmAvailabilityProbe : ILlmAvailabilityProbe, IDisposable
 {
     private sealed record CacheEntry(LlmAvailability Value, DateTimeOffset At);
+
+    // Discovery-owned negatives: the ClaudeCliLocator owns their (sole) negative TTL. Re-caching them
+    // here for a fresh TTL would compound into ~2× recovery latency after a mid-session install (spec §7).
+    // PRism.Web already references PRism.AI.ClaudeCode (it calls AddPrismClaudeCode), so use the shared
+    // constants rather than literals — a reason-code rename then stays a single edit.
+    private static readonly HashSet<string> DiscoveryNegativeReasonCodes =
+        new(StringComparer.Ordinal) { ClaudeReasonCodes.CliNotInstalled, ClaudeReasonCodes.CliDiscoveryFailed };
 
     private readonly ILlmAvailabilityProbe _inner;
     private readonly TimeProvider _clock;
@@ -51,10 +59,12 @@ internal sealed class CachedLlmAvailabilityProbe : ILlmAvailabilityProbe, IDispo
             if (entry is not null && now - entry.At < _ttl) return entry.Value;
 
             var result = await _inner.ProbeAsync(ct).ConfigureAwait(false);
-            // Stamp at probe COMPLETION, not the pre-await `now`: a multi-second CLI
-            // probe would otherwise shorten the effective TTL by its own latency and
-            // raise the subprocess spawn rate the cache exists to bound.
-            _entry = new CacheEntry(result, _clock.GetUtcNow());
+            // Pass discovery-negatives straight through — do not extend them past the locator's TTL.
+            // For all other results, stamp at probe COMPLETION, not the pre-await `now`: a multi-second
+            // CLI probe would otherwise shorten the effective TTL by its own latency and raise the
+            // subprocess spawn rate the cache exists to bound.
+            if (!DiscoveryNegativeReasonCodes.Contains(result.ReasonCode))
+                _entry = new CacheEntry(result, _clock.GetUtcNow());
             return result;
         }
         finally
