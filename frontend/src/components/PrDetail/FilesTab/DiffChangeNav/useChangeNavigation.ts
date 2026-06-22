@@ -8,6 +8,20 @@ const SCROLL_MARGIN = 8;
 // nor a user gesture has done so (generous, so it never fires mid-animation).
 const ANIM_CAP_MS = 1200;
 
+// Scroll offset that lands change `startTop` just below the top edge (by
+// SCROLL_MARGIN), clamped to the scrollable range. Shared by the deliberate
+// jump (goToChange) and the mid-jump re-aim (remeasure).
+function scrollTargetFor(startTop: number, scrollHeight: number, clientHeight: number): number {
+  const maxTop = Math.max(0, scrollHeight - clientHeight);
+  return Math.min(maxTop, Math.max(0, startTop - SCROLL_MARGIN));
+}
+
+// Programmatic scroll, honoring prefers-reduced-motion (instant instead of smooth).
+function scrollContainerTo(c: HTMLElement, top: number): void {
+  const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+  c.scrollTo({ top, behavior: reduce ? 'auto' : 'smooth' });
+}
+
 export interface ChangeNavState {
   total: number;
   currentIdx: number; // -1..total-1
@@ -72,6 +86,18 @@ export function useChangeNavigation(
   containerRef: RefObject<HTMLElement | null>,
   tableRef: RefObject<HTMLElement | null>,
   changes: DiffChange[],
+  // Stable identity of the rendered view (file path + whole-file mode). The
+  // top-reset keys on THIS, not on the `changes` array reference: `changes`
+  // recomputes for the SAME file whenever `allLines` does (whole-file async
+  // load, a parent `files` re-fetch handing DiffPane a fresh `selectedFile`),
+  // and keying the reset on that churn wiped `currentIdx` mid-navigation (#577).
+  // REQUIRED, and must change ONLY on a genuine view swap: a value that never
+  // changes makes the reset fire once on mount and never again; a value that
+  // churns for the same view reintroduces #577. Typed `string` (not `unknown`)
+  // so the compiler rejects passing the `changes` array or an object identity —
+  // the exact mistake this fix exists to prevent. Compared by value (a fresh
+  // string with the same contents does NOT re-fire the reset).
+  resetKey: string,
 ): ChangeNavState {
   const [snap, setSnap] = useState<Measured>({
     startTops: [],
@@ -97,6 +123,10 @@ export function useChangeNavigation(
   // re-subscribing them every time the snapshot changes.
   const snapRef = useRef(snap);
   snapRef.current = snap;
+  // Latest index, read by `remeasure` to re-aim an in-flight jump WITHOUT taking
+  // currentIdx as a callback dep (that would re-measure on every navigation step).
+  const currentIdxRef = useRef(currentIdx);
+  currentIdxRef.current = currentIdx;
 
   const remeasure = useCallback(() => {
     const c = containerRef.current;
@@ -107,6 +137,30 @@ export function useChangeNavigation(
     // Keep currentIdx consistent with the new geometry while parked (not mid-jump).
     if (!animatingRef.current) {
       setCurrentIdx(computeCurrentIdx(m.startTops, c.scrollTop, SCROLL_MARGIN));
+      return;
+    }
+    // Mid-jump: a same-file `changes` recompute (whole-file load / parent
+    // re-fetch) shifted the content height under the running smooth scroll (#577).
+    // Two corrections, since the index-reset no longer fires on every recompute:
+    //   1. Clamp the pinned index into the new bounds so the counter can never
+    //      read "N of M" with N > M when the change set shrank.
+    //   2. Re-aim targetTopRef at the target row's NEW top (and re-issue the
+    //      scroll) so the jump still settles via the arrival check instead of
+    //      waiting out ANIM_CAP_MS against a now-stale target.
+    const last = m.startTops.length - 1;
+    const i = Math.min(currentIdxRef.current, last);
+    if (i !== currentIdxRef.current) setCurrentIdx(i);
+    if (i < 0) {
+      // The change set emptied mid-jump (nothing to arrive at): clear the
+      // animating flag now so scroll-derived tracking resumes immediately
+      // instead of waiting out ANIM_CAP_MS.
+      animatingRef.current = false;
+      return;
+    }
+    const top = scrollTargetFor(m.startTops[i], m.scrollHeight, m.clientHeight);
+    if (Math.abs(top - targetTopRef.current) > 2) {
+      targetTopRef.current = top;
+      scrollContainerTo(c, top);
     }
   }, [containerRef, changes]);
 
@@ -179,16 +233,14 @@ export function useChangeNavigation(
       if (!c || i < 0 || i >= total) return;
       // Set the index up front so the counter advances deterministically.
       setCurrentIdx(i);
-      const maxTop = Math.max(0, c.scrollHeight - c.clientHeight);
-      const top = Math.min(maxTop, Math.max(0, snapRef.current.startTops[i] - SCROLL_MARGIN));
+      const top = scrollTargetFor(snapRef.current.startTops[i], c.scrollHeight, c.clientHeight);
       targetTopRef.current = top;
       animatingRef.current = true;
       window.clearTimeout(animCapRef.current);
       animCapRef.current = window.setTimeout(() => {
         animatingRef.current = false;
       }, ANIM_CAP_MS);
-      const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
-      c.scrollTo({ top, behavior: reduce ? 'auto' : 'smooth' });
+      scrollContainerTo(c, top);
     },
     [total, containerRef],
   );
@@ -213,12 +265,16 @@ export function useChangeNavigation(
     heightPct: snap.scrollHeight > 0 ? (snap.clientHeight / snap.scrollHeight) * 100 : 100,
   };
 
-  // Reset to the top when the change list swaps (file switch / whole-file toggle).
-  // -1 and 0 both display as "1", so this never flickers the counter.
+  // Reset to the top only on a genuine view swap (file switch / whole-file
+  // toggle), keyed on the stable `resetKey` rather than the `changes` array
+  // reference. A same-file content recompute (new `changes` identity, same view)
+  // no longer fires this — `currentIdx` is preserved and the `remeasure` path
+  // re-derives it from the live scroll position (#577). -1 and 0 both display as
+  // "1", so this never flickers the counter.
   useEffect(() => {
     animatingRef.current = false;
     setCurrentIdx(-1);
-  }, [changes]);
+  }, [resetKey]);
 
   // Clear the safety-cap timer on unmount.
   useEffect(() => () => window.clearTimeout(animCapRef.current), []);

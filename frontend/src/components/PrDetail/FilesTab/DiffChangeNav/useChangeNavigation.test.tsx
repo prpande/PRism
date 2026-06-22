@@ -39,7 +39,7 @@ describe('useChangeNavigation', () => {
     const container = fakeContainer(0);
     const ref = { current: container };
     const tableRef = { current: container };
-    const { result } = renderHook(() => useChangeNavigation(ref, tableRef, CHANGES));
+    const { result } = renderHook(() => useChangeNavigation(ref, tableRef, CHANGES, 'k'));
     act(() => result.current.remeasure());
     expect(result.current.total).toBe(3);
     expect(result.current.currentIdx).toBe(-1);
@@ -50,7 +50,7 @@ describe('useChangeNavigation', () => {
   it('next() from -1 scrolls to the first change', () => {
     const container = fakeContainer(0);
     const ref = { current: container };
-    const { result } = renderHook(() => useChangeNavigation(ref, ref, CHANGES));
+    const { result } = renderHook(() => useChangeNavigation(ref, ref, CHANGES, 'k'));
     act(() => result.current.remeasure());
     act(() => result.current.goToNext());
     // first change row top is 100; scroll target = 100 - 8 margin = 92
@@ -63,7 +63,7 @@ describe('useChangeNavigation', () => {
     // sub-pixel rounding. The pinned explicit index must reflect the target.
     const container = fakeContainer(0);
     const ref = { current: container };
-    const { result } = renderHook(() => useChangeNavigation(ref, ref, CHANGES));
+    const { result } = renderHook(() => useChangeNavigation(ref, ref, CHANGES, 'k'));
     act(() => result.current.remeasure());
     expect(result.current.currentIdx).toBe(-1);
     act(() => result.current.goToChange(1));
@@ -89,7 +89,7 @@ describe('useChangeNavigation', () => {
     const ref: { current: HTMLDivElement | null } = { current: null };
     const tableRef: { current: HTMLElement | null } = { current: null };
     let changes = CHANGES.slice();
-    const { result, rerender } = renderHook(() => useChangeNavigation(ref, tableRef, changes));
+    const { result, rerender } = renderHook(() => useChangeNavigation(ref, tableRef, changes, 'k'));
     // Body mounts now; a new `changes` array ref drives the effect re-run.
     const container = fakeContainer(0);
     ref.current = container;
@@ -106,10 +106,124 @@ describe('useChangeNavigation', () => {
     rafSpy.mockRestore();
   });
 
+  it('preserves currentIdx when changes recomputes for the same view (#577)', () => {
+    // #577 repro: with the SAME file open, an unrelated content recompute hands
+    // the hook a NEW `changes` array (same content, same view identity) — e.g. a
+    // parent `files` re-fetch or whole-file async load. The counter must NOT snap
+    // back to "1", and an in-flight advance must survive. The reset is keyed on
+    // the stable view identity (4th arg), not the memoized array reference.
+    const container = fakeContainer(0);
+    const ref = { current: container };
+    let changes = CHANGES.slice();
+    const viewKey = 'src/main.ts false';
+    const { result, rerender } = renderHook(() => useChangeNavigation(ref, ref, changes, viewKey));
+    act(() => result.current.remeasure());
+    act(() => result.current.goToChange(1));
+    expect(result.current.currentIdx).toBe(1);
+    // Settle the smooth-scroll at the jump target so position-derived tracking is
+    // authoritative (change 1's row top is 300, target = 300 - 8 margin = 292).
+    act(() => {
+      container.scrollTop = 292;
+      container.dispatchEvent(new Event('scroll'));
+    });
+    expect(result.current.currentIdx).toBe(1);
+
+    // Same view, content recompute → NEW array identity, SAME content + viewKey.
+    changes = CHANGES.slice();
+    rerender();
+    // Pre-fix (reset keyed on `changes`): currentIdx is wiped to -1 → "1".
+    expect(result.current.currentIdx).toBe(1);
+    // And a single Next still advances exactly one change (not a wasted click).
+    act(() => result.current.goToNext());
+    expect(result.current.currentIdx).toBe(2);
+  });
+
+  it('resets currentIdx to the top when the view identity changes (file switch) (#577)', () => {
+    // The reset must still fire on a genuine view swap (different file / whole-file
+    // toggle), so a fresh file always opens at the top rather than inheriting the
+    // previous file's index.
+    const container = fakeContainer(0);
+    const ref = { current: container };
+    let changes = CHANGES.slice();
+    let viewKey = 'a.ts false';
+    const { result, rerender } = renderHook(() => useChangeNavigation(ref, ref, changes, viewKey));
+    act(() => result.current.remeasure());
+    act(() => result.current.goToChange(2));
+    expect(result.current.currentIdx).toBe(2);
+
+    // Switch files: new view identity + new change list.
+    changes = CHANGES.slice();
+    viewKey = 'b.ts false';
+    rerender();
+    expect(result.current.currentIdx).toBe(-1);
+  });
+
+  it('re-aims an in-flight jump at the moved target on a same-view recompute (#577 secondary)', () => {
+    // Secondary suspect: if content height shifts DURING a smooth scroll, the
+    // captured target goes stale and the jump never "arrives", wedging the
+    // animating flag until the 1200ms cap. remeasure re-aims at the target row's
+    // new top so the jump settles normally instead.
+    const rafSpy = vi.spyOn(window, 'requestAnimationFrame').mockImplementation((cb) => {
+      cb(0);
+      return 0;
+    });
+    const container = fakeContainer(0);
+    const ref = { current: container };
+    const changes = CHANGES.slice();
+    const { result } = renderHook(() =>
+      useChangeNavigation(ref, ref, changes, 'src/main.ts false'),
+    );
+    act(() => result.current.remeasure());
+    // Jump to change 1 (row top 300 → target 292); animation is in flight.
+    act(() => result.current.goToChange(1));
+    expect(container.scrollTo).toHaveBeenLastCalledWith(expect.objectContaining({ top: 292 }));
+    // Content above change 1 grows, pushing its row down 300 → 360 (kept ascending
+    // so computeCurrentIdx's monotonic invariant holds).
+    const row1 = container.querySelector('[data-change-start="1"]') as HTMLElement;
+    row1.getBoundingClientRect = () =>
+      ({ top: 360, bottom: 376, left: 0, right: 50, height: 16, width: 50 }) as DOMRect;
+    // Same-view recompute mid-jump → re-aim at the new top (360 - 8 = 352).
+    act(() => result.current.remeasure());
+    expect(container.scrollTo).toHaveBeenLastCalledWith(expect.objectContaining({ top: 352 }));
+    // Arrival at the corrected target clears the animation; manual scroll resumes.
+    act(() => {
+      container.scrollTop = 352;
+      container.dispatchEvent(new Event('scroll'));
+    });
+    act(() => {
+      container.scrollTop = 0;
+      container.dispatchEvent(new Event('scroll'));
+    });
+    expect(result.current.currentIdx).toBe(-1);
+    rafSpy.mockRestore();
+  });
+
+  it('clamps a pinned index into bounds when a same-view recompute shrinks the set (#577)', () => {
+    // After the fix the index is preserved across same-view recomputes; if the
+    // recompute SHRINKS the change set while a jump is pinned, the counter must
+    // never read "N of M" with N > M — clamp to total-1.
+    const container = fakeContainer(0);
+    const ref = { current: container };
+    let changes = CHANGES.slice();
+    const { result, rerender } = renderHook(() =>
+      useChangeNavigation(ref, ref, changes, 'src/main.ts false'),
+    );
+    act(() => result.current.remeasure());
+    act(() => result.current.goToChange(2));
+    expect(result.current.currentIdx).toBe(2);
+    expect(result.current.total).toBe(3);
+    // Same view, change set drops to 2 (e.g. head advanced / re-fetch).
+    changes = CHANGES.slice(0, 2);
+    rerender();
+    expect(result.current.total).toBe(2);
+    expect(result.current.currentIdx).toBe(1); // clamped, not a stale 2 → "3 of 2"
+    expect(result.current.canNext).toBe(false);
+  });
+
   it('produces ticks with kind + percentages', () => {
     const container = fakeContainer(0);
     const ref = { current: container };
-    const { result } = renderHook(() => useChangeNavigation(ref, ref, CHANGES));
+    const { result } = renderHook(() => useChangeNavigation(ref, ref, CHANGES, 'k'));
     act(() => result.current.remeasure());
     expect(result.current.ticks).toHaveLength(3);
     expect(result.current.ticks[0]).toMatchObject({ kind: 'add', topPct: 10 });
@@ -119,7 +233,7 @@ describe('useChangeNavigation', () => {
     const container = fakeContainer(0);
     Object.defineProperty(container, 'scrollHeight', { value: 200, configurable: true });
     const ref = { current: container };
-    const { result } = renderHook(() => useChangeNavigation(ref, ref, CHANGES));
+    const { result } = renderHook(() => useChangeNavigation(ref, ref, CHANGES, 'k'));
     act(() => result.current.remeasure());
     expect(result.current.hasOverflow).toBe(false);
   });
