@@ -10,6 +10,7 @@ namespace PRism.AI.ClaudeCode;
 public sealed class ClaudeCodeStreamingProvider(
     IStreamingCliProcessFactory factory,
     ClaudeCodeProviderOptions providerOptions,
+    IClaudeCliLocator locator,
     ILoggerFactory? loggerFactory = null) : IStreamingLlmProvider
 {
     // The session's drift-guard warnings (Task 8: MalformedResult / ZeroOutputTurn) only reach an operator
@@ -51,10 +52,17 @@ public sealed class ClaudeCodeStreamingProvider(
             args.Add("--resume"); args.Add(options.ResumeSessionId);
         }
 
+        // StartSession is synchronous (cannot await). Read the locator's memoized snapshot; eager
+        // Live-entry discovery (single-flighted) means it is populated by the time a user starts a
+        // session. Fall back to today's bare-name invocation if not yet resolved (spec §3.2).
+        var (fileName, environment) = locator.CurrentResolved is ResolvedCli resolved
+            ? (resolved.ExecutablePath, resolved.Environment)
+            : (providerOptions.ClaudeExecutable, (IReadOnlyDictionary<string, string>)ClaudeCliEnvironment.BuildAllowlisted());
+
         var spec = new StreamingProcessSpec(
-            FileName: providerOptions.ClaudeExecutable,
+            FileName: fileName,
             Arguments: args,
-            Environment: ClaudeCliEnvironment.BuildAllowlisted(),
+            Environment: environment,
             WorkingDirectory: workingDir);
 
         return new ClaudeCodeStreamingSession(

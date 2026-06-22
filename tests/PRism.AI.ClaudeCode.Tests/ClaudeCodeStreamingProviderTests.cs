@@ -13,7 +13,10 @@ public sealed class ClaudeCodeStreamingProviderTests
         var proc = new FakeStreamingCliProcess();
         var factory = new FakeStreamingCliProcessFactory(proc);
         var options = new ClaudeCodeProviderOptions { WorkingDirectory = baseDir };
-        return (new ClaudeCodeStreamingProvider(factory, options), factory);
+        // FakeClaudeCliLocator with NotFound exercises the fallback path (bare-name + BuildAllowlisted),
+        // keeping all existing env/flag assertions valid.
+        var locator = new FakeClaudeCliLocator(new NotFound(ClaudeReasonCodes.CliDiscoveryFailed));
+        return (new ClaudeCodeStreamingProvider(factory, options, locator), factory);
     }
 
     [Fact]
@@ -53,7 +56,9 @@ public sealed class ClaudeCodeStreamingProviderTests
         var factory = new FakeStreamingCliProcessFactory(proc);
         var loggerFactory = new CapturingLoggerFactory();
         var provider = new ClaudeCodeStreamingProvider(
-            factory, new ClaudeCodeProviderOptions { WorkingDirectory = baseDir }, loggerFactory);
+            factory, new ClaudeCodeProviderOptions { WorkingDirectory = baseDir },
+            new FakeClaudeCliLocator(new NotFound(ClaudeReasonCodes.CliDiscoveryFailed)),
+            loggerFactory);
 
         await using var session = provider.StartSession(new StreamingSessionOptions());
         proc.EmitLines(
@@ -228,6 +233,36 @@ public sealed class ClaudeCodeStreamingProviderTests
         provider.StartSession(new StreamingSessionOptions(WorkingDirectory: baseDir));
         factory.CapturedSpec!.WorkingDirectory.Should().Be(viaNull);
         Directory.Exists(viaNull).Should().BeTrue();
+    }
+
+    [Fact]
+    public void Uses_resolved_invocation_when_locator_has_one()
+    {
+        var env = new Dictionary<string, string> { ["PATH"] = "/opt/homebrew/bin", ["VOLTA_HOME"] = "/v" };
+        var factory = new FakeStreamingCliProcessFactory(new FakeStreamingCliProcess());
+        var provider = new ClaudeCodeStreamingProvider(
+            factory,
+            new ClaudeCodeProviderOptions { WorkingDirectory = Directory.CreateTempSubdirectory().FullName },
+            new FakeClaudeCliLocator(new ResolvedCli("/opt/homebrew/bin/claude", env)));
+
+        provider.StartSession(new StreamingSessionOptions());
+
+        factory.CapturedSpec!.FileName.Should().Be("/opt/homebrew/bin/claude");
+        factory.CapturedSpec.Environment.Should().ContainKey("VOLTA_HOME");
+    }
+
+    [Fact]
+    public void Falls_back_to_bare_name_when_locator_has_no_resolution()
+    {
+        var factory = new FakeStreamingCliProcessFactory(new FakeStreamingCliProcess());
+        var provider = new ClaudeCodeStreamingProvider(
+            factory,
+            new ClaudeCodeProviderOptions { ClaudeExecutable = "claude", WorkingDirectory = Directory.CreateTempSubdirectory().FullName },
+            new FakeClaudeCliLocator(new NotFound(ClaudeReasonCodes.CliDiscoveryFailed)));
+
+        provider.StartSession(new StreamingSessionOptions());
+
+        factory.CapturedSpec!.FileName.Should().Be("claude");
     }
 
     private static string ArgValue(IReadOnlyList<string> args, string flag)

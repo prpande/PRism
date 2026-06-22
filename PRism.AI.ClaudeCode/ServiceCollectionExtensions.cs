@@ -51,6 +51,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IStreamingLlmProvider>(sp => new ClaudeCodeStreamingProvider(
             sp.GetRequiredService<IStreamingCliProcessFactory>(),
             sp.GetRequiredService<ClaudeCodeProviderOptions>(),
+            sp.GetRequiredService<IClaudeCliLocator>(),
             sp.GetRequiredService<ILoggerFactory>()));   // inject a real logger so drift-guard warnings reach a sink
         services.AddSingleton<ITokenUsageTracker>(_ => new JsonlTokenUsageTracker(usageDir));
         // Register the concrete type so Web's AddPrismAi can resolve it directly when
