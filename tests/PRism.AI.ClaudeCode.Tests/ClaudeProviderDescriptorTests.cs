@@ -14,6 +14,7 @@ public sealed class ClaudeProviderDescriptorTests
         var d = ClaudeProviderDescriptor.Create();
 
         d.DisabledStates.Should().Contain(s => s.ReasonCode == ClaudeReasonCodes.CliNotInstalled);
+        d.DisabledStates.Should().Contain(s => s.ReasonCode == ClaudeReasonCodes.CliDiscoveryFailed);
         d.DisabledStates.Should().Contain(s => s.ReasonCode == ClaudeReasonCodes.NotLoggedIn);
         d.DisabledStates.Should().Contain(s => s.ReasonCode == ClaudeReasonCodes.IdentityMismatch);
         d.DisabledStates.Should().Contain(s => s.ReasonCode == ClaudeReasonCodes.Unknown);

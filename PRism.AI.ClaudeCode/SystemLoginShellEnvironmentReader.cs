@@ -66,10 +66,13 @@ public sealed class SystemLoginShellEnvironmentReader : ILoginShellEnvironmentRe
         {
             await process.WaitForExitAsync(timeoutCts.Token).ConfigureAwait(false);
         }
-        catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested && !ct.IsCancellationRequested)
+        catch (OperationCanceledException)
         {
+            // Kill the child shell on EITHER cancellation source — a timeout (pathological rc hang)
+            // or a caller-cancel (shutdown) — so neither path strands a zombie process tree.
             try { process.Kill(entireProcessTree: true); } catch (InvalidOperationException) { }
-            return null;   // pathological rc hung → ladder
+            if (ct.IsCancellationRequested) throw;   // caller cancelled → propagate
+            return null;                             // timeout → fall to the ladder
         }
 #pragma warning disable CA1849 // sync drain after WaitForExitAsync returns immediately post-exit
         process.WaitForExit();
