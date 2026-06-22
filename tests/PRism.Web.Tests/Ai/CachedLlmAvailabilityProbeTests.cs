@@ -83,4 +83,63 @@ public sealed class CachedLlmAvailabilityProbeTests
     {
         public Task<LlmAvailability> ProbeAsync(CancellationToken ct) => Task.FromResult(fn());
     }
+
+    private sealed class SequenceProbe : ILlmAvailabilityProbe
+    {
+        private readonly LlmAvailability[] _results;
+        public int CallCount { get; private set; }
+        public SequenceProbe(LlmAvailability[] results) => _results = results;
+        public Task<LlmAvailability> ProbeAsync(CancellationToken ct)
+        {
+            var r = _results[Math.Min(CallCount, _results.Length - 1)];
+            CallCount++;
+            return Task.FromResult(r);
+        }
+    }
+
+    [Fact]
+    public async Task Does_not_cache_cli_not_installed_so_recovery_is_not_doubled()
+    {
+        var inner = new SequenceProbe(new[]
+        {
+            LlmAvailability.Unavailable("cli-not-installed"),   // 1st call
+            LlmAvailability.Ok,                                 // 2nd call (installed mid-session)
+        });
+        var cached = new CachedLlmAvailabilityProbe(inner, new ManualTimeProvider(), TimeSpan.FromSeconds(30));
+
+        (await cached.ProbeAsync(default)).ReasonCode.Should().Be("cli-not-installed");
+        // No clock advance: a normal result would be served from cache; a discovery-negative must NOT be.
+        (await cached.ProbeAsync(default)).Should().Be(LlmAvailability.Ok);
+        inner.CallCount.Should().Be(2);
+    }
+
+    [Fact]
+    public async Task Does_not_cache_cli_discovery_failed()
+    {
+        var inner = new SequenceProbe(new[]
+        {
+            LlmAvailability.Unavailable("cli-discovery-failed"),
+            LlmAvailability.Ok,
+        });
+        var cached = new CachedLlmAvailabilityProbe(inner, new ManualTimeProvider(), TimeSpan.FromSeconds(30));
+
+        await cached.ProbeAsync(default);
+        (await cached.ProbeAsync(default)).Should().Be(LlmAvailability.Ok);
+        inner.CallCount.Should().Be(2);
+    }
+
+    [Fact]
+    public async Task Still_caches_ok_and_not_logged_in()
+    {
+        var inner = new SequenceProbe(new[]
+        {
+            LlmAvailability.Unavailable("not-logged-in"),
+            LlmAvailability.Ok,   // must NOT be reached within TTL
+        });
+        var cached = new CachedLlmAvailabilityProbe(inner, new ManualTimeProvider(), TimeSpan.FromSeconds(30));
+
+        await cached.ProbeAsync(default);
+        (await cached.ProbeAsync(default)).ReasonCode.Should().Be("not-logged-in");   // served from cache
+        inner.CallCount.Should().Be(1);
+    }
 }
