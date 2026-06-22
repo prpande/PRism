@@ -23,3 +23,29 @@ export function windowOpenDecision(url: string): {
 } {
   return { action: "deny", open: isOpenableUrl(url) };
 }
+
+// Decision for the main window's `will-navigate` guard (#583). A plain in-window
+// anchor click is a top-frame NAVIGATION, not a window.open, so it bypasses
+// setWindowOpenHandler entirely — without this the BrowserWindow would navigate
+// away from the SPA to the external page, leaving a chromeless trap on macOS
+// (the native traffic lights are hidden). The SPA is served from the sidecar
+// origin (http://127.0.0.1:<port>); React Router uses the history API, which does
+// NOT fire will-navigate, so a will-navigate event is always either the initial
+// same-origin load or a real escaping navigation. Same-origin top-frame nav is
+// allowed; anything else is prevented, and routed to the OS browser ONLY when the
+// URL is https (reusing the isOpenableUrl egress invariant — `mailto:`/`http:`
+// etc. are prevented but not opened). Kept here (Electron-free) so the decision is
+// unit-testable under `node --test`.
+export function navigationDecision(
+  targetUrl: string,
+  appOrigin: string,
+): { prevent: boolean; open: boolean } {
+  let target: URL;
+  try {
+    target = new URL(targetUrl);
+  } catch {
+    return { prevent: true, open: false }; // unparseable → block, never open
+  }
+  if (target.origin === appOrigin) return { prevent: false, open: false };
+  return { prevent: true, open: isOpenableUrl(targetUrl) };
+}
