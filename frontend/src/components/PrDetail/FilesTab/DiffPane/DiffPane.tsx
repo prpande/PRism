@@ -399,7 +399,16 @@ export function DiffPane({
 
   const tableRef = useRef<HTMLTableElement>(null);
   const changes = useMemo(() => computeChanges(allLines), [allLines]);
-  const nav = useChangeNavigation(diffBodyRef, tableRef, changes);
+  // The change-nav index resets to the top only when the rendered view actually
+  // swaps — keyed on the same view identity the scroll-reset above uses
+  // (selectedPath + the DERIVED whole-file mode, line ~372) — so the two stay in
+  // lockstep and a same-file `changes` recompute (whole-file success / parent
+  // re-fetch) doesn't snap the counter back to "1" (#577). The `\n` separator is
+  // collision-proof: a newline can't appear in a file path, so no path+flag pair
+  // aliases another. `wholeFileEnabled` is the derived mode (off on a fetch
+  // failure), so a failure flips it and resets — in lockstep with the scroll-reset.
+  const navResetKey = `${selectedPath ?? ''}\n${wholeFileEnabled}`;
+  const nav = useChangeNavigation(diffBodyRef, tableRef, changes, navResetKey);
 
   // Boundary maps: allLines index -> change index, for the run's first and last rows.
   const { changeStartMap, changeEndMap } = useMemo(() => {
