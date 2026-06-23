@@ -1,6 +1,5 @@
 import { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import { ApiError } from '../../../api/client';
-import { postFileViewed } from '../../../api/fileViewed';
 import { useFileDiff } from '../../../hooks/useFileDiff';
 import { useUnionDiff } from '../../../hooks/useUnionDiff';
 import { useFilesTabShortcuts } from '../../../hooks/useFilesTabShortcuts';
@@ -103,6 +102,8 @@ export function FilesTab() {
     fileFocus,
     pendingFilePath,
     clearPendingFilePath,
+    viewedPaths,
+    toggleViewed,
   } = usePrDetailContext();
 
   const isLowQuality = prDetail.clusteringQuality === 'low';
@@ -161,8 +162,6 @@ export function FilesTab() {
     setSelectedCommits(shas);
     setSelectedPath(null);
   }, []);
-  const [viewedPaths, setViewedPaths] = useState<Set<string>>(new Set());
-
   const allRange = buildAllRange(prDetail.pr);
 
   const iterationRange = useMemo(() => {
@@ -299,33 +298,6 @@ export function FilesTab() {
 
   const prUrl = prDetail.pr.htmlUrl ?? undefined;
 
-  const handleToggleViewed = useCallback(
-    (path: string) => {
-      let wasViewed = false;
-      setViewedPaths((prev) => {
-        wasViewed = prev.has(path);
-        const next = new Set(prev);
-        if (wasViewed) next.delete(path);
-        else next.add(path);
-        return next;
-      });
-
-      postFileViewed(prRef, {
-        path,
-        headSha: prDetail.pr.headSha,
-        viewed: !wasViewed,
-      }).catch(() => {
-        setViewedPaths((prev) => {
-          const next = new Set(prev);
-          if (wasViewed) next.add(path);
-          else next.delete(path);
-          return next;
-        });
-      });
-    },
-    [prRef, prDetail.pr.headSha],
-  );
-
   const handleNextFile = useCallback(() => {
     if (fileList.length === 0) return;
     const idx = selectedPath ? fileList.indexOf(selectedPath) : -1;
@@ -374,7 +346,7 @@ export function FilesTab() {
     onNextFile: handleNextFile,
     onPrevFile: handlePrevFile,
     onToggleViewed: () => {
-      if (selectedPath) handleToggleViewed(selectedPath);
+      if (selectedPath) toggleViewed(selectedPath);
     },
     onToggleDiffMode: handleToggleDiffMode,
   });
@@ -759,7 +731,7 @@ export function FilesTab() {
               selectedPath={selectedPath}
               onSelectFile={setSelectedPath}
               viewedPaths={viewedPaths}
-              onToggleViewed={handleToggleViewed}
+              onToggleViewed={toggleViewed}
               isLoading={diff.isLoading}
               focusEntries={focusEntries}
               focusStatus={fileFocus.status}

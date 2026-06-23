@@ -32,6 +32,13 @@ export interface PrDetailContextValue {
   pendingFilePath: string | null;
   requestFileView: (path: string) => void;
   clearPendingFilePath: () => void;
+  // Shared per-file "viewed" state (#442). Derived from the persisted
+  // fileViewState (head-matched) plus an optimistic overlay; the Files-tab
+  // checkboxes AND the Overview "Viewed" tile read the same Set, so a toggle in
+  // one surface is reflected in the other. Owned by PrDetailView via
+  // useFileViewState — no consumer keeps its own copy.
+  viewedPaths: Set<string>;
+  toggleViewed: (path: string) => void;
 }
 
 const PrDetailContext = createContext<PrDetailContextValue | null>(null);

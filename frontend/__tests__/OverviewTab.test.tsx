@@ -100,6 +100,7 @@ interface MockOptions {
   capabilitiesOn?: boolean;
   aiSummary?: { body: string; category: string } | null;
   draftSession?: UseDraftSessionResult;
+  viewedPaths?: Set<string>;
 }
 
 function mockFetch(opts: MockOptions = {}) {
@@ -175,6 +176,7 @@ function providerValue(
   draftSession: UseDraftSessionResult,
   onSelectSubTab: PrDetailContextValue['onSelectSubTab'],
   subscribed = true,
+  viewedPaths: Set<string> = new Set(),
 ): PrDetailContextValue {
   return {
     prRef: ref,
@@ -188,6 +190,8 @@ function providerValue(
     pendingFilePath: null,
     requestFileView: vi.fn(),
     clearPendingFilePath: vi.fn(),
+    viewedPaths,
+    toggleViewed: vi.fn(),
   };
 }
 
@@ -211,7 +215,13 @@ function mountOverview(opts: MockOptions = {}) {
             index
             element={
               <PrDetailContextProvider
-                value={providerValue(prDetailForRoute, draftSession, onSelectSubTab)}
+                value={providerValue(
+                  prDetailForRoute,
+                  draftSession,
+                  onSelectSubTab,
+                  true,
+                  opts.viewedPaths ?? new Set(),
+                )}
               >
                 <OverviewTab />
               </PrDetailContextProvider>
@@ -250,6 +260,22 @@ describe('OverviewTab', () => {
     expect(screen.getByText('Threads').nextElementSibling?.textContent).toBe('3');
     expect(screen.getByText('Drafts').nextElementSibling?.textContent).toBe('0');
     expect(screen.getByText('Viewed').nextElementSibling?.textContent).toBe('0/2');
+  });
+
+  it('sources the Viewed tile count from the shared viewedPaths (bounded to diff files)', async () => {
+    // src/main.ts is in the diff (counts); zzz.ts is not (must not inflate).
+    mountOverview({ viewedPaths: new Set(['src/main.ts', 'zzz.ts']) });
+    await waitFor(() =>
+      expect(screen.getByText('Viewed').nextElementSibling?.textContent).toBe('1/2'),
+    );
+  });
+
+  it('gives the Viewed tile an accessible label instead of a bare ratio', async () => {
+    mountOverview({ viewedPaths: new Set(['src/main.ts']) });
+    await waitFor(() =>
+      expect(screen.getByText('Viewed').nextElementSibling?.textContent).toBe('1/2'),
+    );
+    expect(screen.getByLabelText('Viewed: 1 of 2 files')).toBeInTheDocument();
   });
 
   it('renders PrRootConversation with the rootComments plus the PR5 actions (Reply + Mark all read)', async () => {

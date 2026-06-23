@@ -18,6 +18,7 @@ import { useActivePrUpdates } from '../../hooks/useActivePrUpdates';
 import { usePrDetailRefresh } from '../../hooks/usePrDetailRefresh';
 import { useToast } from '../Toast/useToast';
 import { useDraftSession } from '../../hooks/useDraftSession';
+import { useFileViewState } from '../../hooks/useFileViewState';
 import { useCapabilities } from '../../hooks/useCapabilities';
 import { usePreferences } from '../../hooks/usePreferences';
 import { useFileFocusResult } from '../../hooks/useFileFocusResult';
@@ -111,6 +112,16 @@ export function PrDetailView({
   // Refetch draft session when other tabs / the reload pipeline mutate
   // drafts. Own-tab events are filtered by the subscriber per spec § 5.7.
   useStateChangedSubscriber({ prRef, onSessionChange: draftSession.refetch });
+
+  // #442 — single shared per-file "viewed" state for the Files-tab checkboxes
+  // AND the Overview "Viewed" tile. Derived from the persisted fileViewState
+  // (head-matched) plus an optimistic overlay; `headSha` is undefined until the
+  // detail loads (the hook no-ops toggles until then).
+  const { viewedPaths, toggleViewed } = useFileViewState(
+    prRef,
+    data?.pr.headSha,
+    draftSession.session?.fileViewState?.viewedFiles,
+  );
   // Task 14: reload PR detail when the root-comment draft is posted so the
   // posted comment appears in the conversation and the local draft clears.
   useRootCommentPostedSubscriber({ prRef, onPosted: reload });
@@ -384,6 +395,8 @@ export function PrDetailView({
       pendingFilePath,
       requestFileView,
       clearPendingFilePath,
+      viewedPaths,
+      toggleViewed,
     }),
     [
       prRef,
@@ -397,6 +410,8 @@ export function PrDetailView({
       pendingFilePath,
       requestFileView,
       clearPendingFilePath,
+      viewedPaths,
+      toggleViewed,
     ],
   );
 

@@ -11,11 +11,20 @@ import { StatsTiles } from './StatsTiles';
 import { PrRootConversation, type PrRootConversationReplyContext } from './PrRootConversation';
 import { ReviewFilesCta } from './ReviewFilesCta';
 import { prRootDraft } from '../draftKinds';
+import { countViewedFiles } from '../../../hooks/useFileViewState';
 import styles from './OverviewTab.module.css';
 
 export function OverviewTab() {
-  const { prRef, prDetail, draftSession, readOnly, onSelectSubTab, subscribed, baseShaChanged } =
-    usePrDetailContext();
+  const {
+    prRef,
+    prDetail,
+    draftSession,
+    readOnly,
+    onSelectSubTab,
+    subscribed,
+    baseShaChanged,
+    viewedPaths,
+  } = usePrDetailContext();
   const aiOn = useAiGate('summary');
   const live = useIsLiveMode();
   const { preferences } = usePreferences();
@@ -39,6 +48,12 @@ export function OverviewTab() {
   );
 
   const filesCount = diff.data?.files.length ?? 0;
+  // #442 — real viewed count, sourced from the shared (persisted, head-matched)
+  // viewed state and bounded to the files in this PR's diff.
+  const viewedCount = useMemo(
+    () => countViewedFiles(diff.data?.files ?? [], viewedPaths),
+    [diff.data, viewedPaths],
+  );
   const threadsCount = prDetail.reviewComments.length;
   const draftsCount =
     (draftSession.session?.draftComments.length ?? 0) +
@@ -105,10 +120,7 @@ export function OverviewTab() {
         filesCount={filesCount}
         draftsCount={draftsCount}
         threadsCount={threadsCount}
-        // Intentional stub: the "Viewed" tile reads 0/N until wired to the persisted
-        // per-file viewed state (which DOES round-trip via postMarkViewed). Tracked
-        // by #442 — deferred from #330 to keep this a drift/correctness pass.
-        viewedCount={0}
+        viewedCount={viewedCount}
       />
       <PrRootConversation comments={prDetail.rootComments} replyContext={replyContext} />
       <ReviewFilesCta hasFiles={hasFiles} onReviewFiles={handleReviewFiles} />

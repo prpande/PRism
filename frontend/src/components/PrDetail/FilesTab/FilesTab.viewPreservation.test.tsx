@@ -1,11 +1,12 @@
+import { useRef } from 'react';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { FilesTab } from './FilesTab';
 import { PrDetailContextProvider } from '../prDetailContext';
-import type { PrDetailContextValue } from '../prDetailContext';
 import { makePrDetailDto, makePr } from '../../../../__tests__/helpers/prDetail';
 import { makePrDetailContextValue } from '../testUtils';
+import { useFileViewState } from '../../../hooks/useFileViewState';
 import type { DiffDto, FileChange, ReviewThreadDto } from '../../../api/types';
 import type { UseDraftSessionResult } from '../../../hooks/useDraftSession';
 
@@ -17,8 +18,9 @@ const DIFF_RANGE = `${BASE_SHA}..${HEAD_SHA}`;
 
 // FilesTab pulls its file set from the range-keyed diff hooks (NOT from
 // context). Stub them to a deterministic 2-file diff so the tree + diff render
-// without a backend. selectedPath / diffMode / viewedPaths are FilesTab's OWN
-// useState — they are what this test proves survive a context (prDetail) swap.
+// without a backend. selectedPath / diffMode are FilesTab's OWN useState; viewed
+// state now lives in the shared useFileViewState hook (held by the Harness
+// below) — together they are what this test proves survive a prDetail swap.
 const FILE_A: FileChange = {
   path: 'src/a.ts',
   status: 'modified',
@@ -75,7 +77,7 @@ vi.mock('../../../api/fileViewed', () => ({
 // members, and replyContext is what lets ExistingCommentWidget render the
 // per-thread Reply affordance. registerOpenComposer MUST be a function (its
 // cleanup return is used in a ReplyComposer effect).
-function makeDraftSession(): UseDraftSessionResult {
+function makeDraftSession(viewedFiles: Record<string, string> = {}): UseDraftSessionResult {
   return {
     session: {
       draftVerdict: null,
@@ -85,7 +87,7 @@ function makeDraftSession(): UseDraftSessionResult {
       iterationOverrides: [],
       pendingReviewId: null,
       pendingReviewCommitOid: null,
-      fileViewState: { viewedFiles: {} },
+      fileViewState: { viewedFiles },
     },
     status: 'ready',
     error: null,
@@ -100,17 +102,46 @@ function makeDraftSession(): UseDraftSessionResult {
   };
 }
 
-function makeContextValue(threads: ReviewThreadDto[]): PrDetailContextValue {
-  return makePrDetailContextValue({
-    prRef: { owner: 'octocat', repo: 'hello', number: 42 },
+// Harness mounts FilesTab inside a provider whose viewed state comes from the
+// REAL useFileViewState hook (viewed state was lifted out of FilesTab into the
+// shared PrDetail context). Because this component instance is NOT remounted by
+// `rerender`, the hook's overlay state survives the prDetail swap — which is the
+// behavior under test. draftSession is held in a ref so its identity (and its
+// empty fileViewState) stays stable across rerenders.
+function Harness({
+  threads,
+  persistedViewed = {},
+}: {
+  threads: ReviewThreadDto[];
+  persistedViewed?: Record<string, string>;
+}) {
+  const draftSessionRef = useRef<UseDraftSessionResult | null>(null);
+  if (draftSessionRef.current === null) draftSessionRef.current = makeDraftSession(persistedViewed);
+  const draftSession = draftSessionRef.current;
+
+  const prRef = { owner: 'octocat', repo: 'hello', number: 42 };
+  const { viewedPaths, toggleViewed } = useFileViewState(
+    prRef,
+    HEAD_SHA,
+    draftSession.session?.fileViewState.viewedFiles,
+  );
+
+  const value = makePrDetailContextValue({
+    prRef,
     prDetail: makePrDetailDto({
       pr: makePr({ headSha: HEAD_SHA, baseSha: BASE_SHA, htmlUrl: 'https://example.com/pr/42' }),
       reviewComments: threads,
     }),
-    // A real callable draftSession — testUtils' default is a typed stub that
-    // FilesTab would call into; override it with our complete fixture.
-    draftSession: makeDraftSession(),
+    draftSession,
+    viewedPaths,
+    toggleViewed,
   });
+
+  return (
+    <PrDetailContextProvider value={value}>
+      <FilesTab />
+    </PrDetailContextProvider>
+  );
 }
 
 // The just-arrived thread, anchored to FILE_B line 2 (the paired insert
@@ -142,15 +173,23 @@ describe('FilesTab — view state survives a prDetail swap (auto-reload, #450)',
     vi.clearAllMocks();
   });
 
+  // #442 — the checkboxes hydrate from the persisted, head-matched fileViewState
+  // (previously they always started unchecked because FilesTab kept its own empty
+  // Set). src/b.ts is persisted-viewed at the current head; src/a.ts is not.
+  it('reflects persisted viewed state on load (head-matched)', async () => {
+    render(<Harness threads={[]} persistedViewed={{ 'src/b.ts': HEAD_SHA }} />);
+
+    await waitFor(() => {
+      expect(screen.getByRole('checkbox', { name: 'Viewed src/b.ts' })).toBeChecked();
+    });
+    expect(screen.getByRole('checkbox', { name: 'Viewed src/a.ts' })).not.toBeChecked();
+  });
+
   it('keeps selected file, viewed state, and diff mode; surfaces the new thread with a reply affordance', async () => {
     const user = userEvent.setup();
 
     // 1. Render with a 2-file diff and ZERO review threads.
-    const { rerender } = render(
-      <PrDetailContextProvider value={makeContextValue([])}>
-        <FilesTab />
-      </PrDetailContextProvider>,
-    );
+    const { rerender } = render(<Harness threads={[]} />);
 
     // The first file (src/a.ts) auto-selects on mount.
     await waitFor(() => {
@@ -180,11 +219,7 @@ describe('FilesTab — view state survives a prDetail swap (auto-reload, #450)',
     // 3. Re-render the SAME FilesTab instance with a prDetail that ADDS one
     //    review thread, keeping the file-set + diff identical. This simulates
     //    usePrDetail.reload()'s data swap under keep-alive (no unmount).
-    rerender(
-      <PrDetailContextProvider value={makeContextValue([NEW_THREAD])}>
-        <FilesTab />
-      </PrDetailContextProvider>,
-    );
+    rerender(<Harness threads={[NEW_THREAD]} />);
 
     // 4a. The SECOND file is still selected (component state survived the swap).
     expect(getRow('src/b.ts')).toHaveAttribute('data-selected', 'true');

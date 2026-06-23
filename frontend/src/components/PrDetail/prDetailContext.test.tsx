@@ -25,6 +25,8 @@ test('provides prRef + session to children', () => {
     pendingFilePath: null,
     requestFileView: vi.fn(),
     clearPendingFilePath: vi.fn(),
+    viewedPaths: new Set(),
+    toggleViewed: vi.fn(),
   } satisfies PrDetailContextValue;
   render(
     <PrDetailContextProvider value={value}>
