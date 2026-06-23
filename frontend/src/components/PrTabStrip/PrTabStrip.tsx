@@ -4,12 +4,22 @@ import { useEffectiveLocation } from '../../hooks/useEffectiveLocation';
 import { useOpenTabs, type OpenTab } from '../../contexts/OpenTabsContext';
 import { prRefKey, type PrReference } from '../../api/types';
 import { useSubmitInFlight } from '../../hooks/useSubmitInFlight';
+import { PrStateGlyph } from '../shared/prStateGlyph';
 import styles from './PrTabStrip.module.css';
 
 const INLINE_TAB_CAP = 6;
 
 function tabLabel(t: OpenTab): string {
   return t.title || `${t.ref.owner}/${t.ref.repo}#${t.ref.number}`;
+}
+
+// #530 — the leading glyph is aria-hidden, so the tab's accessible name carries
+// the state word once it's resolved (mirrors how InboxRow folds state into its
+// row aria-label). Unresolved (null) tabs announce the plain label, matching the
+// no-glyph render.
+function tabAriaLabel(t: OpenTab): string {
+  const label = tabLabel(t);
+  return t.glyphState ? `${label} · ${t.glyphState}` : label;
 }
 
 function isActiveTab(pathname: string, t: OpenTab): boolean {
@@ -157,7 +167,7 @@ function PrTabStripBody() {
           tabIndex={0}
           aria-selected={active}
           className={styles.tabBody}
-          aria-label={label}
+          aria-label={tabAriaLabel(t)}
           onClick={() => handleTabClick(t)}
           onKeyDown={(e) => {
             if (e.key === 'Enter' || e.key === ' ') {
@@ -172,6 +182,7 @@ function PrTabStripBody() {
             }
           }}
         >
+          {t.glyphState && <PrStateGlyph state={t.glyphState} />}
           <span className={styles.num}>#{t.ref.number}</span>
           <span className={styles.title}>{label}</span>
           {unread && <span className={styles.dot} aria-hidden="true" />}
@@ -214,10 +225,12 @@ function PrTabStripBody() {
                   const label = tabLabel(t);
                   return (
                     <div role="menuitem" key={key} className={styles.menuItem}>
+                      {t.glyphState && <PrStateGlyph state={t.glyphState} />}
                       <span className={styles.menuNum}>#{t.ref.number}</span>
                       <button
                         type="button"
                         className={styles.menuTitle}
+                        aria-label={tabAriaLabel(t)}
                         onClick={() => {
                           setMenuOpen(false);
                           navigate(pathFor(t.ref));

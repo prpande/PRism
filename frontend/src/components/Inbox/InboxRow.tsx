@@ -7,16 +7,12 @@ import { AiMarker } from '../Ai/AiMarker';
 import { AI_PROVENANCE_LABEL, AI_INBOX_ENRICHING_LABEL } from '../Ai/aiStrings';
 import { prId } from './groupByRepo';
 import { DiffBar } from './DiffBar';
-import {
-  PR_GLYPH_PATH,
-  PR_GLYPH_CLASS,
-  PR_GLYPH_LABEL,
-  type GlyphState,
-} from '../shared/prStateGlyph';
+import { PrStateGlyph, type GlyphState } from '../shared/prStateGlyph';
 import styles from './InboxRow.module.css';
 
 // ---- Leading PR-state octicons (Primer v19, 16-viewBox), every row ----
-// Paths/classes/labels are now single-sourced from ../shared/prStateGlyph (Task 3 #501).
+// The glyph itself is single-sourced from the shared PrStateGlyph component (#530);
+// the open/merged/closed taxonomy below maps GitHub's done-flags to a display state.
 type PrState = 'open' | 'merged' | 'closed';
 
 // ---- CI title-suffix octicons (bare check / cross, no enclosing circle) ----
@@ -132,18 +128,7 @@ export function InboxRow({
       aria-label={ariaLabel}
     >
       <span className={styles.status}>
-        <svg
-          className={`${styles.prState} ${styles[PR_GLYPH_CLASS[glyphState]]}`}
-          data-pr-state={glyphState}
-          viewBox="0 0 16 16"
-          width="14"
-          height="14"
-          fill="currentColor"
-          aria-hidden="true"
-        >
-          <title>{PR_GLYPH_LABEL[glyphState]}</title>
-          <path d={PR_GLYPH_PATH[glyphState]} />
-        </svg>
+        <PrStateGlyph state={glyphState} />
       </span>
       <span className={styles.midCol}>
         <span className={styles.main}>

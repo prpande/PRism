@@ -448,3 +448,96 @@ describe('PrTabStrip close navigation', () => {
     expect(screen.getByTestId('path').textContent).toBe('/');
   });
 });
+
+describe('PrTabStrip state glyph (#530)', () => {
+  // Seeds tabs then optionally resolves each one's glyph state, mirroring how
+  // PrDetailView fills state in after usePrDetail resolves.
+  function SeedStates({
+    states,
+  }: {
+    states: Array<'open' | 'merged' | 'closed' | 'draft' | null>;
+  }) {
+    const { addTab, setTabState } = useOpenTabs();
+    useEffect(() => {
+      states.forEach((s, idx) => {
+        const n = idx + 1;
+        addTab({ owner: 'acme', repo: 'api', number: n }, `Title ${n}`);
+        if (s) setTabState({ owner: 'acme', repo: 'api', number: n }, s);
+      });
+    }, [addTab, setTabState, states]);
+    return null;
+  }
+
+  beforeEach(() => {
+    vi.mocked(useSubmitInFlight).mockReturnValue({ inFlight: false, prRef: null });
+  });
+
+  it('draws no glyph for a tab whose state is unresolved (null)', () => {
+    render(
+      wrap(
+        <>
+          <SeedStates states={[null]} />
+          <PrTabStrip />
+        </>,
+      ),
+    );
+    const tab = screen.getByRole('tab').closest('[data-prref]')!;
+    expect(tab.querySelector('[data-pr-state]')).toBeNull();
+  });
+
+  it('renders the resolved state glyph on the inline tab', () => {
+    render(
+      wrap(
+        <>
+          <SeedStates states={['merged']} />
+          <PrTabStrip />
+        </>,
+      ),
+    );
+    const tab = screen.getByRole('tab').closest('[data-prref]')!;
+    const glyph = tab.querySelector('[data-pr-state]')!;
+    expect(glyph.getAttribute('data-pr-state')).toBe('merged');
+    // Glyph is decorative — state rides the tab's accessible name instead.
+    expect(glyph.getAttribute('aria-hidden')).toBe('true');
+  });
+
+  it('folds the state word into the tab aria-label once resolved', () => {
+    render(
+      wrap(
+        <>
+          <SeedStates states={['closed']} />
+          <PrTabStrip />
+        </>,
+      ),
+    );
+    // The accessible name carries the state so the decorative glyph need not.
+    expect(screen.getByRole('tab', { name: /Title 1 · closed/i })).toBeInTheDocument();
+  });
+
+  it('omits the state word from the aria-label while unresolved', () => {
+    render(
+      wrap(
+        <>
+          <SeedStates states={[null]} />
+          <PrTabStrip />
+        </>,
+      ),
+    );
+    const tab = screen.getByRole('tab');
+    expect(tab.getAttribute('aria-label')).toBe('Title 1');
+  });
+
+  it('renders the state glyph on overflow menu items', async () => {
+    render(
+      wrap(
+        <>
+          <SeedStates states={['open', 'open', 'open', 'open', 'open', 'open', 'draft']} />
+          <PrTabStrip />
+        </>,
+      ),
+    );
+    await userEvent.click(screen.getByRole('button', { name: /more open PR/i }));
+    const item = screen.getByRole('menuitem');
+    expect(item.querySelector('[data-pr-state]')!.getAttribute('data-pr-state')).toBe('draft');
+  });
+});

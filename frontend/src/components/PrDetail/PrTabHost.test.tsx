@@ -268,6 +268,7 @@ describe('PrTabHost', () => {
       unreadKeys: new Set<string>(),
       addTab: vi.fn(),
       setTitle: vi.fn(),
+      setTabState: vi.fn(),
       closeTab: vi.fn(),
       clearAllTabs: vi.fn(),
       markUnread: vi.fn(),

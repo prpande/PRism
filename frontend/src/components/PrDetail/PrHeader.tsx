@@ -33,13 +33,7 @@ import { SubmitDialog } from './SubmitDialog/SubmitDialog';
 import { OpenInGitHubButton } from './OpenInGitHubButton';
 import { ReviewActionButton } from './ReviewActionButton/ReviewActionButton';
 import { RefreshButton } from '../controls/RefreshButton';
-import {
-  PR_GLYPH_PATH,
-  PR_GLYPH_CLASS,
-  PR_GLYPH_LABEL,
-  type GlyphState,
-} from '../shared/prStateGlyph';
-import glyphStyles from '../shared/prStateGlyph.module.css';
+import { PrStateGlyph, type GlyphState } from '../shared/prStateGlyph';
 
 // #128/#203 — double-chevron, authored pointing UP (the expanded state, where
 // content folds toward when collapsed). The collapsed state rotates it 180° to
@@ -440,18 +434,7 @@ export function PrHeader({
       <div className={styles.prHeaderTop}>
         <div className="pr-meta col gap-1" id={metaId}>
           <div className="row gap-2 muted-2 pr-meta-repo">
-            <svg
-              className={`${glyphStyles.prState} ${glyphStyles[PR_GLYPH_CLASS[glyphState]]}`}
-              data-pr-state={glyphState}
-              viewBox="0 0 16 16"
-              width="14"
-              height="14"
-              fill="currentColor"
-              aria-hidden="true"
-            >
-              <title>{PR_GLYPH_LABEL[glyphState]}</title>
-              <path d={PR_GLYPH_PATH[glyphState]} />
-            </svg>
+            <PrStateGlyph state={glyphState} />
             <span>
               {reference.owner}/{reference.repo}
             </span>

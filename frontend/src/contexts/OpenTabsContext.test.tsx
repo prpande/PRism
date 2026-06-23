@@ -37,6 +37,38 @@ describe('OpenTabsContext', () => {
     expect(result.current.openTabs[1].title).toBeNull();
   });
 
+  it('addTab starts a tab with a null glyphState (state unknown until resolved)', () => {
+    const { result } = renderHook(() => useOpenTabs(), { wrapper });
+    const ref = { owner: 'acme', repo: 'api', number: 5 };
+    act(() => result.current.addTab(ref, 'T'));
+    expect(result.current.openTabs[0].glyphState).toBeNull();
+  });
+
+  it('setTabState sets the glyph state for an existing tab without changing order', () => {
+    const { result } = renderHook(() => useOpenTabs(), { wrapper });
+    const a = { owner: 'acme', repo: 'api', number: 1 };
+    const b = { owner: 'acme', repo: 'api', number: 2 };
+    act(() => {
+      result.current.addTab(a, null);
+      result.current.addTab(b, null);
+      result.current.setTabState(a, 'merged');
+    });
+    expect(result.current.openTabs.map((t) => t.ref.number)).toEqual([1, 2]);
+    expect(result.current.openTabs[0].glyphState).toBe('merged');
+    expect(result.current.openTabs[1].glyphState).toBeNull();
+  });
+
+  it('setTabState is a no-op for an unknown tab', () => {
+    const { result } = renderHook(() => useOpenTabs(), { wrapper });
+    const a = { owner: 'acme', repo: 'api', number: 1 };
+    act(() => {
+      result.current.addTab(a, null);
+      result.current.setTabState({ owner: 'ghost', repo: 'repo', number: 99 }, 'closed');
+    });
+    expect(result.current.openTabs).toHaveLength(1);
+    expect(result.current.openTabs[0].glyphState).toBeNull();
+  });
+
   it('closeTab removes by prRefKey', () => {
     const { result } = renderHook(() => useOpenTabs(), { wrapper });
     const a = { owner: 'acme', repo: 'api', number: 1 };

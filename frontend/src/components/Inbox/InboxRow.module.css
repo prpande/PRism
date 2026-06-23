@@ -59,25 +59,8 @@
   min-width: 0;
 }
 
-/* Leading PR-state octicon — 14px glyph centred in the 16px grid track (the
-   track, not this element, reserves the column). Shown on every row. */
-.prState {
-  display: block;
-  width: 14px;
-  height: 14px;
-}
-.prOpen {
-  color: var(--success-fg);
-}
-.prMerged {
-  color: var(--merged-fg);
-}
-.prClosed {
-  color: var(--danger-fg);
-}
-.prDraft {
-  color: var(--info-fg);
-}
+/* Leading PR-state octicon styles moved to the shared PrStateGlyph component (#530);
+   the 16px column track is reserved by .status's grid, not the glyph element. */
 
 /* Title row: just the clamped title now (the CI glyph moved out to .midCol so it can
    row-centre with the metrics rather than pin to this row's first line). */
