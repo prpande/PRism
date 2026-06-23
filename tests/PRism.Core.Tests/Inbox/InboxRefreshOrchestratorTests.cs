@@ -84,33 +84,33 @@ public sealed class InboxRefreshOrchestratorTests
         }
     }
 
-    // PR enricher: identity (returns the same items unchanged)
-    private sealed class IdentityPrEnricher : IPrEnricher
+    // Batch reader: echoes each item's hydration fields and marks every PR awaiting-author by
+    // default (ViewerLastReviewSha != HeadSha), matching the old Identity+Passthrough pair.
+    private sealed class IdentityBatchReader : IPrBatchReader
     {
-        public Task<IReadOnlyList<RawPrInboxItem>> EnrichAsync(
-            IReadOnlyList<RawPrInboxItem> items, CancellationToken ct)
-            => Task.FromResult(items);
+        public Task<IReadOnlyDictionary<PrReference, BatchPrData>> ReadAsync(
+            IReadOnlyList<RawPrInboxItem> items, string viewerLogin, CancellationToken ct)
+            => Task.FromResult<IReadOnlyDictionary<PrReference, BatchPrData>>(
+                items.ToDictionary(i => i.Reference, i => new BatchPrData(
+                    i.HeadSha, i.Additions, i.Deletions, i.CommitCount, i.ChangedFiles,
+                    i.PushedAt, i.MergedAt, i.ClosedAt,
+                    ViewerLastReviewSha: i.HeadSha + "-prev")));   // != HeadSha → awaiting-author kept
     }
 
-    // PR enricher that simulates a dropped enrichment (e.g. GitHub 404): it omits
-    // the given PR numbers from its output, so those refs fall back to the raw
-    // Search item (null close timestamps + empty headSha).
-    private sealed class DropEnricher : IPrEnricher
+    // Batch reader that simulates dropped hydration (e.g. GitHub 404 / PAT-invisible repo):
+    // the given PR numbers are absent from the result dict, so those refs fall back to the raw
+    // Search item (empty headSha) and are dropped by the orchestrator's HeadSha filter.
+    private sealed class DropBatchReader : IPrBatchReader
     {
         private readonly HashSet<int> _drop;
-        public DropEnricher(params int[] drop) => _drop = drop.ToHashSet();
-        public Task<IReadOnlyList<RawPrInboxItem>> EnrichAsync(
-            IReadOnlyList<RawPrInboxItem> items, CancellationToken ct)
-            => Task.FromResult<IReadOnlyList<RawPrInboxItem>>(
-                items.Where(i => !_drop.Contains(i.Reference.Number)).ToList());
-    }
-
-    // Awaiting-author filter: returns all candidates unchanged
-    private sealed class PassthroughAwaitingAuthorFilter : IAwaitingAuthorFilter
-    {
-        public Task<IReadOnlyList<RawPrInboxItem>> FilterAsync(
-            string viewerLogin, IReadOnlyList<RawPrInboxItem> candidates, CancellationToken ct)
-            => Task.FromResult(candidates);
+        public DropBatchReader(params int[] drop) => _drop = drop.ToHashSet();
+        public Task<IReadOnlyDictionary<PrReference, BatchPrData>> ReadAsync(
+            IReadOnlyList<RawPrInboxItem> items, string viewerLogin, CancellationToken ct)
+            => Task.FromResult<IReadOnlyDictionary<PrReference, BatchPrData>>(
+                items.Where(i => !_drop.Contains(i.Reference.Number))
+                     .ToDictionary(i => i.Reference, i => new BatchPrData(
+                         i.HeadSha, i.Additions, i.Deletions, i.CommitCount, i.ChangedFiles,
+                         i.PushedAt, i.MergedAt, i.ClosedAt, i.HeadSha + "-prev")));
     }
 
     // CI detector: returns all items with a fixed status + a configurable Complete flag,
@@ -182,8 +182,7 @@ public sealed class InboxRefreshOrchestratorTests
     private static InboxRefreshOrchestrator Build(
         IConfigStore? config = null,
         ISectionQueryRunner? sections = null,
-        IPrEnricher? enricher = null,
-        IAwaitingAuthorFilter? awaitingFilter = null,
+        IPrBatchReader? batchReader = null,
         ICiFailingDetector? ciDetector = null,
         IInboxDeduplicator? dedupe = null,
         IAiSeamSelector? aiSelector = null,
@@ -194,8 +193,7 @@ public sealed class InboxRefreshOrchestratorTests
             config ?? ConfigStoreFake(),
             sections ?? new FakeSectionQueryRunner(_ =>
                 new Dictionary<string, IReadOnlyList<RawPrInboxItem>>()),
-            enricher ?? new IdentityPrEnricher(),
-            awaitingFilter ?? new PassthroughAwaitingAuthorFilter(),
+            batchReader ?? new IdentityBatchReader(),
             ciDetector ?? new FakeCiDetector(),
             dedupe ?? new InboxDeduplicator(),
             aiSelector ?? new FakeAiSeamSelector(new NoopInboxItemEnricher()),
@@ -774,7 +772,7 @@ public sealed class InboxRefreshOrchestratorTests
         using var sut = Build(
             config: ConfigStoreFake(ConfigWithSections(recentlyClosed: true)),
             sections: sections,
-            enricher: new DropEnricher(7)); // #7 enrichment drops → fallback to raw
+            batchReader: new DropBatchReader(7)); // #7 batch drops → fallback to raw
 
         await sut.RefreshAsync(CancellationToken.None);
 
@@ -1184,6 +1182,54 @@ public sealed class InboxRefreshOrchestratorTests
             "the re-populated settled set must be announced even though ComputeDiff is enrichment-blind");
         published.Should().OnlyContain(u => u.NewOrUpdatedPrCount == 0,
             "an enrichment-only refill announces a refetch but reports no new/updated PRs");
+    }
+
+    [Fact] // Test 9 — golden-output harness: batch path reproduces the documented REST PrInboxItem shape
+    public async Task Batch_path_produces_golden_pr_inbox_items()
+    {
+        var updated = new DateTimeOffset(2026, 6, 23, 9, 0, 0, TimeSpan.Zero);
+        var pushed = new DateTimeOffset(2026, 6, 23, 8, 30, 0, TimeSpan.Zero);
+        var rawReviewReq = new RawPrInboxItem(
+            Ref(101), "Add feature", "octocat", "acme/api", updated, pushed,
+            CommentCount: 0, Additions: 12, Deletions: 3, HeadSha: "head101", CommitCount: 5, ChangedFiles: 4);
+
+        // Batch reader returns hydration verbatim + an older review SHA (so awaiting-author keeps it).
+        var batch = new StubBatchReader(new Dictionary<PrReference, BatchPrData>
+        {
+            [Ref(101)] = new("head101", 12, 3, 5, 4, pushed, null, null, "head100"),
+        });
+
+        var sut = Build(
+            config: ConfigStoreFake(ConfigWithSections(reviewRequested: true, awaitingAuthor: false,
+                                                       authoredByMe: false, mentioned: false)),
+            sections: new FakeSectionQueryRunner(_ => new Dictionary<string, IReadOnlyList<RawPrInboxItem>>
+            {
+                ["review-requested"] = new[] { rawReviewReq },
+            }),
+            batchReader: batch);
+
+        await sut.RefreshAsync(CancellationToken.None);
+        var item = sut.Current!.Sections["review-requested"].Single();
+
+        item.Reference.Should().Be(Ref(101));
+        item.HeadSha.Should().Be("head101");
+        item.Additions.Should().Be(12);
+        item.Deletions.Should().Be(3);
+        item.CommitCount.Should().Be(5);
+        item.ChangedFiles.Should().Be(4);
+        item.PushedAt.Should().Be(pushed);
+        item.MergedAt.Should().BeNull();
+        item.ClosedAt.Should().BeNull();
+    }
+
+    // Minimal IPrBatchReader returning a fixed dictionary (golden-harness fixtures).
+    private sealed class StubBatchReader : IPrBatchReader
+    {
+        private readonly IReadOnlyDictionary<PrReference, BatchPrData> _data;
+        public StubBatchReader(IReadOnlyDictionary<PrReference, BatchPrData> data) => _data = data;
+        public Task<IReadOnlyDictionary<PrReference, BatchPrData>> ReadAsync(
+            IReadOnlyList<RawPrInboxItem> items, string viewerLogin, CancellationToken ct)
+            => Task.FromResult(_data);
     }
 
     [Fact]

@@ -34,7 +34,7 @@ public static class ServiceCollectionExtensions
     /// <see cref="ViewerLoginHydrator"/> are registered here via factory lambdas that close
     /// over <see cref="IServiceProvider"/> and resolve services registered by other
     /// <c>AddPrism*</c> extensions: <c>IReviewAuth</c>, <c>ISectionQueryRunner</c>,
-    /// <c>IPrEnricher</c>, <c>IAwaitingAuthorFilter</c>, <c>ICiFailingDetector</c> (all from
+    /// <c>IPrBatchReader</c>, <c>ICiFailingDetector</c> (all from
     /// <c>AddPrismGitHub</c>) and <c>IAiSeamSelector</c> (from <c>AddPrismAi</c>). DI
     /// factories are lazy, so the cross-method dependencies only resolve at first use after
     /// <c>Build()</c>; the missing dependency would surface as an <see cref="InvalidOperationException"/>
@@ -102,8 +102,7 @@ public static class ServiceCollectionExtensions
             return new InboxRefreshOrchestrator(
                 sp.GetRequiredService<IConfigStore>(),
                 sp.GetRequiredService<ISectionQueryRunner>(),
-                sp.GetRequiredService<IPrEnricher>(),
-                sp.GetRequiredService<IAwaitingAuthorFilter>(),
+                sp.GetRequiredService<IPrBatchReader>(),
                 sp.GetRequiredService<ICiFailingDetector>(),
                 sp.GetRequiredService<IInboxDeduplicator>(),
                 sp.GetRequiredService<IAiSeamSelector>(),
