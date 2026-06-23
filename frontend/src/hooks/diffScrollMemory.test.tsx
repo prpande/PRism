@@ -114,8 +114,10 @@ test("scopes restore to the activating view's OWN body when two PR views are mou
   const bodyB = bodies.b;
   if (!bodyA || !bodyB) throw new Error('both diff bodies must render');
 
-  // View B (currently inactive) records a 300 offset — the capture hook has no
-  // active-gate, so a visible-but-inactive body still stores its scroll.
+  // View B records a 300 offset. (In production an inactive view is hidden via
+  // `hidden={!active}` so its body can't actually scroll; the Harness applies no
+  // hiding, which is what lets this dispatch reach the listener. That's fine —
+  // the property under test here is rootRef SCOPING, not event suppression.)
   bodyB.scrollTop = 300;
   bodyB.dispatchEvent(new Event('scroll'));
 

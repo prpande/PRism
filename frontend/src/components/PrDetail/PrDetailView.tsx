@@ -249,12 +249,18 @@ export function PrDetailView({
   );
   const clearPendingFilePath = useCallback(() => setPendingFilePath(null), []);
 
-  // Ordering dependency: the marker effect must precede useTabScrollMemory so
-  // [data-app-scroll] is a scroll container before scrollTop is restored (in
-  // browser mode it's only scrollable when data-files-active is set; writing
-  // scrollTop to a non-scrollable element clamps to 0). React runs layout-effect
-  // setups in declaration order, so on Files re-activation this effect turns on
-  // overflow first, then useTabScrollMemory restores the saved offset.
+  // ORDER MATTERS — these three layout effects must stay in this sequence:
+  //   1. data-files-active marker effect (below)
+  //   2. useTabScrollMemory (outer [data-app-scroll] offset)
+  //   3. useDiffScrollRestore (inner .diff-pane-body offset, #590)
+  // The marker effect must precede the two restores so [data-app-scroll] is a
+  // scroll container before scrollTop is restored (in browser mode it's only
+  // scrollable when data-files-active is set; writing scrollTop to a
+  // non-scrollable element clamps to 0). React runs layout-effect setups in
+  // declaration order, so on Files re-activation this effect turns on overflow
+  // first, then the two restores write their saved offsets back. Reordering
+  // these silently breaks restore — there's no type/lint guard, only the e2e
+  // (diff-scroll-keepalive.spec.ts) catches it at CI time.
 
   // Viewport-bound Files layout marker. Under keep-alive every open PR tab keeps
   // a (hidden) Files sub-tab in the DOM, so the layout can no longer key off the
