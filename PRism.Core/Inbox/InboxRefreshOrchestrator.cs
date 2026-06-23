@@ -134,7 +134,7 @@ public sealed partial class InboxRefreshOrchestrator : IInboxRefreshOrchestrator
                 Log.ClosedHistoryFetched(_log, closedRaw.Count);
             }
 
-            // Enrich every PR across all sections (one HTTP call per PR, deduplicated by ref)
+            // Hydrate every PR across all sections in one aliased-batch GraphQL read (deduplicated by ref)
             var allRawDistinct = raw.Values.SelectMany(v => v).Concat(closedRaw)
                 .GroupBy(p => p.Reference).Select(g => g.First()).ToList();
             var viewerLogin = _viewerLoginProvider();
