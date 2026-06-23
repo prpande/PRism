@@ -57,7 +57,10 @@
 .tabBody {
   display: flex;
   align-items: center;
-  gap: 8px; /* match the .tab gap so inner element rhythm stays */
+  /* 4px keeps the leading cluster (state glyph · #N · title) tight as one unit —
+     8px left the #N floating too far from the title (#530 review). The close
+     button sits OUTSIDE .tabBody under .tab (gap 8px), so it's unaffected. */
+  gap: 4px;
   flex: 1 1 auto;
   min-width: 0; /* allow .title to truncate via overflow:hidden */
   cursor: pointer;
@@ -241,7 +244,7 @@
 .menuItem {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 4px; /* match .tabBody — tight leading cluster (#530) */
   padding: 8px 10px;
   font-size: var(--text-xs);
   color: var(--text-1);

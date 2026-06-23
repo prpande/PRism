@@ -10,12 +10,18 @@ import {
 } from 'react';
 import type { PrReference } from '../api/types';
 import { prRefKey } from '../api/types';
+import type { GlyphState } from '../components/shared/prStateGlyph';
 
 export interface OpenTab {
   ref: PrReference;
   // null until PrDetailPage resolves the PR title via usePrDetail.
   // While null, PrTabStrip falls back to a "#NNNN" label.
   title: string | null;
+  // #530 — open/merged/closed/draft for the leading state glyph. null until
+  // PrDetailView resolves the PR (same path that fills `title`); while null the
+  // tab strip draws no glyph rather than guessing (which would flash a wrong
+  // state, e.g. open→merged, on resolve).
+  glyphState: GlyphState | null;
 }
 
 export interface OpenTabsContextValue {
@@ -23,6 +29,7 @@ export interface OpenTabsContextValue {
   unreadKeys: ReadonlySet<string>;
   addTab(ref: PrReference, title: string | null): void;
   setTitle(ref: PrReference, title: string): void;
+  setTabState(ref: PrReference, glyphState: GlyphState): void;
   closeTab(ref: PrReference): void;
   markUnread(key: string): void;
   clearUnread(key: string): void;
@@ -59,7 +66,7 @@ export function OpenTabsProvider({ children }: { children: ReactNode }) {
     const key = prRefKey(ref);
     setOpenTabs((prev) => {
       if (prev.some((t) => prRefKey(t.ref) === key)) return prev;
-      const next = [...prev, { ref, title }];
+      const next = [...prev, { ref, title, glyphState: null }];
       openTabsRef.current = next;
       return next;
     });
@@ -69,6 +76,20 @@ export function OpenTabsProvider({ children }: { children: ReactNode }) {
     const key = prRefKey(ref);
     setOpenTabs((prev) => {
       const next = prev.map((t) => (prRefKey(t.ref) === key ? { ...t, title } : t));
+      openTabsRef.current = next;
+      return next;
+    });
+  }, []);
+
+  // #530 — fill the leading state glyph once PrDetailView resolves the PR. Mirrors
+  // setTitle (same resolve path); a no-op if the tab is gone. Skips the state update
+  // when the value is unchanged so a re-resolve doesn't churn a new array reference.
+  const setTabState = useCallback((ref: PrReference, glyphState: GlyphState) => {
+    const key = prRefKey(ref);
+    setOpenTabs((prev) => {
+      const target = prev.find((t) => prRefKey(t.ref) === key);
+      if (!target || target.glyphState === glyphState) return prev;
+      const next = prev.map((t) => (prRefKey(t.ref) === key ? { ...t, glyphState } : t));
       openTabsRef.current = next;
       return next;
     });
@@ -143,12 +164,23 @@ export function OpenTabsProvider({ children }: { children: ReactNode }) {
       unreadKeys,
       addTab,
       setTitle,
+      setTabState,
       closeTab,
       markUnread,
       clearUnread,
       clearAllTabs,
     }),
-    [openTabs, unreadKeys, addTab, setTitle, closeTab, markUnread, clearUnread, clearAllTabs],
+    [
+      openTabs,
+      unreadKeys,
+      addTab,
+      setTitle,
+      setTabState,
+      closeTab,
+      markUnread,
+      clearUnread,
+      clearAllTabs,
+    ],
   );
 
   return <OpenTabsContext.Provider value={value}>{children}</OpenTabsContext.Provider>;

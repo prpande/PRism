@@ -31,6 +31,7 @@ import { useReconcile } from '../../hooks/useReconcile';
 import type { PrReference } from '../../api/types';
 import { prRefKey } from '../../api/types';
 import { useOpenTabs } from '../../contexts/OpenTabsContext';
+import { glyphStateFor, type GlyphState } from '../shared/prStateGlyph';
 import { useTabScrollMemory } from '../../hooks/useTabScrollMemory';
 import { useDiffScrollRestore } from '../../hooks/diffScrollMemory';
 import { LoadingBar } from '../LoadingBar';
@@ -164,7 +165,7 @@ export function PrDetailView({
   // Open-tabs integration. setTitle fills in the tab title once usePrDetail
   // resolves it; clearUnread fires once on first mount. addTab moved to the
   // host (a hidden keep-alive view should not register itself).
-  const { setTitle, clearUnread } = useOpenTabs();
+  const { setTitle, setTabState, clearUnread } = useOpenTabs();
 
   // Fill in the title once usePrDetail resolves it. Skipped while title is
   // still null/undefined (initial load + error states). Deps are primitives,
@@ -175,6 +176,17 @@ export function PrDetailView({
       setTitle({ owner, repo, number }, data.pr.title);
     }
   }, [data?.pr.title, setTitle, owner, repo, number]);
+
+  // #530 — fill the tab's leading state glyph once the PR resolves. `null` until
+  // `data.pr` exists → the tab strip draws no glyph rather than a guessed one.
+  // The derived `glyphState` is a primitive, so keying the effect on it (not the
+  // `data` object) re-fires only when the state actually changes, not on every
+  // poll-driven `data` identity change.
+  const tabGlyphState: GlyphState | null = data?.pr ? glyphStateFor(data.pr) : null;
+  useEffect(() => {
+    if (tabGlyphState === null) return;
+    setTabState({ owner, repo, number }, tabGlyphState);
+  }, [tabGlyphState, setTabState, owner, repo, number]);
 
   // One-shot: clear unread on first mount of this view. The host owns
   // focus-driven clears under keep-alive; here we just ensure a freshly
