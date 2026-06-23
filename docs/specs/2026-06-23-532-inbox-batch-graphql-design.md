@@ -25,8 +25,9 @@ no GraphQL equivalent and stays REST.
 1. Replace the per-PR REST hydration **and** the awaiting-author review walk with **one aliased-batch
    GraphQL reader** (mirroring the existing `GitHubPrTimelineReader` precedent), routed through the
    shared `GitHubGraphQL.PostAsync` transport (PAT-egress guard intact).
-2. Produce **byte-identical `PrInboxItem` rows** before/after, with two explicitly documented,
-   bounded deltas (see § Parity).
+2. Produce `PrInboxItem` rows that match the REST path, except for two explicitly documented deltas
+   (see § Parity): one rare edge-case divergence (`reviews(last:100)` cap) and one strictly-more-correct
+   improvement (the unified cache key).
 3. Preserve the existing per-PR caching benefit so a **steady-state** inbox does not regress into
    re-fetching every tick (critical — see § Caching).
 4. **Measure** the round-trip reduction *and* GraphQL point cost (`rateLimit { cost remaining }`),
@@ -60,22 +61,32 @@ public sealed record BatchPrData(
     int Deletions,             // deletions
     int CommitCount,           // commits.totalCount
     int ChangedFiles,          // changedFiles
-    DateTimeOffset PushedAt,   // headRepository.pushedAt  (see § Parity — verify live)
+    DateTimeOffset PushedAt,   // headRepository.pushedAt — headRepository may be null (deleted fork); fall back to UpdatedAt
     DateTimeOffset? MergedAt,  // mergedAt
     DateTimeOffset? ClosedAt,  // closedAt
-    string? ViewerLastReviewSha); // computed from reviews(last:100) — see § Awaiting-author parity
+    string? ViewerLastReviewSha); // computed at parse time from reviews(last:100) — see § Awaiting-author parity
 ```
 
 `InboxRefreshOrchestrator` calls `ReadAsync` **once** per refresh (over all distinct PR refs across
 visible sections + closed-history), then:
 
 - maps `BatchPrData` hydration fields onto each `RawPrInboxItem` (replacing `_enricher.EnrichAsync`);
-- applies the awaiting-author keep-rule using `ViewerLastReviewSha` (replacing
+- applies the awaiting-author **inclusion predicate** using `ViewerLastReviewSha` (replacing
   `_awaitingFilter.FilterAsync`).
 
-`GitHubPrEnricher` and `GitHubAwaitingAuthorFilter` (the REST impls) are **removed**. No REST
-fallback (see § Failure semantics). The awaiting-author *keep-rule* — `sha != null && sha != head` —
-moves to a small pure, unit-testable helper.
+**Component removal (sole consumer confirmed).** `InboxRefreshOrchestrator` is the only runtime
+consumer of `IPrEnricher` and `IAwaitingAuthorFilter` (verified by grep — other matches are the DI
+registrations and test doubles). Both interfaces *and* their REST implementations
+(`GitHubPrEnricher`, `GitHubAwaitingAuthorFilter`) are **deleted entirely**, and the constructor
+swaps the two parameters for `IGitHubPrBatchReader`. No REST fallback (see § Failure semantics). The
+awaiting-author *inclusion predicate* moves to a small pure, unit-testable helper:
+
+```csharp
+static bool IsAwaitingAuthor(string? viewerLastReviewSha, string headSha)
+    => viewerLastReviewSha is { } sha && sha != headSha;
+```
+
+The orchestrator (not the helper) applies it to filter the `awaiting-author` section.
 
 ### GraphQL query shape (per alias, mirroring `GitHubPrTimelineReader.BuildQuery`)
 
@@ -84,19 +95,22 @@ aN: repository(owner:"o", name:"r") { pullRequest(number:N) {
   headRefOid additions deletions changedFiles
   commits { totalCount }
   mergedAt closedAt
-  headRepository { pushedAt }
+  headRepository { pushedAt }     # headRepository can be null (deleted head fork) — guard the object
   reviews(last:100) { nodes { author { login } state submittedAt commit { oid } } }
+  # author.login is matched against viewerLogin at PARSE time (ParseViewerLastReviewSha),
+  # NOT filtered in the query. `state` is selected but intentionally unused on the parity path.
 } }
 ```
 
 Plus `rateLimit { cost remaining }` at the query root for cost measurement. `viewerLogin` is passed
-into `ReadAsync` by the orchestrator (it already has it via `_viewerLoginProvider()`), so the query
-does **not** select `viewer { login }` — no need to round-trip it.
+into `ReadAsync` by the orchestrator (it already has it via `_viewerLoginProvider()`); the query does
+**not** select `viewer { login }`.
 
 - **100-alias cap + split:** mirror the precedent's `MaxBatch = 100`. The reader splits >100 refs
   into multiple queries itself (the timeline reader leaves splitting to the caller; this reader owns
-  it, since the orchestrator passes an arbitrary-length ref list). Typical inboxes (REST search is
-  `per_page=50` per section, 4 sections) fit in 1–2 batches.
+  it, since the orchestrator passes an arbitrary-length ref list). Search is `per_page=50` × up to 4
+  sections plus closed-history, so a busy cold inbox can reach 200+ distinct refs ⇒ **3–4 batches**;
+  a typical inbox is 1–2. (Adjust the measurement plan's expectation accordingly.)
 
 ### Caching (critical — prevents steady-state regression)
 
@@ -109,12 +123,14 @@ The reader therefore caches `BatchPrData` keyed by **`(PrReference, UpdatedAt)`*
 
 - `UpdatedAt` (from the Search API, already on `RawPrInboxItem`) bumps on *any* PR activity — push,
   comment, **or new review** — so an unchanged `UpdatedAt` guarantees neither hydration nor the
-  viewer's review set changed. It is a strict superset of the old enricher key (`(ref, UpdatedAt)`)
-  and the old awaiting key (`(ref, HeadSha)`).
+  viewer's review set changed.
+- The key is **identical** to the old enricher key (`(ref, UpdatedAt)`, `GitHubPrEnricher.cs:34`), and
+  **strictly more correct** than the old awaiting key (`(ref, HeadSha)`, `GitHubAwaitingAuthorFilter.cs:46`),
+  which could return a stale review SHA when a new review landed at the same head (see § Parity).
 - Net effect: quiescent inbox → 0 batches; cold/churny inbox → `ceil(stale/100)` batches.
 
-Cache eviction mirrors the existing `InboxCacheEviction.PruneAbsent` (drop refs absent from the
-current ref set).
+Cache eviction reuses the existing `InboxCacheEviction.PruneAbsent` (drop refs absent from the current
+ref set).
 
 ### Orchestrator rewiring (`InboxRefreshOrchestrator.RefreshAsync`)
 
@@ -123,93 +139,131 @@ Replace the two steps at `:143` (enrich) and `:155-161` (awaiting filter) with:
 1. `batch = await _batchReader.ReadAsync(allDistinctRefs, viewerLogin, ct)`.
 2. Map hydration onto raw items (same `Where(!IsNullOrEmpty(HeadSha))` drop for refs the batch didn't
    resolve — preserves the enricher's null-drop).
-3. For the `awaiting-author` section, keep PRs where `batch[ref].ViewerLastReviewSha is { } sha &&
-   sha != headSha` — identical predicate to today.
+3. For the `awaiting-author` section, keep PRs where `IsAwaitingAuthor(batch[ref].ViewerLastReviewSha,
+   headSha)` — identical predicate to today.
 
 CI detection, materialization, dedupe, AI enrichment, diff/publish are **untouched**.
 
 ## Parity
 
-### `pushedAt` (the one real risk)
+### `pushedAt` (the one real field risk)
 
-REST derives it from `head.repo.pushed_at`. The GraphQL equivalent is `headRepository { pushedAt }`
-(the head repo's `Repository.pushedAt`). These should be the identical underlying field, but this
-**must be verified live** against a real PR before relying on it (the awaiting-author and hydration
-parity tests below pin it). Fallback if they ever diverge: the field is informational on the row
-(used for sort/“pushed” display), and the REST enricher already falls back to `UpdatedAt` when
-`pushed_at` is absent — the reader mirrors that fallback (`PushedAt ??= UpdatedAt` at the call site).
+REST derives it from `head.repo.pushed_at`, guarding that `head.repo` is a present object before reading
+(`GitHubPrEnricher.cs:76-83`), else falling back to `UpdatedAt`. The GraphQL equivalent is
+`headRepository { pushedAt }`. Two requirements:
+
+1. **Verify live** that `headRepository.pushedAt` equals REST `head.repo.pushed_at` for a healthy
+   same-repo PR (they should be the identical `Repository.pushedAt` field).
+2. **Null-object guard:** on a cross-fork PR whose head fork was deleted, GraphQL returns
+   `headRepository: null` (the whole object) — exactly the case the REST path guards. The parser must
+   guard the *object* (`headRepository` present + object-kind) before reading `pushedAt`, and fall
+   back to `UpdatedAt` otherwise. A null-*scalar* guard alone is insufficient.
 
 ### Awaiting-author last-review SHA — replicate REST semantics, do NOT reuse `ParseViewerReview`
 
-`GitHubPrParser.ParseViewerReview` **excludes DISMISSED/PENDING** reviews. The current REST walk
-(`FetchLastReviewShaAsync`) does **not** exclude DISMISSED — it takes the viewer's review with the
-maximum `submitted_at` among reviews with a **non-empty `commit_id`** and a **string-kind
+`GitHubPrParser.ParseViewerReview` **excludes DISMISSED/PENDING** reviews (via `MapReviewState`,
+`GitHubPrParser.cs:264-266`). The current REST walk (`FetchLastReviewShaAsync`,
+`GitHubAwaitingAuthorFilter.cs:97-114`) does **not** filter on `state` — it takes the viewer's review
+with the maximum `submitted_at` among reviews with a **non-empty `commit_id`** and a **string-kind
 `submitted_at`** (PENDING drafts, whose `submitted_at` is null, are skipped). Reusing
 `ParseViewerReview` would therefore be a *behavior change* for PRs whose latest viewer review is
 DISMISSED.
 
-To preserve byte-identical parity, add a dedicated helper
-`ParseViewerLastReviewSha(JsonElement pull, string viewerLogin)` that mirrors the REST logic exactly
-against the GraphQL `reviews.nodes` shape (`author.login`, `submittedAt`, `commit.oid`): max
-`submittedAt` among the viewer's reviews that carry a non-null `submittedAt` **and** a non-empty
-`commit.oid`; **no `state` filter**. (`state` is selected in the query only for future use / debug; it
-is intentionally not used in the parity path.)
+To preserve parity, add a dedicated helper `ParseViewerLastReviewSha(JsonElement pull, string
+viewerLogin)` that mirrors the REST logic exactly against the GraphQL `reviews.nodes` shape
+(`author.login`, `submittedAt`, `commit.oid`): max `submittedAt` among the viewer's reviews that carry
+a non-null `submittedAt` **and** a non-empty `commit.oid`; **no `state` filter**.
 
 > **Latent-behavior note (deferred, not fixed here):** including DISMISSED reviews in the
 > awaiting-author SHA may itself be questionable, but #532's contract is parity. If it should change,
 > that is a separate issue — flagged, not silently "fixed."
 
-### `reviews(last:100)` bound (documented delta)
+### Documented delta 1 — `reviews(last:100)` bound (rare edge-case divergence)
 
 The REST walk pages up to `MaxReviewPages = 10` × 100 = ~1000 reviews and logs `ReviewPagesCapped`
 when truncated. A single GraphQL alias caps at `reviews(last:100)`. For a PR with **>100 reviews where
-the viewer's latest is older than the 100 most recent**, the computed SHA can differ. This is rare,
-and `last:100` matches the cap the PR-detail query and timeline reader already accept. **Decision:**
-adopt `last:100`; do not paginate inside the batch (that would defeat batching). Emit the same
-`ReviewPagesCapped`-style log when an alias returns exactly 100 review nodes (best-effort
-truncation signal, since `reviews(last:N)` carries no `pageInfo` in the precedent query).
+the viewer's latest is older than the 100 most recent**, the computed SHA can differ — a rare possible
+divergence in `PrInboxItem` output (awaiting-author membership). `last:100` matches the cap the
+PR-detail query and timeline reader already accept. **Decision:** adopt `last:100`; do not paginate
+inside the batch (that would defeat batching). Emit a `ReviewPagesCapped`-style log when an alias
+returns exactly 100 review nodes (best-effort truncation signal — `reviews(last:N)` carries no
+`pageInfo` in the precedent query).
 
-### Caching delta (strictly-more-correct)
+### Documented delta 2 — cache key (strictly-more-correct)
 
 The old awaiting cache keyed on `(ref, HeadSha)` could return a stale review SHA when the viewer
-submitted a new review at the *same* head (no push). The unified `(ref, UpdatedAt)` key invalidates on
-that case (a new review bumps `UpdatedAt`). This is a correctness *improvement*, documented as an
-accepted, strictly-more-correct delta to the "byte-identical" claim.
+submitted a new review at the *same* head (no push) — which can flip awaiting-author membership. The
+unified `(ref, UpdatedAt)` key invalidates on that case (a new review bumps `UpdatedAt`). This is a
+correctness *improvement*; output may differ from the old path only in that strictly-more-correct
+direction.
 
 ## Failure semantics
 
-- **Transport failure** (non-2xx, network) → propagate, aborting the refresh tick. This mirrors the
-  current enricher/awaiting-filter ("5xx/timeout propagates; orchestrator decides to skip the tick";
-  `InboxPoller` retries next tick). No REST fallback — maintaining a parallel REST path defeats the
-  consolidation and doubles the parity surface.
-- **Per-alias null / partial data** (GitHub returns HTTP 200 with partial `data` when some aliases
-  error — e.g. a repo the PAT can't see) → that ref is absent from the result dict; the orchestrator
-  drops it via the existing empty-`HeadSha` filter. Mirrors `GitHubPrTimelineReader`'s per-alias
-  null-tolerance and the enricher's 404→null drop.
-- **`RateLimitExceededException`** → propagate as today (poller honors Retry-After). GraphQL 429s are
-  surfaced via the existing `GitHubHttp.ThrowIfRateLimited`.
+The shared `GitHubGraphQL.PostAsync` does **not** surface rate limits — it throws a plain
+`HttpRequestException` (with `StatusCode` preserved) on any non-2xx, and returns 200 bodies verbatim
+even when GitHub signals a *secondary* rate limit as **HTTP 200 with `errors[].type == "RATE_LIMITED"`**.
+The `GitHubPrTimelineReader` precedent degrades silently (returns an empty map, never throws), which
+both swallows the rate-limit signal **and** contradicts this slice's abort-on-transport-failure
+requirement. **The batch reader therefore owns its own error model — it does NOT blindly mirror the
+precedent:**
+
+- **Rate limit** — HTTP 429 (`HttpRequestException.StatusCode == TooManyRequests`) **or** a 200 body
+  whose `errors[]` contains a `RATE_LIMITED` type → throw `RateLimitExceededException`, propagated to
+  `InboxPoller`, which backs off honoring Retry-After (`InboxPoller.cs:63-72`). This preserves today's
+  REST behavior (a hydration/awaiting 429 backs the poller off). *Caveat:* `PostAsync`'s
+  `HttpRequestException` does not carry the `Retry-After` header, so the thrown exception has a null
+  `RetryAfter` and the poller uses its default max-backoff. Optional follow-up: teach `PostAsync` to
+  attach `Retry-After`, or have the reader issue the POST directly to capture it — deferred; the
+  default backoff is acceptable and strictly better than today's regression.
+- **Other transport failure** (non-429 non-2xx, network) → propagate, aborting the refresh tick
+  (poller retries next tick). Mirrors the current enricher/awaiting "5xx propagates → skip the tick".
+- **Per-alias null / partial data** — for a 200 with usable data where individual aliases are null or
+  carry non-rate-limit errors (e.g. a repo the PAT can't see) → that ref is absent from the result
+  dict; the orchestrator drops it via the existing empty-`HeadSha` filter (mirrors the enricher's
+  404→null drop). This is **silent partial loss for that tick, not a fallback**; the reader emits a
+  Debug log with the dropped-ref count so access regressions are observable.
+
+The reader **owns the per-alias walk and the `errors[]` inspection itself** — it must NOT be wired as
+`PostAsync` + `ThrowIfGraphQLErrorsWithoutData` (that helper throws on errors-without-data and is the
+wrong abort-vs-degrade model for a multi-alias batch, where one good alias counts as "usable data").
+Walk each expected alias defensively (`TryGet`), exactly as `GitHubPrTimelineReader.cs:64-75` does.
+
+No REST fallback — maintaining a parallel REST path defeats the consolidation and doubles the parity
+surface.
 
 ## Testing
 
-Mirror `GitHubPrTimelineReaderTests` patterns. New `GitHubPrBatchReaderTests`:
+Mirror `GitHubPrTimelineReaderTests` patterns (mockable via `FakeHttpClientFactory` /
+`FakeHttpMessageHandler` since `PostAsync` takes a resolved `HttpClient`). New `GitHubPrBatchReaderTests`:
 
 1. **Query construction** — N refs → correct aliased query string (owner/name JSON-escaped, numbers,
-   `reviews(last:100)`, `rateLimit`, `viewer`).
+   `reviews(last:100)`, `rateLimit`; no `viewer`).
 2. **Alias parsing** — full hydration + `ViewerLastReviewSha` parsed from a representative response.
 3. **>100-ref split** — 150 refs → 2 queries; results merged.
-4. **Per-alias error tolerance** — one alias `null` in `data` → that ref absent, others present.
-5. **Awaiting-author parity** — DISMISSED-included max-`submittedAt` selection; PENDING (null
-   `submittedAt`) skipped; empty `commit.oid` skipped; `>100` reviews truncation behavior.
-6. **`pushedAt` parity + fallback** — `headRepository.pushedAt` mapped; absent → `UpdatedAt` fallback.
+4. **Per-alias error tolerance** — one alias `null` in `data` → that ref absent, others present;
+   dropped-ref count logged.
+5. **Awaiting-author parity + truncation log** — DISMISSED-included max-`submittedAt` selection;
+   PENDING (null `submittedAt`) skipped; empty `commit.oid` skipped; exactly-100 review nodes →
+   `ReviewPagesCapped`-style log.
+6. **`pushedAt` parity + null-object fallback** — `headRepository.pushedAt` mapped; `headRepository:
+   null` (deleted-fork fixture) → `UpdatedAt` fallback (not just an absent scalar).
 7. **Caching** — unchanged `UpdatedAt` → no re-fetch (assert batch call count); changed `UpdatedAt` →
    re-fetch; `PruneAbsent` eviction.
+8. **Rate-limit error model** — HTTP 429 → `RateLimitExceededException`; 200 body with
+   `errors[].type=RATE_LIMITED` → `RateLimitExceededException`; non-429 transport error → propagates
+   (abort); these are the cases the precedent gets wrong.
 
 Orchestrator-level:
 
-8. **Parity harness** — a fixture set of raw items run through (a) the old REST path and (b) the new
+9. **Parity harness** — a fixture set of raw items run through (a) the old REST path and (b) the new
    batch path produces identical `PrInboxItem` lists (modulo the two documented deltas). Reuse the
-   existing inbox test doubles (`FakeSectionQueryRunner`, etc.).
-9. **Awaiting-author keep-rule** — `sha != null && sha != head` predicate unit test (pure helper).
+   existing inbox test doubles.
+10. **Inclusion-predicate** — `IsAwaitingAuthor(sha, head)` pure-function unit test.
+11. **Test-double migration** — the existing orchestrator tests inject `IPrEnricher` /
+    `IAwaitingAuthorFilter` doubles (`IdentityPrEnricher`, `PassthroughAwaitingAuthorFilter`,
+    `DropEnricher` in `InboxRefreshOrchestratorTests`; `FakePrEnricher` in `PRism.Web/TestHooks/`; the
+    `Program.cs` test-mode registration). All migrate to an `IGitHubPrBatchReader` double when the
+    constructor changes. (These break at compile time; enumerated here so it's not a surprise.)
 
 Measurement (recorded in PR `## Proof`, not a CI gate): a representative inbox's round-trip count and
 GraphQL `rateLimit.cost` before/after.
@@ -217,19 +271,27 @@ GraphQL `rateLimit.cost` before/after.
 ## Acceptance criteria
 
 - [ ] One aliased-batch GraphQL reader replaces the per-PR REST hydration + awaiting-author review
-      walk; both REST impls removed.
-- [ ] `PrInboxItem` rows byte-identical before/after (two documented deltas: `reviews(last:100)`
-      bound; `(ref, UpdatedAt)` cache key — both strictly bounded/strictly-more-correct).
+      walk; both REST impls **and** their interfaces deleted; orchestrator + DI + test doubles migrated.
+- [ ] `PrInboxItem` rows match the REST path except for **delta 1** (`reviews(last:100)` cap — rare
+      >100-review PRs) — verified by the orchestrator parity harness.
+- [ ] Caching strictly improved: `(ref, UpdatedAt)` key invalidates on same-head new reviews (**delta
+      2**); quiescent inbox issues 0 batches/tick.
+- [ ] Rate-limit error model: 429 **and** 200+`RATE_LIMITED` both raise `RateLimitExceededException`
+      and back the poller off; non-rate-limit transport failure aborts the tick; per-alias loss drops
+      only that ref (logged).
 - [ ] CI detection unchanged (still REST).
 - [ ] Tests: query construction, alias parse, >100 split, per-alias error tolerance, awaiting-author
-      parity, pushedAt parity, caching, orchestrator parity harness.
+      parity, pushedAt null-object parity, caching, rate-limit model, orchestrator parity harness,
+      inclusion-predicate, test-double migration.
 - [ ] Measured round-trip + GraphQL point-cost reduction in PR `## Proof`.
 - [ ] Zero frontend / DTO / persisted-schema change.
 
 ## Risks
 
-- **`pushedAt` divergence** — mitigated by live verification + `UpdatedAt` fallback (informational
-  field).
+- **Rate-limit model regression** (the doc-review blocker) — mitigated by the reader-owned error model
+  above (429 + 200/`RATE_LIMITED` → `RateLimitExceededException`); explicitly tested.
+- **`pushedAt` divergence / deleted-fork null** — mitigated by live verification + null-*object* guard
+  + `UpdatedAt` fallback (informational field).
 - **GraphQL point cost** — mitigated by `(ref, UpdatedAt)` caching (quiescent inbox → 0 batches) and
   explicit before/after measurement. If a fat `reviews(last:100)`-per-alias batch proves point-heavy,
   a follow-up optimization is to select `reviews` **only** for awaiting-author candidates (two alias
