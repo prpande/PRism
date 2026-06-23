@@ -172,6 +172,7 @@ using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
 using FluentAssertions;
+using Microsoft.Extensions.Logging;
 using PRism.Core.Contracts;
 using PRism.Core.Inbox;
 using PRism.GitHub.Inbox;
@@ -223,6 +224,41 @@ public sealed class GitHubPrBatchReaderTests
           "reviews":{"nodes":{{reviewsJson}}}
         }}},"rateLimit":{"cost":1,"remaining":4999}}}
         """;
+    }
+
+    // Two fully-hydrated aliases (a0→head h7, a1→head h8), no reviews.
+    private static string TwoAliasOk()
+        => """
+        {"data":{
+          "a0":{"pullRequest":{"headRefOid":"h7","additions":0,"deletions":0,"changedFiles":0,
+            "commits":{"totalCount":1},"mergedAt":null,"closedAt":null,
+            "headRepository":{"pushedAt":"2026-06-23T10:00:00Z"},"reviews":{"nodes":[]}}},
+          "a1":{"pullRequest":{"headRefOid":"h8","additions":0,"deletions":0,"changedFiles":0,
+            "commits":{"totalCount":1},"mergedAt":null,"closedAt":null,
+            "headRepository":{"pushedAt":"2026-06-23T10:00:00Z"},"reviews":{"nodes":[]}}}},
+        "rateLimit":{"cost":1,"remaining":1}}
+        """;
+
+    // A reader wired to a capturing logger so tests can assert log emissions (e.g. truncation).
+    private static (GitHubPrBatchReader Reader, CapturingLogger<GitHubPrBatchReader> Log) MakeReaderWithLog(
+        HttpStatusCode code, string json)
+    {
+        var log = new CapturingLogger<GitHubPrBatchReader>();
+        var reader = new GitHubPrBatchReader(
+            new FakeHttpClientFactory(FakeHttpMessageHandler.Returns(code, json), new Uri("https://api.github.com/")),
+            () => Task.FromResult<string?>("token"), () => "https://github.com", log);
+        return (reader, log);
+    }
+
+    private sealed class CapturingLogger<T> : ILogger<T>
+    {
+        public List<string> Messages { get; } = new();
+        public IDisposable BeginScope<TState>(TState state) where TState : notnull => NullScope.Instance;
+        public bool IsEnabled(LogLevel logLevel) => true;
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception,
+            Func<TState, Exception?, string> formatter) => Messages.Add(formatter(state, exception));
+        private sealed class NullScope : IDisposable
+        { public static readonly NullScope Instance = new(); public void Dispose() { } }
     }
 
     [Fact] // Test 1 — query construction
@@ -290,6 +326,16 @@ public sealed class GitHubPrBatchReaderTests
         var (reader, _) = MakeReader(HttpStatusCode.OK, OneAliasOk(reviewsJson: reviews));
         var r = await reader.ReadAsync(new[] { Raw(7) }, "viewer", CancellationToken.None);
         r[new PrReference("acme", "api", 7)].ViewerLastReviewSha.Should().Be("real");
+    }
+
+    [Fact] // Test 5c — exactly 100 review nodes → truncation log (reviews(last:100) has no pageInfo)
+    public async Task Logs_when_reviews_page_is_full()
+    {
+        const string node = "{\"author\":{\"login\":\"other\"},\"submittedAt\":\"2026-06-20T00:00:00Z\",\"commit\":{\"oid\":\"x\"}}";
+        var nodes = "[" + string.Join(",", Enumerable.Repeat(node, 100)) + "]";
+        var (reader, log) = MakeReaderWithLog(HttpStatusCode.OK, OneAliasOk(reviewsJson: nodes));
+        await reader.ReadAsync(new[] { Raw(7) }, "viewer", CancellationToken.None);
+        log.Messages.Should().Contain(m => m.Contains("full page"));
     }
 
     [Fact] // Test 6a — pushedAt: headRepository null → UpdatedAt fallback
@@ -382,6 +428,19 @@ public sealed class GitHubPrBatchReaderTests
         calls().Should().Be(2);
     }
 
+    [Fact] // Test 7c — eviction runs even on a full-cache-hit tick (a PR that left the inbox is purged)
+    public async Task Prunes_absent_ref_even_when_remaining_are_cache_hits()
+    {
+        var (reader, calls) = MakeReader(HttpStatusCode.OK, TwoAliasOk());
+        var p7 = Raw(7, updated: T0);
+        var p8 = Raw(8, updated: T0);
+        await reader.ReadAsync(new[] { p7, p8 }, "viewer", CancellationToken.None);  // calls=1, caches 7 & 8
+        await reader.ReadAsync(new[] { p8 }, "viewer", CancellationToken.None);       // full hit on 8 → no fetch; prunes 7
+        calls().Should().Be(1);
+        await reader.ReadAsync(new[] { p7 }, "viewer", CancellationToken.None);       // 7 was pruned → re-fetch
+        calls().Should().Be(2);
+    }
+
     [Fact] // Test 8a — HTTP 429 → RateLimitExceededException
     public async Task Http_429_throws_rate_limit()
     {
@@ -451,7 +510,8 @@ namespace PRism.GitHub.Inbox;
 /// </summary>
 public sealed partial class GitHubPrBatchReader : IPrBatchReader
 {
-    private const int MaxBatch = 100;   // GitHub aliased-batch safety cap (mirrors GitHubPrTimelineReader)
+    private const int MaxBatch = 100;        // GitHub aliased-batch safety cap (mirrors GitHubPrTimelineReader)
+    private const int MaxReviewNodes = 100;  // reviews(last:100) page size — a full page signals possible truncation
     private readonly IHttpClientFactory _httpFactory;
     private readonly Func<Task<string?>> _readToken;
     private readonly Func<string> _readHost;   // late-bound: GraphQL endpoint follows a live host change
@@ -596,7 +656,7 @@ public sealed partial class GitHubPrBatchReader : IPrBatchReader
         return sb.ToString();
     }
 
-    private static bool TryParse(JsonElement repoNode, RawPrInboxItem raw, string viewerLogin, out BatchPrData data)
+    private bool TryParse(JsonElement repoNode, RawPrInboxItem raw, string viewerLogin, out BatchPrData data)
     {
         data = null!;
         if (!repoNode.TryGetProperty("pullRequest", out var pr) || pr.ValueKind != JsonValueKind.Object)
@@ -622,7 +682,7 @@ public sealed partial class GitHubPrBatchReader : IPrBatchReader
             ? ca.GetDateTimeOffset() : null;
 
         data = new BatchPrData(headSha, additions, deletions, commitCount, changedFiles,
-                               pushedAt, mergedAt, closedAt, ParseViewerLastReviewSha(pr, viewerLogin));
+                               pushedAt, mergedAt, closedAt, ParseViewerLastReviewSha(pr, viewerLogin, raw.Reference));
         return true;
     }
 
@@ -633,12 +693,18 @@ public sealed partial class GitHubPrBatchReader : IPrBatchReader
     // the viewer's review with the max submittedAt among reviews with a non-null submittedAt AND a
     // non-empty commit.oid. NO state filter (deliberately NOT GitHubPrParser.ParseViewerReview,
     // which excludes DISMISSED/PENDING) — see spec § Awaiting-author parity.
-    private static string? ParseViewerLastReviewSha(JsonElement pr, string viewerLogin)
+    private string? ParseViewerLastReviewSha(JsonElement pr, string viewerLogin, PrReference reference)
     {
         if (!pr.TryGetProperty("reviews", out var reviews)
             || !reviews.TryGetProperty("nodes", out var nodes)
             || nodes.ValueKind != JsonValueKind.Array)
             return null;
+
+        // Documented delta 1 (spec): reviews(last:100) carries no pageInfo, so a full page is the
+        // only available truncation signal. A PR with >100 reviews whose viewer's latest is older
+        // than the 100 most recent could yield a stale SHA — emit a ReviewPagesCapped-style log.
+        if (nodes.GetArrayLength() == MaxReviewNodes)
+            Log.ReviewsTruncated(_log, reference.Owner, reference.Repo, reference.Number, MaxReviewNodes);
 
         string? best = null;
         DateTimeOffset? bestAt = null;
@@ -678,6 +744,10 @@ public sealed partial class GitHubPrBatchReader : IPrBatchReader
         [LoggerMessage(Level = LogLevel.Debug,
             Message = "Inbox batch reader dropped {Count} ref(s) this tick (per-alias null / non-object / malformed)")]
         internal static partial void RefsDropped(ILogger logger, int count);
+
+        [LoggerMessage(Level = LogLevel.Debug,
+            Message = "Inbox batch reviews(last:{Cap}) returned a full page for {Owner}/{Repo}#{Number}; viewer's most-recent review may be older than the cap")]
+        internal static partial void ReviewsTruncated(ILogger logger, string owner, string repo, int number, int cap);
 
         [LoggerMessage(Level = LogLevel.Debug,
             Message = "Inbox batch GraphQL: {Refs} ref(s), rateLimit cost={Cost} remaining={Remaining}")]
@@ -919,6 +989,8 @@ with:
                 sp.GetRequiredService<IPrBatchReader>(),
 ```
 
+Also update the `<remarks>` XML-doc on `AddPrismCore` (around line 37): it lists `<c>IPrEnricher</c>, <c>IAwaitingAuthorFilter</c>, <c>ICiFailingDetector</c>` as cross-method dependencies — replace the first two with `<c>IPrBatchReader</c>` so the doc doesn't name the soon-to-be-deleted interfaces. (These are `<c>` literals, not `<see cref>`, so they don't break the build — but they go stale; fix here to keep the "0 warnings, no stale docs" bar.)
+
 - [ ] **Step 6: Build + run the orchestrator tests**
 
 Run: `dotnet build PRism.sln`
@@ -1014,8 +1086,10 @@ git commit -m "test(inbox): swap e2e FakePrEnricher → FakePrBatchReader (#532)
 - Delete: `PRism.Core/Inbox/IPrEnricher.cs`
 - Delete: `PRism.Core/Inbox/IAwaitingAuthorFilter.cs`
 - Delete: `tests/PRism.GitHub.Tests/Inbox/GitHubPrEnricherTests.cs`
+- Delete: `tests/PRism.GitHub.Tests/Inbox/GitHubPrEnricherCloseStateTests.cs` (also constructs `new GitHubPrEnricher(...)`; its MergedAt/ClosedAt coverage moves to the GraphQL path via Task 2's `Parses_hydration_fields` + the orchestrator golden harness)
 - Delete: `tests/PRism.GitHub.Tests/Inbox/GitHubAwaitingAuthorFilterTests.cs`
 - Modify: `PRism.GitHub/ServiceCollectionExtensions.cs` (remove the `IPrEnricher` + `IAwaitingAuthorFilter` registrations)
+- Modify: stale comments in `PRism.GitHub/Inbox/GitHubCiFailingDetector.cs`, `PRism.GitHub/GitHubReviewService.cs`, `PRism.GitHub/GitHubPrParser.cs` (build-safe, but they name the deleted classes — see Step 3)
 
 - [ ] **Step 1: Remove the GitHub DI registrations**
 
@@ -1029,13 +1103,20 @@ git rm PRism.GitHub/Inbox/GitHubPrEnricher.cs \
        PRism.Core/Inbox/IPrEnricher.cs \
        PRism.Core/Inbox/IAwaitingAuthorFilter.cs \
        tests/PRism.GitHub.Tests/Inbox/GitHubPrEnricherTests.cs \
+       tests/PRism.GitHub.Tests/Inbox/GitHubPrEnricherCloseStateTests.cs \
        tests/PRism.GitHub.Tests/Inbox/GitHubAwaitingAuthorFilterTests.cs
 ```
 
-- [ ] **Step 3: Grep for any remaining references**
+- [ ] **Step 3: Grep for remaining references; clean stale comments**
 
 Run: `git grep -n "IPrEnricher\|IAwaitingAuthorFilter\|GitHubPrEnricher\|GitHubAwaitingAuthorFilter\|FakePrEnricher"`
-Expected: NO matches outside `docs/` (specs/plans may mention them historically). If any code/test reference remains, fix it before building.
+
+Expected remaining matches are **comments only** (build-safe) — clean each so the deletion looks complete and nobody is misled:
+- `PRism.GitHub/Inbox/GitHubCiFailingDetector.cs` (~line 160) — comment "GitHubPrEnricher.EnrichAsync early-returns…" → reword to "the batch reader early-returns…".
+- `PRism.GitHub/GitHubReviewService.cs` (~line 537) — comment "…GitHubSectionQueryRunner and GitHubPrEnricher" → drop the `GitHubPrEnricher` mention.
+- `PRism.GitHub/GitHubPrParser.cs` (~line 269) — comment "…mirrors GitHubAwaitingAuthorFilter" → reword to "…mirrors the inbox batch reader's awaiting-author SHA selection".
+
+Any match that is actual **code** (not a comment) outside `docs/` is a missed consumer — fix it before building.
 
 - [ ] **Step 4: Full build**
 
@@ -1064,11 +1145,12 @@ git commit -m "refactor(inbox): delete REST enricher + awaiting-author filter, n
 
 **Spec coverage:**
 - One aliased-batch reader replaces REST hydration + awaiting walk → Tasks 1, 2, 3, 5. ✅
-- `(ref, UpdatedAt)` caching, quiescent → 0 batches → Task 2 (tests 7/7b). ✅
+- `(ref, UpdatedAt)` caching, quiescent → 0 batches; eviction on full-cache-hit tick → Task 2 (tests 7/7b/7c). ✅
 - `>100` split → Task 2 (test 3). ✅
 - Rate-limit error model (429 + 200/RATE_LIMITED → throw; other → propagate; per-alias → drop) → Task 2 (tests 8a/8b/8c, 4). ✅
 - `pushedAt` both guards → Task 2 (tests 6a/6b). ✅
 - Awaiting-author parity (no state filter, max submittedAt, non-empty oid) → Task 2 (tests 5a/5b) + predicate Task 1. ✅
+- Delta-1 truncation log (exactly-100 review nodes) → Task 2 (test 5c). ✅
 - Golden-output harness (recast test 9) → Task 3. ✅
 - Inclusion-predicate unit test (test 10) → Task 1. ✅
 - Test-double migration (test 11) → Tasks 3 (orchestrator doubles) + 4 (web fake). ✅
