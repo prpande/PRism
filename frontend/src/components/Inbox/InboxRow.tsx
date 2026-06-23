@@ -7,17 +7,8 @@ import { AiMarker } from '../Ai/AiMarker';
 import { AI_PROVENANCE_LABEL, AI_INBOX_ENRICHING_LABEL } from '../Ai/aiStrings';
 import { prId } from './groupByRepo';
 import { DiffBar } from './DiffBar';
-import {
-  PR_GLYPH_PATH,
-  PR_GLYPH_CLASS,
-  PR_GLYPH_LABEL,
-  type GlyphState,
-} from '../shared/prStateGlyph';
+import { PrStateGlyph, glyphStateFor, type GlyphState } from '../shared/prStateGlyph';
 import styles from './InboxRow.module.css';
-
-// ---- Leading PR-state octicons (Primer v19, 16-viewBox), every row ----
-// Paths/classes/labels are now single-sourced from ../shared/prStateGlyph (Task 3 #501).
-type PrState = 'open' | 'merged' | 'closed';
 
 // ---- CI title-suffix octicons (bare check / cross, no enclosing circle) ----
 type VisibleCi = 'passing' | 'failing' | 'pending';
@@ -76,13 +67,14 @@ export function InboxRow({
     navigate(`/pr/${pr.reference.owner}/${pr.reference.repo}/${pr.reference.number}`);
   };
 
-  const prState: PrState = doneState ?? 'open';
-
-  // #501 — display discriminant for the status glyph. Drafts only matter while open
-  // (merged/closed win via precedence); the PrState type stays open/merged/closed.
-  // Same shape as PrHeader's derivation (prState === 'open' ⟺ !isDone here) so the
-  // two read identically across surfaces.
-  const glyphState: GlyphState = pr.isDraft && prState === 'open' ? 'draft' : prState;
+  // #501/#530 — display discriminant for the status glyph, via the shared
+  // precedence helper so the inbox can't drift from the tab strip / header
+  // (merged/closed win over draft; draft only applies while open).
+  const glyphState: GlyphState = glyphStateFor({
+    isMerged: doneState === 'merged',
+    isClosed: doneState === 'closed',
+    isDraft: pr.isDraft,
+  });
 
   // CI rides the aria-label (glyph is aria-hidden); open rows only. Reuses
   // CI_GLYPH_LABEL so the suffix and the <title> tooltip never drift.
@@ -132,18 +124,7 @@ export function InboxRow({
       aria-label={ariaLabel}
     >
       <span className={styles.status}>
-        <svg
-          className={`${styles.prState} ${styles[PR_GLYPH_CLASS[glyphState]]}`}
-          data-pr-state={glyphState}
-          viewBox="0 0 16 16"
-          width="14"
-          height="14"
-          fill="currentColor"
-          aria-hidden="true"
-        >
-          <title>{PR_GLYPH_LABEL[glyphState]}</title>
-          <path d={PR_GLYPH_PATH[glyphState]} />
-        </svg>
+        <PrStateGlyph state={glyphState} />
       </span>
       <span className={styles.midCol}>
         <span className={styles.main}>

@@ -444,6 +444,10 @@ test.describe('parity baselines — app chrome', () => {
     // match on partial class. If the selector turns out flaky, add a
     // `data-state="unread"` attribute to the tab via a follow-up.
     await page.locator('[data-testid="pr-tabstrip"] [class*="tabUnread"]').first().waitFor();
+    // #530 — the leading state glyph is filled in asynchronously once PrDetailView
+    // resolves the PR. Gate the screenshot on it so the baseline captures the glyph
+    // deterministically (avoids a race where the shot lands before setTabState).
+    await page.locator('[data-testid="pr-tabstrip"] [data-pr-state]').first().waitFor();
     await page.addStyleTag({ content: KILL_ANIMATIONS_CSS });
     await expect(page.locator('[data-testid="pr-tabstrip"]')).toHaveScreenshot(
       'app-chrome-tabstrip.png',

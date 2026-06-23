@@ -254,12 +254,14 @@ describe('PrDetailView — manual Refresh wiring (Task 8 / #344)', () => {
 // ---------------------------------------------------------------------------
 describe('PrDetailView — title propagation on resolve (Task 11)', () => {
   const setTitleSpy = vi.fn();
+  const setTabStateSpy = vi.fn();
 
   const openTabsStub: OpenTabsContextValue = {
     openTabs: [],
     unreadKeys: new Set<string>(),
     addTab: vi.fn(),
     setTitle: setTitleSpy,
+    setTabState: setTabStateSpy,
     closeTab: vi.fn(),
     markUnread: vi.fn(),
     clearUnread: vi.fn(),
@@ -268,6 +270,7 @@ describe('PrDetailView — title propagation on resolve (Task 11)', () => {
 
   beforeEach(() => {
     setTitleSpy.mockClear();
+    setTabStateSpy.mockClear();
   });
 
   test('setTitle is called with prRef and resolved title when usePrDetail resolves', async () => {
@@ -290,6 +293,28 @@ describe('PrDetailView — title propagation on resolve (Task 11)', () => {
       expect(setTitleSpy).toHaveBeenCalledWith(
         { owner: 'acme', repo: 'api', number: 7 },
         'Keep-alive title',
+      );
+    });
+  });
+
+  test('setTabState is called with the resolved PR glyph state (#530)', async () => {
+    render(
+      <MemoryRouter>
+        <OpenTabsContext.Provider value={openTabsStub}>
+          <AskAiDrawerProvider>
+            <ToastProvider>
+              <PrDetailView prRef={{ owner: 'acme', repo: 'api', number: 7 }} active={true} />
+            </ToastProvider>
+          </AskAiDrawerProvider>
+        </OpenTabsContext.Provider>
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      // PR_DETAIL is open (isMerged/isClosed/isDraft all false) → 'open' glyph.
+      expect(setTabStateSpy).toHaveBeenCalledWith(
+        { owner: 'acme', repo: 'api', number: 7 },
+        'open',
       );
     });
   });
