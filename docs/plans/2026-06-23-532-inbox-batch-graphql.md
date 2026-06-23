@@ -172,11 +172,10 @@ using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
 using FluentAssertions;
-using Microsoft.Extensions.Logging;
 using PRism.Core.Contracts;
 using PRism.Core.Inbox;
 using PRism.GitHub.Inbox;
-using PRism.GitHub.Tests.TestHelpers;
+using PRism.GitHub.Tests.TestHelpers;   // shared CapturingLogger<T> (.Entries), FakeHttpClientFactory, FakeHttpMessageHandler
 using Xunit;
 
 namespace PRism.GitHub.Tests.Inbox;
@@ -239,7 +238,9 @@ public sealed class GitHubPrBatchReaderTests
         "rateLimit":{"cost":1,"remaining":1}}
         """;
 
-    // A reader wired to a capturing logger so tests can assert log emissions (e.g. truncation).
+    // A reader wired to the SHARED CapturingLogger<T> (tests/PRism.GitHub.Tests/TestHelpers/
+    // CapturingLogger.cs — exposes .Entries as List<(LogLevel Level, string Message)>) so tests can
+    // assert log emissions (e.g. truncation). Do NOT add a local capturing-logger duplicate.
     private static (GitHubPrBatchReader Reader, CapturingLogger<GitHubPrBatchReader> Log) MakeReaderWithLog(
         HttpStatusCode code, string json)
     {
@@ -248,17 +249,6 @@ public sealed class GitHubPrBatchReaderTests
             new FakeHttpClientFactory(FakeHttpMessageHandler.Returns(code, json), new Uri("https://api.github.com/")),
             () => Task.FromResult<string?>("token"), () => "https://github.com", log);
         return (reader, log);
-    }
-
-    private sealed class CapturingLogger<T> : ILogger<T>
-    {
-        public List<string> Messages { get; } = new();
-        public IDisposable BeginScope<TState>(TState state) where TState : notnull => NullScope.Instance;
-        public bool IsEnabled(LogLevel logLevel) => true;
-        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception,
-            Func<TState, Exception?, string> formatter) => Messages.Add(formatter(state, exception));
-        private sealed class NullScope : IDisposable
-        { public static readonly NullScope Instance = new(); public void Dispose() { } }
     }
 
     [Fact] // Test 1 — query construction
@@ -335,7 +325,7 @@ public sealed class GitHubPrBatchReaderTests
         var nodes = "[" + string.Join(",", Enumerable.Repeat(node, 100)) + "]";
         var (reader, log) = MakeReaderWithLog(HttpStatusCode.OK, OneAliasOk(reviewsJson: nodes));
         await reader.ReadAsync(new[] { Raw(7) }, "viewer", CancellationToken.None);
-        log.Messages.Should().Contain(m => m.Contains("full page"));
+        log.Entries.Should().Contain(e => e.Message.Contains("full page"));
     }
 
     [Fact] // Test 6a — pushedAt: headRepository null → UpdatedAt fallback
@@ -1151,9 +1141,9 @@ git commit -m "refactor(inbox): delete REST enricher + awaiting-author filter, n
 - `pushedAt` both guards → Task 2 (tests 6a/6b). ✅
 - Awaiting-author parity (no state filter, max submittedAt, non-empty oid) → Task 2 (tests 5a/5b) + predicate Task 1. ✅
 - Delta-1 truncation log (exactly-100 review nodes) → Task 2 (test 5c). ✅
-- Golden-output harness (recast test 9) → Task 3. ✅
-- Inclusion-predicate unit test (test 10) → Task 1. ✅
-- Test-double migration (test 11) → Tasks 3 (orchestrator doubles) + 4 (web fake). ✅
+- Golden-output harness (spec test 9) → Task 3 (`Batch_path_produces_golden_pr_inbox_items`). ✅
+- Inclusion-predicate unit test (spec test 10) → Task 1 (`AwaitingAuthorRuleTests`, 3 facts). ✅
+- Test-double migration (spec test 11) → Task 3 (orchestrator doubles `IdentityBatchReader`/`DropBatchReader`/`StubBatchReader`) + Task 4 (`FakePrBatchReader`). ✅
 - CI detection unchanged → not touched (verified: no edits to `GitHubCiFailingDetector`). ✅
 - Zero FE/DTO/schema change → no `frontend/` edits; `RawPrInboxItem`/`PrInboxItem` untouched. ✅
 - Measurement in PR Proof → Task 2 logs cost; Task 5 step 6 records it. ✅
