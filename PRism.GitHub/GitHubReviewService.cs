@@ -534,7 +534,7 @@ public sealed partial class GitHubReviewService : IPrDiscovery, IPrReader
     // Instance-level helper that attaches the Bearer token alongside the standard
     // headers — without this, every REST call goes out anonymously, which 404s on
     // private repos and burns through the 60/hr unauthenticated rate limit on public
-    // repos. Mirrors the pattern used by GitHubSectionQueryRunner and GitHubPrEnricher
+    // repos. Mirrors the pattern used by GitHubSectionQueryRunner
     // (the named "github" HttpClient does not carry a default Authorization header,
     // so every caller is responsible for attaching one per request).
     //

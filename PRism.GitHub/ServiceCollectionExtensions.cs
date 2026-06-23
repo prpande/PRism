@@ -20,9 +20,9 @@ public static class ServiceCollectionExtensions
     /// <see cref="IReviewAuth"/>, <see cref="GitHubReviewService"/> bound to the Reader+Discovery
     /// pairing (<see cref="IPrDiscovery"/>, <see cref="IPrReader"/> — one shared singleton),
     /// <see cref="GitHubReviewSubmitter"/> bound to <see cref="IReviewSubmitter"/> (#321 PR2 split),
-    /// and the four inbox-pipeline implementations under <c>PRism.GitHub/Inbox/</c>
-    /// (<see cref="ISectionQueryRunner"/>, <see cref="IPrEnricher"/>,
-    /// <see cref="IAwaitingAuthorFilter"/>, <see cref="ICiFailingDetector"/>).
+    /// and the three inbox-pipeline implementations under <c>PRism.GitHub/Inbox/</c>
+    /// (<see cref="ISectionQueryRunner"/>, <see cref="IPrBatchReader"/>,
+    /// <see cref="ICiFailingDetector"/>).
     /// </summary>
     /// <remarks>
     /// Every component takes a <c>Func&lt;Task&lt;string?&gt;&gt;</c> token reader so that
@@ -100,23 +100,6 @@ public static class ServiceCollectionExtensions
                 () => tokens.ReadAsync(CancellationToken.None),
                 () => DateTimeOffset.UtcNow,
                 sp.GetRequiredService<ILogger<GitHubSectionQueryRunner>>());
-        });
-
-        services.AddSingleton<IPrEnricher>(sp =>
-        {
-            var tokens = sp.GetRequiredService<ITokenStore>();
-            var factory = sp.GetRequiredService<IHttpClientFactory>();
-            return new GitHubPrEnricher(factory, () => tokens.ReadAsync(CancellationToken.None));
-        });
-
-        services.AddSingleton<IAwaitingAuthorFilter>(sp =>
-        {
-            var tokens = sp.GetRequiredService<ITokenStore>();
-            var factory = sp.GetRequiredService<IHttpClientFactory>();
-            return new GitHubAwaitingAuthorFilter(
-                factory,
-                () => tokens.ReadAsync(CancellationToken.None),
-                sp.GetRequiredService<ILogger<GitHubAwaitingAuthorFilter>>());
         });
 
         // Batched GraphQL inbox hydration + awaiting-author reviews (#532). Late-bound host

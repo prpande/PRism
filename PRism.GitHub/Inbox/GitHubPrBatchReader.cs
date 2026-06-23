@@ -11,7 +11,7 @@ using PRism.Core.Inbox;
 namespace PRism.GitHub.Inbox;
 
 /// <summary>
-/// Batched GraphQL replacement for GitHubPrEnricher + GitHubAwaitingAuthorFilter. ONE aliased
+/// Batched GraphQL inbox reader (#532). ONE aliased
 /// query hydrates many PRs at once (head SHA, diff stats, commit count, changed files, pushedAt,
 /// merged/closed timestamps) AND computes the viewer's last-review SHA from reviews(last:100).
 /// Caches per (Reference, UpdatedAt) so a quiescent inbox issues zero batches. Owns its own
@@ -200,7 +200,7 @@ public sealed partial class GitHubPrBatchReader : IPrBatchReader
     private static int NumOr(JsonElement obj, string name, int fallback)
         => obj.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.Number ? v.GetInt32() : fallback;
 
-    // Replicates GitHubAwaitingAuthorFilter.FetchLastReviewShaAsync against the GraphQL shape:
+    // Computes the viewer's last-review SHA from the GraphQL shape:
     // the viewer's review with the max submittedAt among reviews with a non-null submittedAt AND a
     // non-empty commit.oid. NO state filter (deliberately NOT GitHubPrParser.ParseViewerReview,
     // which excludes DISMISSED/PENDING) — see spec § Awaiting-author parity.
