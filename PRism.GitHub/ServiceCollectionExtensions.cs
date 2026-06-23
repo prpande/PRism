@@ -119,6 +119,20 @@ public static class ServiceCollectionExtensions
                 sp.GetRequiredService<ILogger<GitHubAwaitingAuthorFilter>>());
         });
 
+        // Batched GraphQL inbox hydration + awaiting-author reviews (#532). Late-bound host
+        // (Func<string>) to build the absolute GraphQL endpoint, exactly like the timeline reader.
+        services.AddSingleton<IPrBatchReader>(sp =>
+        {
+            var tokens = sp.GetRequiredService<ITokenStore>();
+            var factory = sp.GetRequiredService<IHttpClientFactory>();
+            var config = sp.GetRequiredService<IConfigStore>();
+            return new GitHubPrBatchReader(
+                factory,
+                () => tokens.ReadAsync(CancellationToken.None),
+                () => config.Current.Github.Host,
+                sp.GetRequiredService<ILogger<GitHubPrBatchReader>>());
+        });
+
         services.AddSingleton<ICiFailingDetector>(sp =>
         {
             var tokens = sp.GetRequiredService<ITokenStore>();
