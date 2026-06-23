@@ -58,6 +58,20 @@ describe('OpenTabsContext', () => {
     expect(result.current.openTabs[1].glyphState).toBeNull();
   });
 
+  it('setTabState returns the same tabs reference when the state is unchanged', () => {
+    const { result } = renderHook(() => useOpenTabs(), { wrapper });
+    const a = { owner: 'acme', repo: 'api', number: 1 };
+    act(() => {
+      result.current.addTab(a, null);
+      result.current.setTabState(a, 'merged');
+    });
+    // The equality guard must bail (preserve array identity) on a re-resolve to
+    // the same state, so a polling PrDetailView effect doesn't churn re-renders.
+    const before = result.current.openTabs;
+    act(() => result.current.setTabState(a, 'merged'));
+    expect(result.current.openTabs).toBe(before);
+  });
+
   it('setTabState is a no-op for an unknown tab', () => {
     const { result } = renderHook(() => useOpenTabs(), { wrapper });
     const a = { owner: 'acme', repo: 'api', number: 1 };

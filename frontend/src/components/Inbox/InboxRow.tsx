@@ -7,13 +7,8 @@ import { AiMarker } from '../Ai/AiMarker';
 import { AI_PROVENANCE_LABEL, AI_INBOX_ENRICHING_LABEL } from '../Ai/aiStrings';
 import { prId } from './groupByRepo';
 import { DiffBar } from './DiffBar';
-import { PrStateGlyph, type GlyphState } from '../shared/prStateGlyph';
+import { PrStateGlyph, glyphStateFor, type GlyphState } from '../shared/prStateGlyph';
 import styles from './InboxRow.module.css';
-
-// ---- Leading PR-state octicons (Primer v19, 16-viewBox), every row ----
-// The glyph itself is single-sourced from the shared PrStateGlyph component (#530);
-// the open/merged/closed taxonomy below maps GitHub's done-flags to a display state.
-type PrState = 'open' | 'merged' | 'closed';
 
 // ---- CI title-suffix octicons (bare check / cross, no enclosing circle) ----
 type VisibleCi = 'passing' | 'failing' | 'pending';
@@ -72,13 +67,14 @@ export function InboxRow({
     navigate(`/pr/${pr.reference.owner}/${pr.reference.repo}/${pr.reference.number}`);
   };
 
-  const prState: PrState = doneState ?? 'open';
-
-  // #501 — display discriminant for the status glyph. Drafts only matter while open
-  // (merged/closed win via precedence); the PrState type stays open/merged/closed.
-  // Same shape as PrHeader's derivation (prState === 'open' ⟺ !isDone here) so the
-  // two read identically across surfaces.
-  const glyphState: GlyphState = pr.isDraft && prState === 'open' ? 'draft' : prState;
+  // #501/#530 — display discriminant for the status glyph, via the shared
+  // precedence helper so the inbox can't drift from the tab strip / header
+  // (merged/closed win over draft; draft only applies while open).
+  const glyphState: GlyphState = glyphStateFor({
+    isMerged: doneState === 'merged',
+    isClosed: doneState === 'closed',
+    isDraft: pr.isDraft,
+  });
 
   // CI rides the aria-label (glyph is aria-hidden); open rows only. Reuses
   // CI_GLYPH_LABEL so the suffix and the <title> tooltip never drift.
