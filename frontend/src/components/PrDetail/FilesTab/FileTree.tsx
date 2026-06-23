@@ -11,6 +11,7 @@ import { AI_TREE_ANALYZED_LABEL } from '../../Ai/aiStrings';
 import { fileFocusStatusToMarkerState } from '../../Ai/fileFocusMarkerState';
 import { buildTree, type TreeNode, type FileTreeNode, type DirectoryTreeNode } from './treeBuilder';
 import { useTreeHScroll } from '../../../hooks/useTreeHScroll';
+import { countViewedFiles } from '../../../hooks/useFileViewState';
 import styles from './FileTree.module.css';
 
 export interface FileTreeProps {
@@ -134,10 +135,7 @@ export function FileTree({
   aiPreview,
 }: FileTreeProps) {
   const tree = useMemo(() => buildTree(files), [files]);
-  const viewedCount = useMemo(
-    () => files.filter((f) => viewedPaths.has(f.path)).length,
-    [files, viewedPaths],
-  );
+  const viewedCount = useMemo(() => countViewedFiles(files, viewedPaths), [files, viewedPaths]);
 
   // Collapse state intentionally persists across `files` changes (e.g. a background
   // freshness refetch): a dir the user collapsed stays collapsed on reload. Stale

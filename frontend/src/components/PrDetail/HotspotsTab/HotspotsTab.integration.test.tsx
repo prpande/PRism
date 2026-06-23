@@ -39,6 +39,8 @@ function Harness({
     pendingFilePath,
     requestFileView,
     clearPendingFilePath: () => setPendingFilePath(null),
+    viewedPaths: new Set(),
+    toggleViewed: () => {},
   };
   return (
     <PrDetailContextProvider value={value}>
