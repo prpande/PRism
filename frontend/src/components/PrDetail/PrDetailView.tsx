@@ -31,6 +31,7 @@ import type { PrReference } from '../../api/types';
 import { prRefKey } from '../../api/types';
 import { useOpenTabs } from '../../contexts/OpenTabsContext';
 import { useTabScrollMemory } from '../../hooks/useTabScrollMemory';
+import { useDiffScrollRestore } from '../../hooks/diffScrollMemory';
 import { LoadingBar } from '../LoadingBar';
 import { useActivationTransition } from '../../hooks/useActivationTransition';
 import { useAiFailure } from '../Ai/aiFailure';
@@ -63,6 +64,9 @@ export function PrDetailView({
   const { owner, repo, number } = prRef;
   const refKey = prRefKey(prRef);
   const navigate = useNavigate();
+  // Root ref for #590 inner-diff-scroll restore (scopes the .diff-pane-body query
+  // to THIS view's kept-alive subtree).
+  const pageRef = useRef<HTMLDivElement>(null);
 
   const { clearPr } = useAiFailure();
   // Clear AI failures for this PR when the view unmounts (e.g. tab closed under PrTabHost
@@ -245,12 +249,18 @@ export function PrDetailView({
   );
   const clearPendingFilePath = useCallback(() => setPendingFilePath(null), []);
 
-  // Ordering dependency: the marker effect must precede useTabScrollMemory so
-  // [data-app-scroll] is a scroll container before scrollTop is restored (in
-  // browser mode it's only scrollable when data-files-active is set; writing
-  // scrollTop to a non-scrollable element clamps to 0). React runs layout-effect
-  // setups in declaration order, so on Files re-activation this effect turns on
-  // overflow first, then useTabScrollMemory restores the saved offset.
+  // ORDER MATTERS — these three layout effects must stay in this sequence:
+  //   1. data-files-active marker effect (below)
+  //   2. useTabScrollMemory (outer [data-app-scroll] offset)
+  //   3. useDiffScrollRestore (inner .diff-pane-body offset, #590)
+  // The marker effect must precede the two restores so [data-app-scroll] is a
+  // scroll container before scrollTop is restored (in browser mode it's only
+  // scrollable when data-files-active is set; writing scrollTop to a
+  // non-scrollable element clamps to 0). React runs layout-effect setups in
+  // declaration order, so on Files re-activation this effect turns on overflow
+  // first, then the two restores write their saved offsets back. Reordering
+  // these silently breaks restore — there's no type/lint guard, only the e2e
+  // (diff-scroll-keepalive.spec.ts) catches it at CI time.
 
   // Viewport-bound Files layout marker. Under keep-alive every open PR tab keeps
   // a (hidden) Files sub-tab in the DOM, so the layout can no longer key off the
@@ -286,6 +296,13 @@ export function PrDetailView({
   // Declared AFTER the data-files-active marker effect above so the container is
   // already a scroller when this restores scrollTop (see ordering note above).
   useTabScrollMemory({ prRefKey: refKey, subTab, active });
+
+  // #590 — restore the INNER diff-body scroll on re-activation. useTabScrollMemory
+  // above only tracks the OUTER [data-app-scroll]; the diff scrolls internally in
+  // files-active mode, and deactivation's marker removal clamps that inner offset to
+  // 0. DiffPane captures the live value; this writes it back. Declared AFTER the
+  // marker effect (and useTabScrollMemory) so the body is bounded again when it runs.
+  useDiffScrollRestore({ rootRef: pageRef, refKey, subTab, active });
 
   const handleReload = () => {
     updates.clear();
@@ -385,7 +402,14 @@ export function PrDetailView({
   }, [draftSession.refetch]);
 
   return (
-    <div className={pageClassName} data-prref={refKey} hidden={!active} data-pr-main tabIndex={-1}>
+    <div
+      ref={pageRef}
+      className={pageClassName}
+      data-prref={refKey}
+      hidden={!active}
+      data-pr-main
+      tabIndex={-1}
+    >
       {/* Per-tab loading bar pinned to THIS tab's content boundary (not a global
           screen-top bar) — each open PR tab owns its own. Shows on cold load and
           background reload; self-contained, so no layout shift. */}

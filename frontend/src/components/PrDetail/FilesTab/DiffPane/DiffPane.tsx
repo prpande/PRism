@@ -7,6 +7,8 @@ import type {
   HunkAnnotation,
   DiffLine,
 } from '../../../../api/types';
+import { prRefKey } from '../../../../api/types';
+import { useDiffScrollCapture } from '../../../../hooks/diffScrollMemory';
 import { parseHunkLines, interleaveWholeFile } from './interleaveWholeFile';
 import type { InlineAnchor } from '../../Composer/InlineCommentComposer';
 import {
@@ -372,6 +374,15 @@ export function DiffPane({
   useEffect(() => {
     if (diffBodyRef.current) diffBodyRef.current.scrollTop = 0;
   }, [wholeFileEnabled, selectedPath]);
+
+  // #590 — record this diff body's live scrollTop so PrDetailView can restore it
+  // when the kept-alive Files tab re-activates (deactivation's data-files-active
+  // removal otherwise clamps it to 0). `diffBodyPresent` mirrors the final-branch
+  // guard below so the listener (re)attaches exactly when the scrollable body
+  // exists — including a late first diff-load.
+  const diffBodyPresent =
+    !!selectedPath && !(isLoading && !file) && !!file && file.hunks.length > 0;
+  useDiffScrollCapture(diffBodyRef, prRefKey(prRef), diffBodyPresent);
 
   // #115 — locked side-by-side horizontal scroll. Active only in split
   // scroll-mode (not wrap, not unified): a single synthetic scrollbar drives
