@@ -78,10 +78,18 @@ export function useFileViewState(
   const viewedRef = useRef(viewedPaths);
   viewedRef.current = viewedPaths;
 
+  // Per-path issue counter. Each toggle bumps its path's generation; a POST's
+  // rollback only fires if no newer toggle for that path has been issued since.
+  // This keeps a late-failing older request from clobbering the user's latest
+  // intent even when same-path POSTs complete out of order.
+  const genRef = useRef(new Map<string, number>());
+
   const toggleViewed = useCallback(
     (path: string) => {
       if (!key || !headSha) return; // detail not loaded — no head to stamp against
       const desired = !viewedRef.current.has(path);
+      const gen = (genRef.current.get(path) ?? 0) + 1;
+      genRef.current.set(path, gen);
       setOverlay((prev) => {
         const base = prev.key === key ? prev.map : EMPTY_OVERRIDES;
         const next = new Map(base);
@@ -89,6 +97,8 @@ export function useFileViewState(
         return { key, map: next };
       });
       postFileViewed({ owner, repo, number }, { path, headSha, viewed: desired }).catch(() => {
+        // A newer toggle superseded this request — leave its override alone.
+        if (genRef.current.get(path) !== gen) return;
         // Roll back to the server truth by dropping the optimistic override.
         setOverlay((prev) => {
           if (prev.key !== key || !prev.map.has(path)) return prev;

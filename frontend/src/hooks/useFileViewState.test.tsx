@@ -93,6 +93,34 @@ describe('useFileViewState', () => {
     await waitFor(() => expect(result.current.viewedPaths.has('a.ts')).toBe(false));
   });
 
+  it('does not clobber a newer toggle when an older POST fails late', async () => {
+    // Server says a.ts is viewed at HEAD.
+    let rejectFirst!: (e: Error) => void;
+    const firstPending = new Promise<void>((_, reject) => {
+      rejectFirst = reject;
+    });
+    // POST_1 stays in flight; POST_2 and POST_3 resolve immediately.
+    postFileViewedMock.mockReturnValueOnce(firstPending).mockResolvedValue(undefined);
+
+    const { result } = renderHook(() => useFileViewState(REF, HEAD, { 'a.ts': HEAD }));
+    expect(result.current.viewedPaths.has('a.ts')).toBe(true);
+
+    // Three rapid toggles of the same path. A render commits between acts, so
+    // `desired` alternates: false (POST_1) -> true (POST_2) -> false (POST_3).
+    act(() => result.current.toggleViewed('a.ts')); // POST_1: viewed=false (will fail late)
+    act(() => result.current.toggleViewed('a.ts')); // POST_2: viewed=true
+    act(() => result.current.toggleViewed('a.ts')); // POST_3: viewed=false (latest intent)
+    expect(result.current.viewedPaths.has('a.ts')).toBe(false);
+
+    // POST_1 fails AFTER the newer toggles landed. Its rollback must not revert
+    // the path to the stale server truth — the latest intent (not viewed) wins.
+    await act(async () => {
+      rejectFirst(new Error('late failure'));
+      await Promise.resolve();
+    });
+    expect(result.current.viewedPaths.has('a.ts')).toBe(false);
+  });
+
   it('clears overrides when the head advances (key change resets viewed state)', () => {
     const { result, rerender } = renderHook(
       ({ head }: { head: string }) => useFileViewState(REF, head, {}),
