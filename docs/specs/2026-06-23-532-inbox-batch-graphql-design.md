@@ -154,10 +154,19 @@ REST derives it from `head.repo.pushed_at`, guarding that `head.repo` is a prese
 
 1. **Verify live** that `headRepository.pushedAt` equals REST `head.repo.pushed_at` for a healthy
    same-repo PR (they should be the identical `Repository.pushedAt` field).
-2. **Null-object guard:** on a cross-fork PR whose head fork was deleted, GraphQL returns
-   `headRepository: null` (the whole object) — exactly the case the REST path guards. The parser must
-   guard the *object* (`headRepository` present + object-kind) before reading `pushedAt`, and fall
-   back to `UpdatedAt` otherwise. A null-*scalar* guard alone is insufficient.
+2. **Both guards required — object AND scalar.** REST guards *both* `head.repo` as an object
+   (`GitHubPrEnricher.cs:78`) *and* `pushed_at` as a String-kind scalar (`GitHubPrEnricher.cs:80`)
+   before parsing; the batch parser must do the same:
+   - **Object guard:** on a cross-fork PR whose head fork was deleted, GraphQL returns
+     `headRepository: null` (the whole object) — guard `headRepository` present + object-kind before
+     descending, else fall back to `UpdatedAt`.
+   - **Scalar guard:** `Repository.pushedAt` is itself nullable (a zero-push repo returns
+     `pushedAt: null` *inside* a present `headRepository`). Guard the leaf as String-kind before
+     `GetDateTimeOffset()`, else fall back to `UpdatedAt`. **`GitHubGraphQL.TryGetPath` does NOT cover
+     this** — it short-circuits on a null *intermediate* but returns `true` with a null-kind *leaf*, so
+     calling `GetDateTimeOffset()` on that leaf would throw. (The per-alias defensive walk would catch
+     the throw and drop just that one ref, but parity requires the explicit String-kind check so the
+     ref survives with an `UpdatedAt` fallback instead of vanishing.)
 
 ### Awaiting-author last-review SHA — replicate REST semantics, do NOT reuse `ParseViewerReview`
 
@@ -212,9 +221,11 @@ precedent:**
   `InboxPoller`, which backs off honoring Retry-After (`InboxPoller.cs:63-72`). This preserves today's
   REST behavior (a hydration/awaiting 429 backs the poller off). *Caveat:* `PostAsync`'s
   `HttpRequestException` does not carry the `Retry-After` header, so the thrown exception has a null
-  `RetryAfter` and the poller uses its default max-backoff. Optional follow-up: teach `PostAsync` to
-  attach `Retry-After`, or have the reader issue the POST directly to capture it — deferred; the
-  default backoff is acceptable and strictly better than today's regression.
+  `RetryAfter`. The poller has **no separate max-backoff** — with a null `RetryAfter` it simply runs
+  the next tick after the normal polling cadence (`InboxPoller.cs:66` only *raises* the delay when
+  `RetryAfter` is non-null and exceeds the cadence). That is acceptable (no tight-loop) and strictly
+  better than today's regression. Optional follow-up: teach `PostAsync` to attach `Retry-After`, or
+  have the reader issue the POST directly to capture it — deferred.
 - **Other transport failure** (non-429 non-2xx, network) → propagate, aborting the refresh tick
   (poller retries next tick). Mirrors the current enricher/awaiting "5xx propagates → skip the tick".
 - **Per-alias null / partial data** — for a 200 with usable data where individual aliases are null or
@@ -245,8 +256,10 @@ Mirror `GitHubPrTimelineReaderTests` patterns (mockable via `FakeHttpClientFacto
 5. **Awaiting-author parity + truncation log** — DISMISSED-included max-`submittedAt` selection;
    PENDING (null `submittedAt`) skipped; empty `commit.oid` skipped; exactly-100 review nodes →
    `ReviewPagesCapped`-style log.
-6. **`pushedAt` parity + null-object fallback** — `headRepository.pushedAt` mapped; `headRepository:
-   null` (deleted-fork fixture) → `UpdatedAt` fallback (not just an absent scalar).
+6. **`pushedAt` parity + both null fallbacks** — `headRepository.pushedAt` mapped; `headRepository:
+   null` (deleted-fork fixture) → `UpdatedAt` fallback; `headRepository` present but `pushedAt: null`
+   (zero-push fixture) → `UpdatedAt` fallback (ref survives, not dropped — covers the String-kind
+   scalar guard, not just the object guard).
 7. **Caching** — unchanged `UpdatedAt` → no re-fetch (assert batch call count); changed `UpdatedAt` →
    re-fetch; `PruneAbsent` eviction.
 8. **Rate-limit error model** — HTTP 429 → `RateLimitExceededException`; 200 body with
@@ -255,9 +268,13 @@ Mirror `GitHubPrTimelineReaderTests` patterns (mockable via `FakeHttpClientFacto
 
 Orchestrator-level:
 
-9. **Parity harness** — a fixture set of raw items run through (a) the old REST path and (b) the new
-   batch path produces identical `PrInboxItem` lists (modulo the two documented deltas). Reuse the
-   existing inbox test doubles.
+9. **Golden-output harness** — because both REST impls are deleted (the "old REST path" no longer
+   exists to run live), parity is asserted against **captured golden `PrInboxItem` fixtures** that
+   encode the documented REST output semantics: a representative raw-item set + GraphQL batch response
+   run through the new batch path must reproduce the golden `PrInboxItem` list field-for-field (the two
+   documented deltas are out of the golden by construction). The golden values come from the REST
+   path's documented behavior (this spec + `GitHubPrEnricher`/`GitHubAwaitingAuthorFilter` semantics),
+   not from a live REST run. Reuse the existing inbox test doubles for the orchestrator wiring.
 10. **Inclusion-predicate** — `IsAwaitingAuthor(sha, head)` pure-function unit test.
 11. **Test-double migration** — the existing orchestrator tests inject `IPrEnricher` /
     `IAwaitingAuthorFilter` doubles (`IdentityPrEnricher`, `PassthroughAwaitingAuthorFilter`,
@@ -272,8 +289,9 @@ GraphQL `rateLimit.cost` before/after.
 
 - [ ] One aliased-batch GraphQL reader replaces the per-PR REST hydration + awaiting-author review
       walk; both REST impls **and** their interfaces deleted; orchestrator + DI + test doubles migrated.
-- [ ] `PrInboxItem` rows match the REST path except for **delta 1** (`reviews(last:100)` cap — rare
-      >100-review PRs) — verified by the orchestrator parity harness.
+- [ ] `PrInboxItem` rows match the documented REST output except for **delta 1** (`reviews(last:100)`
+      cap — rare >100-review PRs) — verified by the orchestrator golden-output harness (REST impls are
+      deleted, so the baseline is captured golden fixtures, not a live REST run).
 - [ ] Caching strictly improved: `(ref, UpdatedAt)` key invalidates on same-head new reviews (**delta
       2**); quiescent inbox issues 0 batches/tick.
 - [ ] Rate-limit error model: 429 **and** 200+`RATE_LIMITED` both raise `RateLimitExceededException`
