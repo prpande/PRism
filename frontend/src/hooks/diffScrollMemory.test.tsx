@@ -96,6 +96,40 @@ test('does not restore a stale offset onto a different PR tab (per-key isolation
   expect(body.scrollTop).toBe(0);
 });
 
+test("scopes restore to the activating view's OWN body when two PR views are mounted (cross-tab isolation)", () => {
+  // Two kept-alive PrDetailViews are in the DOM at once, each with its own
+  // .diff-pane-body. useDiffScrollRestore must write the activating view's offset
+  // onto ITS OWN body (via the per-view rootRef), never the first body in document
+  // order. A single-view test cannot prove this — with one body present an UNSCOPED
+  // document.querySelector passes too; only two simultaneous bodies discriminate.
+  const bodies: { a: HTMLElement | null; b: HTMLElement | null } = { a: null, b: null };
+  const view = (aActive: boolean, bActive: boolean) => (
+    <>
+      <Harness refKey="acme/api/7" active={aActive} bodyRefOut={(el) => (bodies.a = el)} />
+      <Harness refKey="acme/api/999" active={bActive} bodyRefOut={(el) => (bodies.b = el)} />
+    </>
+  );
+  const { rerender } = render(view(true, false));
+  const bodyA = bodies.a;
+  const bodyB = bodies.b;
+  if (!bodyA || !bodyB) throw new Error('both diff bodies must render');
+
+  // View B (currently inactive) records a 300 offset — the capture hook has no
+  // active-gate, so a visible-but-inactive body still stores its scroll.
+  bodyB.scrollTop = 300;
+  bodyB.dispatchEvent(new Event('scroll'));
+
+  // Activate B, deactivate A. B's restore is scoped to B's own rootRef.
+  rerender(view(false, true));
+
+  // B restored its OWN body to 300...
+  expect(bodyB.scrollTop).toBe(300);
+  // ...and did NOT write onto A's body. An unscoped document.querySelector would
+  // have matched A's body (first in document order) and written 300 there; the
+  // per-view rootRef scoping is exactly what keeps A untouched at 0.
+  expect(bodyA.scrollTop).toBe(0);
+});
+
 test('a scroll back to the top (0) is preserved, not force-restored to a prior value', () => {
   const { rerender } = render(<Harness refKey="acme/api/7" active={true} />);
   const body = getBody();
