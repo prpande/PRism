@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { apiClient } from '../api/client';
-import type { PrReference } from '../api/types';
+import type { MergeReadiness, PrReference } from '../api/types';
 import { useEventSource } from './useEventSource';
 
 export interface ActivePrUpdates {
@@ -13,6 +13,8 @@ export interface ActivePrUpdates {
   // true only after the first subscribe POST settles; gates AI fetches that
   // must not fire before the SSE subscription is established (D111 204 guard).
   subscribed: boolean;
+  // populated by Task 7 (SSE); undefined until then → the ?? fallback uses the full-load value
+  mergeReadiness?: MergeReadiness;
   clear(): void;
 }
 

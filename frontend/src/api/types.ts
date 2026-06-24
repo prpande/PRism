@@ -223,6 +223,10 @@ export interface PrDetailPr {
   openedAt: string;
   mergedAt: string | null;
   closedAt: string | null;
+  mergeReadiness?: MergeReadiness;
+  approvals?: number | null;
+  changesRequested?: number | null;
+  updatedAt?: string;
 }
 
 export type ClusteringQuality = 'ok' | 'low';

@@ -462,6 +462,10 @@ export function PrDetailView({
           data ? { headBranch: data.pr.headBranch, baseBranch: data.pr.baseBranch } : undefined
         }
         mergeability={data?.pr.mergeability}
+        mergeReadiness={updates.mergeReadiness ?? data?.pr.mergeReadiness}
+        approvals={data?.pr.approvals}
+        changesRequested={data?.pr.changesRequested}
+        updatedAt={data?.pr.updatedAt}
         ciSummary={data?.pr.ciSummary}
         activeTab={effectiveSubTab}
         onTabChange={selectSubTab}

@@ -34,6 +34,8 @@ import { OpenInGitHubButton } from './OpenInGitHubButton';
 import { ReviewActionButton } from './ReviewActionButton/ReviewActionButton';
 import { RefreshButton } from '../controls/RefreshButton';
 import { PrStateGlyph, type GlyphState } from '../shared/prStateGlyph';
+import { ReadinessBadge } from '../shared/ReadinessBadge';
+import { isBadgeRendered, type MergeReadiness } from '../shared/mergeReadiness';
 
 // #128/#203 — double-chevron, authored pointing UP (the expanded state, where
 // content folds toward when collapsed). The collapsed state rotates it 180° to
@@ -155,6 +157,12 @@ interface PrHeaderProps {
   justRefreshed?: boolean;
   // #512 — the viewer's most-recent submitted review on this PR (null = none).
   viewerReview?: ViewerReview | null;
+  // #593 — merge-readiness badge (expanded variant). Replaces the bare mergeability chip.
+  // Keep `mergeability` above for legacy (chip still renders alongside until chip is removed in §9).
+  mergeReadiness?: MergeReadiness;
+  approvals?: number | null;
+  changesRequested?: number | null;
+  updatedAt?: string;
 }
 
 export function PrHeader({
@@ -163,7 +171,6 @@ export function PrHeader({
   author,
   avatarUrl,
   branchInfo,
-  mergeability,
   ciSummary,
   iterationLabel,
   activeTab,
@@ -190,6 +197,10 @@ export function PrHeader({
   isRefreshing = false,
   justRefreshed = false,
   viewerReview,
+  mergeReadiness,
+  approvals,
+  changesRequested,
+  updatedAt,
 }: PrHeaderProps) {
   const validatorResults: ValidatorResult[] = useAiGate('preSubmitValidators')
     ? CANNED_PRESUBMIT_VALIDATOR_RESULTS
@@ -492,17 +503,19 @@ export function PrHeader({
               </span>
             )}
             {ciSummary && <span className={`chip chip-ci chip-ci-${ciSummary}`}>{ciSummary}</span>}
-            {/* "unknown" is GitHub's not-yet-computed / indeterminate sentinel — it
-                carries no actionable meaning, so suppress the chip rather than show a
-                meaningless status (Truthful-by-default). Today this prop only ever holds
-                the uppercase GraphQL value ("UNKNOWN"); the REST poll's lowercase
-                mergeable_state is dropped at the ActivePrUpdated boundary and never
-                reaches the frontend. The lowercased compare is defensive — it also covers
-                the poll's lowercase "unknown" should that value ever be plumbed through. */}
-            {mergeability && mergeability.toLowerCase() !== 'unknown' && (
-              <span className={`chip chip-mergeability chip-mergeability-${mergeability}`}>
-                {mergeability}
-              </span>
+            {/* #593 — expanded readiness badge replaces the bare mergeability chip.
+                ReadinessBadge returns null for none/merged/closed, so no guard needed.
+                The `mergeability` prop (raw GitHub string) is kept for consumers that
+                have not yet migrated to `mergeReadiness` (§9 legacy gate). */}
+            {mergeReadiness && isBadgeRendered(mergeReadiness) && (
+              <ReadinessBadge
+                readiness={mergeReadiness}
+                variant="expanded"
+                id={`detail-readiness-${reference.owner}-${reference.repo}-${reference.number}`}
+                approvals={approvals}
+                changesRequested={changesRequested}
+                updatedAt={updatedAt}
+              />
             )}
             {iterationLabel && <span className="chip">{iterationLabel}</span>}
             {/* #501 — info Draft marker. Open drafts only; merged/closed win via glyphState.
