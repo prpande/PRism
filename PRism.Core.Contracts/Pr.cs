@@ -25,4 +25,8 @@ public sealed record Pr(
     DateTimeOffset? ClosedAt = null,
     string? AvatarUrl = null,
     string? HtmlUrl = null,
-    bool IsDraft = false);
+    bool IsDraft = false,
+    MergeReadiness MergeReadiness = MergeReadiness.None,
+    int? Approvals = null,
+    int? ChangesRequested = null,
+    DateTimeOffset UpdatedAt = default);

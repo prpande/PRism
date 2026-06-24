@@ -123,6 +123,7 @@ internal static class GitHubPrParser
         // mergeStateStatus is a finer-grained signal ("BEHIND", "DIRTY", etc.); we collapse
         // both into a single `Mergeability` field for the Pr record. Spec § 6.1.
         var mergeability = GetStr("mergeable");
+        var mergeStateStatus = GetStr("mergeStateStatus");
         var ciSummary = "";   // computed by PrDetailLoader (or by an upstream enrichment); placeholder here.
 
         var state = GetStr("state");
@@ -141,6 +142,12 @@ internal static class GitHubPrParser
         // read it null-safely (absent/null → false), mirroring the inbox path.
         var isDraft = pull.TryGetProperty("isDraft", out var dr)
             && dr.ValueKind == JsonValueKind.True;
+
+        var reviewDecision = pull.TryGetProperty("reviewDecision", out var rdEl) && rdEl.ValueKind == JsonValueKind.String
+            ? rdEl.GetString() : null;
+        var readiness = MergeReadinessRule.Derive(prState, isDraft, mergeability, mergeStateStatus, reviewDecision);
+        var (approvals, changesRequested) = CountLatestReviews(pull);
+        var updatedAt = GetDate("updatedAt");
 
         return new Pr(
             reference,
@@ -161,7 +168,11 @@ internal static class GitHubPrParser
             ClosedAt: closedAt,
             AvatarUrl: avatarUrl,
             HtmlUrl: HtmlUrl(),
-            IsDraft: isDraft);
+            IsDraft: isDraft,
+            MergeReadiness: readiness,
+            Approvals: approvals,
+            ChangesRequested: changesRequested,
+            UpdatedAt: updatedAt);
     }
 
     internal static List<IssueCommentDto> ParseRootComments(JsonElement pull)

@@ -44,13 +44,14 @@ public sealed partial class GitHubReviewService : IPrDiscovery, IPrReader
     internal const string PrDetailGraphQLQuery = "query($owner:String!,$repo:String!,$number:Int!){" +
         "viewer{login} " +
         "repository(owner:$owner,name:$repo){pullRequest(number:$number){" +
-        "title body url state isDraft mergeable mergeStateStatus " +
+        "title body url state isDraft mergeable mergeStateStatus reviewDecision updatedAt " +
         "headRefName baseRefName headRefOid baseRefOid " +
         "author{login avatarUrl} createdAt closedAt mergedAt changedFiles " +
         "comments(first:100){pageInfo{hasNextPage endCursor} nodes{databaseId author{login avatarUrl} createdAt body}}" +
         "reviewThreads(first:100){pageInfo{hasNextPage endCursor} nodes{id path line isResolved " +
         "comments(first:100){nodes{id databaseId author{login avatarUrl} createdAt body lastEditedAt}}}}" +
         "reviews(last:100){nodes{author{login} state submittedAt commit{oid}}}" +
+        "latestReviews(first:100){nodes{author{login} state}}" +
         TimelineItemsArgs + "{pageInfo{hasNextPage endCursor} " + TimelineNodes + "}" +
         "}}}";
 
