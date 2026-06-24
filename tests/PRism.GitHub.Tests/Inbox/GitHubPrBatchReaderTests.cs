@@ -171,6 +171,20 @@ public sealed class GitHubPrBatchReaderTests
         log.Entries.Should().Contain(e => e.Message.Contains("full page"));
     }
 
+    [Fact] // Test 5d — a malformed (non-date) submittedAt skips only that review node; PR still hydrated
+    public async Task Malformed_submittedAt_skips_node_not_whole_pr()
+    {
+        const string reviews = """
+        [{"author":{"login":"viewer"},"submittedAt":"not-a-date","commit":{"oid":"bad"}},
+         {"author":{"login":"viewer"},"submittedAt":"2026-06-21T00:00:00Z","commit":{"oid":"good"}}]
+        """;
+        var (reader, _) = MakeReader(HttpStatusCode.OK, OneAliasOk(headSha: "abc", reviewsJson: reviews));
+        var r = await reader.ReadAsync(new[] { Raw(7) }, "viewer", CancellationToken.None);
+        var d = r[new PrReference("acme", "api", 7)];
+        d.HeadSha.Should().Be("abc");               // PR still hydrated, not dropped
+        d.ViewerLastReviewSha.Should().Be("good");  // bad node skipped, valid one still selected
+    }
+
     [Fact] // Test 6a — pushedAt: headRepository null → UpdatedAt fallback
     public async Task PushedAt_falls_back_when_headRepository_null()
     {

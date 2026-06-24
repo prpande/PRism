@@ -225,17 +225,26 @@ public sealed partial class GitHubPrBatchReader : IPrBatchReader
         foreach (var rv in nodes.EnumerateArray())
         {
             if (rv.ValueKind != JsonValueKind.Object) continue;
+            try
+            {
+                var login = GitHubGraphQL.TryGetPath(rv, out var l, "author", "login") ? l.GetString() : null;
+                if (!string.Equals(login, viewerLogin, StringComparison.OrdinalIgnoreCase)) continue;
 
-            var login = GitHubGraphQL.TryGetPath(rv, out var l, "author", "login") ? l.GetString() : null;
-            if (!string.Equals(login, viewerLogin, StringComparison.OrdinalIgnoreCase)) continue;
+                var oid = GitHubGraphQL.TryGetPath(rv, out var o, "commit", "oid") ? o.GetString() : null;
+                if (string.IsNullOrEmpty(oid)) continue;
 
-            var oid = GitHubGraphQL.TryGetPath(rv, out var o, "commit", "oid") ? o.GetString() : null;
-            if (string.IsNullOrEmpty(oid)) continue;
+                if (!rv.TryGetProperty("submittedAt", out var sa) || sa.ValueKind != JsonValueKind.String) continue;
+                var at = sa.GetDateTimeOffset();
 
-            if (!rv.TryGetProperty("submittedAt", out var sa) || sa.ValueKind != JsonValueKind.String) continue;
-            var at = sa.GetDateTimeOffset();
-
-            if (bestAt is null || at > bestAt.Value) { bestAt = at; best = oid; }
+                if (bestAt is null || at > bestAt.Value) { bestAt = at; best = oid; }
+            }
+            catch (Exception ex) when (InboxJsonGuard.IsMalformedItem(ex))
+            {
+                // One malformed review node (e.g. a non-date submittedAt that passes the
+                // String-kind guard but throws in GetDateTimeOffset) is skipped, not propagated —
+                // matches the deleted GitHubAwaitingAuthorFilter's per-review isolation so a single
+                // bad node can't bubble out of TryParse and drop the whole PR from the batch.
+            }
         }
         return best;
     }
