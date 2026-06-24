@@ -185,6 +185,17 @@ public sealed class GitHubPrBatchReaderTests
         d.ViewerLastReviewSha.Should().Be("good");  // bad node skipped, valid one still selected
     }
 
+    [Fact] // Test 5e — viewerLogin match is case-insensitive (author login casing differs)
+    public async Task ViewerLastReviewSha_matches_login_case_insensitively()
+    {
+        const string reviews = """
+        [{"author":{"login":"viewer"},"submittedAt":"2026-06-22T00:00:00Z","commit":{"oid":"mine"}}]
+        """;
+        var (reader, _) = MakeReader(HttpStatusCode.OK, OneAliasOk(reviewsJson: reviews));
+        var r = await reader.ReadAsync(new[] { Raw(7) }, "Viewer", CancellationToken.None);
+        r[new PrReference("acme", "api", 7)].ViewerLastReviewSha.Should().Be("mine");
+    }
+
     [Fact] // Test 6a — pushedAt: headRepository null → UpdatedAt fallback
     public async Task PushedAt_falls_back_when_headRepository_null()
     {
@@ -285,6 +296,16 @@ public sealed class GitHubPrBatchReaderTests
         await reader.ReadAsync(new[] { p8 }, "viewer", CancellationToken.None);       // full hit on 8 → no fetch; prunes 7
         calls().Should().Be(1);
         await reader.ReadAsync(new[] { p7 }, "viewer", CancellationToken.None);       // 7 was pruned → re-fetch
+        calls().Should().Be(2);
+    }
+
+    [Fact] // Test 7d — viewer change (PAT swap) clears the cache → re-fetch under the new identity
+    public async Task Refetches_when_viewer_changes_even_if_updatedAt_unchanged()
+    {
+        var (reader, calls) = MakeReader(HttpStatusCode.OK, OneAliasOk());
+        var items = new[] { Raw(7, updated: T0) };
+        await reader.ReadAsync(items, "alice", CancellationToken.None);  // calls=1, caches under alice
+        await reader.ReadAsync(items, "bob", CancellationToken.None);    // viewer changed → cache cleared → re-fetch
         calls().Should().Be(2);
     }
 

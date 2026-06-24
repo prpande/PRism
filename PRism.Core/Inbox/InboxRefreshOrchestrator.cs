@@ -161,12 +161,15 @@ public sealed partial class InboxRefreshOrchestrator : IInboxRefreshOrchestrator
 
             // Awaiting-author: apply the inclusion predicate using the batch's ViewerLastReviewSha
             // (replaces the per-PR REST review walk). Items here passed the non-empty-HeadSha filter
-            // above, which only retains refs present in `batch`, so the indexer cannot miss.
+            // above, which today only retains refs present in `batch`. We still use TryGetValue rather
+            // than the indexer so a ref that ever reaches here without a batch entry is dropped from the
+            // section (the same disposition as a missed-batch ref above) instead of throwing and
+            // aborting the whole refresh — matching this reader's per-item drop-don't-crash isolation.
             if (rawWithEnrichment.TryGetValue("awaiting-author", out var rawSec2))
             {
                 var filtered = rawSec2
-                    .Where(r => AwaitingAuthorRule.IsAwaitingAuthor(
-                        batch[r.Reference].ViewerLastReviewSha, r.HeadSha))
+                    .Where(r => batch.TryGetValue(r.Reference, out var b)
+                                && AwaitingAuthorRule.IsAwaitingAuthor(b.ViewerLastReviewSha, r.HeadSha))
                     .ToList();
                 Log.AwaitingAuthorFiltered(_log, rawSec2.Count, filtered.Count);
                 rawWithEnrichment["awaiting-author"] = filtered;

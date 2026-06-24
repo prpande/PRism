@@ -28,6 +28,11 @@ public sealed partial class GitHubPrBatchReader : IPrBatchReader
     private readonly Func<string> _readHost;   // late-bound: GraphQL endpoint follows a live host change
     private readonly ILogger<GitHubPrBatchReader> _log;
     private readonly ConcurrentDictionary<(PrReference, DateTimeOffset), BatchPrData> _cache = new();
+    // The cache key is (ref, UpdatedAt), but ViewerLastReviewSha is viewer-dependent. A PAT swap to a
+    // different account (POST /api/auth/replace) keeps UpdatedAt unchanged, so without this guard the
+    // cache would serve the previous viewer's review SHA. Clear on viewer change. Refreshes are
+    // serialized by the poller, so a plain field (no lock) is sufficient.
+    private string? _cachedViewerLogin;
 
     public GitHubPrBatchReader(
         IHttpClientFactory httpFactory,
@@ -45,6 +50,12 @@ public sealed partial class GitHubPrBatchReader : IPrBatchReader
         IReadOnlyList<RawPrInboxItem> items, string viewerLogin, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(items);
+        // Viewer changed (e.g. PAT swapped to another account) → every cached ViewerLastReviewSha is
+        // for the wrong viewer; drop the whole cache so this tick re-fetches under the new identity.
+        if (_cachedViewerLogin is { } prev && !string.Equals(prev, viewerLogin, StringComparison.OrdinalIgnoreCase))
+            _cache.Clear();
+        _cachedViewerLogin = viewerLogin;
+
         var result = new Dictionary<PrReference, BatchPrData>();
         if (items.Count == 0) { _cache.Clear(); return result; }
 
