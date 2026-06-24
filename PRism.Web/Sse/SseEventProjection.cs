@@ -1,3 +1,4 @@
+using PRism.Core.Contracts;
 using PRism.Core.Events;
 
 namespace PRism.Web.Sse;
@@ -29,7 +30,14 @@ namespace PRism.Web.Sse;
 // keeping the payload minimal is the defense — that one foreign-review id is the irreducible minimum.
 internal static class SseEventProjection
 {
-    internal sealed record ActivePrUpdatedWire(string PrRef, string? NewHeadSha, bool HeadShaChanged, int CommentCountDelta, bool IsMerged, bool IsClosed, bool BaseShaChanged, string? NewBaseSha);
+    // MergeReadiness serializes kebab-case (e.g. "behind-base"), NOT an int: every SSE write path
+    // (SseChannel.OnActivePrUpdated / FanoutProjected) serializes the projection payload with
+    // JsonSerializerOptionsFactory.Api, whose JsonStringEnumConverter(KebabCaseJsonNamingPolicy)
+    // emits the kebab string the frontend MergeReadiness union matches. See SseSerializationTests.
+    internal sealed record ActivePrUpdatedWire(
+        string PrRef, string? NewHeadSha, bool HeadShaChanged, int CommentCountDelta,
+        bool IsMerged, bool IsClosed, bool BaseShaChanged, string? NewBaseSha,
+        MergeReadiness MergeReadiness, bool MergeReadinessChanged, int? Approvals, int? ChangesRequested);
     internal sealed record StateChangedWire(string PrRef, IReadOnlyList<string> FieldsTouched, string? SourceTabId);
     internal sealed record DraftSavedWire(string PrRef, string DraftId, string? SourceTabId);
     internal sealed record DraftDiscardedWire(string PrRef, string DraftId, string? SourceTabId);
@@ -65,7 +73,8 @@ internal static class SseEventProjection
     {
         ActivePrUpdated e => ("pr-updated", new ActivePrUpdatedWire(
             e.PrRef.ToString(), e.NewHeadSha, e.HeadShaChanged, e.CommentCountDelta, e.IsMerged, e.IsClosed,
-            e.BaseShaChanged, e.NewBaseSha)),
+            e.BaseShaChanged, e.NewBaseSha,
+            e.MergeReadiness, e.MergeReadinessChanged, e.Approvals, e.ChangesRequested)),
 
         StateChanged e => ("state-changed", new StateChangedWire(e.PrRef.ToString(), e.FieldsTouched, e.SourceTabId)),
         DraftSaved e => ("draft-saved", new DraftSavedWire(e.PrRef.ToString(), e.DraftId, e.SourceTabId)),

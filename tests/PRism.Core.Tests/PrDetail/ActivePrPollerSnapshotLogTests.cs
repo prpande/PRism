@@ -30,18 +30,18 @@ public class ActivePrPollerSnapshotLogTests
         private sealed class NullScope : IDisposable { public static readonly NullScope Instance = new(); public void Dispose() { } }
     }
 
-    private static (ActivePrPoller poller, FakePollerReviewService review, CapturingLogger logger, ActivePrSubscriberRegistry registry) Build()
+    private static (ActivePrPoller poller, FakeActivePrBatchReader batch, CapturingLogger logger, ActivePrSubscriberRegistry registry) Build()
     {
         var registry = new ActivePrSubscriberRegistry();
-        var review = new FakePollerReviewService();
+        var batch = new FakeActivePrBatchReader();
         var bus = new FakeReviewEventBus();
         var cache = new ActivePrCache(registry);
         var logger = new CapturingLogger();
         var poller = new ActivePrPoller(
-            registry, review, bus, cache,
+            registry, new FakePollerReviewService(), batch, bus, cache,
             logger,
             new FakeHostEnvironment("Production"));
-        return (poller, review, logger, registry);
+        return (poller, batch, logger, registry);
     }
 
     private static ActivePrPollSnapshot Snapshot(string headSha = "h1", string baseSha = "b1", int commentCount = 0) =>
@@ -50,10 +50,10 @@ public class ActivePrPollerSnapshotLogTests
     [Fact]
     public async Task T_INV_1_emits_one_snapshot_line_per_successful_poll()
     {
-        var (poller, review, logger, registry) = Build();
+        var (poller, batch, logger, registry) = Build();
         var pr = new PrReference("o", "r", 1);
         registry.Add("sub1", pr);
-        review.SetSnapshot(pr, Snapshot(headSha: "h1"));
+        batch.SetSnapshot(pr, Snapshot(headSha: "h1"));
 
         await poller.TickAsync(T0, default);
 
@@ -64,10 +64,10 @@ public class ActivePrPollerSnapshotLogTests
     [Fact]
     public async Task T_INV_2_first_poll_after_subscribe_has_firstPoll_true_and_prevHead_null()
     {
-        var (poller, review, logger, registry) = Build();
+        var (poller, batch, logger, registry) = Build();
         var pr = new PrReference("o", "r", 1);
         registry.Add("sub1", pr);
-        review.SetSnapshot(pr, Snapshot(headSha: "h1"));
+        batch.SetSnapshot(pr, Snapshot(headSha: "h1"));
 
         await poller.TickAsync(T0, default);
 
@@ -85,14 +85,14 @@ public class ActivePrPollerSnapshotLogTests
     [Fact]
     public async Task T_INV_3_second_poll_with_head_delta_has_firstPoll_false_prevHead_set_and_headChanged_true()
     {
-        var (poller, review, logger, registry) = Build();
+        var (poller, batch, logger, registry) = Build();
         var pr = new PrReference("o", "r", 1);
         registry.Add("sub1", pr);
 
-        review.SetSnapshot(pr, Snapshot(headSha: "h1"));
+        batch.SetSnapshot(pr, Snapshot(headSha: "h1"));
         await poller.TickAsync(T0, default);  // first poll captures h1
 
-        review.SetSnapshot(pr, Snapshot(headSha: "h2"));
+        batch.SetSnapshot(pr, Snapshot(headSha: "h2"));
         await poller.TickAsync(T0.AddSeconds(30), default);  // second poll observes delta
 
         logger.Messages.Should().HaveCount(2);
@@ -107,27 +107,27 @@ public class ActivePrPollerSnapshotLogTests
     [Fact]
     public async Task T_INV_1b_failed_poll_emits_no_snapshot_log_line()
     {
-        var (poller, review, logger, registry) = Build();
+        var (poller, batch, logger, registry) = Build();
         var pr = new PrReference("o", "r", 1);
         registry.Add("sub1", pr);
-        review.SetThrows(pr, new HttpRequestException("simulated 500"));
+        batch.SetThrows(new HttpRequestException("simulated 500"));
 
         await poller.TickAsync(T0, default);
 
-        logger.Messages.Should().BeEmpty("snapshot log only emits on successful poll; thrown polls go to the catch branch where s_pollFailedLog fires instead");
+        logger.Messages.Should().BeEmpty("snapshot log only emits on successful poll; a whole-tick throw goes to the catch branch where s_pollTickFailedLog fires instead");
     }
 
     [Fact]
     public async Task T_INV_3b_second_poll_with_comment_only_delta_has_commentChanged_true_and_headChanged_false()
     {
-        var (poller, review, logger, registry) = Build();
+        var (poller, batch, logger, registry) = Build();
         var pr = new PrReference("o", "r", 1);
         registry.Add("sub1", pr);
 
-        review.SetSnapshot(pr, Snapshot(headSha: "h1", commentCount: 0));
+        batch.SetSnapshot(pr, Snapshot(headSha: "h1", commentCount: 0));
         await poller.TickAsync(T0, default);  // first poll: head=h1, comments=0
 
-        review.SetSnapshot(pr, Snapshot(headSha: "h1", commentCount: 3));
+        batch.SetSnapshot(pr, Snapshot(headSha: "h1", commentCount: 3));
         await poller.TickAsync(T0.AddTicks(1), default);  // second poll: head unchanged, comments delta
 
         logger.Messages.Should().HaveCount(2);

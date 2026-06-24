@@ -3,6 +3,7 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using PRism.Core.Contracts;
 using PRism.Core.Events;
+using PRism.Core.Inbox;
 
 namespace PRism.Core.PrDetail;
 
@@ -13,6 +14,10 @@ public sealed partial class ActivePrPoller : BackgroundService
 {
     private readonly ActivePrSubscriberRegistry _registry;
     private readonly IPrReader _review;
+    // #598 Slice B — ONE batched GraphQL read per tick across all subscribed PRs, replacing the
+    // old per-ref REST PollActivePrAsync fan-out. _review is retained only for its 3 non-poller
+    // callers (the poller no longer calls PollActivePrAsync).
+    private readonly IActivePrBatchReader _batch;
     private readonly IReviewEventBus _bus;
     private readonly IActivePrCache _cache;
     private readonly ILogger<ActivePrPoller> _logger;
@@ -49,6 +54,7 @@ public sealed partial class ActivePrPoller : BackgroundService
     public ActivePrPoller(
         ActivePrSubscriberRegistry registry,
         IPrReader review,
+        IActivePrBatchReader batch,
         IReviewEventBus bus,
         IActivePrCache cache,
         ILogger<ActivePrPoller> logger,
@@ -56,6 +62,7 @@ public sealed partial class ActivePrPoller : BackgroundService
     {
         ArgumentNullException.ThrowIfNull(registry);
         ArgumentNullException.ThrowIfNull(review);
+        ArgumentNullException.ThrowIfNull(batch);
         ArgumentNullException.ThrowIfNull(bus);
         ArgumentNullException.ThrowIfNull(cache);
         ArgumentNullException.ThrowIfNull(env);
@@ -63,6 +70,7 @@ public sealed partial class ActivePrPoller : BackgroundService
         ArgumentNullException.ThrowIfNull(logger);
         _registry = registry;
         _review = review;
+        _batch = batch;
         _bus = bus;
         _cache = cache;
         _logger = logger;
@@ -102,87 +110,105 @@ public sealed partial class ActivePrPoller : BackgroundService
     // requiring a TimeProvider injection.
     internal async Task TickAsync(DateTimeOffset now, CancellationToken ct)
     {
-        var prs = _registry.UniquePrRefs();
-        foreach (var prRef in prs)
+        // #598 Slice B: gather every subscribed PR not currently in backoff, then issue ONE
+        // batched GraphQL read for the whole set. Whole-tick-abort contract: a rate-limited or
+        // poison tick retains last-known for ALL candidates and publishes nothing — one query
+        // serves all PRs, so an aborted tick must never blank any PR's readiness/counts.
+        var candidates = _registry.UniquePrRefs()
+            .Where(r => _state.GetOrAdd(r, _ => new ActivePrPollerState()).NextRetryAt is not { } t || t <= now)
+            .ToList();
+        if (candidates.Count == 0) return;
+
+        IReadOnlyDictionary<PrReference, ActivePrPollSnapshot> snapshots;
+        try
         {
-            ct.ThrowIfCancellationRequested();
-            var state = _state.GetOrAdd(prRef, _ => new ActivePrPollerState());
-            if (state.NextRetryAt is { } retryAt && retryAt > now) continue;
-
-            try
-            {
-                var snapshot = await _review.PollActivePrAsync(prRef, ct).ConfigureAwait(false);
-
-                // First-poll detection: state has no LastHeadSha / LastCommentCount yet.
-                // Emit ActivePrUpdated even with zero deltas so frontend gates that
-                // depend on the snapshot being hydrated (`useFirstActivePrPollComplete`
-                // backing the Mark-all-read button per spec § 5.6) reliably fire on
-                // the first successful poll for a newly-subscribed PR. Without this,
-                // a quiet PR with no head-SHA or comment-count changes never produces
-                // an event, leaving the gate closed indefinitely.
-                // LastBaseSha follows the same first-poll null pattern as LastHeadSha/LastCommentCount:
-                // it is null on the first poll, so baseChanged short-circuits to false (no hydration false-fire).
-                var firstPoll = state.LastHeadSha is null && state.LastCommentCount is null;
-                var headChanged = state.LastHeadSha is { } prev && prev != snapshot.HeadSha;
-                var baseChanged = state.LastBaseSha is { } prevBase && prevBase != snapshot.BaseSha;
-                var commentChanged = state.LastCommentCount is { } prevCount && prevCount != snapshot.CommentCount;
-                // Close-state transition (open → merged/closed). Both producers now hand an enum
-                // PrState, so this is exact enum inequality — the prior case-insensitive string
-                // compare (bridging fake-uppercase vs real-lowercase) is no longer needed.
-                var stateChanged = state.LastPrState is { } prevState && prevState != snapshot.PrState;
-
-                LogPollSnapshot(_logger, prRef, snapshot.HeadSha, state.LastHeadSha, firstPoll, headChanged, baseChanged, commentChanged, stateChanged);
-
-                if (firstPoll || headChanged || baseChanged || commentChanged || stateChanged)
-                {
-                    var commentCountDelta = state.LastCommentCount is { } priorCount
-                        ? snapshot.CommentCount - priorCount
-                        : 0;
-                    var isMerged = snapshot.PrState == PrState.Merged;
-                    var isClosed = snapshot.PrState == PrState.Closed;
-                    // Load-bearing ordering: Publish MUST precede _cache.Update.
-                    // The bus is synchronous, so eviction handlers (summarizer, loader) run
-                    // against the pre-move snapshot. _cache.Update installs the new base AFTER
-                    // eviction — required by the R7 compare-and-set reasoning in Task 9.
-                    _bus.Publish(new ActivePrUpdated(
-                        prRef,
-                        HeadShaChanged: headChanged,
-                        CommentCountChanged: commentChanged,
-                        NewHeadSha: headChanged ? snapshot.HeadSha : null,
-                        CommentCountDelta: commentCountDelta,
-                        IsMerged: isMerged,
-                        IsClosed: isClosed,
-                        BaseShaChanged: baseChanged,
-                        NewBaseSha: baseChanged ? snapshot.BaseSha : null));
-                }
-
-                state.LastHeadSha = snapshot.HeadSha;
-                state.LastBaseSha = snapshot.BaseSha;
-                state.LastCommentCount = snapshot.CommentCount;
-                state.LastPrState = snapshot.PrState;
-                state.ConsecutiveErrors = 0;
-                state.NextRetryAt = null;
-
-                // Publish cache snapshot for PUT /draft (markAllRead) and POST /reload
-                // head-shift detection. HighestIssueCommentId stays null in S4 — see
-                // IActivePrCache class comment + deferrals doc for the markAllRead gap.
-                _cache.Update(prRef, new ActivePrSnapshot(
-                    HeadSha: snapshot.HeadSha,
-                    HighestIssueCommentId: null,
-                    ObservedAt: now,
-                    BaseSha: snapshot.BaseSha));
-            }
-            catch (OperationCanceledException) when (ct.IsCancellationRequested)
-            {
-                throw;
-            }
-#pragma warning disable CA1031 // single-PR failure must not abort the tick
-            catch (Exception ex)
-            {
-                s_pollFailedLog(_logger, prRef, ex);
-                ApplyBackoff(state, now);
-            }
+            snapshots = await _batch.PollBatchAsync(candidates, ct).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+        catch (RateLimitExceededException ex)
+        {
+            // Expected backoff (GitHub rate limit). Retain last-known for all candidates, back off, publish nothing.
+            s_pollRateLimitedLog(_logger, candidates.Count, ex);
+            foreach (var r in candidates) ApplyBackoff(_state[r], now);
+            return;
+        }
+#pragma warning disable CA1031 // whole-tick abort: a transport / poison-payload failure must not crash the loop
+        catch (Exception ex)
+        {
+            // Whole-tick abort on transport / poison payload (e.g. JsonException from a truncated body
+            // or a GitHub schema change). Log at ERROR so a persistent break is visible — a silent
+            // back-off-every-tick would otherwise mask it. Retain last-known, back off, publish nothing.
+            s_pollTickFailedLog(_logger, candidates.Count, ex);
+            foreach (var r in candidates) ApplyBackoff(_state[r], now);
+            return;
+        }
 #pragma warning restore CA1031
+
+        foreach (var prRef in candidates)
+        {
+            if (!snapshots.TryGetValue(prRef, out var snapshot)) continue; // per-alias drop: keep last-known
+            var state = _state[prRef];
+
+            // First-poll detection: state has no LastHeadSha / LastCommentCount yet. Emit even with
+            // zero deltas so the frontend hydration gate (useFirstActivePrPollComplete, spec § 5.6)
+            // fires on the first successful poll. LastBaseSha follows the same first-poll null pattern.
+            var firstPoll = state.LastHeadSha is null && state.LastCommentCount is null;
+            var headChanged = state.LastHeadSha is { } ph && ph != snapshot.HeadSha;
+            var baseChanged = state.LastBaseSha is { } pb && pb != snapshot.BaseSha;
+            var commentChanged = state.LastCommentCount is { } pc && pc != snapshot.CommentCount;
+            var stateChanged = state.LastPrState is { } ps && ps != snapshot.PrState;
+            // Anti-flicker: only a change TO a real (non-None) readiness publishes. A transient
+            // None (GitHub's async mergeStateStatus recompute returning UNKNOWN) must not blank or
+            // churn the live badge — never-cache-UNKNOWN (D4) applied to the live surface. Terminal
+            // Merged/Closed are non-None and ride stateChanged anyway, so the badge still clears on
+            // merge. A null LastMergeReadiness (no prior real readiness — e.g. the first read was a
+            // transient None) with a non-None new value IS a change: the badge appears for the first
+            // time. LastMergeReadiness only ever holds non-None values (it is not reset on a None
+            // tick), so `last != new` with non-None new never fires on a steady Ready→Ready tick.
+            var readinessChanged = snapshot.MergeReadiness != MergeReadiness.None
+                && state.LastMergeReadiness != snapshot.MergeReadiness;
+
+            LogPollSnapshot(_logger, prRef, snapshot.HeadSha, state.LastHeadSha, firstPoll, headChanged, baseChanged, commentChanged, stateChanged);
+
+            if (firstPoll || headChanged || baseChanged || commentChanged || stateChanged || readinessChanged)
+            {
+                var commentDelta = state.LastCommentCount is { } prior ? snapshot.CommentCount - prior : 0;
+                // Load-bearing ordering: Publish MUST precede _cache.Update. The bus is synchronous,
+                // so eviction handlers (summarizer, loader) run against the pre-move snapshot.
+                _bus.Publish(new ActivePrUpdated(
+                    prRef,
+                    HeadShaChanged: headChanged,
+                    CommentCountChanged: commentChanged,
+                    NewHeadSha: headChanged ? snapshot.HeadSha : null,
+                    CommentCountDelta: commentDelta,
+                    IsMerged: snapshot.PrState == PrState.Merged,
+                    IsClosed: snapshot.PrState == PrState.Closed,
+                    BaseShaChanged: baseChanged,
+                    NewBaseSha: baseChanged ? snapshot.BaseSha : null,
+                    MergeReadiness: snapshot.MergeReadiness,
+                    MergeReadinessChanged: readinessChanged,
+                    Approvals: snapshot.Approvals,
+                    ChangesRequested: snapshot.ChangesRequested));
+            }
+
+            state.LastHeadSha = snapshot.HeadSha;
+            state.LastBaseSha = snapshot.BaseSha;
+            state.LastCommentCount = snapshot.CommentCount;
+            state.LastPrState = snapshot.PrState;
+            // Retain last-known non-None readiness so a transient UNKNOWN→None doesn't reset the
+            // baseline and cause a redundant re-publish on the next None→Ready flap.
+            if (snapshot.MergeReadiness != MergeReadiness.None)
+                state.LastMergeReadiness = snapshot.MergeReadiness;
+            state.ConsecutiveErrors = 0;
+            state.NextRetryAt = null;
+
+            // Publish cache snapshot for PUT /draft (markAllRead) and POST /reload head-shift
+            // detection. HighestIssueCommentId stays null in S4 — see IActivePrCache class comment.
+            _cache.Update(prRef, new ActivePrSnapshot(
+                HeadSha: snapshot.HeadSha,
+                HighestIssueCommentId: null,
+                ObservedAt: now,
+                BaseSha: snapshot.BaseSha));
         }
     }
 
@@ -199,10 +225,18 @@ public sealed partial class ActivePrPoller : BackgroundService
         state.NextRetryAt = now.AddSeconds(seconds);
     }
 
-    private static readonly Action<ILogger, PrReference, Exception?> s_pollFailedLog =
-        LoggerMessage.Define<PrReference>(LogLevel.Warning,
-            new EventId(1, "ActivePrPollFailed"),
-            "Active-PR poll failed for {PrRef}; applying backoff");
+    // Expected GitHub rate-limit backoff for the whole batched tick. Warning (recoverable).
+    private static readonly Action<ILogger, int, Exception?> s_pollRateLimitedLog =
+        LoggerMessage.Define<int>(LogLevel.Warning,
+            new EventId(1, "ActivePrPollRateLimited"),
+            "Active-PR batch poll rate-limited; retaining last-known and backing off {Count} ref(s)");
+
+    // Transport / poison-payload whole-tick abort. Error so a persistent break is visible
+    // (a silent back-off-every-tick would otherwise mask a schema change or truncated body).
+    private static readonly Action<ILogger, int, Exception?> s_pollTickFailedLog =
+        LoggerMessage.Define<int>(LogLevel.Error,
+            new EventId(1, "ActivePrPollTickFailed"),
+            "Active-PR batch poll failed; retaining last-known and backing off {Count} ref(s)");
 
     private static readonly Action<ILogger, Exception?> s_tickFailedLog =
         LoggerMessage.Define(LogLevel.Error,

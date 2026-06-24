@@ -121,10 +121,9 @@ public sealed partial class GitHubPrBatchReader : IPrBatchReader
         using var doc = JsonDocument.Parse(body);
 
         // Primary rate limit arrives as HTTP 200 with errors[].type == RATE_LIMITED (data:null).
-        // Inspect errors[] BEFORE reading data (which is null in that case).
-        if (HasRateLimitError(doc.RootElement))
-            throw new RateLimitExceededException(
-                "GitHub GraphQL rate limit (200/RATE_LIMITED) during inbox batch hydration.", retryAfter: null);
+        // Inspect errors[] BEFORE reading data (which is null in that case). Shared guard
+        // (GitHubGraphQL.ThrowIfRateLimited) so the active-PR batch reader uses the same model.
+        GitHubGraphQL.ThrowIfRateLimited(doc.RootElement, "inbox batch hydration");
 
         var results = new List<(RawPrInboxItem, BatchPrData)>();
         if (!doc.RootElement.TryGetProperty("data", out var data) || data.ValueKind != JsonValueKind.Object)
@@ -271,17 +270,6 @@ public sealed partial class GitHubPrBatchReader : IPrBatchReader
             }
         }
         return best;
-    }
-
-    private static bool HasRateLimitError(JsonElement root)
-    {
-        if (!root.TryGetProperty("errors", out var errors) || errors.ValueKind != JsonValueKind.Array)
-            return false;
-        foreach (var e in errors.EnumerateArray())
-            if (e.ValueKind == JsonValueKind.Object && e.TryGetProperty("type", out var t)
-                && string.Equals(t.GetString(), "RATE_LIMITED", StringComparison.Ordinal))
-                return true;
-        return false;
     }
 
     private static partial class Log

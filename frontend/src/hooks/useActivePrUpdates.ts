@@ -25,6 +25,9 @@ const initial = {
   commentCountDelta: 0,
   isMerged: false,
   isClosed: false,
+  // #598 Slice B — latest live readiness. undefined until the first pr-updated event with
+  // mergeReadinessChanged arrives; the ?? fallback in consumers uses the full-load value until then.
+  mergeReadiness: undefined as MergeReadiness | undefined,
 };
 
 export function useActivePrUpdates(prRef: PrReference): ActivePrUpdates {
@@ -60,6 +63,10 @@ export function useActivePrUpdates(prRef: PrReference): ActivePrUpdates {
         // mutually exclusive per Task 15a; if both ever arrive, PrDetailPage prioritizes merged.
         isMerged: s.isMerged || event.isMerged,
         isClosed: s.isClosed || event.isClosed,
+        // Latch on mergeReadinessChanged: the backend sets that flag only on a change TO a real
+        // (non-none) readiness (anti-flicker None guard), so we keep the last meaningful value and
+        // ignore transient None ticks that carry mergeReadinessChanged=false.
+        mergeReadiness: event.mergeReadinessChanged ? event.mergeReadiness : s.mergeReadiness,
       }));
     });
 

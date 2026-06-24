@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
+using PRism.Core.Inbox;
 
 namespace PRism.GitHub;
 
@@ -47,6 +48,20 @@ internal static partial class GitHubGraphQL
                 statusCode: resp.StatusCode);
         }
         return await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+    }
+
+    // Throws RateLimitExceededException on a 200 body carrying errors[].type == "RATE_LIMITED".
+    // (HTTP 429 is surfaced by PostAsync as HttpRequestException with StatusCode 429 — callers
+    // translate that to RateLimitExceededException at their catch site.) Extracted from
+    // GitHubPrBatchReader.HasRateLimitError so both batch readers share one rate-limit model
+    // instead of forking it. `internal` to match the enclosing `internal static` class.
+    internal static void ThrowIfRateLimited(JsonElement root, string context)
+    {
+        if (!root.TryGetProperty("errors", out var errors) || errors.ValueKind != JsonValueKind.Array) return;
+        foreach (var e in errors.EnumerateArray())
+            if (e.ValueKind == JsonValueKind.Object && e.TryGetProperty("type", out var t)
+                && string.Equals(t.GetString(), "RATE_LIMITED", StringComparison.Ordinal))
+                throw new RateLimitExceededException($"GitHub GraphQL rate limit (200/RATE_LIMITED) during {context}.", retryAfter: null);
     }
 
     // Walks a chain of property names defensively. Returns false on any missing key,
