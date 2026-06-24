@@ -50,9 +50,12 @@ public sealed partial class GitHubPrBatchReader : IPrBatchReader
 
         // Partition into cache hits vs stale (key = (ref, UpdatedAt) — UpdatedAt bumps on any PR
         // activity, including a new review, so an unchanged key guarantees nothing we read changed).
+        // Collect the live ref set in the same pass for the eviction prune below.
         var stale = new List<RawPrInboxItem>();
+        var liveRefs = new HashSet<PrReference>();
         foreach (var it in items)
         {
+            liveRefs.Add(it.Reference);
             if (_cache.TryGetValue((it.Reference, it.UpdatedAt), out var hit))
                 result[it.Reference] = hit;
             else
@@ -76,7 +79,7 @@ public sealed partial class GitHubPrBatchReader : IPrBatchReader
             }
         }
 
-        InboxCacheEviction.PruneAbsent(_cache, items.Select(i => i.Reference).ToHashSet());
+        InboxCacheEviction.PruneAbsent(_cache, liveRefs);
         return result;
     }
 
@@ -223,12 +226,10 @@ public sealed partial class GitHubPrBatchReader : IPrBatchReader
         {
             if (rv.ValueKind != JsonValueKind.Object) continue;
 
-            var login = rv.TryGetProperty("author", out var au) && au.ValueKind == JsonValueKind.Object
-                && au.TryGetProperty("login", out var l) ? l.GetString() : null;
+            var login = GitHubGraphQL.TryGetPath(rv, out var l, "author", "login") ? l.GetString() : null;
             if (!string.Equals(login, viewerLogin, StringComparison.OrdinalIgnoreCase)) continue;
 
-            var oid = rv.TryGetProperty("commit", out var cm) && cm.ValueKind == JsonValueKind.Object
-                && cm.TryGetProperty("oid", out var o) ? o.GetString() : null;
+            var oid = GitHubGraphQL.TryGetPath(rv, out var o, "commit", "oid") ? o.GetString() : null;
             if (string.IsNullOrEmpty(oid)) continue;
 
             if (!rv.TryGetProperty("submittedAt", out var sa) || sa.ValueKind != JsonValueKind.String) continue;

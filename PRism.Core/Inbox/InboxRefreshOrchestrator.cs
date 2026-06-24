@@ -141,18 +141,15 @@ public sealed partial class InboxRefreshOrchestrator : IInboxRefreshOrchestrator
             var batch = await _batchReader.ReadAsync(allRawDistinct, viewerLogin, ct).ConfigureAwait(false);
             // Map batch hydration onto each raw item; refs the batch didn't resolve are absent →
             // they fall back to the raw item (empty HeadSha) → dropped by the Where filter below.
-            var byRef = allRawDistinct
-                .Where(r => batch.ContainsKey(r.Reference))
-                .ToDictionary(r => r.Reference, r =>
-                {
-                    var b = batch[r.Reference];
-                    return r with
+            var byRef = new Dictionary<PrReference, RawPrInboxItem>();
+            foreach (var r in allRawDistinct)
+                if (batch.TryGetValue(r.Reference, out var b))
+                    byRef[r.Reference] = r with
                     {
                         HeadSha = b.HeadSha, Additions = b.Additions, Deletions = b.Deletions,
                         CommitCount = b.CommitCount, ChangedFiles = b.ChangedFiles, PushedAt = b.PushedAt,
                         MergedAt = b.MergedAt, ClosedAt = b.ClosedAt,
                     };
-                });
             Log.PrEnrichmentComplete(_log, allRawDistinct.Count, byRef.Count);
 
             var rawWithEnrichment = raw.ToDictionary(
@@ -163,14 +160,13 @@ public sealed partial class InboxRefreshOrchestrator : IInboxRefreshOrchestrator
                     .ToList());
 
             // Awaiting-author: apply the inclusion predicate using the batch's ViewerLastReviewSha
-            // (replaces the per-PR REST review walk). Items here already have a non-empty HeadSha,
-            // so they are guaranteed present in `batch`.
+            // (replaces the per-PR REST review walk). Items here passed the non-empty-HeadSha filter
+            // above, which only retains refs present in `batch`, so the indexer cannot miss.
             if (rawWithEnrichment.TryGetValue("awaiting-author", out var rawSec2))
             {
                 var filtered = rawSec2
                     .Where(r => AwaitingAuthorRule.IsAwaitingAuthor(
-                        batch.TryGetValue(r.Reference, out var b) ? b.ViewerLastReviewSha : null,
-                        r.HeadSha))
+                        batch[r.Reference].ViewerLastReviewSha, r.HeadSha))
                     .ToList();
                 Log.AwaitingAuthorFiltered(_log, rawSec2.Count, filtered.Count);
                 rawWithEnrichment["awaiting-author"] = filtered;
