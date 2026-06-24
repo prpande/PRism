@@ -65,6 +65,10 @@ jobs:
       - name: Frontend audit (fail on any vulnerability)
         working-directory: frontend
         run: npm audit --audit-level=low
+        # `npm audit` calls the live advisory DB, so a slow/unavailable registry
+        # could otherwise hang to the job-level timeout. Bound it explicitly so a
+        # network stall fails fast and legibly rather than silently stretching CI.
+        timeout-minutes: 5
 
       - name: Restore (.NET)
         run: dotnet restore
