@@ -21,6 +21,13 @@ export function MermaidBlock({ code }: MermaidBlockProps) {
         const mermaid = mod.default;
         if (!mermaidInitialized) {
           mermaid.initialize({
+            // SECURITY (load-bearing — do not weaken): the rendered SVG is injected
+            // via dangerouslySetInnerHTML below, and PR diagram source is untrusted.
+            // securityLevel: 'strict' makes Mermaid sanitize its output with DOMPurify
+            // (htmlLabels: false keeps labels as inert text) — this is the ONLY XSS
+            // sanitization boundary on this path; there is no app-level DOMPurify
+            // fallback. The #614 dep bump (mermaid 11.15.0 + dompurify 3.4.11) patches
+            // advisories in exactly this sanitizer. Removing/loosening this re-opens XSS.
             securityLevel: 'strict',
             htmlLabels: false,
             flowchart: { htmlLabels: false },
