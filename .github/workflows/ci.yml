@@ -45,6 +45,27 @@ jobs:
         working-directory: frontend
         run: npm test
 
+      # Dependency-vulnerability gate (#614). Fails the build on ANY advisory
+      # (low and above) across the WHOLE dependency tree — shipped and
+      # dev-tooling alike — so the audit stays at zero rather than rotting back.
+      # No --omit=dev scoping and no allowlist: the target is a hard zero (owner
+      # directive), and a dev-only advisory is surfaced as loudly as a shipped one.
+      #
+      # Placed LAST in the job on purpose: a job halts at the first failing step,
+      # so running audit after lint/build/test means a vulnerability alert (or a
+      # transient registry blip — npm audit queries the live advisory DB) never
+      # masks compile/test results for an otherwise-valid PR.
+      #
+      # Known tradeoff: because this fails the whole tree, the day a new dev-only
+      # transitive advisory is published with no in-range fix, it reds this job on
+      # every PR until addressed. If a future advisory can't be cleared without an
+      # unacceptable major bump, relax this gate DELIBERATELY in a follow-up — the
+      # relaxation PR edits this very step, so it self-clears its own red gate —
+      # rather than silently weakening it.
+      - name: Frontend audit (fail on any vulnerability)
+        working-directory: frontend
+        run: npm audit --audit-level=low
+
       - name: Restore (.NET)
         run: dotnet restore
 
