@@ -126,6 +126,34 @@ jobs:
         working-directory: desktop
         run: npm run test:unit
 
+      # Dependency-vulnerability gate (#615), mirroring the frontend gate (#614).
+      # Fails the build on ANY advisory (low and above) across the WHOLE desktop
+      # tree. That tree is entirely dev/build tooling -- `electron` (the bundled
+      # runtime) and `electron-builder` (packaging); there are no runtime npm
+      # dependencies -- so a hard zero here (owner directive) keeps the packaged
+      # app and its installer free of known-vulnerable transitives rather than
+      # letting them rot back. No --omit=dev (everything is dev) and no allowlist.
+      #
+      # Placed LAST in the job on purpose: a job halts at the first failing step,
+      # so auditing after lint/build/test means a vulnerability alert (or a
+      # transient registry blip -- npm audit queries the live advisory DB) never
+      # masks compile/test results for an otherwise-valid PR.
+      #
+      # Known tradeoff: because this fails the whole tree, the day a new
+      # electron/electron-builder advisory is published with no in-range fix, it
+      # reds this job on every PR until a major bump clears it (exactly the #615
+      # situation). If a future advisory can't be cleared without an unacceptable
+      # major bump, relax this gate DELIBERATELY in a follow-up -- the relaxation
+      # PR edits this very step, so it self-clears its own red gate -- rather than
+      # silently weakening it.
+      - name: Desktop audit (fail on any vulnerability)
+        working-directory: desktop
+        run: npm audit --audit-level=low
+        # `npm audit` calls the live advisory DB, so a slow/unavailable registry
+        # could otherwise hang to the job-level timeout. Bound it explicitly so a
+        # network stall fails fast and legibly rather than silently stretching CI.
+        timeout-minutes: 5
+
   # ---------------------------------------------------------------------------
   # Browser e2e runs in the official Playwright CONTAINER on Linux, NOT on
   # windows-latest. `playwright install` hangs after the download completes —
