@@ -174,8 +174,10 @@ public sealed partial class GitHubPrBatchReader : IPrBatchReader
               .Append(JsonSerializer.Serialize(it.Reference.Repo)).Append("){ pullRequest(number:")
               .Append(it.Reference.Number.ToString(CultureInfo.InvariantCulture))
               .Append("){ headRefOid additions deletions changedFiles commits{ totalCount } ")
-              .Append("mergedAt closedAt headRepository{ pushedAt } ")
-              .Append("reviews(last:100){ nodes{ author{ login } submittedAt commit{ oid } } } } } ");
+              .Append("mergedAt closedAt isDraft mergeable mergeStateStatus reviewDecision ")
+              .Append("headRepository{ pushedAt } ")
+              .Append("reviews(last:100){ nodes{ author{ login } submittedAt commit{ oid } } } ")
+              .Append("latestReviews(first:100){ nodes{ author{ login } state } } } } } ");
         }
         sb.Append("rateLimit{ cost remaining } }");
         return sb.ToString();
@@ -206,8 +208,19 @@ public sealed partial class GitHubPrBatchReader : IPrBatchReader
         DateTimeOffset? closedAt = pr.TryGetProperty("closedAt", out var ca) && ca.ValueKind == JsonValueKind.String
             ? ca.GetDateTimeOffset() : null;
 
+        var isDraft = pr.TryGetProperty("isDraft", out var dr) && dr.ValueKind == JsonValueKind.True;
+        var mergeable = pr.TryGetProperty("mergeable", out var mg) && mg.ValueKind == JsonValueKind.String ? mg.GetString() : null;
+        var mergeStateStatus = pr.TryGetProperty("mergeStateStatus", out var mss) && mss.ValueKind == JsonValueKind.String ? mss.GetString() : null;
+        var reviewDecision = pr.TryGetProperty("reviewDecision", out var rdv) && rdv.ValueKind == JsonValueKind.String ? rdv.GetString() : null;
+
+        var prState = PrStates.FromTimestamps(mergedAt, closedAt);
+        var readiness = MergeReadinessRule.Derive(prState, isDraft, mergeable, mergeStateStatus, reviewDecision);
+        var (approvals, changesRequested) = GitHubPrParser.CountLatestReviews(pr);
+
         data = new BatchPrData(headSha, additions, deletions, commitCount, changedFiles,
-                               pushedAt, mergedAt, closedAt, ParseViewerLastReviewSha(pr, viewerLogin, raw.Reference));
+                               pushedAt, mergedAt, closedAt,
+                               ParseViewerLastReviewSha(pr, viewerLogin, raw.Reference),
+                               readiness, approvals, changesRequested);
         return true;
     }
 

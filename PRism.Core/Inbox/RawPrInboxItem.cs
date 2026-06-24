@@ -25,4 +25,7 @@ public sealed record RawPrInboxItem(
     DateTimeOffset? ClosedAt = null,
     string? AvatarUrl = null,
     bool IsDraft = false,
-    string? Description = null);
+    string? Description = null,
+    MergeReadiness MergeReadiness = MergeReadiness.None,
+    int? Approvals = null,
+    int? ChangesRequested = null);

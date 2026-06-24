@@ -14,4 +14,12 @@ public static class PrStates
             ? PrState.Closed
             : PrState.Open;
     }
+
+    // Reconstructs PR lifecycle state from the only signals an inbox row carries (no raw
+    // `state` string is fetched for inbox). Merged wins over Closed (a merged PR also has a
+    // closedAt on some payloads); both null -> Open.
+    public static PrState FromTimestamps(DateTimeOffset? mergedAt, DateTimeOffset? closedAt)
+        => mergedAt.HasValue ? PrState.Merged
+         : closedAt.HasValue ? PrState.Closed
+         : PrState.Open;
 }

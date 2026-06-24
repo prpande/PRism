@@ -334,6 +334,38 @@ public sealed class GitHubPrBatchReaderTests
             () => reader.ReadAsync(new[] { Raw(7) }, "viewer", CancellationToken.None));
     }
 
+    [Fact] // Test N — merge-readiness derivation + collapsed review counts
+    public async Task Derives_merge_readiness_and_collapsed_review_counts_per_alias()
+    {
+        // A clean, mergeable PR where one reviewer changed-then-approved (must collapse to 1 approval, 0 changes)
+        // and another requested changes -> reviewDecision CHANGES_REQUESTED on a CLEAN PR -> ReadyWithChangesRequested.
+        const string body = """
+        { "data": {
+            "a0": { "pullRequest": {
+                "headRefOid": "deadbeef", "additions": 1, "deletions": 0, "changedFiles": 1,
+                "commits": { "totalCount": 1 }, "mergedAt": null, "closedAt": null,
+                "isDraft": false, "mergeable": "MERGEABLE", "mergeStateStatus": "CLEAN",
+                "reviewDecision": "CHANGES_REQUESTED",
+                "headRepository": { "pushedAt": "2026-06-24T00:00:00Z" },
+                "reviews": { "nodes": [] },
+                "latestReviews": { "nodes": [
+                    { "author": { "login": "alice" }, "state": "APPROVED" },
+                    { "author": { "login": "bob" }, "state": "CHANGES_REQUESTED" }
+                ] }
+            } },
+            "rateLimit": { "cost": 1, "remaining": 4999 } } }
+        """;
+        var (reader, _) = MakeReader(HttpStatusCode.OK, body);
+        var raw = Raw(1);
+
+        var result = await reader.ReadAsync(new[] { raw }, "viewer", CancellationToken.None);
+
+        var item = result[new PrReference("acme", "api", 1)];
+        item.MergeReadiness.Should().Be(MergeReadiness.ReadyWithChangesRequested);
+        item.Approvals.Should().Be(1);
+        item.ChangesRequested.Should().Be(1);
+    }
+
     [Fact] // Empty input → empty, no HTTP
     public async Task Empty_input_returns_empty_without_http()
     {

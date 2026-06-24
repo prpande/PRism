@@ -149,6 +149,9 @@ public sealed partial class InboxRefreshOrchestrator : IInboxRefreshOrchestrator
                         HeadSha = b.HeadSha, Additions = b.Additions, Deletions = b.Deletions,
                         CommitCount = b.CommitCount, ChangedFiles = b.ChangedFiles, PushedAt = b.PushedAt,
                         MergedAt = b.MergedAt, ClosedAt = b.ClosedAt,
+                        MergeReadiness = b.MergeReadiness,
+                        Approvals = b.Approvals,
+                        ChangesRequested = b.ChangesRequested,
                     };
             Log.PrEnrichmentComplete(_log, allRawDistinct.Count, byRef.Count);
 
@@ -364,7 +367,10 @@ public sealed partial class InboxRefreshOrchestrator : IInboxRefreshOrchestrator
             ClosedAt: r.ClosedAt,
             AvatarUrl: r.AvatarUrl,
             IsDraft: r.IsDraft,
-            Description: r.Description);
+            Description: r.Description,
+            MergeReadiness: r.MergeReadiness,
+            Approvals: r.Approvals,
+            ChangesRequested: r.ChangesRequested);
     }
 
     // NewOrUpdatedPrCount is named for the common case (added or updated PRs) but its
@@ -394,7 +400,8 @@ public sealed partial class InboxRefreshOrchestrator : IInboxRefreshOrchestrator
                 {
                     newOrUpdated++; sectionChanged = true; continue;
                 }
-                if (o.HeadSha != n.HeadSha || o.CommentCount != n.CommentCount || o.Ci != n.Ci)
+                if (o.HeadSha != n.HeadSha || o.CommentCount != n.CommentCount || o.Ci != n.Ci
+                    || o.MergeReadiness != n.MergeReadiness)
                 {
                     newOrUpdated++; sectionChanged = true;
                 }

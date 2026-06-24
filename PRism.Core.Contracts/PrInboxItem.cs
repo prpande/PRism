@@ -27,4 +27,7 @@ public sealed record PrInboxItem(
     DateTimeOffset? ClosedAt = null,
     string? AvatarUrl = null,
     bool IsDraft = false,
-    [property: JsonIgnore] string? Description = null);
+    [property: JsonIgnore] string? Description = null,
+    MergeReadiness MergeReadiness = MergeReadiness.None,
+    int? Approvals = null,
+    int? ChangesRequested = null);

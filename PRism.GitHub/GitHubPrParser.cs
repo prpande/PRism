@@ -291,6 +291,30 @@ internal static class GitHubPrParser
             : new ViewerReview(bestState.Value, bestAt.Value, bestCommit);
     }
 
+    // Counts APPROVED and CHANGES_REQUESTED from the already-collapsed `latestReviews` connection
+    // (one node per reviewer, representing their most recent review). Returns (null, null) when the
+    // connection is absent so the FE can suppress the tooltip line for review-count-less PRs.
+    // COMMENTED / DISMISSED / PENDING are excluded (not actionable counts).
+    // Single home: both the inbox batch reader (Task 2) and the detail parser (Task 5) call this.
+    internal static (int? Approvals, int? ChangesRequested) CountLatestReviews(JsonElement pr)
+    {
+        if (!pr.TryGetProperty("latestReviews", out var lr)
+            || !lr.TryGetProperty("nodes", out var nodes)
+            || nodes.ValueKind != JsonValueKind.Array)
+            return (null, null);
+
+        int approvals = 0, changes = 0;
+        foreach (var n in nodes.EnumerateArray())
+        {
+            if (n.ValueKind != JsonValueKind.Object) continue;
+            var state = n.TryGetProperty("state", out var s) && s.ValueKind == JsonValueKind.String ? s.GetString() : null;
+            if (string.Equals(state, "APPROVED", StringComparison.Ordinal)) approvals++;
+            else if (string.Equals(state, "CHANGES_REQUESTED", StringComparison.Ordinal)) changes++;
+            // COMMENTED / DISMISSED / PENDING excluded.
+        }
+        return (approvals, changes);
+    }
+
     private static ReviewState? MapReviewState(string? wire) => wire switch
     {
         "APPROVED" => ReviewState.Approved,
