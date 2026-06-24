@@ -67,6 +67,12 @@ public sealed record BatchPrData(
     string? ViewerLastReviewSha); // computed at parse time from reviews(last:100) — see § Awaiting-author parity
 ```
 
+> **As-built (see the impl plan's "Deviations from the spec"):** the interface is named
+> `IPrBatchReader` (provider-agnostic, matching Core's `IPrEnricher`/`ISectionQueryRunner`
+> convention) and `ReadAsync` takes `IReadOnlyList<RawPrInboxItem>` rather than
+> `IReadOnlyList<PrReference>` — the `(PrReference, UpdatedAt)` cache key (see § Caching) cannot be
+> computed from a bare ref list, and `RawPrInboxItem` carries both. Behavior is unchanged.
+
 `InboxRefreshOrchestrator` calls `ReadAsync` **once** per refresh (over all distinct PR refs across
 visible sections + closed-history), then:
 
@@ -96,9 +102,10 @@ aN: repository(owner:"o", name:"r") { pullRequest(number:N) {
   commits { totalCount }
   mergedAt closedAt
   headRepository { pushedAt }     # headRepository can be null (deleted head fork) — guard the object
-  reviews(last:100) { nodes { author { login } state submittedAt commit { oid } } }
+  reviews(last:100) { nodes { author { login } submittedAt commit { oid } } }
   # author.login is matched against viewerLogin at PARSE time (ParseViewerLastReviewSha),
-  # NOT filtered in the query. `state` is selected but intentionally unused on the parity path.
+  # NOT filtered in the query. As-built, `state` is omitted (impl plan deviation #3 — YAGNI;
+  # the parity path never reads it, and reviving the #527 prior-review marker is a non-goal).
 } }
 ```
 
