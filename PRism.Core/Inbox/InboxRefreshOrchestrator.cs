@@ -14,8 +14,7 @@ public sealed partial class InboxRefreshOrchestrator : IInboxRefreshOrchestrator
 {
     private readonly IConfigStore _config;
     private readonly ISectionQueryRunner _sections;
-    private readonly IPrEnricher _enricher;
-    private readonly IAwaitingAuthorFilter _awaitingFilter;
+    private readonly IPrBatchReader _batchReader;
     private readonly ICiFailingDetector _ciDetector;
     private readonly IInboxDeduplicator _dedupe;
     private readonly IAiSeamSelector _aiSelector;
@@ -37,8 +36,7 @@ public sealed partial class InboxRefreshOrchestrator : IInboxRefreshOrchestrator
     public InboxRefreshOrchestrator(
         IConfigStore config,
         ISectionQueryRunner sections,
-        IPrEnricher enricher,
-        IAwaitingAuthorFilter awaitingFilter,
+        IPrBatchReader batchReader,
         ICiFailingDetector ciDetector,
         IInboxDeduplicator dedupe,
         IAiSeamSelector aiSelector,
@@ -49,8 +47,7 @@ public sealed partial class InboxRefreshOrchestrator : IInboxRefreshOrchestrator
     {
         _config = config;
         _sections = sections;
-        _enricher = enricher;
-        _awaitingFilter = awaitingFilter;
+        _batchReader = batchReader;
         _ciDetector = ciDetector;
         _dedupe = dedupe;
         _aiSelector = aiSelector;
@@ -137,12 +134,23 @@ public sealed partial class InboxRefreshOrchestrator : IInboxRefreshOrchestrator
                 Log.ClosedHistoryFetched(_log, closedRaw.Count);
             }
 
-            // Enrich every PR across all sections (one HTTP call per PR, deduplicated by ref)
+            // Hydrate every PR across all sections in one aliased-batch GraphQL read (deduplicated by ref)
             var allRawDistinct = raw.Values.SelectMany(v => v).Concat(closedRaw)
                 .GroupBy(p => p.Reference).Select(g => g.First()).ToList();
-            var enriched = await _enricher.EnrichAsync(allRawDistinct, ct).ConfigureAwait(false);
-            var byRef = enriched.ToDictionary(p => p.Reference);
-            Log.PrEnrichmentComplete(_log, allRawDistinct.Count, enriched.Count);
+            var viewerLogin = _viewerLoginProvider();
+            var batch = await _batchReader.ReadAsync(allRawDistinct, viewerLogin, ct).ConfigureAwait(false);
+            // Map batch hydration onto each raw item; refs the batch didn't resolve are absent →
+            // they fall back to the raw item (empty HeadSha) → dropped by the Where filter below.
+            var byRef = new Dictionary<PrReference, RawPrInboxItem>();
+            foreach (var r in allRawDistinct)
+                if (batch.TryGetValue(r.Reference, out var b))
+                    byRef[r.Reference] = r with
+                    {
+                        HeadSha = b.HeadSha, Additions = b.Additions, Deletions = b.Deletions,
+                        CommitCount = b.CommitCount, ChangedFiles = b.ChangedFiles, PushedAt = b.PushedAt,
+                        MergedAt = b.MergedAt, ClosedAt = b.ClosedAt,
+                    };
+            Log.PrEnrichmentComplete(_log, allRawDistinct.Count, byRef.Count);
 
             var rawWithEnrichment = raw.ToDictionary(
                 kv => kv.Key,
@@ -151,11 +159,18 @@ public sealed partial class InboxRefreshOrchestrator : IInboxRefreshOrchestrator
                     .Where(r => !string.IsNullOrEmpty(r.HeadSha))
                     .ToList());
 
-            // Section 2 fan-out
+            // Awaiting-author: apply the inclusion predicate using the batch's ViewerLastReviewSha
+            // (replaces the per-PR REST review walk). Items here passed the non-empty-HeadSha filter
+            // above, which today only retains refs present in `batch`. We still use TryGetValue rather
+            // than the indexer so a ref that ever reaches here without a batch entry is dropped from the
+            // section (the same disposition as a missed-batch ref above) instead of throwing and
+            // aborting the whole refresh — matching this reader's per-item drop-don't-crash isolation.
             if (rawWithEnrichment.TryGetValue("awaiting-author", out var rawSec2))
             {
-                var filtered = await _awaitingFilter
-                    .FilterAsync(_viewerLoginProvider(), rawSec2, ct).ConfigureAwait(false);
+                var filtered = rawSec2
+                    .Where(r => batch.TryGetValue(r.Reference, out var b)
+                                && AwaitingAuthorRule.IsAwaitingAuthor(b.ViewerLastReviewSha, r.HeadSha))
+                    .ToList();
                 Log.AwaitingAuthorFiltered(_log, rawSec2.Count, filtered.Count);
                 rawWithEnrichment["awaiting-author"] = filtered;
             }

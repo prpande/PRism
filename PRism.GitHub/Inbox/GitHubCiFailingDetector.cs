@@ -157,7 +157,7 @@ public sealed class GitHubCiFailingDetector : ICiFailingDetector
             // on the section search is SWALLOWED into an empty section by
             // GitHubSectionQueryRunner.QueryAllAsync's per-section catch
             // (GitHubSectionQueryRunner.cs:66) — it does NOT throw. With empty sections,
-            // GitHubPrEnricher.EnrichAsync early-returns without any HTTP call, and
+            // the batch reader early-returns without any HTTP call, and
             // DetectAsync receives an empty authored-by-me list and returns before issuing
             // any Checks call. So a dead token never reaches this line.
             //

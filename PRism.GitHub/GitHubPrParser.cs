@@ -266,7 +266,7 @@ internal static class GitHubPrParser
                 if (state is null) continue; // DISMISSED / PENDING / unknown → excluded
 
                 // submittedAt is JSON null for PENDING; gate on String-kind so a null is a clean
-                // skip, not a GetDateTimeOffset() throw (mirrors GitHubAwaitingAuthorFilter).
+                // skip, not a GetDateTimeOffset() throw (mirrors the inbox batch reader's awaiting-author SHA selection).
                 if (!review.TryGetProperty("submittedAt", out var sa) ||
                     sa.ValueKind != JsonValueKind.String) continue;
                 var submittedAt = sa.GetDateTimeOffset();
