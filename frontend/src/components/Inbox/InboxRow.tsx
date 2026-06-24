@@ -8,6 +8,8 @@ import { AI_PROVENANCE_LABEL, AI_INBOX_ENRICHING_LABEL } from '../Ai/aiStrings';
 import { prId } from './groupByRepo';
 import { DiffBar } from './DiffBar';
 import { PrStateGlyph, glyphStateFor, type GlyphState } from '../shared/prStateGlyph';
+import { ReadinessBadge } from '../shared/ReadinessBadge';
+import { isBadgeRendered, READINESS_SHORT } from '../shared/mergeReadiness';
 import styles from './InboxRow.module.css';
 
 // ---- CI title-suffix octicons (bare check / cross, no enclosing circle) ----
@@ -80,6 +82,15 @@ export function InboxRow({
   // CI_GLYPH_LABEL so the suffix and the <title> tooltip never drift.
   const ciSuffix = !isDone && pr.ci !== 'none' ? ` · ${CI_GLYPH_LABEL[pr.ci]}` : '';
 
+  // #593: readiness badge appends its short label to the row aria-label (the badge button
+  // itself also carries "Merge readiness: …" but the row-level announcement reaches SR
+  // users who tab to the row without entering the badge). Open states only — isBadgeRendered
+  // already gates merged/closed/none.
+  const readinessSuffix =
+    !isDone && pr.mergeReadiness != null && isBadgeRendered(pr.mergeReadiness)
+      ? ` — ${READINESS_SHORT[pr.mergeReadiness]}`
+      : '';
+
   const commitLabel = `${pr.commitCount} ${pr.commitCount === 1 ? 'commit' : 'commits'}`;
 
   // #489: the chip's sparkle is visual-only (button swallows descendant labels),
@@ -108,12 +119,12 @@ export function InboxRow({
 
   // On an open row the state word is glyphState ('draft' for an open draft, else 'open');
   // merged/closed rows use doneState. Open rows announce commit count — main's commit/changed
-  // split replaced V2's iteration metric. Unread / CI / AI suffixes unchanged.
+  // split replaced V2's iteration metric. Unread / CI / readiness / AI suffixes unchanged.
   const ariaLabel = isDone
     ? `${pr.title} · ${pr.repo} · ${doneState}${aiSuffix}${aiLoadingSuffix}`
     : `${pr.title} · ${pr.repo} · ${glyphState} · ${commitLabel}${
         hasUnseenActivity ? ' · unread' : ''
-      }${ciSuffix}${aiSuffix}${aiLoadingSuffix}`;
+      }${ciSuffix}${readinessSuffix}${aiSuffix}${aiLoadingSuffix}`;
 
   return (
     <button
@@ -126,9 +137,29 @@ export function InboxRow({
       <span className={styles.status}>
         <PrStateGlyph state={glyphState} />
       </span>
+      {/* #593 fixed-width CI slot — always renders so the 3rd grid column (title/meta) starts
+          at a consistent offset regardless of CI state. aria-hidden because CI semantics are
+          announced via ciSuffix on the row aria-label; the slot is purely visual. */}
+      <span className={styles.ciSlot} data-ci-slot aria-hidden="true">
+        {!isDone && pr.ci !== 'none' && (
+          <svg
+            className={`${styles.ciSuffix} ${styles[CI_GLYPH_CLASS[pr.ci]]}`}
+            data-ci={pr.ci}
+            viewBox="0 0 16 16"
+            width="14"
+            height="14"
+            fill="currentColor"
+          >
+            <title>{CI_GLYPH_LABEL[pr.ci]}</title>
+            <path d={CI_GLYPH_PATH[pr.ci]} />
+          </svg>
+        )}
+      </span>
       <span className={styles.midCol}>
         <span className={styles.main}>
           <span className={styles.titleRow}>
+            {/* #516 PR number — mono/muted prefix, truncates before the title */}
+            <span className={styles.num}>#{pr.reference.number}</span>
             <span className={styles.title} title={pr.title}>
               {pr.title}
             </span>
@@ -179,25 +210,21 @@ export function InboxRow({
             <span>{formatAge(pr.updatedAt)}</span>
           </span>
         </span>
-        {/* CI glyph — sibling of .main inside the row-centering .midCol so it sits on
-            the row's vertical center, in line with the right-side metrics it reads with,
-            rather than pinned to the title's first line (#345). */}
-        {!isDone && pr.ci !== 'none' && (
-          <svg
-            className={`${styles.ciSuffix} ${styles[CI_GLYPH_CLASS[pr.ci]]}`}
-            data-ci={pr.ci}
-            viewBox="0 0 16 16"
-            width="14"
-            height="14"
-            fill="currentColor"
-            aria-hidden="true"
-          >
-            <title>{CI_GLYPH_LABEL[pr.ci]}</title>
-            <path d={CI_GLYPH_PATH[pr.ci]} />
-          </svg>
-        )}
       </span>
       <span className={styles.tail}>
+        {/* #593 readiness badge — leading edge of the tail, before the fixed metrics.
+            Renders only for the 8 open states (isBadgeRendered gates merged/closed/none).
+            Falls back gracefully when mergeReadiness is absent (older payload shape). */}
+        {pr.mergeReadiness != null && isBadgeRendered(pr.mergeReadiness) && (
+          <ReadinessBadge
+            readiness={pr.mergeReadiness}
+            variant="compact"
+            id={`inbox-readiness-${pr.reference.owner}-${pr.reference.repo}-${pr.reference.number}`}
+            approvals={pr.approvals}
+            changesRequested={pr.changesRequested}
+            updatedAt={pr.updatedAt}
+          />
+        )}
         <span className={styles.metrics}>
           <span className={styles.diffSlot}>
             <DiffBar additions={pr.additions} deletions={pr.deletions} max={maxDiff} />

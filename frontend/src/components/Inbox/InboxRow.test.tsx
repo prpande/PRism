@@ -27,6 +27,9 @@ const PR: PrInboxItem = {
   closedAt: null,
   avatarUrl: 'https://avatars.githubusercontent.com/u/1?v=4',
   isDraft: false,
+  mergeReadiness: 'none',
+  approvals: null,
+  changesRequested: null,
 };
 
 function TabsProbe() {
@@ -529,6 +532,54 @@ function renderRow(
     </MemoryRouter>,
   );
 }
+
+describe('InboxRow #593 readiness + #516 number', () => {
+  it('renders the PR number as a mono prefix on every row', () => {
+    renderInboxRow({ ...PR, reference: { owner: 'acme', repo: 'api', number: 12345 } });
+    expect(screen.getByText('#12345')).toBeInTheDocument();
+  });
+
+  it('renders the readiness badge for an open state and appends it to the aria-label', () => {
+    renderInboxRow({ ...PR, mergeReadiness: 'conflicts' });
+    expect(screen.getByText('Conflicts')).toBeInTheDocument();
+    // The badge renders a button with "Merge readiness: Conflicts"; the row button's
+    // aria-label also contains "Conflicts" via readinessSuffix — use the badge-specific label.
+    expect(screen.getByRole('button', { name: /Merge readiness: Conflicts/ })).toBeInTheDocument();
+  });
+
+  it('renders NO readiness badge for merged/closed/draft/none', () => {
+    for (const pr of [
+      { ...PR, mergedAt: new Date().toISOString(), mergeReadiness: 'merged' as const },
+      { ...PR, closedAt: new Date().toISOString(), mergeReadiness: 'closed' as const },
+      { ...PR, isDraft: true, mergeReadiness: 'none' as const },
+      { ...PR, mergeReadiness: 'none' as const },
+    ]) {
+      const { container, unmount } = renderInboxRow(pr);
+      expect(container.querySelector('[data-readiness]')).toBeNull();
+      unmount();
+    }
+  });
+
+  it('reserves the fixed-width CI slot even when ci is none (alignment contract)', () => {
+    const { container } = renderInboxRow({ ...PR, ci: 'none' });
+    const slot = container.querySelector('[data-ci-slot]');
+    expect(slot).not.toBeNull(); // slot present (empty spacer), so numbers/titles align
+    expect(slot).toHaveAttribute('aria-hidden', 'true');
+    expect(container.querySelector('[data-ci]')).toBeNull(); // but no octicon
+  });
+
+  it('renders the CI octicon inside the leading slot when present', () => {
+    const { container } = renderInboxRow({ ...PR, ci: 'failing' });
+    const slot = container.querySelector('[data-ci-slot]');
+    expect(slot?.querySelector('[data-ci="failing"]')).not.toBeNull();
+  });
+
+  it('still announces CI status via the row aria-label for a failing-CI row (slot is aria-hidden)', () => {
+    // The CI slot/octicon is aria-hidden; CI semantics must reach SR via ciSuffix on the row label.
+    renderInboxRow({ ...PR, ci: 'failing' });
+    expect(screen.getByRole('button', { name: /CI failing/ })).toBeInTheDocument();
+  });
+});
 
 describe('InboxRow chip-slot working marker (#508, #548)', () => {
   it('shows a working marker in the chip slot while enrichment is unsettled', () => {

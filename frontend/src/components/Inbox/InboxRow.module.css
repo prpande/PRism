@@ -1,7 +1,11 @@
 /* InboxRow — single PR row in the inbox list */
 .row {
   display: grid;
-  grid-template-columns: 16px minmax(0, 1fr) var(--inbox-tail-w);
+  /* #593: 4-column grid — state glyph | CI slot | title/meta (elastic) | tail metrics.
+     The CI slot is a fixed 16px column so #N and title start at a constant offset
+     across all rows regardless of CI state (empty slot = invisible spacer). The 1fr
+     mid column absorbs the ~16px the CI glyph previously occupied inside it. */
+  grid-template-columns: 16px 16px minmax(0, 1fr) var(--inbox-tail-w);
   --inbox-tail-w: 288px; /* metrics only: 64 diff + 72 counts + 52 comments + 52 files + 3×12 gaps = 276, +12 slack; tuned in B1 */
   gap: var(--s-3);
   width: 100%;
@@ -48,6 +52,17 @@
   flex: none;
 }
 
+/* #593 fixed-width CI slot (16px column, 2nd grid column). Always renders as a spacer
+   so the title/meta column starts at a consistent left edge. aria-hidden on the slot
+   wrapper; CI is announced via the row aria-label suffix instead. */
+.ciSlot {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  flex: none;
+}
+
 /* Middle column wrapper: the title/meta stack (.main) plus the CI glyph, laid out as
    a row and vertically centred. Centring here puts the CI glyph on the row's vertical
    centre — in line with the right-side metrics it reads with — instead of pinned to
@@ -62,13 +77,31 @@
 /* Leading PR-state octicon styles moved to the shared PrStateGlyph component (#530);
    the 16px column track is reserved by .status's grid, not the glyph element. */
 
-/* Title row: just the clamped title now (the CI glyph moved out to .midCol so it can
-   row-centre with the metrics rather than pin to this row's first line). */
+/* Title row: #N prefix + clamped title, laid out as a flex row.
+   The CI glyph moved to its own dedicated grid column (#593), so the title row is
+   purely the mono number prefix and the title text. min-width:0 bounds the flex row
+   so -webkit-line-clamp holds in any ancestor layout. */
 .titleRow {
   display: flex;
   align-items: flex-start;
   margin-bottom: 4px;
-  min-width: 0; /* bound the flex row so .title's -webkit-line-clamp holds in any ancestor layout */
+  min-width: 0;
+}
+
+/* #516/#593 PR number — mono/muted prefix, fixed-shrink before the title.
+   min-width:0 overrides the flex-item default (min-width:auto) so the span can
+   shrink below its content width; white-space:nowrap + overflow:hidden makes it
+   clip (ellipsis) so #N truncates before the title rather than wrapping. */
+.num {
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  flex: 0 1 auto;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-right: 6px;
+  font-size: var(--text-sm);
 }
 
 /* CI suffix octicon — bare check / cross / amber dot, no enclosing circle, so the
@@ -108,8 +141,10 @@
   font-size: var(--text-sm);
   font-weight: 500;
   color: var(--text-1);
-  flex: 1;
-  min-width: 0;
+  /* flex: 1 1 auto + min-width:10ch ensures the title keeps a minimum readable width;
+     the .num prefix truncates first when both compete for space (#516/#593). */
+  flex: 1 1 auto;
+  min-width: 10ch;
 }
 
 .meta {

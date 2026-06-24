@@ -121,6 +121,11 @@ export interface ConnectResponse {
 
 export type CiStatus = 'none' | 'pending' | 'failing' | 'passing';
 
+// Imported for use in PrInboxItem below, and re-exported so consumers can import
+// from the single api/types barrel without reaching into the component tree.
+import type { MergeReadiness } from '../components/shared/mergeReadiness';
+export type { MergeReadiness };
+
 export interface PrReference {
   owner: string;
   repo: string;
@@ -155,6 +160,11 @@ export interface PrInboxItem {
   mergedAt: string | null;
   closedAt: string | null;
   isDraft: boolean;
+  // #593 merge-readiness fields — optional so existing fixtures / route-mock bodies that
+  // omit them stay valid (backend defaults to 'none' / null on older payloads).
+  mergeReadiness?: MergeReadiness;
+  approvals?: number | null;
+  changesRequested?: number | null;
 }
 
 export interface InboxSection {
