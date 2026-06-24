@@ -247,8 +247,55 @@ public sealed class GitHubPrBatchReaderTests
         var items = Enumerable.Range(1, 150).Select(n => Raw(n)).ToList();
         var r = await reader.ReadAsync(items, "viewer", CancellationToken.None);
 
-        batchCount.Should().Be(2);   // 100 + 50
+        batchCount.Should().Be(3);   // MaxBatch=50 → 50 + 50 + 50 (#593)
         r.Should().HaveCount(150);
+    }
+
+    // Guard (#593): a brace-imbalanced query shipped once — the latestReviews append had one extra
+    // '}', which closed the top-level query{} after a0 so a1 was a GraphQL syntax error → GitHub
+    // returned all-null nodes → every PR dropped → empty inbox. NO test caught it because they all
+    // mock the RESPONSE and never validate the SENT query. This validates BOTH the full (open) and
+    // light (closed) query shapes: braces balanced AND the query block never closes before the end.
+    [Fact]
+    public async Task Built_queries_are_brace_balanced_and_never_close_early()
+    {
+        var sentQueries = new List<string>();
+        var handler = new FakeHttpMessageHandler(req =>
+        {
+            var payload = req.Content!.ReadAsStringAsync().GetAwaiter().GetResult();
+            // Extract the bare GraphQL query from the {"query":"...","variables":{}} POST body so the
+            // brace walk below sees the query, not the JSON wrapper.
+            var q = System.Text.Json.JsonDocument.Parse(payload).RootElement.GetProperty("query").GetString()!;
+            sentQueries.Add(q);
+            var aliases = System.Text.RegularExpressions.Regex.Matches(q, @"a(\d+): repository")
+                .Select(m => $"\"a{m.Groups[1].Value}\":{{\"pullRequest\":{{\"headRefOid\":\"h\",\"additions\":0,\"deletions\":0,\"changedFiles\":0,\"commits\":{{\"totalCount\":1}},\"mergedAt\":null,\"closedAt\":null,\"headRepository\":{{\"pushedAt\":\"2026-06-23T10:00:00Z\"}},\"reviews\":{{\"nodes\":[]}}}}}}");
+            var body = "{\"data\":{" + string.Join(",", aliases) + "},\"rateLimit\":{\"cost\":1,\"remaining\":1}}";
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            { Content = new System.Net.Http.StringContent(body, System.Text.Encoding.UTF8, "application/json") };
+        });
+        var reader = new GitHubPrBatchReader(
+            new FakeHttpClientFactory(handler, new Uri("https://api.github.com/")),
+            () => Task.FromResult<string?>("token"), () => "https://github.com");
+
+        // One open (full readiness selection) + one closed (light selection) → two distinct queries.
+        var items = new[] { Raw(1), Raw(2) with { IsClosedHistory = true } };
+        await reader.ReadAsync(items, "viewer", CancellationToken.None);
+
+        sentQueries.Should().HaveCount(2, "open and closed PRs take separate queries");
+        foreach (var q in sentQueries)
+        {
+            q.Count(c => c == '{').Should().Be(q.Count(c => c == '}'), "every '{{' must be closed in: {0}", q);
+            // Walk depth: it must stay > 0 from the first '{' until the final '}' — a premature
+            // return to 0 means an alias escaped the query block (the original bug).
+            var depth = 0; var firstZeroAt = -1;
+            for (var i = 0; i < q.Length; i++)
+            {
+                if (q[i] == '{') depth++;
+                else if (q[i] == '}') { depth--; if (depth == 0 && firstZeroAt < 0) firstZeroAt = i; }
+            }
+            firstZeroAt.Should().Be(q.TrimEnd().Length - 1,
+                "the query block must close exactly once, at the very end (no early close): {0}", q);
+        }
     }
 
     [Fact] // Test 4 — per-alias null tolerated, others present

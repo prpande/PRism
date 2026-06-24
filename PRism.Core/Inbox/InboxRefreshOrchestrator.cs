@@ -134,8 +134,13 @@ public sealed partial class InboxRefreshOrchestrator : IInboxRefreshOrchestrator
                 Log.ClosedHistoryFetched(_log, closedRaw.Count);
             }
 
-            // Hydrate every PR across all sections in one aliased-batch GraphQL read (deduplicated by ref)
-            var allRawDistinct = raw.Values.SelectMany(v => v).Concat(closedRaw)
+            // Hydrate every PR via the batch reader (deduplicated by ref). Recently-closed items are
+            // flagged IsClosedHistory so the reader fetches them with the light selection (no merge-
+            // readiness compute fields — they render no badge, D5); open section items keep the full
+            // selection. Open items come first in the concat, so on a rare open/closed ref collision
+            // GroupBy.First() keeps the open (full) variant. (#593 — avoids the GraphQL 502 timeout.)
+            var allRawDistinct = raw.Values.SelectMany(v => v)
+                .Concat(closedRaw.Select(r => r with { IsClosedHistory = true }))
                 .GroupBy(p => p.Reference).Select(g => g.First()).ToList();
             var viewerLogin = _viewerLoginProvider();
             var batch = await _batchReader.ReadAsync(allRawDistinct, viewerLogin, ct).ConfigureAwait(false);

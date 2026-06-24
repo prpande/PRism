@@ -28,4 +28,9 @@ public sealed record RawPrInboxItem(
     string? Description = null,
     MergeReadiness MergeReadiness = MergeReadiness.None,
     int? Approvals = null,
-    int? ChangesRequested = null);
+    int? ChangesRequested = null,
+    // Routing hint for the batch reader (#593): recently-closed/merged PRs render no badge (D5),
+    // so they take the light GraphQL selection (no mergeable/mergeStateStatus/reviews/latestReviews)
+    // — those merge-state fields force per-PR server-side computation and are pure waste for terminal
+    // PRs. Open candidates default to false → full readiness selection.
+    bool IsClosedHistory = false);

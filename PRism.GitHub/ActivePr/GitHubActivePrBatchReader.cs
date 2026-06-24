@@ -134,7 +134,9 @@ public sealed class GitHubActivePrBatchReader : IActivePrBatchReader
               .Append(r.Number.ToString(CultureInfo.InvariantCulture))
               .Append("){ headRefOid baseRefOid state isDraft mergeable mergeStateStatus reviewDecision ")
               .Append("reviewThreads(first:100){ nodes{ comments{ totalCount } } } reviews{ totalCount } ")
-              .Append("latestReviews(first:100){ nodes{ author{ login } state } } } } ");
+              // latestReviews is collapsed (one per reviewer); 20 covers any real PR for the
+              // approval/changes-requested counts and keeps the per-alias cost low (#593).
+              .Append("latestReviews(first:20){ nodes{ author{ login } state } } } } ");
         sb.Append("rateLimit{ cost remaining } }");
         return sb.ToString();
     }
