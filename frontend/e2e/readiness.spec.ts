@@ -57,6 +57,8 @@ const baseItem = {
   commentCount: 2,
   additions: 50,
   deletions: 10,
+  commitCount: 1,
+  changedFiles: 1,
   headSha: 'abc123',
   ci: 'none' as const,
   lastViewedHeadSha: null,
@@ -134,13 +136,9 @@ test.use({ viewport: VIEWPORT });
 test.describe('readiness badge — open states', () => {
   for (const theme of ['light', 'dark'] as const) {
     test.describe(`theme: ${theme}`, () => {
-      test.beforeEach(async () => {
-        // Pixel baselines are CI-only — same guard as parity-baselines.spec.ts.
-        // The non-pixel assertions below still run locally and on CI.
-        // NOTE: test.skip in beforeEach skips only the current test, not the describe block.
-        // We use a conditional flag checked per-test for pixel shots instead (see below).
-      });
-
+      // Pixel baselines are CI-only (same guard as parity-baselines.spec.ts); the non-pixel
+      // assertions below run locally and on CI. test.skip in a beforeEach would skip only the
+      // current test, not the describe block, so pixel shots are gated per-test via process.env.CI.
       for (const readiness of OPEN_STATES) {
         const shortLabel = READINESS_SHORT[readiness];
 
