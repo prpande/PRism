@@ -63,6 +63,23 @@ export const READINESS_TOOLTIP: Record<MergeReadiness, string> = {
   ready: 'This PR can be merged.',
 };
 
+// #593 — colour tone per state, driving the bare glyph + popover accent/title colour.
+// green = mergeable (ready / ready-with-changes), amber = waiting/blocked, red = broken.
+export type ReadinessTone = 'success' | 'warning' | 'danger';
+export const READINESS_TONE: Record<MergeReadiness, ReadinessTone | ''> = {
+  none: '',
+  merged: '',
+  closed: '',
+  conflicts: 'danger',
+  'behind-base': 'warning',
+  'changes-requested': 'danger',
+  'review-required': 'warning',
+  'blocked-by-protection': 'warning',
+  unstable: 'warning',
+  'ready-with-changes-requested': 'success',
+  ready: 'success',
+};
+
 // Global chip class (defined in tokens.css, Task 4). Shared by both surfaces.
 export const READINESS_CHIP_CLASS: Record<MergeReadiness, string> = {
   none: '',

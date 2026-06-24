@@ -140,6 +140,13 @@ export function prRefKey(reference: PrReference): string {
   return `${reference.owner}/${reference.repo}/${reference.number}`;
 }
 
+// #593 — a reviewer surfaced in the merge-readiness popover. `login` doubles as a team name for
+// team review requests (those carry no avatar). Mirrors the backend Reviewer record.
+export interface Reviewer {
+  login: string;
+  avatarUrl?: string | null;
+}
+
 export interface PrInboxItem {
   reference: PrReference;
   title: string;
@@ -165,6 +172,10 @@ export interface PrInboxItem {
   mergeReadiness?: MergeReadiness;
   approvals?: number | null;
   changesRequested?: number | null;
+  // #593 reviewer name-lists for the readiness popover people section.
+  approvers?: Reviewer[] | null;
+  changesRequestedBy?: Reviewer[] | null;
+  awaitingReviewers?: Reviewer[] | null;
 }
 
 export interface InboxSection {
@@ -226,6 +237,10 @@ export interface PrDetailPr {
   mergeReadiness?: MergeReadiness;
   approvals?: number | null;
   changesRequested?: number | null;
+  // #593 reviewer name-lists for the readiness popover people section.
+  approvers?: Reviewer[] | null;
+  changesRequestedBy?: Reviewer[] | null;
+  awaitingReviewers?: Reviewer[] | null;
   updatedAt?: string;
 }
 

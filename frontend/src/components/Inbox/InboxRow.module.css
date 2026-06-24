@@ -188,15 +188,18 @@
   align-items: center;
   justify-content: flex-end;
   min-width: 0;
+  /* #593 — space between the readiness glyph and the metrics block. */
+  gap: var(--s-2);
 }
 
 /* Right-pinned, fixed-width slots in fixed order — this is what makes the
-   numbers line up column-for-column across rows. */
+   numbers line up column-for-column across rows. #593 tightened 12px→8px to
+   make room for the readiness glyph without widening the tail. */
 .metrics {
   flex: none;
   display: flex;
   align-items: center;
-  gap: var(--s-3);
+  gap: var(--s-2);
 }
 
 .diffSlot {

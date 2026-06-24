@@ -28,10 +28,13 @@ describe('ReadinessBadge', () => {
     }
   });
 
-  it('renders the short label + chip class for an open state', () => {
+  it('renders a bare glyph trigger (no text label) with data-readiness + aria-label', () => {
     renderBadge('behind-base');
-    const chip = screen.getByText('Behind');
-    expect(chip.className).toContain('chip-readiness-behind-base');
+    const trigger = screen.getByRole('button', { name: 'Merge readiness: Behind' });
+    expect(trigger).toHaveAttribute('data-readiness', 'behind-base');
+    // #593 — the badge is an icon now, not a text chip.
+    expect(trigger.querySelector('svg')).not.toBeNull();
+    expect(trigger).not.toHaveTextContent('Behind');
   });
 
   it('opens the popover immediately on focus and closes on Escape', async () => {
@@ -77,10 +80,28 @@ describe('ReadinessBadge', () => {
     expect(tip).not.toHaveTextContent('0');
   });
 
-  it('renders an aria-hidden amber dot for ready-with-changes-requested', () => {
+  it('renders a glyph for ready-with-changes-requested (success tone, no dot)', () => {
     const { container } = renderBadge('ready-with-changes-requested');
-    const dot = container.querySelector('[data-readiness-dot]');
-    expect(dot).not.toBeNull();
-    expect(dot).toHaveAttribute('aria-hidden', 'true');
+    const trigger = container.querySelector('[data-readiness="ready-with-changes-requested"]');
+    expect(trigger).not.toBeNull();
+    expect(trigger!.querySelector('svg')).not.toBeNull();
+    // the old amber-dot affordance is gone — this state has its own glyph now.
+    expect(container.querySelector('[data-readiness-dot]')).toBeNull();
+  });
+
+  it('renders the people section with named reviewers, suppressing the count fallback', () => {
+    renderBadge('review-required', {
+      approvals: 1,
+      approvers: [{ login: 'alice', avatarUrl: null }],
+      awaitingReviewers: [{ login: 'bob', avatarUrl: null }],
+    });
+    act(() => screen.getAllByRole('button')[0].focus());
+    const tip = screen.getByRole('tooltip');
+    expect(tip).toHaveTextContent('Approved');
+    expect(tip).toHaveTextContent('alice');
+    expect(tip).toHaveTextContent('Waiting on');
+    expect(tip).toHaveTextContent('bob');
+    // names present → the "1 approval" count-only fallback line is suppressed.
+    expect(tip).not.toHaveTextContent('1 approval');
   });
 });

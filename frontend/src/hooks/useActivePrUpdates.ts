@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { apiClient } from '../api/client';
-import type { MergeReadiness, PrReference } from '../api/types';
+import type { MergeReadiness, PrReference, Reviewer } from '../api/types';
 import { useEventSource } from './useEventSource';
 
 export interface ActivePrUpdates {
@@ -15,6 +15,14 @@ export interface ActivePrUpdates {
   subscribed: boolean;
   // populated by Task 7 (SSE); undefined until then → the ?? fallback uses the full-load value
   mergeReadiness?: MergeReadiness;
+  // #593 — live readiness popover data (counts + reviewer names). undefined until the first
+  // pr-updated event; consumers ?? back to the full-load value. Snapshot semantics (assigned from
+  // each event, not accumulated), so a later tick can correct or clear them.
+  approvals?: number | null;
+  changesRequested?: number | null;
+  approvers?: Reviewer[] | null;
+  changesRequestedBy?: Reviewer[] | null;
+  awaitingReviewers?: Reviewer[] | null;
   clear(): void;
 }
 
@@ -28,6 +36,12 @@ const initial = {
   // #598 Slice B — latest live readiness. undefined until the first pr-updated event with
   // mergeReadinessChanged arrives; the ?? fallback in consumers uses the full-load value until then.
   mergeReadiness: undefined as MergeReadiness | undefined,
+  // #593 — latest live popover data (snapshot from each event).
+  approvals: undefined as number | null | undefined,
+  changesRequested: undefined as number | null | undefined,
+  approvers: undefined as Reviewer[] | null | undefined,
+  changesRequestedBy: undefined as Reviewer[] | null | undefined,
+  awaitingReviewers: undefined as Reviewer[] | null | undefined,
 };
 
 export function useActivePrUpdates(prRef: PrReference): ActivePrUpdates {
@@ -67,6 +81,14 @@ export function useActivePrUpdates(prRef: PrReference): ActivePrUpdates {
         // (non-none) readiness (anti-flicker None guard), so we keep the last meaningful value and
         // ignore transient None ticks that carry mergeReadinessChanged=false.
         mergeReadiness: event.mergeReadinessChanged ? event.mergeReadiness : s.mergeReadiness,
+        // #593 — popover data is a snapshot of the current poll: assign from the event when it
+        // carries the field, else keep the last value. No anti-flicker latch (these aren't
+        // subject to the transient-None recompute that gates mergeReadiness).
+        approvals: event.approvals ?? s.approvals,
+        changesRequested: event.changesRequested ?? s.changesRequested,
+        approvers: event.approvers ?? s.approvers,
+        changesRequestedBy: event.changesRequestedBy ?? s.changesRequestedBy,
+        awaitingReviewers: event.awaitingReviewers ?? s.awaitingReviewers,
       }));
     });
 

@@ -4,6 +4,7 @@ import type {
   DraftSubmittedEvent,
   InboxUpdatedEvent,
   MergeReadiness,
+  Reviewer,
   RootCommentPostedEvent,
   SingleCommentPostedEvent,
   StateChangedEvent,
@@ -45,6 +46,10 @@ export type PrUpdatedEvent = {
   mergeReadinessChanged?: boolean;
   approvals?: number | null;
   changesRequested?: number | null;
+  // #593 — live reviewer name-lists for the detail readiness popover (snapshot each tick).
+  approvers?: Reviewer[] | null;
+  changesRequestedBy?: Reviewer[] | null;
+  awaitingReviewers?: Reviewer[] | null;
 };
 
 // Backend payload shape: SseEventProjection.IdentityChangedWire (Type: "identity-change").

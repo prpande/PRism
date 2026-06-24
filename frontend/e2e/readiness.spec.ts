@@ -162,18 +162,14 @@ test.describe('readiness badge — open states', () => {
           // 2. data-readiness attribute matches the wire value.
           await expect(badge).toHaveAttribute('data-readiness', readiness);
 
-          // 3. Badge contains the short label text.
-          await expect(badge).toContainText(shortLabel);
+          // 3. Badge is a bare glyph (#593) — an inline SVG, no visible text label.
+          await expect(badge.locator('svg')).toBeVisible();
+          await expect(badge).not.toContainText(shortLabel);
 
           // 4. Row-level aria-label includes the readiness suffix (accessibility).
           const row = page.getByRole('button', { name: /Refactor auth flow/ }).first();
           const rowLabel = await row.getAttribute('aria-label');
           expect(rowLabel).toContain(shortLabel);
-
-          // 5. 'ready-with-changes-requested' renders the amber caveat dot.
-          if (readiness === 'ready-with-changes-requested') {
-            await expect(badge.locator('[data-readiness-dot]')).toBeVisible();
-          }
 
           // Pixel snapshot — CI only.
           if (process.env.CI) {

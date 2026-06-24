@@ -1,11 +1,13 @@
 import { useCallback, useContext, useEffect, useId, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import type { Reviewer } from '../../api/types';
+import { Avatar } from '../Avatar/Avatar';
 import {
   isBadgeRendered,
   READINESS_SHORT,
   READINESS_LONG,
   READINESS_TOOLTIP,
-  READINESS_CHIP_CLASS,
+  READINESS_TONE,
   type MergeReadiness,
 } from './mergeReadiness';
 import { ReadinessTooltipCtxRaw, useReadinessTooltip } from './ReadinessTooltipContext';
@@ -20,10 +22,102 @@ interface ReadinessBadgeProps {
   approvals?: number | null;
   changesRequested?: number | null;
   updatedAt?: string | null;
+  // #593 — reviewer name-lists for the popover people section. Absent/empty rows are suppressed.
+  approvers?: Reviewer[] | null;
+  changesRequestedBy?: Reviewer[] | null;
+  awaitingReviewers?: Reviewer[] | null;
 }
 
+const TONE_CLASS: Record<'success' | 'warning' | 'danger', string> = {
+  success: styles.toneSuccess,
+  warning: styles.toneWarning,
+  danger: styles.toneDanger,
+};
+
+// Bare stroke glyph per state (24-viewBox, currentColor). NONE shares a shape with the bare CI
+// (check/cross/dot) or PR-state (git) glyphs — readiness is its own family (#593).
+function glyphInner(r: MergeReadiness) {
+  switch (r) {
+    case 'ready':
+      return (
+        <>
+          <circle cx="12" cy="12" r="9" />
+          <path d="m8.5 12.4 2.4 2.4 4.6-5.2" />
+        </>
+      );
+    case 'ready-with-changes-requested':
+    case 'changes-requested':
+      // message-warning — the caveat (green) is the same glyph as changes-requested (red).
+      return (
+        <>
+          <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+          <path d="M12 7v3" />
+          <path d="M12 13h.01" />
+        </>
+      );
+    case 'review-required':
+      return (
+        <>
+          <circle cx="12" cy="12" r="9" />
+          <path d="M12 7v5l3 2" />
+        </>
+      );
+    case 'behind-base':
+      return (
+        <>
+          <path d="M21 12a9 9 0 1 1-3-6.7" />
+          <path d="M21 3v5h-5" />
+        </>
+      );
+    case 'blocked-by-protection':
+      return (
+        <>
+          <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+          <path d="M12 8v4" />
+          <path d="M12 16h.01" />
+        </>
+      );
+    case 'unstable':
+      return (
+        <>
+          <path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z" />
+          <path d="M12 9v4" />
+          <path d="M12 17h.01" />
+        </>
+      );
+    case 'conflicts':
+      return (
+        <>
+          <path d="M7.86 2h8.28L22 7.86v8.28L16.14 22H7.86L2 16.14V7.86z" />
+          <path d="M12 8v4" />
+          <path d="M12 16h.01" />
+        </>
+      );
+    default:
+      return null;
+  }
+}
+
+function ReadinessGlyph({ readiness }: { readiness: MergeReadiness }) {
+  return (
+    <svg
+      className={styles.glyphSvg}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2.2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      {glyphInner(readiness)}
+    </svg>
+  );
+}
+
+// Count-only fallback line, used in the popover foot ONLY when no named reviewer lists are present
+// (older payloads / route-mock fixtures). When names are available the people section replaces it.
 function countsLine(approvals?: number | null, changes?: number | null): string | null {
-  // Suppress the whole line when both are unavailable (review-only PR -> null counts).
   if (approvals == null && changes == null) return null;
   const parts: string[] = [];
   if ((changes ?? 0) > 0) parts.push(`Changes requested by ${changes}`);
@@ -45,6 +139,23 @@ function ageLine(updatedAt?: string | null): string | null {
   return `Updated ${Math.round(hrs / 24)}d ago`;
 }
 
+function PeopleRole({ label, people }: { label: string; people?: Reviewer[] | null }) {
+  if (!people || people.length === 0) return null;
+  return (
+    <>
+      <span className={styles.role}>{label}</span>
+      <span className={styles.who}>
+        {people.map((p) => (
+          <span className={styles.nm} key={`${label}-${p.login}`}>
+            <Avatar src={p.avatarUrl} login={p.login} size="sm" />
+            {p.login}
+          </span>
+        ))}
+      </span>
+    </>
+  );
+}
+
 export function ReadinessBadge({
   readiness,
   variant,
@@ -52,6 +163,9 @@ export function ReadinessBadge({
   approvals,
   changesRequested,
   updatedAt,
+  approvers,
+  changesRequestedBy,
+  awaitingReviewers,
 }: ReadinessBadgeProps) {
   const ctx = useContext(ReadinessTooltipCtxRaw);
   const { openId, setOpenId } = useReadinessTooltip();
@@ -133,17 +247,22 @@ export function ReadinessBadge({
 
   if (!isBadgeRendered(readiness)) return null;
 
-  const label = variant === 'compact' ? READINESS_SHORT[readiness] : READINESS_LONG[readiness];
-  const showDot = readiness === 'ready-with-changes-requested';
+  const tone = READINESS_TONE[readiness];
+  const toneClass = tone ? TONE_CLASS[tone] : '';
+  const hasPeople =
+    (approvers?.length ?? 0) > 0 ||
+    (changesRequestedBy?.length ?? 0) > 0 ||
+    (awaitingReviewers?.length ?? 0) > 0;
   const counts = countsLine(approvals, changesRequested);
   const age = ageLine(updatedAt);
+  const showCountsFallback = !hasPeople && counts != null;
 
   return (
     <span className={styles.wrap}>
       <button
         ref={triggerRef}
         type="button"
-        className={`chip ${READINESS_CHIP_CLASS[readiness]} ${styles.trigger}`}
+        className={`${styles.trigger} ${toneClass} ${variant === 'expanded' ? styles.expanded : styles.compact}`}
         data-readiness={readiness}
         aria-label={`Merge readiness: ${READINESS_SHORT[readiness]}`}
         aria-describedby={open ? describedById : undefined}
@@ -160,8 +279,7 @@ export function ReadinessBadge({
           if (e.key === 'Escape') close();
         }}
       >
-        {showDot && <span className={styles.dot} data-readiness-dot aria-hidden="true" />}
-        {label}
+        <ReadinessGlyph readiness={readiness} />
       </button>
       {open &&
         coords &&
@@ -172,14 +290,25 @@ export function ReadinessBadge({
             className={styles.popover}
             style={{ top: coords.top, left: coords.left }}
           >
-            <div className={styles.reasonRow}>
-              <span className={`chip ${READINESS_CHIP_CLASS[readiness]}`}>
-                {READINESS_LONG[readiness]}
-              </span>
+            <div className={`${styles.accent} ${toneClass}`} />
+            <div className={`${styles.head} ${toneClass}`}>
+              <ReadinessGlyph readiness={readiness} />
+              {READINESS_LONG[readiness]}
             </div>
-            <div className={styles.oneLiner}>{READINESS_TOOLTIP[readiness]}</div>
-            {counts && <div className={styles.fact}>{counts}</div>}
-            {age && <div className={styles.fact}>{age}</div>}
+            <div className={styles.reason}>{READINESS_TOOLTIP[readiness]}</div>
+            {hasPeople && (
+              <div className={styles.people}>
+                <PeopleRole label="Approved" people={approvers} />
+                <PeopleRole label="Changes by" people={changesRequestedBy} />
+                <PeopleRole label="Waiting on" people={awaitingReviewers} />
+              </div>
+            )}
+            {(showCountsFallback || age) && (
+              <div className={styles.foot}>
+                {showCountsFallback && <div>{counts}</div>}
+                {age && <div>{age}</div>}
+              </div>
+            )}
           </div>,
           document.body,
         )}

@@ -223,6 +223,9 @@ export function InboxRow({
             approvals={pr.approvals}
             changesRequested={pr.changesRequested}
             updatedAt={pr.updatedAt}
+            approvers={pr.approvers}
+            changesRequestedBy={pr.changesRequestedBy}
+            awaitingReviewers={pr.awaitingReviewers}
           />
         )}
         <span className={styles.metrics}>

@@ -541,9 +541,9 @@ describe('InboxRow #593 readiness + #516 number', () => {
 
   it('renders the readiness badge for an open state and appends it to the aria-label', () => {
     renderInboxRow({ ...PR, mergeReadiness: 'conflicts' });
-    expect(screen.getByText('Conflicts')).toBeInTheDocument();
-    // The badge renders a button with "Merge readiness: Conflicts"; the row button's
-    // aria-label also contains "Conflicts" via readinessSuffix — use the badge-specific label.
+    // #593 — the badge is a bare glyph (no text label); assert via its accessible name.
+    // The row button's aria-label also contains "Conflicts" via readinessSuffix — use the
+    // badge-specific "Merge readiness: …" label to target the badge itself.
     expect(screen.getByRole('button', { name: /Merge readiness: Conflicts/ })).toBeInTheDocument();
   });
 

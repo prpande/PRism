@@ -232,9 +232,18 @@ describe('PrHeader viewerReview wiring', () => {
 });
 
 describe('PrHeader readiness badge (#593)', () => {
-  it('renders the expanded readiness badge with the long reason for an open state', () => {
-    renderHeader({ loading: false, mergeReadiness: 'conflicts', prState: 'open', isDraft: false });
-    expect(screen.getByText('Has conflicts')).toBeInTheDocument();
+  it('renders the expanded readiness badge (glyph) for an open state', () => {
+    const { container } = renderHeader({
+      loading: false,
+      mergeReadiness: 'conflicts',
+      prState: 'open',
+      isDraft: false,
+    });
+    // #593 — the badge is a bare glyph; the long reason ("Has conflicts") lives in the
+    // hover popover. Assert the trigger via its accessible name + data-readiness.
+    const badge = container.querySelector('[data-readiness="conflicts"]');
+    expect(badge).not.toBeNull();
+    expect(badge).toHaveAttribute('aria-label', 'Merge readiness: Conflicts');
   });
 
   it('renders NO badge for merged/closed/draft/none', () => {

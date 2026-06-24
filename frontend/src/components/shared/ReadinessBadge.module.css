@@ -2,32 +2,59 @@
   display: inline-flex;
   position: relative;
 }
+
+/* Bare colored glyph trigger (#593) — no chip background/border. Padding gives a comfortable
+   hover/hit target without a visible container; the icon shape + colour carry the state. */
 .trigger {
   border: none;
+  background: none;
   cursor: default;
-  font: inherit;
+  padding: 1px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: inherit;
 }
-/* Explicit focus ring — the chip background can absorb the UA default outline, and the
-   focus ring is a B1-gate requirement (WCAG 2.4.11). Mirrors the global :focus-visible token. */
+.glyphSvg {
+  width: 15px;
+  height: 15px;
+  flex: none;
+  display: block;
+}
+.compact .glyphSvg {
+  width: 15px;
+  height: 15px;
+}
+.expanded .glyphSvg {
+  width: 16px;
+  height: 16px;
+}
+
+/* Tone — drives the glyph colour and (via currentColor) the popover accent + title. */
+.toneSuccess {
+  color: var(--success-fg);
+}
+.toneWarning {
+  color: var(--warning-fg);
+}
+.toneDanger {
+  color: var(--danger-fg);
+}
+
+/* Explicit focus ring — B1-gate requirement (WCAG 2.4.11). Mirrors the global :focus-visible. */
 .trigger:focus-visible {
   outline: 2px solid var(--accent-ring);
   outline-offset: 2px;
+  border-radius: var(--radius-2);
 }
-.dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 999px;
-  background: var(--warning-fg);
-  margin-right: 5px;
-  flex: none;
-}
+
+/* ---- popover ---- */
 .popover {
   position: fixed;
   z-index: 50;
-  max-width: 280px;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
+  width: 268px;
+  max-width: calc(100vw - 24px);
+  overflow: hidden;
   font-family: var(--font-sans);
   font-size: var(--text-2xs);
   background: var(--surface-1);
@@ -35,15 +62,59 @@
   border: 1px solid var(--border-2);
   border-radius: var(--radius-2);
   box-shadow: var(--shadow-3);
-  padding: 8px 10px;
   pointer-events: none;
 }
-.reasonRow {
+.accent {
+  height: 3px;
+  background: currentColor;
+}
+.head {
   display: flex;
+  align-items: center;
+  gap: 7px;
+  font-weight: 700;
+  font-size: 12px;
+  padding: 9px 12px 0;
 }
-.oneLiner {
-  color: var(--text-1);
-}
-.fact {
+.reason {
   color: var(--text-2);
+  line-height: 1.45;
+  padding: 5px 12px 8px;
+}
+.people {
+  padding: 8px 12px 4px;
+  border-top: 1px solid var(--border-2);
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 7px 10px;
+  align-items: start;
+}
+.role {
+  color: var(--text-3);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding-top: 3px;
+  white-space: nowrap;
+}
+.who {
+  display: flex;
+  align-items: center;
+  gap: 5px 8px;
+  flex-wrap: wrap;
+  color: var(--text-2);
+  line-height: 1.5;
+}
+.nm {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.foot {
+  color: var(--text-3);
+  padding: 7px 12px 9px;
+  border-top: 1px solid var(--border-2);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
 }

@@ -2,6 +2,7 @@ import { useEffect, useId, useState } from 'react';
 import type {
   DraftVerdict,
   PrReference,
+  Reviewer,
   ReviewSessionDto,
   ValidatorResult,
   ViewerReview,
@@ -163,6 +164,10 @@ interface PrHeaderProps {
   approvals?: number | null;
   changesRequested?: number | null;
   updatedAt?: string;
+  // #593 — reviewer name-lists for the readiness popover people section.
+  approvers?: Reviewer[] | null;
+  changesRequestedBy?: Reviewer[] | null;
+  awaitingReviewers?: Reviewer[] | null;
 }
 
 export function PrHeader({
@@ -200,6 +205,9 @@ export function PrHeader({
   mergeReadiness,
   approvals,
   changesRequested,
+  approvers,
+  changesRequestedBy,
+  awaitingReviewers,
   updatedAt,
 }: PrHeaderProps) {
   const validatorResults: ValidatorResult[] = useAiGate('preSubmitValidators')
@@ -515,6 +523,9 @@ export function PrHeader({
                 approvals={approvals}
                 changesRequested={changesRequested}
                 updatedAt={updatedAt}
+                approvers={approvers}
+                changesRequestedBy={changesRequestedBy}
+                awaitingReviewers={awaitingReviewers}
               />
             )}
             {iterationLabel && <span className="chip">{iterationLabel}</span>}
