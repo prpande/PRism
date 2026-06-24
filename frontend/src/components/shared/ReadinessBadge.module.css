@@ -1,0 +1,49 @@
+.wrap {
+  display: inline-flex;
+  position: relative;
+}
+.trigger {
+  border: none;
+  cursor: default;
+  font: inherit;
+}
+/* Explicit focus ring — the chip background can absorb the UA default outline, and the
+   focus ring is a B1-gate requirement (WCAG 2.4.11). Mirrors the global :focus-visible token. */
+.trigger:focus-visible {
+  outline: 2px solid var(--accent-ring);
+  outline-offset: 2px;
+}
+.dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--warning-fg);
+  margin-right: 5px;
+  flex: none;
+}
+.popover {
+  position: fixed;
+  z-index: 50;
+  max-width: 280px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-family: var(--font-sans);
+  font-size: var(--text-2xs);
+  background: var(--surface-1);
+  color: var(--text-1);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-2);
+  box-shadow: var(--shadow-3);
+  padding: 8px 10px;
+  pointer-events: none;
+}
+.reasonRow {
+  display: flex;
+}
+.oneLiner {
+  color: var(--text-1);
+}
+.fact {
+  color: var(--text-2);
+}

@@ -31,6 +31,7 @@ import { useTabUnreadSignal } from './hooks/useTabUnreadSignal';
 import { ErrorModal } from './components/ErrorModal';
 import { GitHubAuthBanner } from './components/GitHubAuthBanner';
 import { ReauthRouteGuard } from './components/ReauthRouteGuard';
+import { ReadinessTooltipProvider } from './components/shared/ReadinessTooltipContext';
 
 function TabSignals() {
   useTabUnreadSignal();
@@ -215,7 +216,11 @@ function AppShell() {
                   cf. OpenTabsContext. */}
               <PreferencesProvider>
                 <AiFailureProvider>
-                  {isAuthed ? <EventStreamProvider>{tree}</EventStreamProvider> : tree}
+                  {/* #593: one readiness-popover singleton across whichever surface (inbox
+                      or PR-detail) is live — they're never mounted together. */}
+                  <ReadinessTooltipProvider>
+                    {isAuthed ? <EventStreamProvider>{tree}</EventStreamProvider> : tree}
+                  </ReadinessTooltipProvider>
                 </AiFailureProvider>
               </PreferencesProvider>
             </AskAiDrawerProvider>
