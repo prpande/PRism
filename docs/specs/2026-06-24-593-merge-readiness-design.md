@@ -45,6 +45,7 @@ public enum MergeReadiness
     ReviewRequired,
     BlockedByProtection,
     Unstable,
+    ReadyWithChangesRequested, // mergeable, but a reviewer requested changes (protection doesn't require review)
     Ready,
 }
 
@@ -75,13 +76,14 @@ public static class MergeReadinessRule
 | 7 | `ReviewRequired` | `mergeStateStatus == BLOCKED && reviewDecision == REVIEW_REQUIRED` | yellow |
 | 8 | `BlockedByProtection` | `mergeStateStatus == BLOCKED` (otherwise: approved/null → required check or other protection) | yellow |
 | 9 | `Unstable` | `mergeStateStatus == UNSTABLE` | yellow |
-| 10 | `Ready` | `mergeStateStatus == CLEAN` or `HAS_HOOKS` | green |
-| 11 | `None` (Unknown) | `mergeStateStatus == UNKNOWN` / null / unrecognized; `mergeable == UNKNOWN` with no stronger signal; no-push-access | **none** |
+| 10 | `ReadyWithChangesRequested` | (`mergeStateStatus == CLEAN` or `HAS_HOOKS`) **and** `reviewDecision == CHANGES_REQUESTED` | **dimmed green** (+ amber caveat dot) |
+| 11 | `Ready` | `mergeStateStatus == CLEAN` or `HAS_HOOKS` | green |
+| 12 | `None` (Unknown) | `mergeStateStatus == UNKNOWN` / null / unrecognized; `mergeable == UNKNOWN` with no stronger signal; no-push-access | **none** |
 
 Notes:
 - **Terminal states win** (Merged/Closed before everything) — this fixes the issue's merged-PR contradiction *by construction*.
 - **`BLOCKED` granularity** is purely the review/protection axis (D1: check-failure is the CI dot's job). `ChangesRequested` (a reviewer explicitly blocked, red/actionable) reads differently from `ReviewRequired` (needs approvals, yellow/waiting) and `BlockedByProtection` (approved but a required check / other rule unmet, yellow).
-- `reviewDecision` is **not** a standalone state — a changes-requested review that protection does not *require* does not block merge, so it must not drive the can-this-merge indicator. It only subdivides `BLOCKED`. **Consequence to confirm at B1:** a PR with `reviewDecision == CHANGES_REQUESTED` but `mergeStateStatus == CLEAN` (a reviewer requested changes in a repo where protection does **not** require review) falls through to row 10 → `Ready` (green "Ready to merge"). That is correct as a *can-this-merge* signal, but reads as a potential at-a-glance misread; it is a named B1 screenshot case and an open owner-confirm question (§ open decisions).
+- `reviewDecision` subdivides two buckets: `BLOCKED` (rows 6–8) and the clean-but-changes-requested case (row 10). It is never a standalone state. **Resolved (owner decision):** a PR with `reviewDecision == CHANGES_REQUESTED` but `mergeStateStatus == CLEAN` (a reviewer requested changes where protection does **not** require review) can technically merge, so it is **not** red `ChangesRequested`; but showing plain green `Ready` would hide the open request. It renders as `ReadyWithChangesRequested` — a **dimmed-green** chip with an amber caveat dot (short "Ready (changes)", long "Ready — changes requested"). This keeps the can-this-merge truth (green family) while flagging the caveat.
 - **`mergeable == CONFLICTING` is an independent conflict source.** Row 4 ORs it in deliberately so a PR with `mergeable == CONFLICTING` but `mergeStateStatus ∈ {BEHIND, BLOCKED, UNSTABLE, UNKNOWN}` still resolves to `Conflicts` — conflicts dominate. This cross-axis behavior is enumerated in the §10 test matrix so a future row-reorder cannot regress conflicts-hidden-behind-BEHIND.
 - Colors are the starting mapping; final pixels are B1-validated live in both themes.
 
@@ -97,6 +99,7 @@ Notes:
 | ReviewRequired | "Review required" | "Review required" |
 | BlockedByProtection | "Blocked" | "Blocked by branch protection" |
 | Unstable | "Unstable" | "Checks unstable" |
+| ReadyWithChangesRequested | "Ready (changes)" | "Ready — changes requested" |
 | Ready | "Ready" | "Ready to merge" |
 
 The four yellow states (BehindBase, ReviewRequired, BlockedByProtection, Unstable) are color-identical; their short labels are distinct with **no shared prefix** that truncation could collapse, so the text axis always disambiguates them (see §6 label-always-visible contract).
@@ -119,6 +122,8 @@ Frontend types (`frontend/src/api/types.ts`): add `mergeReadiness` to the inbox 
 
 A **color-coded badge appears on BOTH surfaces** (inbox and PR detail), driven by the same `MergeReadiness` value and the same `.chip-readiness-*` token set — a compact variant on the inbox, an expanded variant on detail. `None` (Draft/Unknown) renders nothing on both (matches the CI `none` pattern). Merged/closed show their terminal badge and **never** a mergeable/conflicting badge.
 
+**Inbox terminal-state glyph suppression (owner decision A).** On the inbox, when `MergeReadiness` is `Merged` or `Closed`, the readiness chip **replaces** (suppresses) the PR-state glyph for that row — the chip carries both the color and the label, so the glyph would be redundant. The PR-state glyph still renders for open/draft rows. (Draft itself still shows the glyph and no readiness chip per D5.)
+
 **Label-always-visible contract (accessibility floor).** On both surfaces the **short text label is always rendered** — never collapsed to a bare color dot or an icon-only mark. Color is reinforcement, not the sole signal (WCAG 1.4.1, Use of Color); the four color-identical yellow states are distinguishable by label alone. B1 may tune chip width/padding but **may not** introduce a label-less variant; "the contract is a color-coded badge *with its label*, not a bare dot." The label may not truncate to a shared prefix.
 
 - **Inbox row (`InboxRow.tsx`)** — a compact, color-coded readiness **badge** (chip) carrying the **short label** (§4 table), rendered **parallel to** the existing CI octicon and PR-state glyph (D1).
@@ -129,9 +134,7 @@ A **color-coded badge appears on BOTH surfaces** (inbox and PR detail), driven b
 
 **Accessibility.** The chip is **informational and non-interactive** (no focus, no keyboard handler, no tooltip). Inbox: the state's short label is appended to the row's existing `aria-label` (e.g. "PR #593 … — Ready"), with the same single source-of-truth label module the detail view uses. Detail: the long reason renders as visible text inside the chip, so it is announced directly. A screen-reader announcement check is added to the B1 gate (§10).
 
-**Tokens.** New `.chip-readiness-*` rules in `tokens.css` cover every non-`None` state. Because PRism's oklch surface scale is **theme-asymmetric** (light descends, dark ascends/compressed — repo memory), each rule defines **separate light and dark token values** (not one value assumed to work in both). Label-on-chip text must clear **WCAG AA 4.5:1** contrast in both themes, measured live at B1 (1px-canvas method), not eyeballed from a screenshot.
-
-**Open decision (owner / B1) — Merged/Closed inbox redundancy.** The inbox already shows merged/closed via the PR-state glyph (#501/#596). Rendering a `Merged`/`Closed` readiness chip *and* the glyph duplicates the signal — the same reasoning D5 uses to suppress a Draft chip. The issue title explicitly wants the merged-PR badge *fixed*, so the chip is wanted somewhere; whether on the inbox the chip **coexists with** or **suppresses** the glyph is an owner call, flagged for B1 (does not block the rest of the design).
+**Tokens.** New `.chip-readiness-*` rules in `tokens.css` map each state to PRism's existing semantic soft/fg pairs (`--success-soft`/`--success-fg` green, `--warning-soft`/`--warning-fg` yellow, `--danger-soft`/`--danger-fg` red), plus a new `--merged-soft` purple pair (`--merged-fg` already exists) and a neutral `--surface-3`/`--text-2` gray for Closed. `ReadyWithChangesRequested` is a **dimmed green** (success-soft mixed toward surface) with a leading amber (`--warning`) caveat dot. Because PRism's oklch surface scale is **theme-asymmetric** (light descends, dark ascends/compressed — repo memory), each rule resolves through theme-scoped tokens (the semantic pairs are already per-theme; `--merged-soft` adds both). Label-on-chip text must clear **WCAG AA 4.5:1** contrast in both themes, measured live at B1 (1px-canvas method), not eyeballed from a screenshot.
 
 ## 7. Error handling / degradation
 
@@ -157,11 +160,11 @@ Captured live via `gh api graphql` with the exact emitted query + the reader's `
 
 ## 10. Testing strategy
 
-- **`MergeReadinessRuleTests`** (Core, pure, exhaustive): every precedence row, terminal-overrides (merged/closed beat everything), each `BLOCKED`×`reviewDecision` combination, unrecognized-enum → `None`, null inputs → `None`. **Cross-axis matrix:** `mergeable == CONFLICTING` paired with each `mergeStateStatus` value (BEHIND, BLOCKED, UNSTABLE, CLEAN, UNKNOWN) must yield `Conflicts`; `mergeable == MERGEABLE` with `mergeStateStatus == DIRTY` must also yield `Conflicts`; `reviewDecision == CHANGES_REQUESTED` with `mergeStateStatus == CLEAN` must yield `Ready` (the by-construction fall-through — pin it so a reorder can't silently change it).
+- **`MergeReadinessRuleTests`** (Core, pure, exhaustive): every precedence row, terminal-overrides (merged/closed beat everything), each `BLOCKED`×`reviewDecision` combination, unrecognized-enum → `None`, null inputs → `None`. **Cross-axis matrix:** `mergeable == CONFLICTING` paired with each `mergeStateStatus` value (BEHIND, BLOCKED, UNSTABLE, CLEAN, UNKNOWN) must yield `Conflicts`; `mergeable == MERGEABLE` with `mergeStateStatus == DIRTY` must also yield `Conflicts`; `reviewDecision == CHANGES_REQUESTED` with `mergeStateStatus == CLEAN`/`HAS_HOOKS` must yield `ReadyWithChangesRequested` (row 10, the dimmed variant — pin it so a reorder can't collapse it to plain `Ready` or red `ChangesRequested`), while `reviewDecision == CHANGES_REQUESTED` with `mergeStateStatus == BLOCKED` yields red `ChangesRequested`.
 - **Inbox batch reader** (`GitHubPrBatchReaderTests` additions): new fields parsed; readiness derived per alias; per-alias isolation preserved; rate-limit cost asserted present.
 - **Active-poll batch reader** (new tests, mirror the batch-reader suite): batched query shape across multiple subscribed PRs; derivation; **comment/review count parity — GraphQL count equals the REST `pulls/{n}/comments` count for a PR with both inline and conversation comments** (§9); whole-tick-abort retains last-known value (§7); rate-limit model (429 + 200/RATE_LIMITED); per-alias null tolerance.
 - **Frontend** (vitest): inbox chip per state (incl. `None` → nothing, label always present) and detail badge + reason per state, both via the single label/color module; merged/closed never render a mergeable/conflicting badge; `None` chip slot reserves no width.
-- **B1 visual gate** (Playwright): screenshots of the indicator across all rendered states (Ready/Conflicts/BehindBase/ChangesRequested/ReviewRequired/**BlockedByProtection**/Unstable/Merged/Closed) in **light and dark**, validated live before lock — plus the named **CHANGES_REQUESTED×CLEAN → green "Ready to merge"** case (owner-confirm). B1 also verifies: WCAG AA 4.5:1 label-on-chip contrast in both themes (1px-canvas), and the readiness label is announced by a screen reader on both surfaces.
+- **B1 visual gate** (Playwright): screenshots of the indicator across all rendered states (Ready/ReadyWithChangesRequested/Conflicts/BehindBase/ChangesRequested/ReviewRequired/**BlockedByProtection**/Unstable/Merged/Closed) in **light and dark**, validated live before lock — including the inbox terminal-glyph-suppression rows (Merged/Closed show chip, no glyph) and the dimmed `ReadyWithChangesRequested` variant. B1 also verifies: WCAG AA 4.5:1 label-on-chip contrast in both themes (1px-canvas), and the readiness label is announced by a screen reader on both surfaces.
 
 ## 11. Scope / slicing (for writing-plans)
 
@@ -179,9 +182,10 @@ Large T3; one PR (per the "Full #593" decision). Expected task order:
 ## 12. Acceptance criteria
 
 - [ ] A color-coded merge-readiness **badge appears on BOTH the inbox and the PR-detail view**, driven by the same `MergeReadiness` value and shared token set.
-- [ ] Inbox badge (compact, short state label) covers: Ready, Conflicts, BehindBase, ChangesRequested, ReviewRequired, BlockedByProtection, Unstable, Merged, Closed (Draft/Unknown → no badge).
-- [ ] PR-detail badge shows a **human-readable reason**, derived from `mergeStateStatus` (+ `reviewDecision` for the `BLOCKED` split), not the collapsed string.
-- [ ] Merged and closed PRs show a terminal state and **never** render a mergeable/conflicting badge.
+- [ ] Inbox badge (compact, short state label) covers: Ready, ReadyWithChangesRequested, Conflicts, BehindBase, ChangesRequested, ReviewRequired, BlockedByProtection, Unstable, Merged, Closed (Draft/Unknown → no badge).
+- [ ] PR-detail badge shows a **human-readable reason**, derived from `mergeStateStatus` (+ `reviewDecision` for the `BLOCKED` split and the dimmed `ReadyWithChangesRequested` variant), not the collapsed string.
+- [ ] On the inbox, Merged/Closed rows show the readiness chip and **suppress** the PR-state glyph (decision A); the chip never renders a mergeable/conflicting badge for terminal PRs.
+- [ ] A reviewer-requested-changes-but-mergeable PR renders the dimmed `ReadyWithChangesRequested` chip (green family + amber caveat dot), not plain green `Ready` nor red `ChangesRequested`.
 - [ ] `UNKNOWN`/null and push-access-gap cases render **no** indicator without errors; resolve on a later tick (not cached).
 - [ ] CI octicon behavior is unchanged (separate, parallel signal).
 - [ ] Active poll makes **1 GraphQL call per tick** across all subscribed PRs (was `N × 3` REST); comment/review counts preserved; merge-readiness rides the snapshot/SSE so the badge updates live.
