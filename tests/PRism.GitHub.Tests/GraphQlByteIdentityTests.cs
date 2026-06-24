@@ -22,7 +22,9 @@ public class GraphQlByteIdentityTests
         "reviewThreads(first:100){pageInfo{hasNextPage endCursor} nodes{id path line isResolved " +
         "comments(first:100){nodes{id databaseId author{login avatarUrl} createdAt body lastEditedAt}}}}" +
         "reviews(last:100){nodes{author{login} state submittedAt commit{oid}}}" +
-        "latestReviews(first:100){nodes{author{login} state}}" +
+        // #593 — avatarUrl on latestReviews + the reviewRequests connection feed the readiness popover.
+        "latestReviews(first:100){nodes{author{login avatarUrl} state}}" +
+        "reviewRequests(first:20){nodes{requestedReviewer{... on User{login avatarUrl} ... on Team{name}}}}" +
         "timelineItems(first:100,itemTypes:[PULL_REQUEST_COMMIT,HEAD_REF_FORCE_PUSHED_EVENT,PULL_REQUEST_REVIEW]){" +
         "pageInfo{hasNextPage endCursor} nodes{__typename " +
         "... on PullRequestCommit{commit{oid committedDate message additions deletions}} " +

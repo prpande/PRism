@@ -37,7 +37,10 @@ internal static class SseEventProjection
     internal sealed record ActivePrUpdatedWire(
         string PrRef, string? NewHeadSha, bool HeadShaChanged, int CommentCountDelta,
         bool IsMerged, bool IsClosed, bool BaseShaChanged, string? NewBaseSha,
-        MergeReadiness MergeReadiness, bool MergeReadinessChanged, int? Approvals, int? ChangesRequested);
+        MergeReadiness MergeReadiness, bool MergeReadinessChanged, int? Approvals, int? ChangesRequested,
+        // #593 — live reviewer name-lists for the detail readiness popover.
+        IReadOnlyList<Reviewer>? Approvers, IReadOnlyList<Reviewer>? ChangesRequestedBy,
+        IReadOnlyList<Reviewer>? AwaitingReviewers);
     internal sealed record StateChangedWire(string PrRef, IReadOnlyList<string> FieldsTouched, string? SourceTabId);
     internal sealed record DraftSavedWire(string PrRef, string DraftId, string? SourceTabId);
     internal sealed record DraftDiscardedWire(string PrRef, string DraftId, string? SourceTabId);
@@ -74,7 +77,8 @@ internal static class SseEventProjection
         ActivePrUpdated e => ("pr-updated", new ActivePrUpdatedWire(
             e.PrRef.ToString(), e.NewHeadSha, e.HeadShaChanged, e.CommentCountDelta, e.IsMerged, e.IsClosed,
             e.BaseShaChanged, e.NewBaseSha,
-            e.MergeReadiness, e.MergeReadinessChanged, e.Approvals, e.ChangesRequested)),
+            e.MergeReadiness, e.MergeReadinessChanged, e.Approvals, e.ChangesRequested,
+            e.Approvers, e.ChangesRequestedBy, e.AwaitingReviewers)),
 
         StateChanged e => ("state-changed", new StateChangedWire(e.PrRef.ToString(), e.FieldsTouched, e.SourceTabId)),
         DraftSaved e => ("draft-saved", new DraftSavedWire(e.PrRef.ToString(), e.DraftId, e.SourceTabId)),

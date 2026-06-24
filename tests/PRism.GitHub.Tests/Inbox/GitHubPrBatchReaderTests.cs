@@ -113,8 +113,14 @@ public sealed class GitHubPrBatchReaderTests
         query.Should().Contain("a0: repository(owner:\"acme\", name:\"api\")");
         query.Should().Contain("pullRequest(number:7)");
         query.Should().Contain("reviews(last:100)");
+        // #593 — open-PR readiness selection carries reviewer avatars + the still-requested reviewers.
+        query.Should().Contain("latestReviews(first:20){ nodes{ author{ login avatarUrl } state } }");
+        query.Should().Contain("reviewRequests(first:20)");
         query.Should().Contain("rateLimit");
-        query.Should().NotContain("viewer{");
+        // The inbox batch query must NOT fetch the top-level viewer node (detail query does).
+        // Match "viewer{login}" specifically — a bare "viewer{" now substring-collides with the
+        // #593 reviewRequests "requestedReviewer{" selection.
+        query.Should().NotContain("viewer{login}");
     }
 
     [Fact] // Test 2 — alias parsing (full hydration)

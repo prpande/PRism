@@ -27,4 +27,9 @@ public sealed record ActivePrUpdated(
     MergeReadiness MergeReadiness = MergeReadiness.None,
     bool MergeReadinessChanged = false,
     int? Approvals = null,
-    int? ChangesRequested = null) : IReviewEvent;
+    int? ChangesRequested = null,
+    // #593 reviewer name-lists so the live detail popover shows who approved / requested changes /
+    // is still being waited on, consistent with the inbox (which refreshes names every poll tick).
+    IReadOnlyList<Reviewer>? Approvers = null,
+    IReadOnlyList<Reviewer>? ChangesRequestedBy = null,
+    IReadOnlyList<Reviewer>? AwaitingReviewers = null) : IReviewEvent;

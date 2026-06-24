@@ -210,7 +210,10 @@ public sealed partial class GitHubPrBatchReader : IPrBatchReader
                   .Append("reviews(last:100){ nodes{ author{ login } submittedAt commit{ oid } } } ")
                   // latestReviews is collapsed (one entry per reviewer); 20 covers any real PR's
                   // distinct reviewers for the approval/changes-requested counts (cheap vs first:100).
-                  .Append("latestReviews(first:20){ nodes{ author{ login } state } } ");
+                  // avatarUrl (#593) feeds the popover people section's avatars.
+                  .Append("latestReviews(first:20){ nodes{ author{ login avatarUrl } state } } ")
+                  // reviewRequests (#593) = still-requested ("waiting on") reviewers; union over User|Team.
+                  .Append("reviewRequests(first:20){ nodes{ requestedReviewer{ ... on User{ login avatarUrl } ... on Team{ name } } } } ");
             sb.Append("} } "); // close pullRequest selection, repository selection
         }
         sb.Append("rateLimit{ cost remaining } }");
@@ -250,11 +253,14 @@ public sealed partial class GitHubPrBatchReader : IPrBatchReader
         var prState = PrStates.FromTimestamps(mergedAt, closedAt);
         var readiness = MergeReadinessRule.Derive(prState, isDraft, mergeable, mergeStateStatus, reviewDecision);
         var (approvals, changesRequested) = GitHubPrParser.CountLatestReviews(pr);
+        var (approvers, changesRequestedBy) = GitHubPrParser.ParseLatestReviewers(pr);
+        var awaitingReviewers = GitHubPrParser.ParseRequestedReviewers(pr);
 
         data = new BatchPrData(headSha, additions, deletions, commitCount, changedFiles,
                                pushedAt, mergedAt, closedAt,
                                ParseViewerLastReviewSha(pr, viewerLogin, raw.Reference),
-                               readiness, approvals, changesRequested);
+                               readiness, approvals, changesRequested,
+                               approvers, changesRequestedBy, awaitingReviewers);
         return true;
     }
 

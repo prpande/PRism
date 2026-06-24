@@ -29,4 +29,9 @@ public sealed record Pr(
     MergeReadiness MergeReadiness = MergeReadiness.None,
     int? Approvals = null,
     int? ChangesRequested = null,
-    DateTimeOffset UpdatedAt = default);
+    DateTimeOffset UpdatedAt = default,
+    // #593 reviewer name-lists for the readiness popover. Null = not fetched (FE suppresses the
+    // row); the int counts above stay as a count-only fallback when avatars/names are unavailable.
+    IReadOnlyList<Reviewer>? Approvers = null,
+    IReadOnlyList<Reviewer>? ChangesRequestedBy = null,
+    IReadOnlyList<Reviewer>? AwaitingReviewers = null);

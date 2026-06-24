@@ -31,4 +31,8 @@ public sealed record BatchPrData(
     string? ViewerLastReviewSha,
     MergeReadiness MergeReadiness = MergeReadiness.None,
     int? Approvals = null,
-    int? ChangesRequested = null);
+    int? ChangesRequested = null,
+    // #593 reviewer name-lists parsed from latestReviews (approvers/changes) + reviewRequests (waiting).
+    IReadOnlyList<Reviewer>? Approvers = null,
+    IReadOnlyList<Reviewer>? ChangesRequestedBy = null,
+    IReadOnlyList<Reviewer>? AwaitingReviewers = null);

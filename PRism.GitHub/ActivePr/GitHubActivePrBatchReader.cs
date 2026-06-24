@@ -90,6 +90,8 @@ public sealed class GitHubActivePrBatchReader : IActivePrBatchReader
         var isDraft = pr.TryGetProperty("isDraft", out var d) && d.ValueKind == JsonValueKind.True;
         var readiness = MergeReadinessRule.Derive(state, isDraft, StrOrNull("mergeable"), StrOrNull("mergeStateStatus"), StrOrNull("reviewDecision"));
         var (approvals, changes) = GitHubPrParser.CountLatestReviews(pr);
+        var (approvers, changesRequestedBy) = GitHubPrParser.ParseLatestReviewers(pr);
+        var awaitingReviewers = GitHubPrParser.ParseRequestedReviewers(pr);
 
         snapshot = new ActivePrPollSnapshot(
             HeadSha: headSha,
@@ -100,7 +102,10 @@ public sealed class GitHubActivePrBatchReader : IActivePrBatchReader
             ReviewCount: TotalCount("reviews"),
             MergeReadiness: readiness,
             Approvals: approvals,
-            ChangesRequested: changes);
+            ChangesRequested: changes,
+            Approvers: approvers,
+            ChangesRequestedBy: changesRequestedBy,
+            AwaitingReviewers: awaitingReviewers);
         return true;
     }
 
@@ -136,7 +141,9 @@ public sealed class GitHubActivePrBatchReader : IActivePrBatchReader
               .Append("reviewThreads(first:100){ nodes{ comments{ totalCount } } } reviews{ totalCount } ")
               // latestReviews is collapsed (one per reviewer); 20 covers any real PR for the
               // approval/changes-requested counts and keeps the per-alias cost low (#593).
-              .Append("latestReviews(first:20){ nodes{ author{ login } state } } } } ");
+              // avatarUrl + reviewRequests (#593) feed the live detail readiness popover's people section.
+              .Append("latestReviews(first:20){ nodes{ author{ login avatarUrl } state } } ")
+              .Append("reviewRequests(first:20){ nodes{ requestedReviewer{ ... on User{ login avatarUrl } ... on Team{ name } } } } } } ");
         sb.Append("rateLimit{ cost remaining } }");
         return sb.ToString();
     }

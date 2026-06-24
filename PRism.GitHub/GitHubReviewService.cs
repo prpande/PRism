@@ -51,7 +51,9 @@ public sealed partial class GitHubReviewService : IPrDiscovery, IPrReader
         "reviewThreads(first:100){pageInfo{hasNextPage endCursor} nodes{id path line isResolved " +
         "comments(first:100){nodes{id databaseId author{login avatarUrl} createdAt body lastEditedAt}}}}" +
         "reviews(last:100){nodes{author{login} state submittedAt commit{oid}}}" +
-        "latestReviews(first:100){nodes{author{login} state}}" +
+        // #593: avatarUrl on latestReviews + reviewRequests feed the readiness popover people section.
+        "latestReviews(first:100){nodes{author{login avatarUrl} state}}" +
+        "reviewRequests(first:20){nodes{requestedReviewer{... on User{login avatarUrl} ... on Team{name}}}}" +
         TimelineItemsArgs + "{pageInfo{hasNextPage endCursor} " + TimelineNodes + "}" +
         "}}}";
 

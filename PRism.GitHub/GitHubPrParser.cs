@@ -147,6 +147,8 @@ internal static class GitHubPrParser
             ? rdEl.GetString() : null;
         var readiness = MergeReadinessRule.Derive(prState, isDraft, mergeability, mergeStateStatus, reviewDecision);
         var (approvals, changesRequested) = CountLatestReviews(pull);
+        var (approvers, changesRequestedBy) = ParseLatestReviewers(pull);
+        var awaitingReviewers = ParseRequestedReviewers(pull);
         var updatedAt = GetDate("updatedAt");
 
         return new Pr(
@@ -172,7 +174,10 @@ internal static class GitHubPrParser
             MergeReadiness: readiness,
             Approvals: approvals,
             ChangesRequested: changesRequested,
-            UpdatedAt: updatedAt);
+            UpdatedAt: updatedAt,
+            Approvers: approvers,
+            ChangesRequestedBy: changesRequestedBy,
+            AwaitingReviewers: awaitingReviewers);
     }
 
     internal static List<IssueCommentDto> ParseRootComments(JsonElement pull)
@@ -324,6 +329,61 @@ internal static class GitHubPrParser
             // COMMENTED / DISMISSED / PENDING excluded.
         }
         return (approvals, changes);
+    }
+
+    // #593 — reviewer NAME lists from the collapsed `latestReviews` connection, parallel to
+    // CountLatestReviews's counts: one (login, avatarUrl) per reviewer split by APPROVED vs
+    // CHANGES_REQUESTED. Returns (null, null) when the connection is absent (closed PRs take the
+    // light selection) so the FE suppresses the popover rows. COMMENTED/DISMISSED/PENDING excluded.
+    internal static (List<Reviewer>? Approvers, List<Reviewer>? ChangesRequestedBy) ParseLatestReviewers(JsonElement pr)
+    {
+        if (!pr.TryGetProperty("latestReviews", out var lr)
+            || !lr.TryGetProperty("nodes", out var nodes)
+            || nodes.ValueKind != JsonValueKind.Array)
+            return (null, null);
+
+        List<Reviewer>? approvers = null, changesRequestedBy = null;
+        foreach (var n in nodes.EnumerateArray())
+        {
+            if (n.ValueKind != JsonValueKind.Object) continue;
+            var state = n.TryGetProperty("state", out var s) && s.ValueKind == JsonValueKind.String ? s.GetString() : null;
+            if (!string.Equals(state, "APPROVED", StringComparison.Ordinal)
+                && !string.Equals(state, "CHANGES_REQUESTED", StringComparison.Ordinal))
+                continue;
+            var (login, avatar) = ReadActor(n);
+            if (string.IsNullOrEmpty(login)) continue;
+            var reviewer = new Reviewer(login, avatar);
+            if (string.Equals(state, "APPROVED", StringComparison.Ordinal))
+                (approvers ??= new()).Add(reviewer);
+            else
+                (changesRequestedBy ??= new()).Add(reviewer);
+        }
+        return (approvers, changesRequestedBy);
+    }
+
+    // #593 — still-requested ("waiting on") reviewers from the `reviewRequests` connection. The
+    // requestedReviewer is a union (User|Team|Mannequin): users carry `login`+`avatarUrl`, teams
+    // carry `name` (no avatar). Returns null when absent/empty so the FE suppresses the row.
+    internal static List<Reviewer>? ParseRequestedReviewers(JsonElement pr)
+    {
+        if (!pr.TryGetProperty("reviewRequests", out var rr)
+            || !rr.TryGetProperty("nodes", out var nodes)
+            || nodes.ValueKind != JsonValueKind.Array)
+            return null;
+
+        List<Reviewer>? list = null;
+        foreach (var n in nodes.EnumerateArray())
+        {
+            if (n.ValueKind != JsonValueKind.Object) continue;
+            if (!n.TryGetProperty("requestedReviewer", out var rv) || rv.ValueKind != JsonValueKind.Object) continue;
+            var login = rv.TryGetProperty("login", out var l) && l.ValueKind == JsonValueKind.String ? l.GetString() : null;
+            var name = rv.TryGetProperty("name", out var nm) && nm.ValueKind == JsonValueKind.String ? nm.GetString() : null;
+            var who = string.IsNullOrEmpty(login) ? name : login;
+            if (string.IsNullOrEmpty(who)) continue;
+            var avatar = rv.TryGetProperty("avatarUrl", out var av) && av.ValueKind == JsonValueKind.String ? av.GetString() : null;
+            (list ??= new()).Add(new Reviewer(who, avatar));
+        }
+        return list;
     }
 
     private static ReviewState? MapReviewState(string? wire) => wire switch

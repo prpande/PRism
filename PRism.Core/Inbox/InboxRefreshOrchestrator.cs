@@ -157,6 +157,9 @@ public sealed partial class InboxRefreshOrchestrator : IInboxRefreshOrchestrator
                         MergeReadiness = b.MergeReadiness,
                         Approvals = b.Approvals,
                         ChangesRequested = b.ChangesRequested,
+                        Approvers = b.Approvers,
+                        ChangesRequestedBy = b.ChangesRequestedBy,
+                        AwaitingReviewers = b.AwaitingReviewers,
                     };
             Log.PrEnrichmentComplete(_log, allRawDistinct.Count, byRef.Count);
 
@@ -375,7 +378,10 @@ public sealed partial class InboxRefreshOrchestrator : IInboxRefreshOrchestrator
             Description: r.Description,
             MergeReadiness: r.MergeReadiness,
             Approvals: r.Approvals,
-            ChangesRequested: r.ChangesRequested);
+            ChangesRequested: r.ChangesRequested,
+            Approvers: r.Approvers,
+            ChangesRequestedBy: r.ChangesRequestedBy,
+            AwaitingReviewers: r.AwaitingReviewers);
     }
 
     // NewOrUpdatedPrCount is named for the common case (added or updated PRs) but its

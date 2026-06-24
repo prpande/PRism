@@ -188,7 +188,10 @@ public sealed partial class ActivePrPoller : BackgroundService
                     MergeReadiness: snapshot.MergeReadiness,
                     MergeReadinessChanged: readinessChanged,
                     Approvals: snapshot.Approvals,
-                    ChangesRequested: snapshot.ChangesRequested));
+                    ChangesRequested: snapshot.ChangesRequested,
+                    Approvers: snapshot.Approvers,
+                    ChangesRequestedBy: snapshot.ChangesRequestedBy,
+                    AwaitingReviewers: snapshot.AwaitingReviewers));
             }
 
             state.LastHeadSha = snapshot.HeadSha;

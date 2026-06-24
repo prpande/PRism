@@ -13,4 +13,9 @@ public sealed record ActivePrPollSnapshot(
     // consume only HeadSha. Trailing-with-defaults so the REST path + existing tests still compile.
     MergeReadiness MergeReadiness = MergeReadiness.None,
     int? Approvals = null,
-    int? ChangesRequested = null);
+    int? ChangesRequested = null,
+    // #593 reviewer name-lists, parsed from the active-poll latestReviews + reviewRequests so the
+    // detail readiness popover's people section updates live (parallel to Approvals/ChangesRequested).
+    IReadOnlyList<Reviewer>? Approvers = null,
+    IReadOnlyList<Reviewer>? ChangesRequestedBy = null,
+    IReadOnlyList<Reviewer>? AwaitingReviewers = null);

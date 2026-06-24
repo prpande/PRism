@@ -30,4 +30,8 @@ public sealed record PrInboxItem(
     [property: JsonIgnore] string? Description = null,
     MergeReadiness MergeReadiness = MergeReadiness.None,
     int? Approvals = null,
-    int? ChangesRequested = null);
+    int? ChangesRequested = null,
+    // #593 reviewer name-lists for the readiness popover (parallel to Pr). Null = not fetched.
+    IReadOnlyList<Reviewer>? Approvers = null,
+    IReadOnlyList<Reviewer>? ChangesRequestedBy = null,
+    IReadOnlyList<Reviewer>? AwaitingReviewers = null);
