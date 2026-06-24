@@ -21,7 +21,7 @@
 - **Whole-tick-abort retains last-known (spec §7):** because Slice B issues one query for all subscribed PRs, a rate-limited/aborted tick must never blank the badge/counts — retain last-known and resume next tick. The SSE consumer must not clear readiness on a skipped tick.
 - **Enum wire form:** enums serialize kebab-case automatically via `JsonSerializerOptionsFactory.Api`'s `JsonStringEnumConverter(new KebabCaseJsonNamingPolicy())`. No per-enum attributes. The TS union must match the kebab forms exactly.
 - **Gated B1 — UI-visual:** color coding is validated live in **both** light and dark themes before lock (Playwright CI baselines + 1px-canvas WCAG checks). Inbox visual change → parity-baseline regen.
-- **One PR with carve-out fallback (spec §11, owner-confirmed):** ships as one PR by default; Tasks 1–6 must reach green *independently* of Task 7 (Slice B) so Slice B can be carved into a follow-up perf-only PR if it lags. The badge can ship on the existing REST poll with the additive field.
+- **One PR with carve-out fallback (spec §11, owner-confirmed):** ships as one PR by default; Tasks 1–6 must reach green *independently* of Task 7 (Slice B) so Slice B can be carved into a follow-up perf-only PR if it lags. The badge ships on the existing REST poll with the additive field. **For the carve-out to actually compile, the `mergeReadiness?` stub on the `ActivePrUpdates` interface lands in Task 6 (not Task 7)** — see Task 6 Step 1; without it Tasks 1–6 don't typecheck.
 - **Pre-push checklist (`.ai/docs/development-process.md`) runs verbatim before any push.** Run `/simplify` before raising the PR.
 
 ## File Structure
@@ -29,9 +29,11 @@
 **Backend — new files:**
 - `PRism.Core.Contracts/MergeReadiness.cs` — the `MergeReadiness` enum (11 members).
 - `PRism.Core.Contracts/MergeReadinessRule.cs` — pure `Derive(...)` precedence function.
-- `PRism.GitHub/ActivePr/GitHubActivePrBatchReader.cs` — sibling batched active-poll reader (Slice B).
+- `PRism.Core/PrDetail/IActivePrBatchReader.cs` — the batched-poll reader **interface** (lives in Core, mirroring `PRism.Core/Inbox/IPrBatchReader.cs`; the poller in Core consumes it — Core does **not** reference PRism.GitHub, so the interface cannot live in the GitHub assembly).
+- `PRism.GitHub/ActivePr/GitHubActivePrBatchReader.cs` — the **implementation** `: IActivePrBatchReader` (Slice B).
 - `tests/PRism.Core.Tests/Contracts/MergeReadinessRuleTests.cs` — exhaustive rule matrix.
 - `tests/PRism.GitHub.Tests/ActivePr/GitHubActivePrBatchReaderTests.cs` — batched-poll reader tests (shape, derivation, count parity, whole-tick-abort, rate-limit, per-alias isolation).
+- `tests/PRism.Core.Tests/PrDetail/ActivePrPollerReadinessTests.cs` — new poller tests (readiness publish, whole-tick-abort, open→merged transition).
 
 **Backend — modified files:**
 - `PRism.Core.Contracts/PrStates.cs` — add `FromTimestamps(mergedAt, closedAt)` helper.
@@ -40,14 +42,17 @@
 - `PRism.GitHub/Inbox/GitHubPrBatchReader.cs` — extend query (`mergeable mergeStateStatus reviewDecision isDraft latestReviews`); parse + derive; carry counts.
 - `PRism.Core/Inbox/InboxRefreshOrchestrator.cs` — thread the carried readiness/counts through the `with`-merge into `MaterializePrInboxItem`.
 - `PRism.Core.Contracts/Pr.cs` — add `MergeReadiness MergeReadiness`, nullable counts, `UpdatedAt`.
+- `PRism.Core/Inbox/IPrBatchReader.cs` — extend the `BatchPrData` record (it lives here, **not** in `GitHubPrBatchReader.cs`) with the readiness/count carriers.
 - `PRism.GitHub/GitHubReviewService.cs` — `PrDetailGraphQLQuery` (+ `reviewDecision updatedAt latestReviews`); Slice B tick wiring; DI of the new reader.
-- `PRism.GitHub/GitHubPrParser.cs` — `ParsePr` derives `MergeReadiness`, counts, `UpdatedAt`; add a shared collapsed-count helper.
-- `PRism.GitHub/GitHubGraphQL.cs` — extract a shared `ThrowIfRateLimited(JsonElement)` guard (used by both batch readers).
+- `PRism.GitHub/GitHubPrParser.cs` — `ParsePr` derives `MergeReadiness`, counts, `UpdatedAt`; **owns** the shared `internal static CountLatestReviews` collapsed-count helper (single home; the inbox batch reader calls it — no temporary duplicate).
+- `PRism.GitHub/GitHubGraphQL.cs` — extract a shared `internal static ThrowIfRateLimited(JsonElement, string)` guard (used by both batch readers; `GitHubGraphQL` is an `internal static` class, so `internal`, not `public`).
 - `PRism.Core.Contracts/ActivePrPollSnapshot.cs` — add `MergeReadiness MergeReadiness` + nullable counts.
-- `PRism.Core/ActivePr/ActivePrPoller.cs` — batched tick; `readinessChanged` publish trigger; `LastMergeReadiness` state; whole-tick-abort.
-- `PRism.Core/ActivePr/ActivePrUpdated.cs` (event) — add `MergeReadiness` + nullable counts.
-- `PRism.Web/Sse/SseEventProjection.cs` — `ActivePrUpdatedWire` carries readiness + counts.
-- `PRism.GitHub/ServiceCollectionExtensions.cs` — register `GitHubActivePrBatchReader`.
+- `PRism.Core/PrDetail/ActivePrPoller.cs` — batched tick; `readinessChanged` publish trigger (with anti-flicker None guard); `LastMergeReadiness` state; whole-tick-abort.
+- `PRism.Core/Events/ActivePrUpdated.cs` (event) — add `MergeReadiness` + nullable counts.
+- `PRism.Web/Sse/SseEventProjection.cs` — `ActivePrUpdatedWire` carries readiness + counts (verify the SSE channel serializes the enum kebab-case via `JsonSerializerOptionsFactory.Api`, not as an int).
+- `PRism.GitHub/ServiceCollectionExtensions.cs` — register `IActivePrBatchReader` → `GitHubActivePrBatchReader`.
+- `tests/PRism.Core.Tests/PrDetail/ActivePrCacheTests.cs` + `ActivePrPollerBackoffTests.cs` + `ActivePrPollerSnapshotLogTests.cs` + `ActivePrPollerSubscriberFaultTests.cs` — migrate to the batched-reader ctor (Task 7).
+- `tests/PRism.GitHub.Tests/GraphQlByteIdentityTests.cs` — update the pinned `ExpectedPrDetail` literal to the new query (Task 5).
 
 **Frontend — new files:**
 - `frontend/src/components/shared/mergeReadiness.ts` — the `MergeReadiness` TS union + short/long/tooltip/chip-class maps + `isBadgeRendered`.
@@ -596,7 +601,7 @@ var reviewDecision = pr.TryGetProperty("reviewDecision", out var rdv) && rdv.Val
 
 var prState = PrStates.FromTimestamps(mergedAt, closedAt);
 var readiness = MergeReadinessRule.Derive(prState, isDraft, mergeable, mergeStateStatus, reviewDecision);
-var (approvals, changesRequested) = CountLatestReviews(pr);
+var (approvals, changesRequested) = GitHubPrParser.CountLatestReviews(pr); // single home — see below
 
 data = new BatchPrData(headSha, additions, deletions, commitCount, changedFiles,
                        pushedAt, mergedAt, closedAt,
@@ -605,10 +610,10 @@ data = new BatchPrData(headSha, additions, deletions, commitCount, changedFiles,
 return true;
 ```
 
-Add the helper (counts only `APPROVED`/`CHANGES_REQUESTED` from the already-collapsed `latestReviews`; returns `(null, null)` when the connection is absent so the FE suppresses the tooltip line for review-only PRs):
+**Define the collapsed-count helper once, in `GitHubPrParser` (its single home — both the inbox batch reader here and the detail parser in Task 5 call it; no duplicate).** Add to `PRism.GitHub/GitHubPrParser.cs` as `internal static` (counts only `APPROVED`/`CHANGES_REQUESTED` from the already-collapsed `latestReviews`; returns `(null, null)` when the connection is absent so the FE suppresses the tooltip line for review-only PRs):
 
 ```csharp
-private static (int? Approvals, int? ChangesRequested) CountLatestReviews(JsonElement pr)
+internal static (int? Approvals, int? ChangesRequested) CountLatestReviews(JsonElement pr)
 {
     if (!pr.TryGetProperty("latestReviews", out var lr)
         || !lr.TryGetProperty("nodes", out var nodes)
@@ -628,7 +633,7 @@ private static (int? Approvals, int? ChangesRequested) CountLatestReviews(JsonEl
 }
 ```
 
-Extend the `BatchPrData` record (same file) with `MergeReadiness MergeReadiness, int? Approvals, int? ChangesRequested`.
+Extend the `BatchPrData` record — which lives in **`PRism.Core/Inbox/IPrBatchReader.cs`** (not `GitHubPrBatchReader.cs`) — with `MergeReadiness MergeReadiness, int? Approvals, int? ChangesRequested`.
 
 - [ ] **Step 11: Thread through the orchestrator**
 
@@ -648,6 +653,17 @@ Approvals: r.Approvals,
 ChangesRequested: r.ChangesRequested,
 ```
 
+(`UpdatedAt` is **already** a member of `RawPrInboxItem`/`PrInboxItem` and `MaterializePrInboxItem` already passes it through — no change needed; the badge's "Updated Xh ago" fact reads the existing `pr.updatedAt`. The TS `PrInboxItem` likewise already has `updatedAt: string`. Do not re-add it.)
+
+**Also publish on readiness flips.** `InboxRefreshOrchestrator.ComputeDiff` currently decides whether to emit `InboxUpdated` from `HeadSha`/`CommentCount`/`Ci` only (`if (o.HeadSha != n.HeadSha || o.CommentCount != n.CommentCount || o.Ci != n.Ci)`). GitHub recomputes `mergeStateStatus` asynchronously **without bumping `updatedAt`**, so a readiness-only flip (e.g. `UNKNOWN`→`CLEAN`, or a conflict resolving) would update the cached snapshot but never push `InboxUpdated` — the inbox badge would stay stale until an unrelated field changes (the same class of bug as the known sync-enricher refill miss). Add `MergeReadiness` to the predicate:
+
+```csharp
+if (o.HeadSha != n.HeadSha || o.CommentCount != n.CommentCount || o.Ci != n.Ci
+    || o.MergeReadiness != n.MergeReadiness)
+```
+
+Add a test (in the orchestrator's existing diff test suite) asserting a readiness-only delta publishes `InboxUpdated`.
+
 - [ ] **Step 12: Run the batch-reader + contract tests**
 
 Run: `dotnet test tests/PRism.GitHub.Tests/PRism.GitHub.Tests.csproj --filter FullyQualifiedName~GitHubPrBatchReaderTests`
@@ -658,7 +674,8 @@ Expected: PASS.
 
 ```bash
 git add PRism.Core.Contracts/PrStates.cs PRism.Core/Inbox/RawPrInboxItem.cs \
-  PRism.Core.Contracts/PrInboxItem.cs PRism.GitHub/Inbox/GitHubPrBatchReader.cs \
+  PRism.Core.Contracts/PrInboxItem.cs PRism.Core/Inbox/IPrBatchReader.cs \
+  PRism.GitHub/Inbox/GitHubPrBatchReader.cs PRism.GitHub/GitHubPrParser.cs \
   PRism.Core/Inbox/InboxRefreshOrchestrator.cs \
   tests/PRism.Core.Tests/Contracts/PrStatesTests.cs \
   tests/PRism.GitHub.Tests/Inbox/GitHubPrBatchReaderTests.cs
@@ -853,6 +870,9 @@ function ageLine(updatedAt?: string | null): string | null {
   const then = new Date(updatedAt).getTime();
   if (Number.isNaN(then)) return null;
   const mins = Math.max(0, Math.round((Date.now() - then) / 60000));
+  // Sanity floor: a default/min DateTimeOffset (0001-01-01) leaking from a non-parser Pr
+  // construction site would render an absurd "Updated 738000d ago". Suppress beyond ~10y.
+  if (mins > 10 * 365 * 24 * 60) return null;
   if (mins < 60) return `Updated ${mins}m ago`;
   const hrs = Math.round(mins / 60);
   if (hrs < 24) return `Updated ${hrs}h ago`;
@@ -893,10 +913,16 @@ export function ReadinessBadge({
     if (open && !isBadgeRendered(readiness)) setOpenId(null);
   }, [open, readiness, setOpenId]);
 
-  // While open, dismiss on scroll/resize (non-interactive popover; simplest clip-safe choice).
+  // While open, dismiss on scroll/resize (non-interactive popover; simplest clip-safe choice) —
+  // BUT not when the trigger holds keyboard focus: a keyboard user who arrow-scrolls the inbox
+  // would otherwise lose the tooltip's announced description while the element stays focused.
+  // Pointer-driven open always closes on scroll (the pointer has left the trigger).
   useEffect(() => {
     if (!open) return;
-    const onScrollResize = () => setOpenId(null);
+    const onScrollResize = () => {
+      if (document.activeElement === triggerRef.current) return; // keyboard-focused: keep open
+      setOpenId(null);
+    };
     window.addEventListener('scroll', onScrollResize, true);
     window.addEventListener('resize', onScrollResize);
     return () => {
@@ -921,6 +947,7 @@ export function ReadinessBadge({
         type="button"
         className={`chip ${READINESS_CHIP_CLASS[readiness]} ${styles.trigger}`}
         data-readiness={readiness}
+        aria-label={`Merge readiness: ${READINESS_SHORT[readiness]}`}
         aria-describedby={open ? describedById : undefined}
         onMouseEnter={() => {
           hoverTimer.current = window.setTimeout(openNow, HOVER_OPEN_MS);
@@ -977,6 +1004,12 @@ Create `frontend/src/components/shared/ReadinessBadge.module.css` (popover mirro
   cursor: default;
   font: inherit;
 }
+/* Explicit focus ring — the chip background can absorb the UA default outline, and the
+   focus ring is a B1-gate requirement (WCAG 2.4.11). Mirrors the global :focus-visible token. */
+.trigger:focus-visible {
+  outline: 2px solid var(--accent-ring);
+  outline-offset: 2px;
+}
 .dot {
   width: 6px;
   height: 6px;
@@ -1015,7 +1048,9 @@ Create `frontend/src/components/shared/ReadinessBadge.module.css` (popover mirro
 
 - [ ] **Step 6: Wrap the app root with the provider**
 
-In the app root provider nest (find where `OpenTabsProvider`/`AskAiDrawerProvider` are composed — e.g. `frontend/src/PrismApp.tsx`), wrap the subtree that contains both the inbox and PR-detail with `<ReadinessTooltipProvider>…</ReadinessTooltipProvider>`. (The inbox tests use their own provider via `renderInboxRow`; add `ReadinessTooltipProvider` there in Task 4.)
+In the app root provider nest (find where `OpenTabsProvider`/`AskAiDrawerProvider` are composed — e.g. `frontend/src/PrismApp.tsx`), wrap the subtree that contains both the inbox and PR-detail with `<ReadinessTooltipProvider>…</ReadinessTooltipProvider>`. (Inbox and PR-detail are never mounted together, so a single app-root provider covers both surfaces; the singleton is across whichever surface is live.)
+
+**Test-overhead note:** only tests that render **two or more badges and assert the singleton** need to wrap in `ReadinessTooltipProvider` (the `ReadinessBadge.test.tsx` singleton case does). Single-badge tests — `InboxRow.test.tsx` (one row → one badge) and `PrHeader.test.tsx` (one header badge) — rely on `useReadinessTooltip`'s graceful no-provider fallback (open/close works locally; only cross-badge singleton coordination is inert), so they do **not** need the provider. This keeps the provider out of the inbox/header test helpers.
 
 - [ ] **Step 7: Run to verify it passes**
 
@@ -1056,8 +1091,13 @@ In `frontend/src/styles/tokens.css`, add under both `[data-theme="light"]` and `
 
 ```css
   /* #593 dimmed-green for ReadyWithChangesRequested — starting mix; B0/B1-tune per theme
-     so it reads distinct from both plain --success-soft and the yellow family. */
-  --readiness-ready-caveat-soft: color-mix(in oklch, var(--success-soft) 60%, var(--surface-3));
+     so it reads distinct from both plain --success-soft and the yellow family. The oklch
+     surface scale is theme-asymmetric (light --success-soft is light/descending, dark is
+     darker/ascending), so the same mix fraction reads differently — author per theme.
+     Directional starting points: light ~60% success-soft, dark ~50% (dark --success-soft is
+     already lighter, so a lower fraction keeps the dimmed chip separable from plain Ready). */
+  --readiness-ready-caveat-soft: color-mix(in oklch, var(--success-soft) 60%, var(--surface-3)); /* light theme */
+  /* dark theme: --readiness-ready-caveat-soft: color-mix(in oklch, var(--success-soft) 50%, var(--surface-3)); */
 ```
 
 Then add the global chip classes (next to the existing `.chip-success` block, ~line 653):
@@ -1133,6 +1173,12 @@ describe('InboxRow #593 readiness + #516 number', () => {
     const { container } = renderInboxRow({ ...PR, ci: 'failing' });
     const slot = container.querySelector('[data-ci-slot]');
     expect(slot?.querySelector('[data-ci="failing"]')).not.toBeNull();
+  });
+
+  it('still announces CI status via the row aria-label for a failing-CI row (slot is aria-hidden)', () => {
+    // The CI slot/octicon is aria-hidden; CI semantics must reach SR via ciSuffix on the row label.
+    renderInboxRow({ ...PR, ci: 'failing' });
+    expect(screen.getByRole('button', { name: /CI failing/ })).toBeInTheDocument();
   });
 });
 ```
@@ -1231,7 +1277,13 @@ In `frontend/src/components/Inbox/InboxRow.module.css`:
   color: var(--text-2);
   font-family: var(--font-mono);
   flex: 0 1 auto;
+  /* min-width:0 overrides the flex-item default (min-width:auto) so the span can shrink
+     below its content width; white-space:nowrap + overflow:hidden makes it actually clip
+     (ellipsis), so #N truncates before the title rather than wrapping or overflowing. */
+  min-width: 0;
+  white-space: nowrap;
   overflow: hidden;
+  text-overflow: ellipsis;
   margin-right: 6px;
 }
 ```
@@ -1250,9 +1302,9 @@ In `frontend/src/components/Inbox/InboxRow.module.css`:
 
 (Use the existing title element's class name; if the title isn't already in a flex row with `#N`, wrap `#N` + title in a flex container.)
 
-- [ ] **Step 7: Wrap inbox tests with the provider**
+- [ ] **Step 7: Extend the inbox test fixture (no provider needed)**
 
-In `InboxRow.test.tsx`, wrap `renderInboxRow`'s tree with `<ReadinessTooltipProvider>` (import from `../shared/ReadinessTooltipContext`).
+In `InboxRow.test.tsx`, extend the `PR` fixture with `mergeReadiness: 'none', approvals: null, changesRequested: null`. The row renders a single badge, so it relies on `useReadinessTooltip`'s graceful no-provider fallback — **do not** wrap `renderInboxRow` in `ReadinessTooltipProvider` (per Task 3 Step 6 test-overhead note).
 
 - [ ] **Step 8: Run to verify it passes**
 
@@ -1275,12 +1327,13 @@ Extend the detail GraphQL query and parser so the full-load `Pr` record carries 
 
 **Files:**
 - Modify: `PRism.GitHub/GitHubReviewService.cs` (`PrDetailGraphQLQuery`)
-- Modify: `PRism.GitHub/GitHubPrParser.cs` (`ParsePr` + collapsed-count helper)
+- Modify: `PRism.GitHub/GitHubPrParser.cs` (`ParsePr` derivation — `CountLatestReviews` already added here in Task 2)
 - Modify: `PRism.Core.Contracts/Pr.cs` (fields)
-- Test: `tests/PRism.GitHub.Tests/GitHubPrParserTests.cs`
+- Test: `tests/PRism.GitHub.Tests/GitHubReviewServicePrDetailTests.cs` (ParsePr is exercised here via the `GetPrDetailAsync` inline-handler-stub harness — there is **no** `GitHubPrParserTests.cs`)
+- Test: `tests/PRism.GitHub.Tests/GraphQlByteIdentityTests.cs` (the pinned-query byte-identity guard — must be updated when the query changes)
 
 **Interfaces:**
-- Consumes: `MergeReadinessRule.Derive`, `MergeReadiness` (Task 1).
+- Consumes: `MergeReadinessRule.Derive`, `MergeReadiness` (Task 1), `GitHubPrParser.CountLatestReviews` (Task 2).
 - Produces: `Pr.MergeReadiness`, `Pr.Approvals` (`int?`), `Pr.ChangesRequested` (`int?`), `Pr.UpdatedAt` (`DateTimeOffset`).
 
 - [ ] **Step 1: Add fields to `Pr`**
@@ -1297,41 +1350,36 @@ public sealed record Pr(
     DateTimeOffset UpdatedAt = default);
 ```
 
-- [ ] **Step 2: Write the failing parser test**
+- [ ] **Step 2: Write the failing detail test**
 
-Add to `tests/PRism.GitHub.Tests/GitHubPrParserTests.cs` (mirror the existing `ParsePr` fixture style — a `JsonElement` from a canned `pullRequest` body):
+Add to `tests/PRism.GitHub.Tests/GitHubReviewServicePrDetailTests.cs`, using that file's existing `GetPrDetailAsync` inline-handler-stub harness: stub the GraphQL response's `pullRequest` node with the body below (a reviewer changed-then-approved → two history nodes, but `latestReviews` collapses to 1 approval), then assert on the returned `dto.Pr`. Match the file's existing stub-construction helper for the canned response; the assertion targets are what matter:
 
 ```csharp
-[Fact]
-public void ParsePr_derives_readiness_and_collapsed_counts()
-{
-    // A reviewer changed-then-approved (two history nodes) but latestReviews collapses to 1 approval.
-    const string json = """
-    { "title": "t", "body": "", "url": "https://x", "state": "OPEN", "isDraft": false,
-      "mergeable": "MERGEABLE", "mergeStateStatus": "BLOCKED", "reviewDecision": "REVIEW_REQUIRED",
-      "headRefName": "f", "baseRefName": "main", "headRefOid": "h", "baseRefOid": "b",
-      "author": { "login": "a", "avatarUrl": "u" }, "createdAt": "2026-06-20T00:00:00Z",
-      "updatedAt": "2026-06-24T10:00:00Z", "closedAt": null, "mergedAt": null, "changedFiles": 1,
-      "reviews": { "nodes": [
-        { "author": { "login": "alice" }, "state": "CHANGES_REQUESTED", "submittedAt": "2026-06-21T00:00:00Z", "commit": { "oid": "h" } },
-        { "author": { "login": "alice" }, "state": "APPROVED", "submittedAt": "2026-06-22T00:00:00Z", "commit": { "oid": "h" } }
-      ] },
-      "latestReviews": { "nodes": [ { "author": { "login": "alice" }, "state": "APPROVED" } ] } }
-    """;
-    using var doc = System.Text.Json.JsonDocument.Parse(json);
-    var pr = GitHubPrParser.ParsePr(doc.RootElement, new PrReference("acme", "api", 7));
+// pullRequest node stubbed into the GraphQL response:
+//   "state":"OPEN","isDraft":false,"mergeable":"MERGEABLE","mergeStateStatus":"BLOCKED",
+//   "reviewDecision":"REVIEW_REQUIRED","updatedAt":"2026-06-24T10:00:00Z",
+//   "headRefName":"f","baseRefName":"main","headRefOid":"h","baseRefOid":"b",
+//   "author":{"login":"a","avatarUrl":"u"},"createdAt":"2026-06-20T00:00:00Z",
+//   "closedAt":null,"mergedAt":null,"changedFiles":1,"title":"t","body":"","url":"https://x",
+//   "comments":{"pageInfo":{"hasNextPage":false},"nodes":[]},
+//   "reviewThreads":{"pageInfo":{"hasNextPage":false},"nodes":[]},
+//   "reviews":{"nodes":[
+//     {"author":{"login":"alice"},"state":"CHANGES_REQUESTED","submittedAt":"2026-06-21T00:00:00Z","commit":{"oid":"h"}},
+//     {"author":{"login":"alice"},"state":"APPROVED","submittedAt":"2026-06-22T00:00:00Z","commit":{"oid":"h"}}]},
+//   "latestReviews":{"nodes":[{"author":{"login":"alice"},"state":"APPROVED"}]}
 
-    pr.MergeReadiness.Should().Be(MergeReadiness.ReviewRequired);
-    pr.Approvals.Should().Be(1);
-    pr.ChangesRequested.Should().Be(0);
-    pr.UpdatedAt.Should().Be(DateTimeOffset.Parse("2026-06-24T10:00:00Z"));
-}
+var dto = await service.GetPrDetailAsync(new PrReference("acme", "api", 7), CancellationToken.None);
+
+dto.Pr.MergeReadiness.Should().Be(MergeReadiness.ReviewRequired);
+dto.Pr.Approvals.Should().Be(1);
+dto.Pr.ChangesRequested.Should().Be(0);
+dto.Pr.UpdatedAt.Should().Be(DateTimeOffset.Parse("2026-06-24T10:00:00Z"));
 ```
 
 - [ ] **Step 3: Run to verify it fails**
 
-Run: `dotnet test tests/PRism.GitHub.Tests/PRism.GitHub.Tests.csproj --filter FullyQualifiedName~GitHubPrParserTests.ParsePr_derives_readiness`
-Expected: FAIL — fields default to `None`/null.
+Run: `dotnet test tests/PRism.GitHub.Tests/PRism.GitHub.Tests.csproj --filter FullyQualifiedName~GitHubReviewServicePrDetailTests`
+Expected: FAIL — new `dto.Pr` fields default to `None`/null/`default`. **Also expect `GraphQlByteIdentityTests` to fail** once Step 4 lands (the pinned query literal drifts) — Step 5b updates it.
 
 - [ ] **Step 4: Extend the detail query**
 
@@ -1344,9 +1392,9 @@ In `PRism.GitHub/GitHubReviewService.cs`, in `PrDetailGraphQLQuery` add `reviewD
 "latestReviews(first:100){nodes{author{login} state}}" +
 ```
 
-- [ ] **Step 5: Derive in `ParsePr` + add the shared count helper**
+- [ ] **Step 5: Derive in `ParsePr`**
 
-In `PRism.GitHub/GitHubPrParser.cs` `ParsePr`, after `isDraft`/`prState` are computed, derive readiness, counts, and `updatedAt`, and pass them to the `Pr` constructor:
+In `PRism.GitHub/GitHubPrParser.cs` `ParsePr`, after `isDraft`/`prState` are computed, derive readiness, counts, and `updatedAt`, and pass them to the `Pr` constructor. `CountLatestReviews` already lives in this file (added in Task 2) — just call it:
 
 ```csharp
 var mergeStateStatus = GetStr("mergeStateStatus");
@@ -1366,41 +1414,22 @@ ChangesRequested: changesRequested,
 UpdatedAt: updatedAt);
 ```
 
-Add the `CountLatestReviews` helper (identical contract to the inbox reader's — count only `APPROVED`/`CHANGES_REQUESTED` from the already-collapsed `latestReviews`; `(null,null)` when absent). To honor DRY, place it once as an `internal static` in `GitHubPrParser` and have the inbox reader call `GitHubPrParser.CountLatestReviews` instead of its own copy (refactor the Task-2 helper to delegate, or move the canonical copy here and reference it from the batch reader — pick the single home in this task and update the other caller):
+- [ ] **Step 5b: Update the pinned byte-identity literal**
 
-```csharp
-internal static (int? Approvals, int? ChangesRequested) CountLatestReviews(JsonElement pr)
-{
-    if (!pr.TryGetProperty("latestReviews", out var lr)
-        || !lr.TryGetProperty("nodes", out var nodes)
-        || nodes.ValueKind != JsonValueKind.Array)
-        return (null, null);
-
-    int approvals = 0, changes = 0;
-    foreach (var n in nodes.EnumerateArray())
-    {
-        if (n.ValueKind != JsonValueKind.Object) continue;
-        var state = n.TryGetProperty("state", out var s) && s.ValueKind == JsonValueKind.String ? s.GetString() : null;
-        if (string.Equals(state, "APPROVED", StringComparison.Ordinal)) approvals++;
-        else if (string.Equals(state, "CHANGES_REQUESTED", StringComparison.Ordinal)) changes++;
-    }
-    return (approvals, changes);
-}
-```
-
-(If the Task-2 batch reader already defined a private copy, delete it and call `GitHubPrParser.CountLatestReviews` — one home only.)
+`tests/PRism.GitHub.Tests/GraphQlByteIdentityTests.cs` asserts `GitHubReviewService.PrDetailGraphQLQuery` is byte-identical to a separately-hardcoded `ExpectedPrDetail` literal (the #320 anti-drift guard). Step 4 changed the query, so update `ExpectedPrDetail` to match byte-for-byte: insert `reviewDecision updatedAt ` right after `mergeStateStatus ` and the `latestReviews(first:100){nodes{author{login} state}}` selection in the same position the production const adds it. Run `GraphQlByteIdentityTests` and confirm green.
 
 - [ ] **Step 6: Run to verify it passes**
 
-Run: `dotnet test tests/PRism.GitHub.Tests/PRism.GitHub.Tests.csproj --filter FullyQualifiedName~GitHubPrParserTests`
-Expected: PASS.
+Run: `dotnet test tests/PRism.GitHub.Tests/PRism.GitHub.Tests.csproj --filter "FullyQualifiedName~GitHubReviewServicePrDetailTests|FullyQualifiedName~GraphQlByteIdentityTests"`
+Expected: PASS. (Note for the implementer: the network/PAT-gated `FrozenPrismPrTests.Frozen_pr_graphql_shape_unchanged` replays the live query against a stored fixture — after this query change it will report shape drift until re-captured with `PRISM_FROZEN_PR_CAPTURE_FIXTURE=1`. ParsePr reads the new fields null-safely so unit tests are unaffected; re-capture the frozen fixture as part of B1 validation.)
 
 - [ ] **Step 7: Commit**
 
 ```bash
 git add PRism.GitHub/GitHubReviewService.cs PRism.GitHub/GitHubPrParser.cs \
-  PRism.Core.Contracts/Pr.cs PRism.GitHub/Inbox/GitHubPrBatchReader.cs \
-  tests/PRism.GitHub.Tests/GitHubPrParserTests.cs
+  PRism.Core.Contracts/Pr.cs \
+  tests/PRism.GitHub.Tests/GitHubReviewServicePrDetailTests.cs \
+  tests/PRism.GitHub.Tests/GraphQlByteIdentityTests.cs
 git commit -m "feat(593): derive merge-readiness + counts + updatedAt in PR-detail parse"
 ```
 
@@ -1432,6 +1461,17 @@ export interface PrDetailPr {
   updatedAt: string;
 }
 ```
+
+**Carve-out stub (do this here, not in Task 7).** Step 5 below reads `updates.mergeReadiness`, but that field is added to the `ActivePrUpdates` interface only in Task 7 Step 12. For Tasks 1–6 to compile and ship independently of Slice B (the carve-out contract), add the optional field to the interface now, in `frontend/src/hooks/useActivePrUpdates.ts`:
+
+```ts
+export interface ActivePrUpdates {
+  // ... existing fields ...
+  mergeReadiness?: MergeReadiness; // populated by Task 7 (SSE); undefined until then → the ?? fallback uses the full-load value
+}
+```
+
+Until Task 7 wires the SSE field, `updates.mergeReadiness` is always `undefined`, so Step 5's `updates.mergeReadiness ?? data?.pr.mergeReadiness` correctly falls back to the full-load value — the badge ships live-update-free on the existing REST poll if Slice B is carved out.
 
 - [ ] **Step 2: Write the failing header test**
 
@@ -1523,20 +1563,23 @@ git commit -m "feat(593): PR-detail expanded readiness badge replaces bare merge
 Replace the active poll's `N × 3` REST calls/tick with one batched GraphQL query across all subscribed PRs; carry readiness + counts live through the snapshot/SSE. **Structurally independent of Tasks 1–6** — see the carve-out fallback (spec §11): if this lags, the badge ships on the existing REST poll and Slice B becomes a follow-up PR.
 
 **Files:**
-- Modify: `PRism.GitHub/GitHubGraphQL.cs` (extract shared rate-limit guard)
-- Create: `PRism.GitHub/ActivePr/GitHubActivePrBatchReader.cs`
+- Modify: `PRism.GitHub/GitHubGraphQL.cs` (extract shared `internal` rate-limit guard)
+- Create: `PRism.Core/PrDetail/IActivePrBatchReader.cs` (**interface in Core** — the poller consumes it; Core can't reference PRism.GitHub)
+- Create: `PRism.GitHub/ActivePr/GitHubActivePrBatchReader.cs` (implementation)
 - Modify: `PRism.Core.Contracts/ActivePrPollSnapshot.cs` (fields)
-- Modify: `PRism.Core/ActivePr/ActivePrPoller.cs` (batched tick, readinessChanged, whole-tick-abort)
-- Modify: `PRism.Core/ActivePr/ActivePrUpdated.cs` (event fields)
+- Modify: `PRism.Core/PrDetail/ActivePrPoller.cs` (batched tick, readinessChanged + anti-flicker None guard, whole-tick-abort, ctor gains `IActivePrBatchReader`)
+- Modify: `PRism.Core/Events/ActivePrUpdated.cs` (event fields)
 - Modify: `PRism.Web/Sse/SseEventProjection.cs` (`ActivePrUpdatedWire`)
-- Modify: `PRism.GitHub/ServiceCollectionExtensions.cs` (DI)
+- Modify: `PRism.GitHub/Inbox/GitHubPrBatchReader.cs` (call the extracted `ThrowIfRateLimited`; drop its private copy)
+- Modify: `PRism.GitHub/ServiceCollectionExtensions.cs` (DI: register `IActivePrBatchReader`)
 - Modify: `frontend/src/hooks/useActivePrUpdates.ts` (thread readiness)
-- Test: `tests/PRism.GitHub.Tests/ActivePr/GitHubActivePrBatchReaderTests.cs`, `tests/PRism.Core.Tests/ActivePr/ActivePrPollerTests.cs`, `frontend/src/hooks/useActivePrUpdates.test.ts`
+- Test (new): `tests/PRism.GitHub.Tests/ActivePr/GitHubActivePrBatchReaderTests.cs`, `tests/PRism.Core.Tests/PrDetail/ActivePrPollerReadinessTests.cs`, `frontend/src/hooks/useActivePrUpdates.test.ts`
+- Test (migrate): `tests/PRism.Core.Tests/PrDetail/ActivePrCacheTests.cs`, `ActivePrPollerBackoffTests.cs`, `ActivePrPollerSnapshotLogTests.cs`, `ActivePrPollerSubscriberFaultTests.cs` — the poller ctor changes (see Step 10b).
 
 **Interfaces:**
 - Consumes: `GitHubGraphQL.PostAsync`, `GitHubGraphQL.ThrowIfRateLimited`, `MergeReadinessRule.Derive`, `GitHubPrParser.CountLatestReviews`.
 - Produces:
-  - `interface IActivePrBatchReader { Task<IReadOnlyDictionary<PrReference, ActivePrPollSnapshot>> PollBatchAsync(IReadOnlyList<PrReference> refs, CancellationToken ct); }`
+  - `interface IActivePrBatchReader { Task<IReadOnlyDictionary<PrReference, ActivePrPollSnapshot>> PollBatchAsync(IReadOnlyList<PrReference> refs, CancellationToken ct); }` — **declared in `PRism.Core/PrDetail/IActivePrBatchReader.cs`**, mirroring how `IPrBatchReader` (Core) / `GitHubPrBatchReader` (GitHub) are split. Returns `ActivePrPollSnapshot` (already a Core.Contracts type).
   - `ActivePrPollSnapshot.MergeReadiness` (+ `Approvals`/`ChangesRequested` nullable).
   - `ActivePrUpdated.MergeReadiness` + `MergeReadinessChanged` + counts; `ActivePrUpdatedWire` mirror; `ActivePrUpdates.mergeReadiness` (FE).
 
@@ -1544,13 +1587,13 @@ Replace the active poll's `N × 3` REST calls/tick with one batched GraphQL quer
 
 - [ ] **Step 1: Extract the shared rate-limit guard**
 
-In `PRism.GitHub/GitHubGraphQL.cs`, add a public static guard (lift the body from `GitHubPrBatchReader.HasRateLimitError` + its throw) and have `GitHubPrBatchReader` call it (remove its private copy):
+In `PRism.GitHub/GitHubGraphQL.cs`, add a static guard (lift the body from `GitHubPrBatchReader.HasRateLimitError` + its throw). `GitHubGraphQL` is declared `internal static partial class`, so the member is `internal` (a `public` modifier would be silently downgraded — use `internal` to match):
 
 ```csharp
 // Throws RateLimitExceededException on a 200 body carrying errors[].type == "RATE_LIMITED".
 // (HTTP 429 is surfaced by PostAsync as HttpRequestException with StatusCode 429 — callers
 // translate that to RateLimitExceededException at their catch site.)
-public static void ThrowIfRateLimited(JsonElement root, string context)
+internal static void ThrowIfRateLimited(JsonElement root, string context)
 {
     if (!root.TryGetProperty("errors", out var errors) || errors.ValueKind != JsonValueKind.Array) return;
     foreach (var e in errors.EnumerateArray())
@@ -1558,6 +1601,12 @@ public static void ThrowIfRateLimited(JsonElement root, string context)
             && string.Equals(t.GetString(), "RATE_LIMITED", StringComparison.Ordinal))
             throw new RateLimitExceededException($"GitHub GraphQL rate limit (200/RATE_LIMITED) during {context}.", retryAfter: null);
 }
+```
+
+Then refactor the existing `GitHubPrBatchReader` call site: replace the current `if (HasRateLimitError(doc.RootElement)) { throw new RateLimitExceededException("GitHub GraphQL rate limit (200/RATE_LIMITED) during inbox batch hydration.", retryAfter: null); }` block with a single call, and delete the private `HasRateLimitError` method:
+
+```csharp
+GitHubGraphQL.ThrowIfRateLimited(doc.RootElement, "inbox batch hydration");
 ```
 
 - [ ] **Step 2: Add snapshot fields**
@@ -1600,12 +1649,12 @@ public sealed class GitHubActivePrBatchReaderTests
             "a0": { "pullRequest": { "headRefOid": "h1", "baseRefOid": "b1",
                 "state": "OPEN", "isDraft": false, "mergeable": "MERGEABLE",
                 "mergeStateStatus": "DIRTY", "reviewDecision": null,
-                "reviewThreads": { "totalCount": 2 }, "reviews": { "totalCount": 3 },
-                "latestReviews": { "nodes": [] } } },
+                "reviewThreads": { "nodes": [ { "comments": { "totalCount": 2 } } ] },
+                "reviews": { "totalCount": 3 }, "latestReviews": { "nodes": [] } } },
             "a1": { "pullRequest": { "headRefOid": "h2", "baseRefOid": "b2",
                 "state": "OPEN", "isDraft": false, "mergeable": "MERGEABLE",
                 "mergeStateStatus": "CLEAN", "reviewDecision": "APPROVED",
-                "reviewThreads": { "totalCount": 0 }, "reviews": { "totalCount": 1 },
+                "reviewThreads": { "nodes": [] }, "reviews": { "totalCount": 1 },
                 "latestReviews": { "nodes": [ { "author": { "login": "a" }, "state": "APPROVED" } ] } } },
             "rateLimit": { "cost": 1, "remaining": 4999 } } }
         """;
@@ -1615,26 +1664,27 @@ public sealed class GitHubActivePrBatchReaderTests
         var map = await reader.PollBatchAsync(refs, CancellationToken.None);
 
         map[refs[0]].MergeReadiness.Should().Be(MergeReadiness.Conflicts);
-        map[refs[0]].CommentCount.Should().Be(2); // reviewThreads.totalCount == REST inline-comment parity
+        map[refs[0]].CommentCount.Should().Be(2);
         map[refs[1]].MergeReadiness.Should().Be(MergeReadiness.Ready);
         map[refs[1]].Approvals.Should().Be(1);
     }
 
     [Fact]
-    public async Task Comment_count_equals_rest_inline_comment_count()
+    public async Task Comment_count_counts_comments_not_threads()
     {
-        // reviewThreads.totalCount must equal REST pulls/{n}/comments for a PR with BOTH
-        // inline review comments AND conversation comments (the latter must NOT inflate it).
+        // REST pulls/{n}/comments returns one entry PER inline comment. Two threads — one with 3
+        // replies, one with 1 — must yield CommentCount=4 (per-comment), NOT 2 (per-thread).
         const string body = """
         { "data": { "a0": { "pullRequest": { "headRefOid": "h", "baseRefOid": "b",
             "state": "OPEN", "isDraft": false, "mergeable": "MERGEABLE", "mergeStateStatus": "CLEAN",
-            "reviewDecision": "APPROVED", "reviewThreads": { "totalCount": 4 },
+            "reviewDecision": "APPROVED",
+            "reviewThreads": { "nodes": [ { "comments": { "totalCount": 3 } }, { "comments": { "totalCount": 1 } } ] },
             "reviews": { "totalCount": 2 }, "latestReviews": { "nodes": [] } } },
             "rateLimit": { "cost": 1, "remaining": 4999 } } }
         """;
         var reader = NewReaderReturning(body);
         var map = await reader.PollBatchAsync(new[] { new PrReference("o", "r", 1) }, CancellationToken.None);
-        map.Values.Single().CommentCount.Should().Be(4);
+        map.Values.Single().CommentCount.Should().Be(4); // 3 + 1, not the 2-thread count
     }
 
     [Fact]
@@ -1644,7 +1694,7 @@ public sealed class GitHubActivePrBatchReaderTests
         { "data": { "a0": { "pullRequest": null },
             "a1": { "pullRequest": { "headRefOid": "h2", "baseRefOid": "b2", "state": "OPEN",
                 "isDraft": false, "mergeable": "MERGEABLE", "mergeStateStatus": "CLEAN",
-                "reviewDecision": "APPROVED", "reviewThreads": { "totalCount": 0 },
+                "reviewDecision": "APPROVED", "reviewThreads": { "nodes": [] },
                 "reviews": { "totalCount": 0 }, "latestReviews": { "nodes": [] } } },
             "rateLimit": { "cost": 1, "remaining": 4999 } } }
         """;
@@ -1653,6 +1703,33 @@ public sealed class GitHubActivePrBatchReaderTests
         var map = await reader.PollBatchAsync(refs, CancellationToken.None);
         map.Should().NotContainKey(refs[0]);
         map.Should().ContainKey(refs[1]);
+    }
+
+    [Fact]
+    public async Task Detects_merge_close_transition_via_state_field()
+    {
+        // GraphQL `state` returns MERGED/CLOSED directly; PrStates.FromGitHub matches "merged"
+        // case-insensitively regardless of the `merged` bool, so a PR that merged mid-subscription
+        // resolves to PrState.Merged (the poller then publishes IsMerged=true). Guards the live
+        // "this PR was merged" banner against a regression if `state` is ever dropped from the query.
+        const string body = """
+        { "data": {
+            "a0": { "pullRequest": { "headRefOid": "h", "baseRefOid": "b", "state": "MERGED",
+                "isDraft": false, "mergeable": "MERGEABLE", "mergeStateStatus": "CLEAN",
+                "reviewDecision": "APPROVED", "reviewThreads": { "nodes": [] },
+                "reviews": { "totalCount": 1 }, "latestReviews": { "nodes": [] } } },
+            "a1": { "pullRequest": { "headRefOid": "h2", "baseRefOid": "b2", "state": "CLOSED",
+                "isDraft": false, "mergeable": "UNKNOWN", "mergeStateStatus": "UNKNOWN",
+                "reviewDecision": null, "reviewThreads": { "nodes": [] },
+                "reviews": { "totalCount": 0 }, "latestReviews": { "nodes": [] } } },
+            "rateLimit": { "cost": 1, "remaining": 4999 } } }
+        """;
+        var reader = NewReaderReturning(body);
+        var refs = new[] { new PrReference("o", "r", 1), new PrReference("o", "r", 2) };
+        var map = await reader.PollBatchAsync(refs, CancellationToken.None);
+        map[refs[0]].PrState.Should().Be(PrState.Merged);
+        map[refs[0]].MergeReadiness.Should().Be(MergeReadiness.Merged); // terminal — FE renders no badge
+        map[refs[1]].PrState.Should().Be(PrState.Closed);
     }
 
     [Fact]
@@ -1674,9 +1751,23 @@ public sealed class GitHubActivePrBatchReaderTests
 Run: `dotnet test tests/PRism.GitHub.Tests/PRism.GitHub.Tests.csproj --filter FullyQualifiedName~GitHubActivePrBatchReaderTests`
 Expected: FAIL — reader does not exist.
 
-- [ ] **Step 5: Create the batched reader**
+- [ ] **Step 5: Create the interface (Core) + the batched reader (GitHub)**
 
-Create `PRism.GitHub/ActivePr/GitHubActivePrBatchReader.cs` (mirror `GitHubPrBatchReader`'s alias-build + transport + per-alias isolation; selection/parse are poll-specific):
+First create `PRism.Core/PrDetail/IActivePrBatchReader.cs` (interface in Core — the poller consumes it):
+
+```csharp
+using PRism.Core.Contracts;
+
+namespace PRism.Core.PrDetail;
+
+public interface IActivePrBatchReader
+{
+    Task<IReadOnlyDictionary<PrReference, ActivePrPollSnapshot>> PollBatchAsync(
+        IReadOnlyList<PrReference> refs, CancellationToken ct);
+}
+```
+
+Then create `PRism.GitHub/ActivePr/GitHubActivePrBatchReader.cs` (mirror `GitHubPrBatchReader`'s alias-build + transport + per-alias isolation; selection/parse are poll-specific):
 
 ```csharp
 using System.Globalization;
@@ -1685,14 +1776,9 @@ using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using PRism.Core.Contracts;
+using PRism.Core.PrDetail;
 
 namespace PRism.GitHub.ActivePr;
-
-public interface IActivePrBatchReader
-{
-    Task<IReadOnlyDictionary<PrReference, ActivePrPollSnapshot>> PollBatchAsync(
-        IReadOnlyList<PrReference> refs, CancellationToken ct);
-}
 
 public sealed class GitHubActivePrBatchReader : IActivePrBatchReader
 {
@@ -1757,7 +1843,7 @@ public sealed class GitHubActivePrBatchReader : IActivePrBatchReader
 
         string Str(string n) => pr.TryGetProperty(n, out var e) && e.ValueKind == JsonValueKind.String ? e.GetString() ?? "" : "";
         string? StrOrNull(string n) => pr.TryGetProperty(n, out var e) && e.ValueKind == JsonValueKind.String ? e.GetString() : null;
-        int Count(string conn) => pr.TryGetProperty(conn, out var c) && c.ValueKind == JsonValueKind.Object
+        int TotalCount(string conn) => pr.TryGetProperty(conn, out var c) && c.ValueKind == JsonValueKind.Object
             && c.TryGetProperty("totalCount", out var tc) && tc.ValueKind == JsonValueKind.Number ? tc.GetInt32() : 0;
 
         var headSha = Str("headRefOid");
@@ -1773,12 +1859,32 @@ public sealed class GitHubActivePrBatchReader : IActivePrBatchReader
             BaseSha: Str("baseRefOid"),
             Mergeability: Str("mergeable"),
             PrState: state,
-            CommentCount: Count("reviewThreads"),  // REST pulls/{n}/comments parity (inline review comments)
-            ReviewCount: Count("reviews"),
+            CommentCount: CountReviewComments(pr),  // REST pulls/{n}/comments parity: per-COMMENT, not per-thread
+            ReviewCount: TotalCount("reviews"),
             MergeReadiness: readiness,
             Approvals: approvals,
             ChangesRequested: changes);
         return true;
+    }
+
+    // REST pulls/{n}/comments returns one entry PER inline review comment; a single reviewThread
+    // holds multiple comments, so reviewThreads.totalCount (thread count) is NOT parity. Sum the
+    // per-thread comment counts instead (caps at 100 threads — the pagination ceiling).
+    private static int CountReviewComments(JsonElement pr)
+    {
+        if (!pr.TryGetProperty("reviewThreads", out var rt)
+            || !rt.TryGetProperty("nodes", out var nodes)
+            || nodes.ValueKind != JsonValueKind.Array)
+            return 0;
+        int total = 0;
+        foreach (var thread in nodes.EnumerateArray())
+        {
+            if (thread.ValueKind != JsonValueKind.Object) continue;
+            if (thread.TryGetProperty("comments", out var c) && c.ValueKind == JsonValueKind.Object
+                && c.TryGetProperty("totalCount", out var tc) && tc.ValueKind == JsonValueKind.Number)
+                total += tc.GetInt32();
+        }
+        return total;
     }
 
     private static string BuildQuery(List<(string Alias, PrReference Ref)> aliased)
@@ -1790,7 +1896,7 @@ public sealed class GitHubActivePrBatchReader : IActivePrBatchReader
               .Append(JsonSerializer.Serialize(r.Repo)).Append("){ pullRequest(number:")
               .Append(r.Number.ToString(CultureInfo.InvariantCulture))
               .Append("){ headRefOid baseRefOid state isDraft mergeable mergeStateStatus reviewDecision ")
-              .Append("reviewThreads{ totalCount } reviews{ totalCount } ")
+              .Append("reviewThreads(first:100){ nodes{ comments{ totalCount } } } reviews{ totalCount } ")
               .Append("latestReviews(first:100){ nodes{ author{ login } state } } } } ");
         sb.Append("rateLimit{ cost remaining } }");
         return sb.ToString();
@@ -1804,7 +1910,7 @@ public sealed class GitHubActivePrBatchReader : IActivePrBatchReader
 }
 ```
 
-(`state: "OPEN"` is fetched and `merged:false` is passed to `FromGitHub` because the poll's job is the open-PR live signal; a PR that merges/closes mid-subscription surfaces via the existing `isMerged`/`isClosed` latch on the REST head probe / detail reload path. If a future requirement needs the poll itself to detect merge transitions, fetch `mergedAt`/`closedAt` here too — out of scope for this slice.)
+(**The batched poll DOES detect merge/close transitions** — keep `state` in the query. GraphQL `state` returns `OPEN`/`CLOSED`/`MERGED` directly, and `PrStates.FromGitHub` matches `"merged"`/`"closed"` case-insensitively *independent* of the `merged` bool (which only matters for the REST path, where state is lowercase `open`/`closed` and a merged PR reads as `closed`). So `FromGitHub("MERGED", merged:false)` → `PrState.Merged`. A PR that merges/closes mid-subscription resolves to its terminal `PrState`; `MergeReadinessRule.Derive` returns `Merged`/`Closed` (badge renders nothing); and the poller's `stateChanged` branch publishes `ActivePrUpdated` with `IsMerged`/`IsClosed` from `snapshot.PrState`, driving the live "this PR was merged" banner exactly as the old REST poll did. Do **not** drop `state` from the query under the impression it's unused for the open-only badge — the `Detects_merge_close_transition_via_state_field` test guards this.)
 
 - [ ] **Step 6: Run to verify the reader tests pass**
 
@@ -1813,7 +1919,7 @@ Expected: PASS.
 
 - [ ] **Step 7: Add event + wire + poller-state fields**
 
-`PRism.Core/ActivePr/ActivePrUpdated.cs` — add to the record:
+`PRism.Core/Events/ActivePrUpdated.cs` — add to the record:
 
 ```csharp
 MergeReadiness MergeReadiness = MergeReadiness.None,
@@ -1822,13 +1928,13 @@ int? Approvals = null,
 int? ChangesRequested = null);
 ```
 
-`PRism.Web/Sse/SseEventProjection.cs` — extend `ActivePrUpdatedWire` and the projection mapping with `MergeReadiness` (kebab via the global converter), `MergeReadinessChanged`, `Approvals`, `ChangesRequested`.
+`PRism.Web/Sse/SseEventProjection.cs` — extend `ActivePrUpdatedWire` and the projection mapping with `MergeReadiness`, `MergeReadinessChanged`, `Approvals`, `ChangesRequested`. **Verify the SSE channel serializes `MergeReadiness` kebab-case** (e.g. `"behind-base"`), not as an integer: confirm the channel that writes `ActivePrUpdatedWire` to the response stream uses `JsonSerializerOptionsFactory.Api` (the options carrying `JsonStringEnumConverter(KebabCaseJsonNamingPolicy)`). If it serializes with default options, the enum would emit as a number and the FE `MergeReadiness` union would silently never match — add an SSE serialization test asserting the kebab string appears in the wire payload.
 
 In `ActivePrPoller` state class, add `public MergeReadiness? LastMergeReadiness { get; set; }`.
 
 - [ ] **Step 8: Write the failing poller test**
 
-Add to `tests/PRism.Core.Tests/ActivePr/ActivePrPollerTests.cs`:
+Add to a new `tests/PRism.Core.Tests/PrDetail/ActivePrPollerReadinessTests.cs` (the poller tests live under `PrDetail/`, not `ActivePr/`):
 
 ```csharp
 [Fact]
@@ -1866,12 +1972,12 @@ public async Task Whole_tick_abort_retains_last_known_and_does_not_publish_blank
 
 - [ ] **Step 9: Run to verify it fails**
 
-Run: `dotnet test tests/PRism.Core.Tests/PRism.Core.Tests.csproj --filter FullyQualifiedName~ActivePrPollerTests`
+Run: `dotnet test tests/PRism.Core.Tests/PRism.Core.Tests.csproj --filter FullyQualifiedName~ActivePrPollerReadinessTests`
 Expected: FAIL — poller still per-ref REST; no `MergeReadinessChanged`.
 
 - [ ] **Step 10: Rewrite `TickAsync` to batch**
 
-In `PRism.Core/ActivePr/ActivePrPoller.cs`, inject `IActivePrBatchReader` and rewrite `TickAsync`: gather `UniquePrRefs()`, drop refs whose `NextRetryAt > now`, issue **one** `PollBatchAsync` for the rest. On `RateLimitExceededException`/transport abort, apply backoff to all candidate refs and **return without publishing** (retain last-known — whole-tick-abort contract). On success, run the existing per-ref diff/publish using the returned snapshot, adding `readinessChanged = state.LastMergeReadiness is { } prev && prev != snapshot.MergeReadiness;` to the publish trigger and to the published `ActivePrUpdated`. A ref absent from the returned map (per-alias null) keeps its last-known and does not publish:
+In `PRism.Core/PrDetail/ActivePrPoller.cs`, inject `IActivePrBatchReader` and rewrite `TickAsync`: gather `UniquePrRefs()`, drop refs whose `NextRetryAt > now`, issue **one** `PollBatchAsync` for the rest. On `RateLimitExceededException`/transport abort, apply backoff to all candidate refs and **return without publishing** (retain last-known — whole-tick-abort contract). On success, run the existing per-ref diff/publish using the returned snapshot, adding the anti-flicker `readinessChanged` trigger (below) to the publish condition and to the published `ActivePrUpdated`. A ref absent from the returned map (per-alias null) keeps its last-known and does not publish:
 
 ```csharp
 internal async Task TickAsync(DateTimeOffset now, CancellationToken ct)
@@ -1887,10 +1993,19 @@ internal async Task TickAsync(DateTimeOffset now, CancellationToken ct)
         snapshots = await _batch.PollBatchAsync(candidates, ct).ConfigureAwait(false);
     }
     catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+    catch (RateLimitExceededException ex)
+    {
+        // Expected backoff (GitHub rate limit). Retain last-known for all candidates, back off, publish nothing.
+        s_pollRateLimitedLog(_logger, candidates.Count, ex);
+        foreach (var r in candidates) ApplyBackoff(_state[r], now);
+        return;
+    }
     catch (Exception ex)
     {
-        // Whole-tick abort: retain last-known for every candidate, back off, publish nothing.
-        s_pollFailedLog(_logger, candidates.Count, ex);
+        // Whole-tick abort on transport / poison payload (e.g. JsonException from a truncated body
+        // or a GitHub schema change). Log at ERROR so a persistent break is visible — a silent
+        // back-off-every-tick would otherwise mask it. Retain last-known, back off, publish nothing.
+        s_pollTickFailedLog(_logger, candidates.Count, ex);
         foreach (var r in candidates) ApplyBackoff(_state[r], now);
         return;
     }
@@ -1904,7 +2019,12 @@ internal async Task TickAsync(DateTimeOffset now, CancellationToken ct)
         var baseChanged = state.LastBaseSha is { } pb && pb != snapshot.BaseSha;
         var commentChanged = state.LastCommentCount is { } pc && pc != snapshot.CommentCount;
         var stateChanged = state.LastPrState is { } ps && ps != snapshot.PrState;
-        var readinessChanged = state.LastMergeReadiness is { } pr && pr != snapshot.MergeReadiness;
+        // Anti-flicker: only a change TO a real (non-None) readiness publishes. A transient
+        // None (GitHub's async mergeStateStatus recompute returning UNKNOWN) must not blank or
+        // churn the live badge — never-cache-UNKNOWN (D4) applied to the live surface. Terminal
+        // Merged/Closed are non-None and ride stateChanged anyway, so the badge still clears on merge.
+        var readinessChanged = state.LastMergeReadiness is { } pr && pr != snapshot.MergeReadiness
+            && snapshot.MergeReadiness != MergeReadiness.None;
 
         if (firstPoll || headChanged || baseChanged || commentChanged || stateChanged || readinessChanged)
         {
@@ -1929,7 +2049,10 @@ internal async Task TickAsync(DateTimeOffset now, CancellationToken ct)
         state.LastBaseSha = snapshot.BaseSha;
         state.LastCommentCount = snapshot.CommentCount;
         state.LastPrState = snapshot.PrState;
-        state.LastMergeReadiness = snapshot.MergeReadiness;
+        // Retain last-known non-None readiness so a transient UNKNOWN→None doesn't reset the
+        // baseline and cause a redundant re-publish on the next None→Ready flap.
+        if (snapshot.MergeReadiness != MergeReadiness.None)
+            state.LastMergeReadiness = snapshot.MergeReadiness;
         state.ConsecutiveErrors = 0;
         state.NextRetryAt = null;
         _cache.Update(prRef, new ActivePrSnapshot(snapshot.HeadSha, null, now, snapshot.BaseSha));
@@ -1937,14 +2060,25 @@ internal async Task TickAsync(DateTimeOffset now, CancellationToken ct)
 }
 ```
 
-(`_batch` is the injected `IActivePrBatchReader`; keep `_review.PollActivePrAsync` untouched for its 3 non-poller callers. The `s_pollFailedLog` delegate's signature changes from per-ref to per-tick-count — update its `LoggerMessage` definition.)
+(`_batch` is the injected `IActivePrBatchReader`, added as a new ctor parameter on `ActivePrPoller`; keep `_review.PollActivePrAsync` untouched for its 3 non-poller callers. Replace the old per-ref `s_pollFailedLog` `LoggerMessage` with two per-tick-count delegates: `s_pollRateLimitedLog` (info/warning) and `s_pollTickFailedLog` (error).)
+
+- [ ] **Step 10b: Migrate the existing poller tests + verify DI ordering**
+
+Adding the `IActivePrBatchReader` ctor parameter breaks every `new ActivePrPoller(registry, review, bus, cache, logger, env)` call site and changes tick behavior (the per-ref REST path no longer runs). Update the four existing test files under `tests/PRism.Core.Tests/PrDetail/` — `ActivePrCacheTests.cs`, `ActivePrPollerBackoffTests.cs`, `ActivePrPollerSnapshotLogTests.cs`, `ActivePrPollerSubscriberFaultTests.cs`:
+- Construct the poller with a fake `IActivePrBatchReader` and seed snapshots via `PollBatchAsync` (one returned dictionary per tick) instead of the old `review.SetSnapshot(...)` per-ref REST seeding.
+- The backoff / snapshot-log / subscriber-fault behaviors now exercise the batched path: a fake reader that throws `RateLimitExceededException` drives backoff; one that returns a partial dictionary drives per-alias drop; one that returns changed snapshots drives the publish/log assertions.
+- Run each migrated file to confirm it compiles and passes against the new tick.
+
+**DI ordering:** `AddHostedService<ActivePrPoller>()` (in `PRism.Core/ServiceCollectionExtensions.cs`) now resolves `IActivePrBatchReader`, whose implementation is registered in `PRism.GitHub/ServiceCollectionExtensions.cs` (Step 11). Confirm the composition root (`PRism.Web/Program.cs`) calls the GitHub registration **before or alongside** the Core registration so the hosted service resolves at startup (DI resolution is order-independent within a single `BuildServiceProvider`, but both `AddXxx` calls must run before `Build()` — verify both are wired in `Program.cs`).
 
 - [ ] **Step 11: Register the reader**
 
 In `PRism.GitHub/ServiceCollectionExtensions.cs`, register `IActivePrBatchReader` mirroring the `IPrBatchReader` registration (same token/host/factory closures):
 
 ```csharp
-services.AddSingleton<PRism.GitHub.ActivePr.IActivePrBatchReader>(sp =>
+// Interface in PRism.Core.PrDetail; implementation in PRism.GitHub.ActivePr. The host closure
+// reads config.Current at call time (hot-reloadable host) — matches the IPrBatchReader registration.
+services.AddSingleton<PRism.Core.PrDetail.IActivePrBatchReader>(sp =>
 {
     var tokens = sp.GetRequiredService<ITokenStore>();
     var factory = sp.GetRequiredService<IHttpClientFactory>();
@@ -1959,20 +2093,21 @@ services.AddSingleton<PRism.GitHub.ActivePr.IActivePrBatchReader>(sp =>
 
 - [ ] **Step 12: Thread readiness through the FE hook**
 
-In `frontend/src/hooks/useActivePrUpdates.ts`, add `mergeReadiness: MergeReadiness | undefined` to `ActivePrUpdates`, read it from the `pr-updated` event, and store the latest non-null value:
+In `frontend/src/hooks/useActivePrUpdates.ts`, the `mergeReadiness?: MergeReadiness` field already exists on `ActivePrUpdates` (added as the carve-out stub in Task 6 Step 1). Now **populate** it: read the readiness fields from the `pr-updated` event and store the latest value, latching on `mergeReadinessChanged`:
 
 ```ts
 import type { MergeReadiness } from '../components/shared/mergeReadiness';
-// in ActivePrUpdates: mergeReadiness?: MergeReadiness;
 // in the handler:
 mergeReadiness: event.mergeReadinessChanged ? event.mergeReadiness : s.mergeReadiness,
 ```
+
+(Also extend the SSE event type the stream emits with `mergeReadiness`/`mergeReadinessChanged` so the handler reads typed fields, matching the `ActivePrUpdatedWire` shape from Step 7.)
 
 Add a FE test in `frontend/src/hooks/useActivePrUpdates.test.ts` asserting a `pr-updated` event with `mergeReadinessChanged: true, mergeReadiness: 'ready'` surfaces `mergeReadiness === 'ready'`.
 
 - [ ] **Step 13: Run all Slice B tests**
 
-Run: `dotnet test tests/PRism.Core.Tests/PRism.Core.Tests.csproj --filter FullyQualifiedName~ActivePrPollerTests`
+Run: `dotnet test tests/PRism.Core.Tests/PRism.Core.Tests.csproj --filter FullyQualifiedName~ActivePrPoller` (covers the new `ActivePrPollerReadinessTests` **and** the migrated `ActivePrCacheTests`/`ActivePrPollerBackoffTests`/`ActivePrPollerSnapshotLogTests`/`ActivePrPollerSubscriberFaultTests`)
 Then: `dotnet test tests/PRism.GitHub.Tests/PRism.GitHub.Tests.csproj --filter FullyQualifiedName~GitHubActivePrBatchReaderTests`
 Then (from `frontend/`): `npx vitest run src/hooks/useActivePrUpdates.test.ts`
 Expected: PASS.
@@ -1987,12 +2122,17 @@ Capture live via `gh api graphql` with the exact emitted query + the reader's `r
 - [ ] **Step 15: Commit**
 
 ```bash
-git add PRism.GitHub/GitHubGraphQL.cs PRism.GitHub/ActivePr/GitHubActivePrBatchReader.cs \
-  PRism.Core.Contracts/ActivePrPollSnapshot.cs PRism.Core/ActivePr/ActivePrPoller.cs \
-  PRism.Core/ActivePr/ActivePrUpdated.cs PRism.Web/Sse/SseEventProjection.cs \
+git add PRism.GitHub/GitHubGraphQL.cs PRism.GitHub/Inbox/GitHubPrBatchReader.cs \
+  PRism.Core/PrDetail/IActivePrBatchReader.cs PRism.GitHub/ActivePr/GitHubActivePrBatchReader.cs \
+  PRism.Core.Contracts/ActivePrPollSnapshot.cs PRism.Core/PrDetail/ActivePrPoller.cs \
+  PRism.Core/Events/ActivePrUpdated.cs PRism.Web/Sse/SseEventProjection.cs \
   PRism.GitHub/ServiceCollectionExtensions.cs frontend/src/hooks/useActivePrUpdates.ts \
   tests/PRism.GitHub.Tests/ActivePr/GitHubActivePrBatchReaderTests.cs \
-  tests/PRism.Core.Tests/ActivePr/ActivePrPollerTests.cs \
+  tests/PRism.Core.Tests/PrDetail/ActivePrPollerReadinessTests.cs \
+  tests/PRism.Core.Tests/PrDetail/ActivePrCacheTests.cs \
+  tests/PRism.Core.Tests/PrDetail/ActivePrPollerBackoffTests.cs \
+  tests/PRism.Core.Tests/PrDetail/ActivePrPollerSnapshotLogTests.cs \
+  tests/PRism.Core.Tests/PrDetail/ActivePrPollerSubscriberFaultTests.cs \
   frontend/src/hooks/useActivePrUpdates.test.ts
 git commit -m "feat(593): Slice B — batched active-poll GraphQL reader + live readiness/SSE (epic #598)"
 ```
@@ -2065,4 +2205,6 @@ git commit -m "test(593): B1 readiness visual specs + parity baseline regen"
 - **Single-PR `PollActivePrAsync` leaves `MergeReadiness = None`**: REST `/pulls/{n}` has no `reviewDecision`, and its 3 non-poller callers consume only `HeadSha`; the batched path is the readiness source.
 
 **Carve-out reminder (Global Constraints):** Tasks 1–6 are green-independent of Task 7. If Task 7 lags, ship Tasks 1–6 (badge on the existing REST poll via the additive field) and carve Slice B into a follow-up perf-only PR.
+
+**ce-doc-review round 1 (6 personas) — corrections folded in.** Verified against the codebase; the material fixes: count parity now sums per-thread `comments.totalCount` (was the wrong `reviewThreads.totalCount` thread count — would have broken the SSE "new comment" delta); `IActivePrBatchReader` interface moved to `PRism.Core/PrDetail/` (Core can't reference PRism.GitHub — was a compile break); the four existing `ActivePr*` poller tests + ctor + DI migration added (Task 7 Step 10b); `GraphQlByteIdentityTests` literal update added (Task 5 Step 5b — pinned-query guard); `InboxRefreshOrchestrator.ComputeDiff` gains `MergeReadiness` so readiness-only flips publish `InboxUpdated`; all `PRism.Core/ActivePr/*` paths corrected to `PrDetail/` + `Events/`; `BatchPrData` located in `PRism.Core/Inbox/IPrBatchReader.cs`; `CountLatestReviews` single-homed in `GitHubPrParser` from Task 2; `ThrowIfRateLimited` is `internal` (not `public`) with the call-site refactor shown; `readinessChanged` gains an anti-flicker None guard; the merged-transition comment corrected (the poll *does* detect merges via `state`) + tests added; tooltip scroll-close now spares keyboard-focused triggers; `.num` truncation CSS fixed; explicit `.trigger:focus-visible`; `ageLine` upper-bound guard; distinct badge `aria-label`; per-theme caveat-soft directional value; SSE kebab-serialization verification note. The single owner-decision finding (1-PR-with-carve-out vs upfront 2-PR split, re-raised given the parity bug — now fixed) is surfaced to the human-review gate, not auto-resolved.
 
