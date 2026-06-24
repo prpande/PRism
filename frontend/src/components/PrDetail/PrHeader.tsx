@@ -158,7 +158,7 @@ interface PrHeaderProps {
   // #512 — the viewer's most-recent submitted review on this PR (null = none).
   viewerReview?: ViewerReview | null;
   // #593 — merge-readiness badge (expanded variant). Replaces the bare mergeability chip.
-  // Keep `mergeability` above for legacy (chip still renders alongside until chip is removed in §9).
+  // The `mergeability` prop above is kept for legacy callers (§9); the old chip is already removed.
   mergeReadiness?: MergeReadiness;
   approvals?: number | null;
   changesRequested?: number | null;
