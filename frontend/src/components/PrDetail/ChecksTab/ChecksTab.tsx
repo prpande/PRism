@@ -284,27 +284,18 @@ const GLYPH_PATH: Record<RowGlyph, string> = {
   dash: 'M2 7.75A.75.75 0 0 1 2.75 7h10.5a.75.75 0 0 1 0 1.5H2.75A.75.75 0 0 1 2 7.75Z',
 };
 
+const GLYPH_CLS: Record<RowGlyph, string> = {
+  cross: styles.glyphFail,
+  alert: styles.glyphAlert,
+  spinner: styles.glyphPending,
+  check: styles.glyphPass,
+  dash: styles.glyphNeutral,
+};
+
 function RowGlyphIcon({ glyph }: { glyph: RowGlyph }) {
-  let cls: string;
-  switch (glyph) {
-    case 'cross':
-      cls = styles.glyphFail;
-      break;
-    case 'alert':
-      cls = styles.glyphAlert;
-      break;
-    case 'spinner':
-      cls = styles.glyphPending;
-      break;
-    case 'check':
-      cls = styles.glyphPass;
-      break;
-    default:
-      cls = styles.glyphNeutral;
-  }
   return (
     <svg
-      className={`${styles.glyph} ${cls}`}
+      className={`${styles.glyph} ${GLYPH_CLS[glyph]}`}
       data-glyph={glyph}
       aria-hidden="true"
       viewBox="0 0 16 16"
