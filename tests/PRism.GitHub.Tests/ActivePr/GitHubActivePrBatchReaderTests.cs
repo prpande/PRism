@@ -1,0 +1,127 @@
+using System.Net;
+using FluentAssertions;
+using PRism.Core.Contracts;
+using PRism.Core.Inbox;
+using PRism.GitHub.ActivePr;
+using PRism.GitHub.Tests.TestHelpers;   // FakeHttpClientFactory, FakeHttpMessageHandler
+using Xunit;
+
+namespace PRism.GitHub.Tests.ActivePr;
+
+public sealed class GitHubActivePrBatchReaderTests
+{
+    // Construct a reader whose every GraphQL POST returns `body` with HTTP 200.
+    private static GitHubActivePrBatchReader NewReaderReturning(string body)
+    {
+        var handler = new FakeHttpMessageHandler(_ =>
+        {
+            var resp = new HttpResponseMessage(HttpStatusCode.OK);
+            resp.Content = new StringContent(body, System.Text.Encoding.UTF8, "application/json");
+            return resp;
+        });
+        return new GitHubActivePrBatchReader(
+            new FakeHttpClientFactory(handler, new Uri("https://api.github.com/")),
+            () => Task.FromResult<string?>("token"),
+            () => "https://github.com");
+    }
+
+    [Fact]
+    public async Task Batches_all_refs_and_derives_readiness_per_alias()
+    {
+        const string body = """
+        { "data": {
+            "a0": { "pullRequest": { "headRefOid": "h1", "baseRefOid": "b1",
+                "state": "OPEN", "isDraft": false, "mergeable": "MERGEABLE",
+                "mergeStateStatus": "DIRTY", "reviewDecision": null,
+                "reviewThreads": { "nodes": [ { "comments": { "totalCount": 2 } } ] },
+                "reviews": { "totalCount": 3 }, "latestReviews": { "nodes": [] } } },
+            "a1": { "pullRequest": { "headRefOid": "h2", "baseRefOid": "b2",
+                "state": "OPEN", "isDraft": false, "mergeable": "MERGEABLE",
+                "mergeStateStatus": "CLEAN", "reviewDecision": "APPROVED",
+                "reviewThreads": { "nodes": [] }, "reviews": { "totalCount": 1 },
+                "latestReviews": { "nodes": [ { "author": { "login": "a" }, "state": "APPROVED" } ] } } },
+            "rateLimit": { "cost": 1, "remaining": 4999 } } }
+        """;
+        var reader = NewReaderReturning(body);
+        var refs = new[] { new PrReference("o", "r", 1), new PrReference("o", "r", 2) };
+
+        var map = await reader.PollBatchAsync(refs, CancellationToken.None);
+
+        map[refs[0]].MergeReadiness.Should().Be(MergeReadiness.Conflicts);
+        map[refs[0]].CommentCount.Should().Be(2);
+        map[refs[1]].MergeReadiness.Should().Be(MergeReadiness.Ready);
+        map[refs[1]].Approvals.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task Comment_count_counts_comments_not_threads()
+    {
+        // REST pulls/{n}/comments returns one entry PER inline comment. Two threads — one with 3
+        // replies, one with 1 — must yield CommentCount=4 (per-comment), NOT 2 (per-thread).
+        const string body = """
+        { "data": { "a0": { "pullRequest": { "headRefOid": "h", "baseRefOid": "b",
+            "state": "OPEN", "isDraft": false, "mergeable": "MERGEABLE", "mergeStateStatus": "CLEAN",
+            "reviewDecision": "APPROVED",
+            "reviewThreads": { "nodes": [ { "comments": { "totalCount": 3 } }, { "comments": { "totalCount": 1 } } ] },
+            "reviews": { "totalCount": 2 }, "latestReviews": { "nodes": [] } } },
+            "rateLimit": { "cost": 1, "remaining": 4999 } } }
+        """;
+        var reader = NewReaderReturning(body);
+        var map = await reader.PollBatchAsync(new[] { new PrReference("o", "r", 1) }, CancellationToken.None);
+        map.Values.Single().CommentCount.Should().Be(4); // 3 + 1, not the 2-thread count
+    }
+
+    [Fact]
+    public async Task Per_alias_null_node_drops_only_that_pr()
+    {
+        const string body = """
+        { "data": { "a0": { "pullRequest": null },
+            "a1": { "pullRequest": { "headRefOid": "h2", "baseRefOid": "b2", "state": "OPEN",
+                "isDraft": false, "mergeable": "MERGEABLE", "mergeStateStatus": "CLEAN",
+                "reviewDecision": "APPROVED", "reviewThreads": { "nodes": [] },
+                "reviews": { "totalCount": 0 }, "latestReviews": { "nodes": [] } } },
+            "rateLimit": { "cost": 1, "remaining": 4999 } } }
+        """;
+        var reader = NewReaderReturning(body);
+        var refs = new[] { new PrReference("o", "r", 1), new PrReference("o", "r", 2) };
+        var map = await reader.PollBatchAsync(refs, CancellationToken.None);
+        map.Should().NotContainKey(refs[0]);
+        map.Should().ContainKey(refs[1]);
+    }
+
+    [Fact]
+    public async Task Detects_merge_close_transition_via_state_field()
+    {
+        // GraphQL `state` returns MERGED/CLOSED directly; PrStates.FromGitHub matches "merged"
+        // case-insensitively regardless of the `merged` bool, so a PR that merged mid-subscription
+        // resolves to PrState.Merged (the poller then publishes IsMerged=true). Guards the live
+        // "this PR was merged" banner against a regression if `state` is ever dropped from the query.
+        const string body = """
+        { "data": {
+            "a0": { "pullRequest": { "headRefOid": "h", "baseRefOid": "b", "state": "MERGED",
+                "isDraft": false, "mergeable": "MERGEABLE", "mergeStateStatus": "CLEAN",
+                "reviewDecision": "APPROVED", "reviewThreads": { "nodes": [] },
+                "reviews": { "totalCount": 1 }, "latestReviews": { "nodes": [] } } },
+            "a1": { "pullRequest": { "headRefOid": "h2", "baseRefOid": "b2", "state": "CLOSED",
+                "isDraft": false, "mergeable": "UNKNOWN", "mergeStateStatus": "UNKNOWN",
+                "reviewDecision": null, "reviewThreads": { "nodes": [] },
+                "reviews": { "totalCount": 0 }, "latestReviews": { "nodes": [] } } },
+            "rateLimit": { "cost": 1, "remaining": 4999 } } }
+        """;
+        var reader = NewReaderReturning(body);
+        var refs = new[] { new PrReference("o", "r", 1), new PrReference("o", "r", 2) };
+        var map = await reader.PollBatchAsync(refs, CancellationToken.None);
+        map[refs[0]].PrState.Should().Be(PrState.Merged);
+        map[refs[0]].MergeReadiness.Should().Be(MergeReadiness.Merged); // terminal — FE renders no badge
+        map[refs[1]].PrState.Should().Be(PrState.Closed);
+    }
+
+    [Fact]
+    public async Task Rate_limited_200_body_throws()
+    {
+        const string body = """{ "errors": [ { "type": "RATE_LIMITED" } ] }""";
+        var reader = NewReaderReturning(body);
+        var act = () => reader.PollBatchAsync(new[] { new PrReference("o", "r", 1) }, CancellationToken.None);
+        await act.Should().ThrowAsync<RateLimitExceededException>();
+    }
+}

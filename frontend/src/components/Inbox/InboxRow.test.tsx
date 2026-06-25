@@ -27,6 +27,9 @@ const PR: PrInboxItem = {
   closedAt: null,
   avatarUrl: 'https://avatars.githubusercontent.com/u/1?v=4',
   isDraft: false,
+  mergeReadiness: 'none',
+  approvals: null,
+  changesRequested: null,
 };
 
 function TabsProbe() {
@@ -235,44 +238,45 @@ describe('InboxRow grouped indent', () => {
   });
 });
 
-describe('InboxRow tail reserve-and-collapse', () => {
-  it('always reserves the diff, counts, and comment slots', () => {
+// #593 — the tail metrics moved from fixed-width reserve-and-collapse slots to
+// content-sized, conditionally-rendered items with one uniform 8px gap (the
+// empty 52px voids reserved by the old slots read as large, uneven gaps). The
+// diff bar keeps its fixed track; +/− counts always render; the comment and file
+// metrics render ONLY when their count > 0.
+describe('InboxRow tail metrics (content-sized)', () => {
+  it('always renders the diff cell and the +/- counts', () => {
     const { container } = renderInboxRow({ ...PR, additions: 0, deletions: 0, commentCount: 0 });
-    expect(container.querySelector('[class*="diffSlot"]')).not.toBeNull();
-    expect(container.querySelector('[class*="countsSlot"]')).not.toBeNull();
-    expect(container.querySelector('[class*="commentSlot"]')).not.toBeNull();
+    expect(container.querySelector('[class*="diffCell"]')).not.toBeNull();
+    expect(container.querySelector('[class*="counts"]')).not.toBeNull();
   });
 
-  it('renders the diff-bar slot empty at zero diff but keeps the counts populated', () => {
+  it('renders the diff cell empty at zero diff but keeps the counts populated', () => {
     const { container } = renderInboxRow({ ...PR, additions: 0, deletions: 0 });
-    const diffSlot = container.querySelector('[class*="diffSlot"]')!;
-    expect(diffSlot.querySelector('[class*="diffbar"]')).toBeNull(); // DiffBar returns null at zero total
-    expect(container.querySelector('[class*="countsSlot"]')!.textContent).toContain('+0');
+    const diffCell = container.querySelector('[class*="diffCell"]')!;
+    expect(diffCell.querySelector('[class*="diffbar"]')).toBeNull(); // DiffBar returns null at zero total
+    expect(container.querySelector('[class*="counts"]')!.textContent).toContain('+0');
   });
 
-  it('renders the comment slot empty when commentCount is 0', () => {
+  it('does not render the comment metric when commentCount is 0', () => {
     const { container } = renderInboxRow({ ...PR, commentCount: 0 });
-    expect(
-      container.querySelector('[class*="commentSlot"]')!.querySelector('[class*="comments"]'),
-    ).toBeNull();
+    expect(container.querySelector('[class*="comments"]')).toBeNull();
   });
 
   it('renders the comment count with an accent comment glyph when commentCount > 0', () => {
     const { container } = renderInboxRow({ ...PR, commentCount: 5 });
-    const slot = container.querySelector('[class*="commentSlot"]')!;
-    expect(slot.textContent).toContain('5');
+    const comments = container.querySelector('[class*="comments"]')!;
+    expect(comments.textContent).toContain('5');
     // an SVG glyph (not an emoji) labels the number as a comment count
-    expect(slot.querySelector('svg')).not.toBeNull();
+    expect(comments.querySelector('svg')).not.toBeNull();
   });
 
-  it('renders a 3-digit comment count intact (the adversarial-finding case the 52px slot widening fixed)', () => {
-    // commentSlot was widened 44px → 52px so a 3-digit pill no longer overflows.
-    // The slot width is CSS (not unit-testable in jsdom), but assert the full
-    // count text renders without truncation so the regression stays closed.
+  it('renders a 3-digit comment count intact (the adversarial-finding case)', () => {
+    // Content-sizing means a 3-digit pill grows to fit rather than overflowing a
+    // fixed slot; assert the full count text renders without truncation.
     const { container } = renderInboxRow({ ...PR, commentCount: 123 });
-    const slot = container.querySelector('[class*="commentSlot"]')!;
-    expect(slot.textContent).toContain('123');
-    expect(slot.querySelector('svg')).not.toBeNull();
+    const comments = container.querySelector('[class*="comments"]')!;
+    expect(comments.textContent).toContain('123');
+    expect(comments.querySelector('svg')).not.toBeNull();
   });
 });
 
@@ -422,22 +426,20 @@ describe('InboxRow unread bar, New-badge removal, and age', () => {
   });
 });
 
-describe('InboxRow changed-files slot', () => {
+describe('InboxRow changed-files metric', () => {
   it('renders changed-files count in the tail metrics', () => {
     const { container } = renderInboxRow({ ...PR, changedFiles: 5 });
-    const filesSlot = container.querySelector('[class*="filesSlot"]');
-    expect(filesSlot).not.toBeNull();
-    expect(filesSlot!.textContent).toContain('5');
+    const files = container.querySelector('[class*="files"]');
+    expect(files).not.toBeNull();
+    expect(files!.textContent).toContain('5');
     // count is rendered next to an aria-hidden SVG glyph
-    expect(filesSlot!.querySelector('svg')).not.toBeNull();
+    expect(files!.querySelector('svg')).not.toBeNull();
   });
 
-  it('does not render files count when changedFiles is 0', () => {
+  it('does not render the files metric when changedFiles is 0', () => {
+    // #593 — content-sized: a zero file count renders nothing (no reserved slot).
     const { container } = renderInboxRow({ ...PR, changedFiles: 0 });
-    const filesSlot = container.querySelector('[class*="filesSlot"]');
-    expect(filesSlot).not.toBeNull();
-    expect(filesSlot!.querySelector('[class*="files"]')).toBeNull();
-    expect(filesSlot!.textContent).toBe('');
+    expect(container.querySelector('[class*="files"]')).toBeNull();
     // queryByText with exact match: the standalone "0" file count must not appear
     expect(screen.queryByText('0')).toBeNull();
   });
@@ -529,6 +531,54 @@ function renderRow(
     </MemoryRouter>,
   );
 }
+
+describe('InboxRow #593 readiness + #516 number', () => {
+  it('renders the PR number as a mono prefix on every row', () => {
+    renderInboxRow({ ...PR, reference: { owner: 'acme', repo: 'api', number: 12345 } });
+    expect(screen.getByText('#12345')).toBeInTheDocument();
+  });
+
+  it('renders the readiness badge for an open state and appends it to the aria-label', () => {
+    renderInboxRow({ ...PR, mergeReadiness: 'conflicts' });
+    // #593 — the badge is a bare glyph (no text label); assert via its accessible name.
+    // The row button's aria-label also contains "Conflicts" via readinessSuffix — use the
+    // badge-specific "Merge readiness: …" label to target the badge itself.
+    expect(screen.getByRole('button', { name: /Merge readiness: Conflicts/ })).toBeInTheDocument();
+  });
+
+  it('renders NO readiness badge for merged/closed/draft/none', () => {
+    for (const pr of [
+      { ...PR, mergedAt: new Date().toISOString(), mergeReadiness: 'merged' as const },
+      { ...PR, closedAt: new Date().toISOString(), mergeReadiness: 'closed' as const },
+      { ...PR, isDraft: true, mergeReadiness: 'none' as const },
+      { ...PR, mergeReadiness: 'none' as const },
+    ]) {
+      const { container, unmount } = renderInboxRow(pr);
+      expect(container.querySelector('[data-readiness]')).toBeNull();
+      unmount();
+    }
+  });
+
+  it('reserves the fixed-width CI slot even when ci is none (alignment contract)', () => {
+    const { container } = renderInboxRow({ ...PR, ci: 'none' });
+    const slot = container.querySelector('[data-ci-slot]');
+    expect(slot).not.toBeNull(); // slot present (empty spacer), so numbers/titles align
+    expect(slot).toHaveAttribute('aria-hidden', 'true');
+    expect(container.querySelector('[data-ci]')).toBeNull(); // but no octicon
+  });
+
+  it('renders the CI octicon inside the leading slot when present', () => {
+    const { container } = renderInboxRow({ ...PR, ci: 'failing' });
+    const slot = container.querySelector('[data-ci-slot]');
+    expect(slot?.querySelector('[data-ci="failing"]')).not.toBeNull();
+  });
+
+  it('still announces CI status via the row aria-label for a failing-CI row (slot is aria-hidden)', () => {
+    // The CI slot/octicon is aria-hidden; CI semantics must reach SR via ciSuffix on the row label.
+    renderInboxRow({ ...PR, ci: 'failing' });
+    expect(screen.getByRole('button', { name: /CI failing/ })).toBeInTheDocument();
+  });
+});
 
 describe('InboxRow chip-slot working marker (#508, #548)', () => {
   it('shows a working marker in the chip slot while enrichment is unsettled', () => {

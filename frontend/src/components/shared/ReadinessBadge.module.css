@@ -1,0 +1,149 @@
+/* Bare colored glyph trigger (#593) — no chip background/border. Padding gives a comfortable
+   hover/hit target without a visible container; the icon shape + colour carry the state. */
+.trigger {
+  border: none;
+  background: none;
+  cursor: default;
+  padding: 1px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: inherit;
+}
+.glyphSvg {
+  width: 15px;
+  height: 15px;
+  flex: none;
+  display: block;
+}
+.expanded .glyphSvg {
+  width: 16px;
+  height: 16px;
+}
+
+/* PR-detail variant (#593) — full-text pill: glyph + label on a soft tone tint.
+   The inbox stays the bare glyph (.compact, glyph-only); the detail header has the
+   horizontal room for the label, matching the earlier inbox text-pill design the
+   user approved. The soft background + fg text mirror the app's chip language
+   (the same --success/-warning/-danger-soft tone tokens the global chips use). */
+.expanded {
+  gap: 6px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: var(--text-xs);
+  font-weight: 600;
+  line-height: 1.2;
+}
+.label {
+  white-space: nowrap;
+}
+/* Soft tone tint behind the pill. The bare .compact glyph keeps only the fg colour
+   (no background); these backgrounds apply solely to the expanded pill. */
+.expanded.toneSuccess {
+  background: var(--success-soft);
+}
+.expanded.toneWarning {
+  background: var(--warning-soft);
+}
+.expanded.toneDanger {
+  background: var(--danger-soft);
+}
+/* ready-with-changes-requested is success-toned (green glyph + green text) but uses
+   the dedicated caveat-green tint so it reads distinct from a plain "ready" pill —
+   the same green-caveat distinction the glyph carries (a green message-warning). */
+.expanded.toneSuccess[data-readiness='ready-with-changes-requested'] {
+  background: var(--readiness-ready-caveat-soft);
+}
+
+/* Tone — drives the glyph colour and (via currentColor) the popover accent + title. */
+.toneSuccess {
+  color: var(--success-fg);
+}
+.toneWarning {
+  color: var(--warning-fg);
+}
+.toneDanger {
+  color: var(--danger-fg);
+}
+
+/* Explicit focus ring — B1-gate requirement (WCAG 2.4.11). Mirrors the global :focus-visible. */
+.trigger:focus-visible {
+  outline: 2px solid var(--accent-ring);
+  outline-offset: 2px;
+  border-radius: var(--radius-2);
+}
+/* The expanded pill is fully rounded; match the focus ring to its shape. */
+.expanded:focus-visible {
+  border-radius: 999px;
+}
+
+/* ---- popover ---- */
+.popover {
+  position: fixed;
+  z-index: 50;
+  width: 268px;
+  max-width: calc(100vw - 24px);
+  overflow: hidden;
+  font-family: var(--font-sans);
+  font-size: var(--text-2xs);
+  background: var(--surface-1);
+  color: var(--text-1);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-2);
+  box-shadow: var(--shadow-3);
+  pointer-events: none;
+}
+.accent {
+  height: 3px;
+  background: currentColor;
+}
+.head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-weight: 700;
+  font-size: 12px;
+  padding: 9px 12px 0;
+}
+.reason {
+  color: var(--text-2);
+  line-height: 1.45;
+  padding: 5px 12px 8px;
+}
+.people {
+  padding: 8px 12px 4px;
+  border-top: 1px solid var(--border-2);
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 7px 10px;
+  align-items: start;
+}
+.role {
+  color: var(--text-3);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding-top: 3px;
+  white-space: nowrap;
+}
+.who {
+  display: flex;
+  align-items: center;
+  gap: 5px 8px;
+  flex-wrap: wrap;
+  color: var(--text-2);
+  line-height: 1.5;
+}
+.nm {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.foot {
+  color: var(--text-3);
+  padding: 7px 12px 9px;
+  border-top: 1px solid var(--border-2);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}

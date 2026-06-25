@@ -121,6 +121,11 @@ export interface ConnectResponse {
 
 export type CiStatus = 'none' | 'pending' | 'failing' | 'passing';
 
+// Imported for use in PrInboxItem below, and re-exported so consumers can import
+// from the single api/types barrel without reaching into the component tree.
+import type { MergeReadiness } from '../components/shared/mergeReadiness';
+export type { MergeReadiness };
+
 export interface PrReference {
   owner: string;
   repo: string;
@@ -133,6 +138,13 @@ export interface PrReference {
 // it the same way — centralized here so the format can't drift.
 export function prRefKey(reference: PrReference): string {
   return `${reference.owner}/${reference.repo}/${reference.number}`;
+}
+
+// #593 — a reviewer surfaced in the merge-readiness popover. `login` doubles as a team name for
+// team review requests (those carry no avatar). Mirrors the backend Reviewer record.
+export interface Reviewer {
+  login: string;
+  avatarUrl?: string | null;
 }
 
 export interface PrInboxItem {
@@ -155,6 +167,15 @@ export interface PrInboxItem {
   mergedAt: string | null;
   closedAt: string | null;
   isDraft: boolean;
+  // #593 merge-readiness fields — optional so existing fixtures / route-mock bodies that
+  // omit them stay valid (backend defaults to 'none' / null on older payloads).
+  mergeReadiness?: MergeReadiness;
+  approvals?: number | null;
+  changesRequested?: number | null;
+  // #593 reviewer name-lists for the readiness popover people section.
+  approvers?: Reviewer[] | null;
+  changesRequestedBy?: Reviewer[] | null;
+  awaitingReviewers?: Reviewer[] | null;
 }
 
 export interface InboxSection {
@@ -213,6 +234,14 @@ export interface PrDetailPr {
   openedAt: string;
   mergedAt: string | null;
   closedAt: string | null;
+  mergeReadiness?: MergeReadiness;
+  approvals?: number | null;
+  changesRequested?: number | null;
+  // #593 reviewer name-lists for the readiness popover people section.
+  approvers?: Reviewer[] | null;
+  changesRequestedBy?: Reviewer[] | null;
+  awaitingReviewers?: Reviewer[] | null;
+  updatedAt?: string;
 }
 
 export type ClusteringQuality = 'ok' | 'low';

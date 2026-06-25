@@ -12,6 +12,13 @@ internal sealed class FakeReviewEventBus : IReviewEventBus
         get { lock (_gate) return _published.ToArray(); }
     }
 
+    // Reset the recorded publishes so a test can seed via a first tick, clear, then assert
+    // only the second tick's publishes (used by the batched-poll readiness tests).
+    public void Clear()
+    {
+        lock (_gate) _published.Clear();
+    }
+
     public void Publish<TEvent>(TEvent evt) where TEvent : IReviewEvent
     {
         ArgumentNullException.ThrowIfNull(evt);

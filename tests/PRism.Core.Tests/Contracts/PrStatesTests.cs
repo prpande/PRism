@@ -44,4 +44,16 @@ public class PrStatesTests
     {
         JsonSerializer.Serialize(value, JsonSerializerOptionsFactory.Storage).Should().Be(expectedJson);
     }
+
+    [Fact]
+    public void FromTimestamps_open_when_both_null()
+        => PrStates.FromTimestamps(null, null).Should().Be(PrState.Open);
+
+    [Fact]
+    public void FromTimestamps_merged_wins_over_closed()
+        => PrStates.FromTimestamps(DateTimeOffset.UtcNow, DateTimeOffset.UtcNow).Should().Be(PrState.Merged);
+
+    [Fact]
+    public void FromTimestamps_closed_when_only_closed_set()
+        => PrStates.FromTimestamps(null, DateTimeOffset.UtcNow).Should().Be(PrState.Closed);
 }

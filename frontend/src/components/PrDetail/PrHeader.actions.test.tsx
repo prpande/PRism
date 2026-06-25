@@ -137,9 +137,11 @@ describe('PrHeader', () => {
     expect(screen.getByText(/main/i)).toBeInTheDocument();
   });
 
-  it('renders mergeability chip when provided', () => {
-    render(<PrHeader {...baseProps} mergeability="mergeable" />);
-    expect(screen.getByText(/mergeable/i)).toBeInTheDocument();
+  // #593: mergeability chip replaced by ReadinessBadge; mergeability prop is kept for §9 compat
+  // but no longer renders a visible chip. The readiness badge is tested in PrHeader.test.tsx.
+  it('accepts mergeability prop without rendering a chip (replaced by readiness badge in #593)', () => {
+    const { container } = render(<PrHeader {...baseProps} mergeability="mergeable" />);
+    expect(container.querySelector('.chip-mergeability')).toBeNull();
   });
 
   it('renders CI chip when ciSummary provided', () => {

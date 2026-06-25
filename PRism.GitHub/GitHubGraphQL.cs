@@ -1,5 +1,9 @@
+using System.Globalization;
+using System.Linq;
+using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
+using PRism.Core.Inbox;
 
 namespace PRism.GitHub;
 
@@ -46,7 +50,68 @@ internal static partial class GitHubGraphQL
                 inner: null,
                 statusCode: resp.StatusCode);
         }
-        return await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+        var okBody = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+        // Universal GraphQL error visibility (#593 infra): a GraphQL-level error arrives as
+        // HTTP 200 carrying an errors[] array in the body, so the non-2xx branch above never
+        // sees it. EVERY GraphQL caller routes through this method (inbox batch, active poll,
+        // PR detail, submit, discovery), so logging here makes errors[] observable for ALL
+        // queries without per-caller code. Best-effort: never let logging break the call.
+        LogGraphQlErrorsIfAny(okBody, query, log);
+        return okBody;
+    }
+
+    // Logs any GraphQL errors[] in a 200 response at Warning, with each error's type, path, and
+    // (truncated) message plus a query snippet so the failing query is identifiable. Callers that
+    // also translate specific error types (e.g. ThrowIfRateLimited) still run independently — this
+    // is observability only and changes no control flow. Parses defensively; a malformed body or
+    // a body with no errors[] is a silent no-op.
+    internal static void LogGraphQlErrorsIfAny(string body, string query, ILogger log)
+    {
+        // Fast path: skip the parse entirely on the overwhelmingly-common error-free response.
+        if (string.IsNullOrEmpty(body) || body.IndexOf("\"errors\"", StringComparison.Ordinal) < 0) return;
+        try
+        {
+            using var doc = JsonDocument.Parse(body);
+            var root = doc.RootElement;
+            if (root.ValueKind != JsonValueKind.Object
+                || !root.TryGetProperty("errors", out var errors)
+                || errors.ValueKind != JsonValueKind.Array
+                || errors.GetArrayLength() == 0)
+                return;
+
+            var sb = new StringBuilder();
+            var shown = 0;
+            foreach (var e in errors.EnumerateArray())
+            {
+                if (shown++ == 5) { sb.Append("…(+more)"); break; }
+                if (e.ValueKind != JsonValueKind.Object) { sb.Append(e.GetRawText()).Append(" | "); continue; }
+                var type = e.TryGetProperty("type", out var t) && t.ValueKind == JsonValueKind.String ? t.GetString() : "?";
+                var path = e.TryGetProperty("path", out var p) && p.ValueKind == JsonValueKind.Array
+                    ? string.Join("/", p.EnumerateArray().Select(x => x.ValueKind == JsonValueKind.String ? x.GetString() : x.GetRawText()))
+                    : "?";
+                var msg = e.TryGetProperty("message", out var m) && m.ValueKind == JsonValueKind.String ? m.GetString() : "";
+                sb.Append(CultureInfo.InvariantCulture, $"[type={type} path={path}] {GitHubHttp.Truncate(msg ?? string.Empty, 240)} | ");
+            }
+            Log.GraphQLErrors(log, errors.GetArrayLength(), GitHubHttp.Truncate(query, 160), sb.ToString());
+        }
+        catch (JsonException)
+        {
+            // Logging must never break the GraphQL call; an unparseable 200 body is the caller's problem.
+        }
+    }
+
+    // Throws RateLimitExceededException on a 200 body carrying errors[].type == "RATE_LIMITED".
+    // (HTTP 429 is surfaced by PostAsync as HttpRequestException with StatusCode 429 — callers
+    // translate that to RateLimitExceededException at their catch site.) Extracted from
+    // GitHubPrBatchReader.HasRateLimitError so both batch readers share one rate-limit model
+    // instead of forking it. `internal` to match the enclosing `internal static` class.
+    internal static void ThrowIfRateLimited(JsonElement root, string context)
+    {
+        if (!root.TryGetProperty("errors", out var errors) || errors.ValueKind != JsonValueKind.Array) return;
+        foreach (var e in errors.EnumerateArray())
+            if (e.ValueKind == JsonValueKind.Object && e.TryGetProperty("type", out var t)
+                && string.Equals(t.GetString(), "RATE_LIMITED", StringComparison.Ordinal))
+                throw new RateLimitExceededException($"GitHub GraphQL rate limit (200/RATE_LIMITED) during {context}.", retryAfter: null);
     }
 
     // Walks a chain of property names defensively. Returns false on any missing key,
@@ -80,5 +145,12 @@ internal static partial class GitHubGraphQL
         [LoggerMessage(Level = LogLevel.Warning, EventId = 5, EventName = "GraphQLTransportFailed",
             Message = "GraphQL HTTP request failed: {StatusCode} {ReasonPhrase}. Body: {Body}")]
         internal static partial void GraphQLTransportFailed(ILogger logger, int statusCode, string reasonPhrase, string body);
+
+        // EventId 6 — a 200 response that carried a GraphQL errors[] array (timeout, field-level
+        // permission, validation, etc.). Warning because partial/empty data usually means a
+        // degraded result the operator should see. Universal: fires for every GraphQL query.
+        [LoggerMessage(Level = LogLevel.Warning, EventId = 6, EventName = "GraphQLErrors",
+            Message = "GraphQL response carried {Count} error(s). Query: {Query} | Errors: {Errors}")]
+        internal static partial void GraphQLErrors(ILogger logger, int count, string query, string errors);
     }
 }

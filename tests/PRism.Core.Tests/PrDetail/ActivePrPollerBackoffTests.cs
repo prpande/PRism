@@ -1,114 +1,123 @@
 using FluentAssertions;
-using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging.Abstractions;
 using PRism.Core.Contracts;
 using PRism.Core.Events;
+using PRism.Core.Inbox;
 using PRism.Core.PrDetail;
 
 namespace PRism.Core.Tests.PrDetail;
 
+// Migrated to the batched active-poll path (#598 Slice B). The poller now issues ONE
+// PollBatchAsync per tick across every subscribed PR. Backoff is whole-tick (a rate-limit /
+// transport / poison-payload throw backs off ALL candidates and publishes nothing — last-known
+// retained); a per-alias drop keeps last-known for the dropped ref and publishes nothing for it.
 public class ActivePrPollerBackoffTests
 {
     private static readonly DateTimeOffset T0 = new(2026, 5, 7, 0, 0, 0, TimeSpan.Zero);
 
-    private static (ActivePrPoller poller, FakePollerReviewService review, FakeReviewEventBus bus, ActivePrSubscriberRegistry registry, IActivePrCache cache) Build()
+    private static (ActivePrPoller poller, FakeActivePrBatchReader batch, FakeReviewEventBus bus, ActivePrSubscriberRegistry registry, IActivePrCache cache) Build()
     {
         var registry = new ActivePrSubscriberRegistry();
-        var review = new FakePollerReviewService();
+        var batch = new FakeActivePrBatchReader();
         var bus = new FakeReviewEventBus();
         var cache = new ActivePrCache(registry);
         var poller = new ActivePrPoller(
-            registry, review, bus, cache,
+            registry, new FakePollerReviewService(), batch, bus, cache,
             NullLogger<ActivePrPoller>.Instance,
             new FakeHostEnvironment("Production"));
-        return (poller, review, bus, registry, cache);
+        return (poller, batch, bus, registry, cache);
     }
 
     private static ActivePrPollSnapshot Snapshot(string headSha = "h1", string baseSha = "b1", int commentCount = 0, PrState prState = PrState.Open) =>
         new(headSha, baseSha, "MERGEABLE", prState, commentCount, 0);
 
     [Fact]
-    public async Task Healthy_pr_continues_to_poll_while_other_pr_is_in_backoff()
+    public async Task Whole_tick_rate_limit_backs_off_all_refs_then_resumes_after_backoff_elapses()
     {
-        var (poller, review, _, registry, _) = Build();
+        var (poller, batch, _, registry, _) = Build();
         var prA = new PrReference("o", "r", 1);
         var prB = new PrReference("o", "r", 2);
         registry.Add("sub1", prA);
         registry.Add("sub1", prB);
-        review.SetThrows(prA, new HttpRequestException("500"));
-        review.SetSnapshot(prB, Snapshot());
 
+        // Tick 1: rate-limited → both refs backoff 60s, no batch returns.
+        batch.SetThrows(new RateLimitExceededException("rate", null));
         await poller.TickAsync(T0, default);
-        review.CallCount(prA).Should().Be(1);
-        review.CallCount(prB).Should().Be(1);
+        batch.BatchCallCount.Should().Be(1);
 
-        // Tick again 1 second later. PR A's backoff (60s) hasn't elapsed → skipped.
-        // PR B has no backoff → polled again.
+        // Tick 2 at T0+1 (within 60s backoff): both refs skipped → no batch call issued.
         await poller.TickAsync(T0.AddSeconds(1), default);
-        review.CallCount(prA).Should().Be(1, "PR A is in backoff and should be skipped");
-        review.CallCount(prB).Should().Be(2, "PR B is healthy and continues to poll");
+        batch.BatchCallCount.Should().Be(1, "all candidates are in backoff, so no batch call is issued");
+
+        // Tick 3 at T0+120 (past 60s backoff): refs eligible again → batch call resumes.
+        batch.ClearThrow();
+        batch.SetSnapshot(prA, Snapshot());
+        batch.SetSnapshot(prB, Snapshot());
+        await poller.TickAsync(T0.AddSeconds(120), default);
+        batch.BatchCallCount.Should().Be(2, "backoff elapsed, so the batch poll runs again");
     }
 
     [Fact]
-    public async Task Backoff_resets_after_successful_poll()
+    public async Task Backoff_resets_after_successful_tick()
     {
-        var (poller, review, _, registry, _) = Build();
+        var (poller, batch, _, registry, _) = Build();
         var pr = new PrReference("o", "r", 1);
         registry.Add("sub1", pr);
-        review.SetThrows(pr, new HttpRequestException("500"));
 
         // Tick 1: error → backoff 60s.
+        batch.SetThrows(new RateLimitExceededException("rate", null));
         await poller.TickAsync(T0, default);
-        review.CallCount(pr).Should().Be(1);
+        batch.BatchCallCount.Should().Be(1);
 
         // Tick at T0+120 (past 60s backoff): success → ConsecutiveErrors=0, NextRetryAt=null.
-        review.SetSnapshot(pr, Snapshot());
+        batch.ClearThrow();
+        batch.SetSnapshot(pr, Snapshot());
         await poller.TickAsync(T0.AddSeconds(120), default);
-        review.CallCount(pr).Should().Be(2);
+        batch.BatchCallCount.Should().Be(2);
 
         // New error: ConsecutiveErrors should reset to 1 (not climb to 2). Backoff = 60s.
-        review.SetThrows(pr, new HttpRequestException("500"));
+        batch.SetThrows(new RateLimitExceededException("rate", null));
         await poller.TickAsync(T0.AddSeconds(121), default);
-        review.CallCount(pr).Should().Be(3);
+        batch.BatchCallCount.Should().Be(3);
 
-        // Confirm backoff was 60s (reset worked) by polling at T0+182.
-        // If reset failed and ConsecutiveErrors had climbed to 3, backoff would be 240s
-        // and the call below would be skipped.
+        // Confirm backoff was 60s (reset worked) by polling at T0+182. If reset failed and
+        // ConsecutiveErrors had climbed to 3, backoff would be 240s and the tick would be skipped.
+        batch.ClearThrow();
+        batch.SetSnapshot(pr, Snapshot());
         await poller.TickAsync(T0.AddSeconds(182), default);
-        review.CallCount(pr).Should().Be(4, "backoff reset to 60s after successful poll, so PR is polled again at T0+182");
+        batch.BatchCallCount.Should().Be(4, "backoff reset to 60s after a successful tick, so the poll runs again at T0+182");
     }
 
     [Fact]
-    public async Task Single_pr_exception_does_not_block_other_prs()
+    public async Task Per_alias_drop_keeps_last_known_for_dropped_ref_while_other_ref_publishes()
     {
-        var (poller, review, _, registry, _) = Build();
+        var (poller, batch, bus, registry, _) = Build();
         var prA = new PrReference("o", "r", 1);
         var prB = new PrReference("o", "r", 2);
         registry.Add("sub1", prA);
         registry.Add("sub1", prB);
-        review.SetThrows(prA, new InvalidOperationException("synchronous boom"));
-        review.SetSnapshot(prB, Snapshot());
+
+        // PR A absent from the returned map (per-alias null); PR B present.
+        batch.DropRef(prA);
+        batch.SetSnapshot(prB, Snapshot());
 
         await poller.TickAsync(T0, default);
-        review.CallCount(prA).Should().Be(1);
-        review.CallCount(prB).Should().Be(1, "PR B must poll within the same tick despite PR A throwing");
+
+        batch.BatchCallCount.Should().Be(1, "one batch call serves all candidates");
+        bus.Published.OfType<ActivePrUpdated>().Should().ContainSingle("only the returned ref publishes; the dropped ref keeps last-known");
+        ((ActivePrUpdated)bus.Published[0]).PrRef.Should().Be(prB);
     }
 
     [Fact]
     public async Task FirstSuccessfulPoll_PublishesActivePrUpdated_EvenWithoutDeltas()
     {
-        // Spec § 5.6 + frontend `useFirstActivePrPollComplete`: the gate hook
-        // backing the Mark-all-read button needs the first successful poll
-        // for a newly-subscribed PR to surface as a `pr-updated` SSE event.
-        // Without this, a quiet PR (no head SHA or comment count changes)
-        // would never publish, leaving the gate closed indefinitely. Both
-        // delta flags are false because there is nothing to compare against
-        // on the first poll — consumers treat the first event as a hydration
-        // signal, not a delta announcement.
-        var (poller, review, bus, registry, _) = Build();
+        // Spec § 5.6 + frontend `useFirstActivePrPollComplete`: the gate hook backing the
+        // Mark-all-read button needs the first successful poll for a newly-subscribed PR to
+        // surface as a `pr-updated` SSE event. Both delta flags are false on the first poll.
+        var (poller, batch, bus, registry, _) = Build();
         var pr = new PrReference("o", "r", 1);
         registry.Add("sub1", pr);
-        review.SetSnapshot(pr, Snapshot(headSha: "h1", commentCount: 0));
+        batch.SetSnapshot(pr, Snapshot(headSha: "h1", commentCount: 0));
 
         await poller.TickAsync(T0, default);
 
@@ -124,17 +133,17 @@ public class ActivePrPollerBackoffTests
     [Fact]
     public async Task Publishes_ActivePrUpdated_when_head_sha_changes()
     {
-        var (poller, review, bus, registry, _) = Build();
+        var (poller, batch, bus, registry, _) = Build();
         var pr = new PrReference("o", "r", 1);
         registry.Add("sub1", pr);
 
-        review.SetSnapshot(pr, Snapshot(headSha: "h1"));
+        batch.SetSnapshot(pr, Snapshot(headSha: "h1"));
         await poller.TickAsync(T0, default);  // first poll publishes a hydration event
         bus.Published.Should().ContainSingle("first poll publishes a hydration event");
         var firstEvt = (ActivePrUpdated)bus.Published[0];
         firstEvt.HeadShaChanged.Should().BeFalse("the first event has no prior state to diff against");
 
-        review.SetSnapshot(pr, Snapshot(headSha: "h2"));
+        batch.SetSnapshot(pr, Snapshot(headSha: "h2"));
         await poller.TickAsync(T0.AddSeconds(30), default);
         bus.Published.Should().HaveCount(2);
         var deltaEvt = (ActivePrUpdated)bus.Published[1];
@@ -147,15 +156,15 @@ public class ActivePrPollerBackoffTests
     [Fact]
     public async Task Publishes_ActivePrUpdated_when_comment_count_changes()
     {
-        var (poller, review, bus, registry, _) = Build();
+        var (poller, batch, bus, registry, _) = Build();
         var pr = new PrReference("o", "r", 1);
         registry.Add("sub1", pr);
 
-        review.SetSnapshot(pr, Snapshot(headSha: "h1", commentCount: 0));
+        batch.SetSnapshot(pr, Snapshot(headSha: "h1", commentCount: 0));
         await poller.TickAsync(T0, default);
         bus.Published.Should().ContainSingle("first poll publishes a hydration event");
 
-        review.SetSnapshot(pr, Snapshot(headSha: "h1", commentCount: 3));
+        batch.SetSnapshot(pr, Snapshot(headSha: "h1", commentCount: 3));
         await poller.TickAsync(T0.AddSeconds(30), default);
         bus.Published.Should().HaveCount(2);
         var deltaEvt = (ActivePrUpdated)bus.Published[1];
@@ -167,19 +176,18 @@ public class ActivePrPollerBackoffTests
     [Fact]
     public async Task Publishes_ActivePrUpdated_with_IsMerged_on_open_to_merged_transition_even_when_head_and_comments_unchanged()
     {
-        // Spec § 5.2.3: a clean merge leaves head-sha and comment-count unchanged (merge
-        // commit lands on base; head ref deleted; no new comment). The poller must still
-        // emit on the open→merged state transition so the frontend can show the merged banner.
-        var (poller, review, bus, registry, _) = Build();
+        // Spec § 5.2.3: a clean merge leaves head-sha and comment-count unchanged. The poller must
+        // still emit on the open→merged state transition so the frontend can show the merged banner.
+        var (poller, batch, bus, registry, _) = Build();
         var pr = new PrReference("o", "r", 1);
         registry.Add("sub1", pr);
 
-        review.SetSnapshot(pr, Snapshot(headSha: "h1", commentCount: 5, prState: PrState.Open));
+        batch.SetSnapshot(pr, Snapshot(headSha: "h1", commentCount: 5, prState: PrState.Open));
         await poller.TickAsync(T0, default);
         bus.Published.Should().ContainSingle("first poll publishes a hydration event");
 
         // Same head, same comment count — only the state flips open → merged.
-        review.SetSnapshot(pr, Snapshot(headSha: "h1", commentCount: 5, prState: PrState.Merged));
+        batch.SetSnapshot(pr, Snapshot(headSha: "h1", commentCount: 5, prState: PrState.Merged));
         await poller.TickAsync(T0.AddSeconds(30), default);
 
         bus.Published.Should().HaveCount(2, "the open→merged transition is a change even with identical head/comments");
@@ -194,20 +202,15 @@ public class ActivePrPollerBackoffTests
     [Fact]
     public async Task Does_not_publish_again_on_steady_state_merged_tick()
     {
-        // Regression: after the open→merged transition emits its event, a subsequent tick
-        // with the same merged state (same head, same comment count) must NOT emit again.
-        // LastPrState is already "merged" so stateChanged=false and no delta exists → silent.
-        var (poller, review, bus, registry, _) = Build();
+        var (poller, batch, bus, registry, _) = Build();
         var pr = new PrReference("o", "r", 1);
         registry.Add("sub1", pr);
 
-        // Tick 1: first poll (open) → hydration event.
-        review.SetSnapshot(pr, Snapshot(headSha: "h1", commentCount: 5, prState: PrState.Open));
+        batch.SetSnapshot(pr, Snapshot(headSha: "h1", commentCount: 5, prState: PrState.Open));
         await poller.TickAsync(T0, default);
         bus.Published.Should().ContainSingle("first poll publishes a hydration event");
 
-        // Tick 2: open→merged transition → one delta event (total 2).
-        review.SetSnapshot(pr, Snapshot(headSha: "h1", commentCount: 5, prState: PrState.Merged));
+        batch.SetSnapshot(pr, Snapshot(headSha: "h1", commentCount: 5, prState: PrState.Merged));
         await poller.TickAsync(T0.AddSeconds(30), default);
         bus.Published.Should().HaveCount(2, "the open→merged transition emits exactly one event");
 
@@ -219,15 +222,15 @@ public class ActivePrPollerBackoffTests
     [Fact]
     public async Task Publishes_ActivePrUpdated_with_IsClosed_on_open_to_closed_transition()
     {
-        var (poller, review, bus, registry, _) = Build();
+        var (poller, batch, bus, registry, _) = Build();
         var pr = new PrReference("o", "r", 1);
         registry.Add("sub1", pr);
 
-        review.SetSnapshot(pr, Snapshot(headSha: "h1", commentCount: 5, prState: PrState.Open));
+        batch.SetSnapshot(pr, Snapshot(headSha: "h1", commentCount: 5, prState: PrState.Open));
         await poller.TickAsync(T0, default);
         bus.Published.Should().ContainSingle();
 
-        review.SetSnapshot(pr, Snapshot(headSha: "h1", commentCount: 5, prState: PrState.Closed));
+        batch.SetSnapshot(pr, Snapshot(headSha: "h1", commentCount: 5, prState: PrState.Closed));
         await poller.TickAsync(T0.AddSeconds(30), default);
 
         bus.Published.Should().HaveCount(2);
@@ -239,10 +242,10 @@ public class ActivePrPollerBackoffTests
     [Fact]
     public async Task Does_not_publish_again_when_snapshot_is_unchanged()
     {
-        var (poller, review, bus, registry, _) = Build();
+        var (poller, batch, bus, registry, _) = Build();
         var pr = new PrReference("o", "r", 1);
         registry.Add("sub1", pr);
-        review.SetSnapshot(pr, Snapshot(headSha: "h1", commentCount: 0));
+        batch.SetSnapshot(pr, Snapshot(headSha: "h1", commentCount: 0));
 
         await poller.TickAsync(T0, default);
         await poller.TickAsync(T0.AddSeconds(30), default);
@@ -253,17 +256,17 @@ public class ActivePrPollerBackoffTests
     [Fact]
     public async Task Publishes_ActivePrUpdated_when_base_sha_changes_with_unchanged_head()
     {
-        var (poller, review, bus, registry, _) = Build();
+        var (poller, batch, bus, registry, _) = Build();
         var pr = new PrReference("o", "r", 1);
         registry.Add("sub1", pr);
 
-        review.SetSnapshot(pr, Snapshot(headSha: "h1", baseSha: "b1"));
+        batch.SetSnapshot(pr, Snapshot(headSha: "h1", baseSha: "b1"));
         await poller.TickAsync(T0, default);  // first poll → hydration event, BaseShaChanged false
         bus.Published.Should().ContainSingle("first poll publishes a hydration event");
         ((ActivePrUpdated)bus.Published[0]).BaseShaChanged.Should().BeFalse("no prior base to diff");
 
         // Base branch advances; head unchanged.
-        review.SetSnapshot(pr, Snapshot(headSha: "h1", baseSha: "b2"));
+        batch.SetSnapshot(pr, Snapshot(headSha: "h1", baseSha: "b2"));
         await poller.TickAsync(T0.AddSeconds(30), default);
 
         bus.Published.Should().HaveCount(2, "a same-head base-only move must be published, not swallowed");
@@ -276,10 +279,10 @@ public class ActivePrPollerBackoffTests
     [Fact]
     public async Task FirstPoll_hydrates_LastBaseSha_without_emitting_BaseShaChanged()
     {
-        var (poller, review, bus, registry, _) = Build();
+        var (poller, batch, bus, registry, _) = Build();
         var pr = new PrReference("o", "r", 1);
         registry.Add("sub1", pr);
-        review.SetSnapshot(pr, Snapshot(headSha: "h1", baseSha: "b1"));
+        batch.SetSnapshot(pr, Snapshot(headSha: "h1", baseSha: "b1"));
 
         await poller.TickAsync(T0, default);
 
@@ -296,10 +299,10 @@ public class ActivePrPollerBackoffTests
         // head/base/comment/state change emitted nothing — leaving the frontend
         // Mark-all-read gate (useFirstActivePrPollComplete) closed for the process lifetime.
         // Pruning state when a PR loses its last subscriber resets first-poll detection.
-        var (poller, review, bus, registry, _) = Build();
+        var (poller, batch, bus, registry, _) = Build();
         var pr = new PrReference("o", "r", 1);
         registry.Add("sub1", pr);
-        review.SetSnapshot(pr, Snapshot(headSha: "h1", commentCount: 0));
+        batch.SetSnapshot(pr, Snapshot(headSha: "h1", commentCount: 0));
 
         await poller.TickAsync(T0, default);                 // first poll → hydration event
         bus.Published.Should().ContainSingle("first poll publishes a hydration event");
@@ -323,13 +326,13 @@ public class ActivePrPollerBackoffTests
         // Issue #609 — the resource leak. _state accumulated one entry per distinct PR ever
         // subscribed in the process lifetime; entries were never reclaimed. Pruning on tick
         // bounds _state to the set of currently-subscribed PRs.
-        var (poller, review, _, registry, _) = Build();
+        var (poller, batch, _, registry, _) = Build();
         var prA = new PrReference("o", "r", 1);
         var prB = new PrReference("o", "r", 2);
         registry.Add("sub1", prA);
         registry.Add("sub1", prB);
-        review.SetSnapshot(prA, Snapshot());
-        review.SetSnapshot(prB, Snapshot());
+        batch.SetSnapshot(prA, Snapshot());
+        batch.SetSnapshot(prB, Snapshot());
 
         await poller.TickAsync(T0, default);
         poller.TrackedStateCount.Should().Be(2, "both subscribed PRs are tracked after a poll");

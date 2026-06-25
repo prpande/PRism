@@ -3,6 +3,8 @@ import type {
   DraftSavedEvent,
   DraftSubmittedEvent,
   InboxUpdatedEvent,
+  MergeReadiness,
+  Reviewer,
   RootCommentPostedEvent,
   SingleCommentPostedEvent,
   StateChangedEvent,
@@ -37,6 +39,17 @@ export type PrUpdatedEvent = {
   commentCountDelta: number;
   isMerged: boolean;
   isClosed: boolean;
+  // #598 Slice B — live merge-readiness. mergeReadinessChanged latches the value: only a change
+  // TO a real (non-none) readiness sets it true (anti-flicker), so the FE updates the badge only
+  // when the value is meaningful. Optional for back-compat with route-mock fixtures.
+  mergeReadiness?: MergeReadiness;
+  mergeReadinessChanged?: boolean;
+  approvals?: number | null;
+  changesRequested?: number | null;
+  // #593 — live reviewer name-lists for the detail readiness popover (snapshot each tick).
+  approvers?: Reviewer[] | null;
+  changesRequestedBy?: Reviewer[] | null;
+  awaitingReviewers?: Reviewer[] | null;
 };
 
 // Backend payload shape: SseEventProjection.IdentityChangedWire (Type: "identity-change").

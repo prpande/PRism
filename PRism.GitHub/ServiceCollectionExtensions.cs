@@ -116,6 +116,21 @@ public static class ServiceCollectionExtensions
                 sp.GetRequiredService<ILogger<GitHubPrBatchReader>>());
         });
 
+        // Batched GraphQL active-PR poll reader (#598 Slice B). Interface in PRism.Core.PrDetail;
+        // implementation in PRism.GitHub.ActivePr. The host closure reads config.Current at call
+        // time (hot-reloadable host) — matches the IPrBatchReader registration above.
+        services.AddSingleton<PRism.Core.PrDetail.IActivePrBatchReader>(sp =>
+        {
+            var tokens = sp.GetRequiredService<ITokenStore>();
+            var factory = sp.GetRequiredService<IHttpClientFactory>();
+            var config = sp.GetRequiredService<IConfigStore>();
+            return new PRism.GitHub.ActivePr.GitHubActivePrBatchReader(
+                factory,
+                () => tokens.ReadAsync(CancellationToken.None),
+                () => config.Current.Github.Host,
+                sp.GetRequiredService<ILogger<PRism.GitHub.ActivePr.GitHubActivePrBatchReader>>());
+        });
+
         services.AddSingleton<ICiFailingDetector>(sp =>
         {
             var tokens = sp.GetRequiredService<ITokenStore>();
