@@ -26,6 +26,11 @@ public sealed class ClaudeCodeLlmProvider(
     ICliProcessRunner runner, ClaudeCodeProviderOptions options, IClaudeCliLocator locator)
     : ILlmProvider
 {
+    // Shared by the two exit-0-but-unparseable branches below (JsonException vs literal-null envelope) so
+    // the user-facing message has a single source of truth. NOT shared with the "without a result field"
+    // throw — that is a distinct failure with its own message.
+    private const string UnparseableJsonMessage = "claude -p returned unparseable JSON.";
+
     public async Task<LlmResult> CompleteAsync(LlmRequest request, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(request);
@@ -101,11 +106,11 @@ public sealed class ClaudeCodeLlmProvider(
             // may embed stay confined to the inner exception (logged by type-name only), never the outer
             // message which routes through LlmProviderException's redaction contract.
             throw new LlmProviderException(
-                "claude -p returned unparseable JSON.", stderr: string.Empty, exitCode: 0, innerException: ex);
+                UnparseableJsonMessage, stderr: string.Empty, exitCode: 0, innerException: ex);
         }
 
         if (envelope is null)
-            throw new LlmProviderException("claude -p returned unparseable JSON.", stderr: string.Empty, exitCode: 0);
+            throw new LlmProviderException(UnparseableJsonMessage, stderr: string.Empty, exitCode: 0);
         if (envelope.Result is null)
             throw new LlmProviderException("claude -p returned JSON without a result field.", stderr: string.Empty, exitCode: 0);
 
