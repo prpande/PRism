@@ -112,6 +112,12 @@ export function useComposerAutoSave(props: UseComposerAutoSaveProps): UseCompose
   // notification (spec § 5.7a). The PUT already dispatched can't be recalled,
   // but everything observable downstream is suppressed.
   const doSave = useCallback(async (currentBody: string): Promise<void> => {
+    // `p` snapshots the patch target (prRef, anchor) at dispatch time — a PUT
+    // already in flight can't retarget. `disabled` and the callbacks, by
+    // contrast, are read LIVE from propsRef.current after each await, so a
+    // mid-flight take-over is honored (Defect B). prRef/anchor are assumed
+    // stable for the in-flight PUT: a PR change unmounts this composer tree, so
+    // the snapshot/live split can't cross PRs in practice.
     const p = propsRef.current;
     if (p.disabled) return;
     const trimmed = currentBody.trim();
@@ -190,6 +196,13 @@ export function useComposerAutoSave(props: UseComposerAutoSaveProps): UseCompose
   );
 
   const flush = useCallback(async (): Promise<string | null> => {
+    // #602 §5.7a call-site guard: a flush() on a taken-over (read-only) tab must
+    // perform no write AND leak no id. doSave's entry check already blocks the
+    // write, but flush() would still return draftIdRef.current — a draft id this
+    // now-read-only tab created before the take-over. Short-circuit to null so a
+    // caller (e.g. an external flushRef consumer) never receives a stale id to
+    // act on.
+    if (propsRef.current.disabled) return null;
     if (debounceTimer.current) {
       clearTimeout(debounceTimer.current);
       debounceTimer.current = null;

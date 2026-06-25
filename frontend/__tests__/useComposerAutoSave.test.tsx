@@ -618,6 +618,38 @@ describe('useComposerAutoSave — post-await disabled re-check (#602 Defect B)',
     expect(spy).not.toHaveBeenCalled();
     expect(returned).toBeNull();
   });
+
+  // §5.7a leak guard: a draft is created (id assigned), THEN a cross-tab
+  // take-over flips disabled. A flush() on the now-read-only tab must not hand
+  // the previously-assigned id back to the caller — it returns null, exactly as
+  // if no write had occurred. (Preflight adversarial finding.)
+  it('FlushAfterCreateThenDisabled_ReturnsNull_NoForeignId', async () => {
+    const spy = vi
+      .spyOn(draftApi, 'sendPatch')
+      .mockResolvedValue({ ok: true, assignedId: 'uuid-1' });
+
+    const { result, rerender } = renderHook(
+      ({ body, disabled }: { body: string; disabled: boolean }) =>
+        useComposerAutoSave(defaultProps({ body, disabled })),
+      { initialProps: { body: 'abc', disabled: false } },
+    );
+
+    // Create completes; the hook now holds the assigned id internally.
+    await flushTimersAndPromises();
+    expect(spy).toHaveBeenCalledTimes(1);
+
+    // Cross-tab take-over flips this tab read-only.
+    rerender({ body: 'abc', disabled: true });
+
+    let returned: string | null = 'sentinel';
+    await act(async () => {
+      returned = await result.current.flush();
+    });
+
+    // No second write, and no foreign id handed back to the caller.
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(returned).toBeNull();
+  });
 });
 
 describe('useComposerAutoSave — serialized saves (#602 Defect C)', () => {
