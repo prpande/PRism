@@ -20,15 +20,18 @@ internal sealed class FakePrChecksReader : IPrChecksReader
             new("build", CheckRunStatus.Completed, CheckConclusion.Failure, "check-run",
                 DateTimeOffset.Parse("2026-06-25T10:00:00Z", System.Globalization.CultureInfo.InvariantCulture),
                 DateTimeOffset.Parse("2026-06-25T10:02:10Z", System.Globalization.CultureInfo.InvariantCulture),
-                "https://github.com/o/r/runs/1"),
+                "https://github.com/o/r/runs/1",
+                Summary: "2 errors, 0 warnings", AppName: "GitHub Actions"),
             new("lint", CheckRunStatus.InProgress, null, "check-run",
                 DateTimeOffset.Parse("2026-06-25T10:00:05Z", System.Globalization.CultureInfo.InvariantCulture),
                 null,
-                "https://github.com/o/r/runs/2"),
+                "https://github.com/o/r/runs/2",
+                Summary: "Running eslint...", AppName: "GitHub Actions"),
             new("test", CheckRunStatus.Completed, CheckConclusion.Success, "check-run",
                 DateTimeOffset.Parse("2026-06-25T10:00:00Z", System.Globalization.CultureInfo.InvariantCulture),
                 DateTimeOffset.Parse("2026-06-25T10:00:45Z", System.Globalization.CultureInfo.InvariantCulture),
-                "https://github.com/o/r/runs/3"),
+                "https://github.com/o/r/runs/3",
+                Summary: "128 passed", AppName: "CircleCI"),
         };
         return Task.FromResult(new ChecksResponseDto(checks, headSha, DegradedReason.None));
     }

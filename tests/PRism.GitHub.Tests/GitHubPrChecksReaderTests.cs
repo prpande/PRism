@@ -56,6 +56,45 @@ public class GitHubPrChecksReaderTests
     }
 
     [Fact]
+    public async Task Parses_output_title_and_app_name_for_check_runs_and_description_for_statuses()
+    {
+        var reader = ReaderFor(req =>
+        {
+            if (req.RequestUri!.AbsolutePath.EndsWith("/check-runs", StringComparison.Ordinal))
+                return Json(
+                    """{"check_runs":[{"name":"build","status":"completed","conclusion":"failure","output":{"title":"2 errors, 0 warnings"},"app":{"name":"GitHub Actions"}}]}""");
+            return Json(
+                """{"state":"success","total_count":1,"statuses":[{"context":"ci/legacy","state":"success","description":"Build succeeded"}]}""");
+        });
+
+        var resp = await reader.ReadAsync(Pr, Sha, CancellationToken.None);
+
+        var run = Assert.Single(resp.Checks, c => c.Source == "check-run");
+        Assert.Equal("2 errors, 0 warnings", run.Summary); // output.title
+        Assert.Equal("GitHub Actions", run.AppName); // app.name
+        var status = Assert.Single(resp.Checks, c => c.Source == "status");
+        Assert.Equal("Build succeeded", status.Summary); // status description
+        Assert.Null(status.AppName); // legacy status has no app object
+    }
+
+    [Fact]
+    public async Task Missing_output_app_and_description_yield_null_summary_and_appname()
+    {
+        var reader = ReaderFor(req =>
+            req.RequestUri!.AbsolutePath.EndsWith("/check-runs", StringComparison.Ordinal)
+                ? Json("""{"check_runs":[{"name":"x","status":"completed","conclusion":"success"}]}""")
+                : Json("""{"state":"success","total_count":1,"statuses":[{"context":"y","state":"success"}]}"""));
+
+        var resp = await reader.ReadAsync(Pr, Sha, CancellationToken.None);
+
+        foreach (var c in resp.Checks)
+        {
+            Assert.Null(c.Summary);
+            Assert.Null(c.AppName);
+        }
+    }
+
+    [Fact]
     public async Task Bare_pending_status_with_no_registered_contexts_contributes_nothing_286()
     {
         var reader = ReaderFor(req =>

@@ -77,7 +77,9 @@ public sealed class GitHubPrChecksReader : IPrChecksReader
                     Source: "check-run",
                     StartedAt: ParseTime(r, "started_at"),
                     CompletedAt: ParseTime(r, "completed_at"),
-                    DetailsUrl: SanitizeUrl(StringProp(r, "details_url") ?? StringProp(r, "html_url"))));
+                    DetailsUrl: SanitizeUrl(StringProp(r, "details_url") ?? StringProp(r, "html_url")),
+                    Summary: NestedStringProp(r, "output", "title"),
+                    AppName: NestedStringProp(r, "app", "name")));
             }
 
             nextUrl = GitHubLinkHeader.TryGetRel(resp, "next", out var n) ? n : null;
@@ -120,7 +122,9 @@ public sealed class GitHubPrChecksReader : IPrChecksReader
                         Source: "status",
                         StartedAt: null,
                         CompletedAt: null,
-                        DetailsUrl: SanitizeUrl(StringProp(s, "target_url"))));
+                        DetailsUrl: SanitizeUrl(StringProp(s, "target_url")),
+                        Summary: StringProp(s, "description"),
+                        AppName: null)); // legacy status has no app object; the context name is the source
                 }
             }
 
@@ -136,6 +140,13 @@ public sealed class GitHubPrChecksReader : IPrChecksReader
 
     private static string? StringProp(JsonElement el, string name) =>
         el.TryGetProperty(name, out var p) && p.ValueKind == JsonValueKind.String ? p.GetString() : null;
+
+    // Reads el[outer][inner] as a string; null if either level is absent/null/non-object.
+    // Used for check-run output.title and app.name (both nested one level deep).
+    private static string? NestedStringProp(JsonElement el, string outer, string inner) =>
+        el.TryGetProperty(outer, out var o) && o.ValueKind == JsonValueKind.Object
+            ? StringProp(o, inner)
+            : null;
 
     private static DateTimeOffset? ParseTime(JsonElement el, string name) =>
         StringProp(el, name) is { } s && DateTimeOffset.TryParse(s, out var t) ? t : null;
