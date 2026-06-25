@@ -2,6 +2,7 @@ import { createContext, useContext, type ReactNode } from 'react';
 import type { PrDetailDto, PrReference } from '../../api/types';
 import type { UseDraftSessionResult } from '../../hooks/useDraftSession';
 import type { FileFocusState } from '../../hooks/useFileFocusResult';
+import type { CheckRunsResult } from '../../hooks/useCheckRuns';
 import type { PrTabId } from './PrSubTabStrip';
 
 // Carries everything a sub-tab needs, replacing the old Outlet context +
@@ -25,6 +26,9 @@ export interface PrDetailContextValue {
   // AND HotspotsTab. One owner (PrDetailView) fetches it; both readers share it,
   // so there is no duplicate GET.
   fileFocus: FileFocusState;
+  // The single shared check-runs result (spec §9) — consumed by the checks tab.
+  // One owner (PrDetailView) fetches it; the checks tab reads it.
+  checks: CheckRunsResult;
   // Deep-link navigation intent: HotspotsTab calls requestFileView(path) (which
   // switches to the Files tab and stashes the path); FilesTab consumes
   // pendingFilePath, applies it, then calls clearPendingFilePath(). The state
