@@ -91,6 +91,20 @@ a client parameter rather than resolving it server-side):
 This keeps the "Banner, not mutation" invariant intact (polled head drift remains
 a banner + explicit reload, never an auto-swap of what's under the cursor).
 
+**Verdict-staleness after a push (product R2, reconciled with adversarial R2).**
+The Checks tab asserts a *health verdict* (green tick / "all passing"), so after a
+push the tab can show a confident verdict for a superseded head until Reload.
+Adversarial R2 verified this is **not a new divergence**: the existing header chip
+already reads the *loaded* head's `ciSummary` with the same drift-banner-only
+signal (`PrDetailView.tsx`), and changing the chip is a non-goal. Neutralizing
+*only* the tab glyph would make the tab and chip disagree — the very inconsistency
+to avoid. **Decision for v1:** rely on the shared head-drift banner (consistent
+with the chip), plus the new-SHA glyph reset (§ Tab strip indicator) so a stale
+verdict doesn't survive the Reload itself. An in-tab staleness treatment
+(dim/neutralize the glyph + an in-panel "for an earlier commit" line, applied to
+*both* chip and tab for consistency) is a noted fast-follow if the verdict
+prominence proves misleading in practice.
+
 ## Architecture overview
 
 ```
@@ -101,7 +115,8 @@ GitHub REST                  PRism.GitHub                 PRism.Web             
 /commits/{sha}/status     ─┘  GitHubPrChecksReader        → ChecksResponseDto   ─ prDetailContext
                               → IReadOnlyList<CheckDto>                          ─ ChecksTab + tab glyph
         ▲
-        └─ GitHubCiFailingDetector also calls GitHubCheckClassifier, folds → 4-state (unchanged behavior)
+        └─ GitHubCiFailingDetector shares ClassifyCheckRun + HasRegisteredStatuses, folds → 4-state
+           (combined-status rollup read unchanged; page-walk NOT shared — see Reader)
 ```
 
 The slice mirrors the **Hotspots tab** precedent end-to-end: a backend reader → a
@@ -112,43 +127,74 @@ No existing tab data path is disturbed.
 
 ### Shared classification — `GitHubCheckClassifier` (the R1 resolution)
 
-A new **pure** helper in `PRism.GitHub` (no HTTP, no cache) with two functions:
+A new **pure** helper in `PRism.GitHub` (no HTTP, no cache). Scope it to **only
+what the detector already computes the same way** — sharing more than that would
+turn an extraction into a behavior change (see the boundary note below):
 
 ```csharp
-// raw check-run JSON element → normalized
+// raw check-run JSON element → normalized. SHARED: detector + reader.
 static (CheckRunStatus Status, CheckConclusion? Conclusion) ClassifyCheckRun(JsonElement run);
-// a single combined-status "statuses[]" entry → normalized
-static (CheckRunStatus Status, CheckConclusion? Conclusion) ClassifyStatusContext(JsonElement ctx);
-// whether a combined-status payload has ≥1 registered context (the #286 guard)
+// whether a combined-status payload has ≥1 registered context (#286 guard). SHARED.
 static bool HasRegisteredStatuses(JsonElement combinedStatusRoot);
+// a single combined-status "statuses[]" entry → normalized. READER-ONLY (see boundary note).
+static (CheckRunStatus Status, CheckConclusion? Conclusion) ClassifyStatusContext(JsonElement ctx);
 ```
 
-`GitHubCiFailingDetector` is refactored to call `ClassifyCheckRun` /
-`ClassifyStatusContext` / `HasRegisteredStatuses` and fold the normalized values
-into its existing 4-state rollup — **behavior-preserving**, with the existing
-`GitHubCiFailingDetectorTests` as the regression net. The new reader calls the
-same functions and keeps the normalized values verbatim. This single-sources the
-classification so a future edge-case fix (the next #264) lands once.
+**Sharing boundary (the behavior-preserving line — adversarial R2).** Two paths
+classify *differently today* and must NOT be force-unified:
 
-**The classification rules the shared helper must encode** (lifted verbatim from
-the detector — enumerated here so they are testable contract, not "mirrors the
-detector"):
+- **Check-runs:** the detector classifies each run element exactly as the reader
+  needs (`GitHubCiFailingDetector.cs:197-212`). `ClassifyCheckRun` is a genuine
+  behavior-preserving extraction; the detector folds its result into
+  `anyFailing/anyPending/anySuccess`, the reader keeps it verbatim. **Shared.**
+- **Combined status:** the detector reads the **server-computed rollup** (`state`
+  for the whole commit, `GitHubCiFailingDetector.cs:238-254`) — it never
+  enumerates `statuses[]`. The reader needs **per-entry** classification to list
+  individual contexts. These are different computations. So `ClassifyStatusContext`
+  is **reader-only**, and the detector **keeps reading the rollup `state`
+  unchanged**. (`HasRegisteredStatuses` is already shared — the detector calls it
+  today for the #286 guard.) Do not claim the detector calls `ClassifyStatusContext`.
 
-| GitHub input | Normalized |
+So the genuinely behavior-preserving, test-guarded extraction is
+**`ClassifyCheckRun` + `HasRegisteredStatuses`**; the existing
+`GitHubCiFailingDetectorTests` are the regression net for those. The per-context
+status mapping is new reader code (its own tests), not an extraction.
+
+**Check-run classification (`ClassifyCheckRun`) — must match the detector exactly:**
+
+| check-run input | Normalized |
 |---|---|
-| check-run `status ∈ {queued, in_progress}` | `Status = queued` / `in-progress`, `Conclusion = null` |
-| check-run `status = completed`, `conclusion = success` | `completed`, `success` |
-| check-run `status = completed`, `conclusion ∈ {failure, timed_out, cancelled}` | `completed`, mapped (`timed_out`→`timed-out`) |
-| check-run `status = completed`, `conclusion ∈ {skipped, neutral, action_required, startup_failure, stale}` | `completed`, mapped (`action_required`→`action-required`); the others → their kebab forms |
-| legacy status `state = pending` **and `HasRegisteredStatuses`** | `in-progress`, `null` |
-| legacy status `state = pending` **and NOT `HasRegisteredStatuses`** | **omitted entirely** (the #286 bare-pending guard — a no-legacy-CI PR must NOT contribute a phantom in-progress check) |
-| legacy status `state ∈ {failure, error}` | `completed`, `failure` |
-| legacy status `state = success` | `completed`, `success` |
+| `status != "completed"` (incl. `queued`, `in_progress`, **`waiting`/`requested`/`pending`** and any future value) | `in-progress` (or `queued` if `status == "queued"`), `Conclusion = null` |
+| `status = completed`, `conclusion = success` | `completed`, `success` |
+| `status = completed`, `conclusion ∈ {failure, timed_out, cancelled}` | `completed`, mapped (`timed_out`→`timed-out`) |
+| `status = completed`, `conclusion ∈ {skipped, neutral, action_required, startup_failure, stale}` | `completed`, mapped (`action_required`→`action-required`); others → kebab |
+
+> **The non-terminal rule is a catch-all, NOT an allowlist (adversarial R2).** The
+> detector treats **any** non-`completed` status as pending
+> (`GitHubCiFailingDetector.cs:201`); GitHub has added `waiting`/`requested`/`pending`
+> beyond `queued`/`in_progress`. Enumerating only two values would silently flip a
+> `waiting` check's classification — and the existing detector tests cover only
+> `completed`/`in_progress`, so they would **not** catch the regression. Define it
+> as `status != "completed"` and add a classifier test for an unknown/future status
+> string. (UI maps everything non-terminal to "in-progress" for the glyph;
+> `queued` is preserved on the DTO only as a finer label.)
+
+**Legacy combined-status classification:**
+
+| input | Normalized |
+|---|---|
+| **rollup** `state ∈ {failure, error}` (detector path) | aggregate Failing — detector unchanged |
+| **rollup** `state = pending` **and `HasRegisteredStatuses`** (detector path) | aggregate Pending — detector unchanged |
+| **rollup** `state = pending` **and NOT `HasRegisteredStatuses`** | aggregate None — the #286 bare-pending guard, detector unchanged |
+| **per-entry** `statuses[].state ∈ {failure, error}` (reader, `ClassifyStatusContext`) | `completed`, `failure` |
+| **per-entry** `statuses[].state = pending` (reader) | `in-progress`, `null` |
+| **per-entry** `statuses[].state = success` (reader) | `completed`, `success` |
+| reader: combined status with **NOT `HasRegisteredStatuses`** | contributes **no** `CheckDto` (#286 — a no-legacy-CI PR must not add a phantom check) |
 
 > **#286 is the trap.** GitHub's combined-status returns `state = "pending"` with
-> `total_count = 0` for every modern Actions-only PR (the common case). Mapping
-> that to an in-progress check would light a permanent false amber pulse on the
-> tab strip. The bare-pending row above is mandatory.
+> `total_count = 0` for every modern Actions-only PR (the common case). The reader
+> applies `HasRegisteredStatuses` and contributes nothing in that case; mapping it
+> to an in-progress check would light a permanent false amber pulse.
 
 ### Contract — `CheckDto` / `ChecksResponseDto`
 
@@ -164,7 +210,7 @@ public sealed record CheckDto(
     string Source,                // "check-run" | "status" (UI honesty: no duration for status)
     DateTimeOffset? StartedAt,    // check-runs only; null for legacy status
     DateTimeOffset? CompletedAt,  // check-runs only
-    string? DetailsUrl);          // sanitized https/http only (see § Security); else null
+    string? DetailsUrl);          // sanitized https-only (see § Security); else null
 
 public enum DegradedReason { None, Auth, Transient } // drives cause-accurate UI copy
 
@@ -173,6 +219,11 @@ public sealed record ChecksResponseDto(
     string HeadSha,               // echoes the requested SHA (coherence dedup, see § Head-SHA model)
     DegradedReason Degraded);     // None = complete read; Auth = a 403; Transient = a 5xx
 ```
+
+**Degraded precedence (coherence R2):** `Degraded` is a single value. If the two
+sources fail with *different* reasons (e.g. check-runs 403 + status 5xx), report
+**`Auth` before `Transient`** — the auth cause is the more specific and actionable
+one to surface. `None` only when both reads completed cleanly.
 
 `CheckRunStatus`, `CheckConclusion`, and `DegradedReason` are new enums and
 round-trip **kebab-case lowercase** via the existing `JsonStringEnumConverter`
@@ -207,9 +258,17 @@ Implementation reuses the established HTTP plumbing and the shared classifier:
   truncated — the AC says "lists individual checks," so first-page-only (the
   detector's aggregate shortcut) is not acceptable here.
 - The `rel="next"` page-walk (next-link follow + cap + `ThrowIfRateLimited` +
-  degraded-on-non-2xx) is factored into a small shared `GitHubPageWalker` used by
-  both the check-runs and status reads, and ideally by the detector too (the page
-  walk is mechanical and SHA-safe to share, distinct from classification).
+  degraded-on-non-2xx) lives **in the reader** (a small private loop reused for the
+  check-runs and status reads). It is **not** shared with the detector: the
+  detector's page loop carries classification-coupled short-circuit state (a
+  `Failing` seen on an earlier page is definitive and returned non-degraded even if
+  a later page degrades — `GitHubCiFailingDetector.cs:174-185`, pinned by
+  `All_passing_first_page_then_degraded_next_page_marks_none_not_passing`). A
+  generic walker can't reproduce that without a classification-fold callback, at
+  which point it isn't "small and shared." The reader classifies after a full read
+  and has no such short-circuit, so its loop is genuinely simple. Duplicating ~20
+  mechanical lines is cheaper than coupling the two. (scope-guardian / feasibility /
+  adversarial R2 all converged here.)
 - All via `GitHubHttp.SendAsync` on the `"github"` client (same-host credential
   guard, rate-limit throwing, API-version header — all inherited). The GHES
   absolute-URL + host-guard discipline (`reference_github_link_pagination_ghes_double_prefix`)
@@ -236,10 +295,13 @@ routes. `sha` is a **required** query parameter supplied by the client (its load
 `data.pr.headSha`); the endpoint calls `IPrChecksReader.ReadAsync(pr, sha, ct)`
 and returns `ChecksResponseDto` (echoing `sha` as `HeadSha`).
 
-**Input validation (§ Security):** `owner` and `repo` are validated against a
-GitHub-identifier pattern (`^[A-Za-z0-9_.-]{1,100}$`) and `sha` against
-`^[0-9a-fA-F]{7,64}$` at the endpoint before constructing `PrReference` /
-interpolating into the GitHub path. (Existing PR-detail endpoints share the
+**Input validation (§ Security):** `sha` is validated with the **existing
+`IsValidGitOid`** (`SharedRegexes.Sha40() || Sha64()` — exactly 40 or 64 hex), the
+same validator `/file?sha=` and `/diff?range=` already use; do **not** invent a
+looser range — the client always sends a full `data.pr.headSha`, and consistency
+keeps one sha contract (feasibility / security R2). `owner` and `repo` are
+validated against a GitHub-identifier pattern (`^[A-Za-z0-9_.-]{1,100}$`) before
+constructing `PrReference`. (Existing PR-detail endpoints share the
 unvalidated-owner/repo gap; this endpoint does not propagate it. Retrofitting the
 others is out of scope, noted for a follow-up.)
 
@@ -260,9 +322,11 @@ takes `active: boolean` and `headSha: string | undefined` as **parameters** (not
 context), so it is unit-testable by toggling props.
 
 ```ts
+type DegradedReason = 'none' | 'auth' | 'transient'; // kebab wire union (matches C# DegradedReason)
+
 interface CheckRunsResult {
   status: 'idle' | 'loading' | 'ok' | 'empty' | 'error';
-  degraded: DegradedReason;   // overlay on 'ok'/'empty' — a partial read still has (some) data
+  degraded: DegradedReason;   // overlay carried on EVERY status incl. 'error' (carries the cause)
   checks: CheckRun[];
   retry: () => void;
 }
@@ -271,6 +335,11 @@ interface CheckRunsResult {
 > **`degraded` is a flag, not a status** (scope-guardian/coherence): a partial read
 > is "`ok` (or `empty`) with a caveat," not a distinct terminal state. Five
 > statuses + a `degraded` overlay; the banner shows when `degraded !== 'none'`.
+> On the TS side `DegradedReason` is the **kebab string union** (`'none'|'auth'|
+> 'transient'`) deserialized from the wire, so the comparison is the literal
+> `degraded !== 'none'` (the C# side is the `DegradedReason` enum). `degraded` is
+> meaningful in the **`error`** state too (both sources failed): it carries `auth`
+> or `transient` so the error copy is cause-accurate, not generic.
 > `checksGlyphState` inspects `checks` only, never `status`.
 
 **Polling model** (option A — lazy + active-only):
@@ -282,22 +351,37 @@ interface CheckRunsResult {
   Keying off the sub-tab alone would poll forever in backgrounded PR tabs; adding
   `document.visibilityState` stops a blurred Electron window from polling.
 - **Lazy:** `status = 'idle'`, no fetch, until the gate first goes true.
-- **Interval:** re-fetch every **15s** while the gate is true **and** ≥1 check is
-  non-terminal (`Status ∈ {queued, in-progress}`). 15s (vs the inbox's 30s) keeps
-  fast checks responsive without tripling the call rate; CI runs are minutes-long,
-  so it's not chatty. **Single-flight:** never overlap fetches — if a tick fires
-  while one is in flight, skip it.
-- **Stop conditions:** all checks terminal, gate goes false, or unmount.
-- **429 / error backoff:** on a thrown 429 or network error, **stop the 15s loop**
-  and surface `status = 'error'` + Retry; do **not** keep firing every 15s into a
-  rate limit. (Manual Retry restarts the loop.)
-- **Eventual-consistency grace:** check-runs for a just-loaded SHA can lag. Treat
-  an **empty** first response within ~5s of the gate opening as still-`loading`
-  (don't flash "No checks for this commit" then fill); after the grace window an
-  empty read is a true `empty`.
+- **Interval:** re-fetch every **15s** while the gate is true **and** the result is
+  still "live" (see stop conditions). 15s (vs the inbox's 30s) keeps fast checks
+  responsive without tripling the call rate; CI runs are minutes-long, so it's not
+  chatty. **Single-flight:** never overlap fetches — if a tick fires while one is in
+  flight, skip it.
+- **"Live" = keep polling while** ≥1 check is non-terminal (`Status ∈ {queued,
+  in-progress}`) **OR** the list is empty *and* within ~2 min of the gate opening
+  (the late-registration window — see below). Otherwise stop.
+- **Stop conditions:** all checks terminal (and ≥1 present), gate goes false, the
+  late-registration window elapses on a still-empty list, or unmount.
+- **429 / error backoff:** on a thrown 429 or network error, **stop the loop** and
+  surface `status = 'error'` (+ `degraded` cause) + Retry; do **not** keep firing
+  every 15s into a rate limit. (Manual Retry restarts the loop.)
+- **Empty handling (no fixed grace skeleton — scope/adversarial R2):** a definitive
+  empty read renders **"No checks for this commit" immediately** (no 5s skeleton
+  tax on the common no-CI PR — many PRs genuinely have none). To still catch
+  *late-registering* checks (just reloaded to a brand-new SHA before GitHub
+  registered the runs), the loop keeps polling on an empty list for the
+  ~2-min late-registration window above, then stops. The first non-empty result
+  switches to normal terminal-based polling. (Backend has no completeness signal,
+  so the client can't distinguish genuine-empty from lagging-empty up front — the
+  bounded re-poll covers the lag without delaying the genuine case.)
 - **Re-fetch on `headSha` change** (i.e. after a user Reload): abort the in-flight
-  request (`AbortController`) and start a fresh series for the new SHA. The
-  response-SHA equality check is the belt-and-suspenders dedup.
+  request (`AbortController`) and start a fresh series for the new SHA.
+
+**Coherence guards (adversarial R2 — no overclaim):** *single-flight* handles
+intra-series ordering (no two in-flight requests in one SHA series); the
+*`AbortController`* handles the cross-series race (an old-SHA response landing after
+a Reload starts a new fetch); the *`HeadSha` echo equality check* is a defensive
+cross-series backstop (reject a response whose `HeadSha` ≠ currently-requested SHA).
+It does **not** dedup "within a SHA series" — single-flight already precludes that.
 
 Result is published via `prDetailContext` (parallel to `fileFocus`).
 
@@ -322,34 +406,57 @@ Two orthogonal signals, from the inbox CI vocabulary (`InboxRow.tsx` octicons):
     tick** (inbox `passing` check octicon).
   - otherwise → no leading glyph.
 - **Trailing badge** — **failing count**, red warn-styled, shown when failing > 0.
-  **"Failing" counts the same conclusions the header chip treats as failing**:
-  `Conclusion ∈ {failure, timed-out, cancelled}` (R4 reconciliation — the detector
-  counts `cancelled`/`timed_out` as failing, so the badge must too, or a
-  cancelled-only PR would show a red chip with no red badge).
+  **"Failing" = `Conclusion ∈ {failure, timed-out, cancelled}`** — the same
+  conclusions the header chip treats as failing (the detector counts
+  `cancelled`/`timed_out` as failing), so the badge matches the chip.
 
-`action-required` is **not** counted as failing (it's a manual gate, not a
-failure) but is **not** silent either: it gets its own row treatment and sort tier
-(below failing, above in-progress) — see the panel. It does not drive the lead
-glyph or the badge in v1; revisit surfacing manual gates more prominently if users
-ask (tracked against the existing #305 thread).
+> **Cancelled must be a full failing-tier member, not just a badge count
+> (adversarial R2).** An earlier draft counted `cancelled` in the badge but sorted
+> it into a lower non-failing tier — so a cancelled-only PR showed a red "1 failing"
+> badge and aria, but the failing section in the panel was empty ("badge says 1
+> failing, I see none"). Resolution: `{failure, timed-out, cancelled}` are the
+> **failing tier** everywhere — badge, aria, sort position (top), and row glyph
+> (red). They agree by construction.
 
-**Idle/loading glyph (stale-while-revalidate):** while `status ∈ {idle, loading}`,
-**preserve the last-known glyph** if one was shown; show no glyph only on the
-initial cold load before any data has arrived. Prevents a flicker-to-blank on
-tab re-entry / re-fetch.
+`action-required` is a **manual gate, not a failure**: it is **not** in the failing
+count, but is **not** silent — it has its own row glyph (amber) and its own sort
+tier (below failing, above in-progress). It does not drive the lead glyph or the
+badge in v1; revisit surfacing manual gates more prominently if users ask (tracked
+against the existing #305 thread).
+
+**Lead-glyph completeness (design R2).** The lead slot has exactly three outcomes:
+in-progress → amber pulse; all-green → green tick; **everything else → no lead
+glyph** (including a failing-only / cancelled-only terminal state — the **red badge
+is the signal there, intentionally, with no lead glyph**). This is deliberate, not
+an omission.
+
+**Idle/loading glyph (stale-while-revalidate, with a reload reset — product R2):**
+- *Same-SHA re-fetch* (a poll tick): while `status ∈ {idle, loading}` **preserve
+  the last-known glyph** — prevents a flicker-to-blank between ticks.
+- *New-SHA load* (after a Reload): **clear** the preserved glyph back to the cold
+  no-glyph state — do **not** carry the prior head's verdict (e.g. a green tick)
+  across the Reload boundary onto a commit whose checks haven't loaded.
+- Initial cold load: no glyph until the first response.
 
 A single `checksGlyphState(checks)` derivation is the source of truth for both the
-lead glyph and the badge count, so they cannot drift. It is pure over the `checks`
-array and exhaustively unit-tested (all-queued, running+failing, cancelled-only,
-all-green, mixed, empty).
+lead glyph and the badge count, so they cannot drift. Pure over the `checks` array,
+exhaustively unit-tested (all-queued, running+failing, cancelled-only → red badge +
+no lead glyph, all-green → tick, mixed, empty).
 
 **Accessibility:**
 - `prefers-reduced-motion: reduce` → the amber dot renders **static** (no pulse);
   the dot itself still conveys in-progress, motion is decorative only.
 - The **tab's `aria-label` carries the health summary** (matching how `InboxRow`
   puts CI state in its aria-label), e.g. `"Checks — 2 failing"`, `"Checks —
-  running"`, `"Checks — all passing"`. The visual badge and the dot are
-  `aria-hidden` (their meaning is already in the label).
+  running"`, `"Checks — all passing"`, `"Checks — 1 cancelled"` (failing-tier
+  count). The visual badge and the dot are `aria-hidden` (their meaning is in the
+  label).
+- **Live-update policy (design R2):** label changes during polling are
+  **intentionally silent** — no `aria-live` on the tab. At the 15s cadence a live
+  announcer would be chatty, and the shared head-drift banner already announces the
+  consequential change. A keyboard/SR user hears the current health when they
+  navigate to the tab. (Documented tradeoff; revisit if users want active
+  announcements.)
 
 ### Tab panel — `ChecksTab`
 
@@ -357,37 +464,56 @@ New `frontend/src/components/PrDetail/ChecksTab/ChecksTab.tsx`, consuming
 `usePrDetailContext()`. Mirrors `HotspotsTab` structure.
 
 - **List:** flat (not grouped by workflow — YAGNI; `detailsUrl` reaches the
-  workflow on GitHub). Sorted **problems-first**: failing → action-required →
-  in-progress → neutral/skipped/cancelled → passing last; stable by name within a
-  tier. (`cancelled` is a failing *conclusion* for the badge but sorts in the
-  lower "terminal-not-success" group visually — it's a finished non-actionable
-  state, distinct from an active failure; the row glyph marks it clearly.)
-- **Row:** status octicon (reused inbox glyph set) + check name + duration + a
-  **"Details ↗"** link to `detailsUrl` (opens on github.com; `target="_blank"`,
-  `rel="noopener noreferrer"`, the Electron will-navigate guard — and the URL is
-  already https-sanitized backend-side, § Security). When `detailsUrl` is null
-  (sanitized out, or a legacy status without a target), render the name without a
-  link.
+  workflow on GitHub). Sorted **problems-first** by tier, stable by name within a
+  tier:
+  1. **failing** — `Conclusion ∈ {failure, timed-out, cancelled}` (the failing tier,
+     matching the badge)
+  2. **action-required**
+  3. **in-progress** — `Status ∈ {queued, in-progress}`
+  4. **neutral / skipped / stale**
+  5. **passing** (`success`) last
+- **Row:** conclusion glyph (below) + check name + duration + a **"Details ↗"** link
+  to `detailsUrl` (opens on github.com; `target="_blank"`, `rel="noopener
+  noreferrer"`, the Electron will-navigate guard — URL is https-sanitized
+  backend-side, § Security). When `detailsUrl` is null (sanitized out, or a legacy
+  status without a target), render the name without a link.
+  - **Row glyph mapping (design R2 — was previously undefined):**
+
+    | state | glyph | color |
+    |---|---|---|
+    | `failure` / `timed-out` | ✗ cross | red |
+    | `cancelled` | ✗ cross (or slash) | red (failing tier) |
+    | `action-required` | ! / alert octicon | amber |
+    | `queued` / `in-progress` | spinner / dot | amber |
+    | `skipped` / `neutral` / `stale` | – dash | muted/grey |
+    | `success` | ✓ check | green |
+
+    Reuse the `InboxRow` octicon set where it maps (check/cross/dot); the
+    action-required and dash glyphs are new but small.
   - **Name overflow:** one line, `text-overflow: ellipsis`, full name in a native
     `title`. Duration + Details are right-aligned fixed columns; the name takes the
     remaining width.
   - **Duration:** `<1s → "<1s"`; `<60s → "Ns"`; `≥60s → "Nm Ss"`; `≥1h → "Nh Mm"`.
-    For an **in-progress** check it shows **elapsed** (`now − StartedAt`),
-    live-ticking ~1s via a single interval; after completion it's the final
-    `CompletedAt − StartedAt`. Omitted entirely when `Source = "status"` (no
-    timing) or `StartedAt` is absent.
+    Computed from the **latest poll response** (`CompletedAt − StartedAt`; for an
+    in-progress check, `last-response-time − StartedAt`). **No separate per-second
+    live-ticker in v1** (scope R2) — it updates each 15s poll, which is adequate for
+    minutes-long runs and avoids a second interval + per-second re-renders. Omitted
+    when `Source = "status"` (no timing) or `StartedAt` is absent.
 - **States:**
   - `idle`/`loading` (cold) → skeleton rows. (Warm re-fetch keeps the last list
     rendered; no skeleton flash.)
-  - `empty` → "No checks for this commit." (After the eventual-consistency grace.)
-  - `error` → message + **Retry**. Copy is cause-accurate:
-    - thrown 429 / network → "Couldn't load checks — retry."
+  - `empty` → "No checks for this commit." (Rendered immediately on a definitive
+    empty read — no fixed grace; see the late-registration re-poll in § Hook.)
+  - `error` → message + **Retry**, cause-accurate via `degraded`:
+    - `auth` → "Couldn't load checks — the current token may lack access (a classic
+      `repo` token is required for the Checks API)."
+    - `transient` / 429 / network → "Couldn't load checks — retry."
   - `degraded` overlay (partial read, some checks shown) → a subtle banner above
-    the list, copy keyed to `DegradedReason`:
-    - `Auth` → "PRism couldn't read some checks — the current token may lack
+    the list, copy keyed to `degraded`:
+    - `auth` → "PRism couldn't read some checks — the current token may lack
       access (a classic `repo` token is required for the Checks API)." (Does **not**
       claim the token is *definitely* wrong; GHES configs can also 403.)
-    - `Transient` → "Some checks couldn't be loaded — retry."
+    - `transient` → "Some checks couldn't be loaded — retry."
 
 ### Types
 
@@ -399,19 +525,19 @@ does not type Playwright `route.fulfill` bodies).
 
 ### Large check counts
 
-The backend caps at ~1000 (10 pages). The frontend renders the flat list without
-virtualization in v1 (typical PRs have <30 checks; the problems-first sort puts
-anything actionable at the top). If a read exceeds a soft display cap of **200**
-rows, render the first 200 (problems-first) with a "Showing first 200 of N — open
-on GitHub for the full set" notice rather than silently truncating. Virtualization
-is deferred unless real monorepo usage shows it's needed.
+The backend caps at ~1000 (10 pages) — the safety valve. The frontend renders the
+flat list without virtualization or a display cap in v1 (typical PRs have <30
+checks; the problems-first sort puts anything actionable at the top). No soft
+display cap (scope R2 — it would need a `TotalCount` field the DTO doesn't carry,
+for a case the spec itself calls unlikely). Virtualization is deferred unless real
+monorepo usage shows it's needed.
 
 ## Security
 
 | Concern | Mitigation |
 |---|---|
-| `detailsUrl` is provider-controlled (third-party check-run `html_url`/`target_url`) — `javascript:`/`data:` XSS via `<a href>` (and `rel=noopener` does **not** block `javascript:` execution) | **Backend allowlist:** populate `CheckDto.DetailsUrl` only when the URL parses as absolute `https`/`http`; otherwise `null`. Sanitize at the source so every consumer is safe. |
-| `owner`/`repo`/`sha` path & query injection into GitHub REST paths | Validate at the endpoint (`owner`/`repo` `^[A-Za-z0-9_.-]{1,100}$`, `sha` `^[0-9a-fA-F]{7,64}$`) before use. |
+| `detailsUrl` is provider-controlled (third-party check-run `html_url`/`target_url`) — `javascript:`/`data:` XSS via `<a href>` (and `rel=noopener` does **not** block `javascript:` execution) | **Backend allowlist, `https`-only:** populate `CheckDto.DetailsUrl` only when `Uri.TryCreate(raw, UriKind.Absolute, out var u) && u.Scheme == "https"`; otherwise `null`. Use the codebase's `Uri.TryCreate`+scheme pattern (`GitHubFeedbackSubmitter.cs:34`, `HostUrlResolver.cs:10`), **not** a `StartsWith` check (bypassable). `https`-only matches every other outbound link in the codebase; GitHub `html_url` is always https even on GHES (security R2). |
+| `owner`/`repo`/`sha` path & query injection into GitHub REST paths | Validate at the endpoint: `owner`/`repo` `^[A-Za-z0-9_.-]{1,100}$`; `sha` via the existing **`IsValidGitOid`** (`Sha40()||Sha64()`, exactly 40/64 hex) — same as `/file?sha=`, not a bespoke range. |
 | PAT egress to off-host (GHES double-prefix) | Inherited `GitHubHttp.ApplyHeaders` same-host guard + absolute-URL `rel="next"` (`reference_github_link_pagination_ghes_double_prefix`). |
 | Reverse-tabnabbing on `target="_blank"` | `rel="noopener noreferrer"`. |
 | Authz (reading a repo the user shouldn't) | Same model as every PR-detail endpoint — the PAT gates at GitHub (403/404); no new exposure. |
@@ -420,13 +546,14 @@ is deferred unless real monorepo usage shows it's needed.
 
 | Condition | Backend | Frontend |
 |---|---|---|
-| No checks / no registered statuses | `Checks = []`, `Degraded = None` | `empty` (after grace) |
-| 403 on a source | partial list, `Degraded = Auth` | list + `Auth` banner (scope-accurate copy) |
-| 5xx / other non-2xx on a source | partial list, `Degraded = Transient` | list + `Transient` banner |
-| Both sources fail (no data) | `Checks = []`, `Degraded = Auth\|Transient` | `error` + Retry (cause-accurate) |
+| No checks / no registered statuses | `Checks = []`, `Degraded = None` | `empty` immediately (definitive); loop re-polls ≤2 min for late registration |
+| 403 on a source | partial list, `Degraded = Auth` | list + `auth` banner (scope-accurate copy) |
+| 5xx / other non-2xx on a source | partial list, `Degraded = Transient` | list + `transient` banner |
+| Both sources fail, different reasons | `Degraded = Auth` (Auth before Transient) | `error` + Retry, `auth` copy |
+| Both sources fail (no data) | `Checks = []`, `Degraded = Auth\|Transient` | `error` + Retry (copy keyed to `degraded`) |
 | 429 rate-limit | throws | loop stops; `error` + Retry |
-| Loaded head advanced (new push) | n/a (client still on old `sha`) | existing drift banner → user Reload → re-fetch new head |
-| Out-of-order responses in a SHA series | response echoes `HeadSha` | `AbortController` + SHA-equality dedup |
+| Loaded head advanced (new push) | n/a (client still on old `sha`) | shared drift banner → user Reload → re-fetch new head (see § Head-SHA model) |
+| Cross-series stale response (after Reload) | response echoes `HeadSha` | `AbortController` + `HeadSha`-equality backstop |
 
 ## Testing strategy
 
@@ -434,28 +561,36 @@ Non-bug enhancement → proof is **test-first** new tests (red→green within PR
 history) + the acceptance checklist.
 
 - **Backend — `GitHubCheckClassifier` (`PRism.GitHub.Tests`):** every row of the
-  classification table, including the **#286 bare-pending omission**, `cancelled`
-  / `timed_out` / `action_required` / `skipped` / `neutral` mappings. These are
-  the highest-value tests (the drift risk lives here).
+  check-run table incl. `cancelled`/`timed_out`/`action_required`/`skipped`/
+  `neutral`; the **non-terminal catch-all** (assert an unknown/future status string
+  e.g. `"waiting"` normalizes to in-progress, not a fall-through — the narrowing
+  regression the existing tests miss); per-context `ClassifyStatusContext` mapping;
+  `HasRegisteredStatuses` true/false incl. the **#286 bare-pending** omission. These
+  are the highest-value tests (the drift risk lives here).
 - **Backend — detector regression:** the existing `GitHubCiFailingDetectorTests`
-  must stay green across the classification extraction (proves behavior-preserving).
-- **Backend — `GitHubPrChecksReader`:** check-runs + status pagination across
-  `rel="next"`; page cap; degraded `Auth` (403) vs `Transient` (5xx) returns
-  partial + correct reason, does not throw; 429 throws; `detailsUrl` sanitization
-  (a `javascript:` `html_url` → null).
+  must stay green across the `ClassifyCheckRun` + `HasRegisteredStatuses` extraction
+  (proves behavior-preserving). The detector's combined-status **rollup** read is
+  unchanged (not routed through `ClassifyStatusContext`).
+- **Backend — `GitHubPrChecksReader`:** check-runs **and** `/status` pagination
+  across `rel="next"`; page cap; degraded `Auth` (403) vs `Transient` (5xx) returns
+  partial + correct reason, does not throw; both-fail precedence (Auth before
+  Transient); 429 throws; `detailsUrl` sanitization (a `javascript:`, `data:`, and
+  `http:` `html_url` each → null; an `https:` one passes).
 - **Backend — `PRism.Web` integration:** `GET …/checks?sha=` via
-  `FakePrChecksReader`; required-param + `owner`/`repo`/`sha` validation rejects
-  malformed input.
+  `FakePrChecksReader`; required-`sha` + `owner`/`repo`/`sha` (`IsValidGitOid`)
+  validation rejects malformed input.
 - **Frontend (vitest):** `checksGlyphState` over all combinations (all-queued,
-  running+failing, cancelled-only → red badge, all-green → tick, empty);
-  `ChecksTab` each state (skeleton/empty/error/Auth-degraded/Transient-degraded/
-  list); problems-first ordering; duration formatting + live-tick (fake timers) +
-  omission for `status` source; name-ellipsis + title; `useCheckRuns` lazy-start,
-  poll start/stop on `active` toggle + on all-terminal + on `document.hidden`,
-  single-flight, 429-stops-loop, eventual-consistency grace, headSha re-fetch +
-  abort (fake timers). Hook test arrangement: render with `active=false` → no
-  fetch; `active=true` → first fetch; push a non-terminal check, advance timers →
-  re-fetch; `active=false` → no further fetch.
+  running+failing, **cancelled-only → red badge + no lead glyph**, all-green →
+  tick, empty); `ChecksTab` each state (skeleton/empty/error-auth/error-transient/
+  auth-degraded/transient-degraded/list); problems-first ordering with cancelled in
+  the failing tier; conclusion→glyph mapping incl. action-required; duration
+  formatting (no live-tick) + omission for `status` source; name-ellipsis + title;
+  glyph **clear on new-SHA load** vs preserve on same-SHA re-fetch; `useCheckRuns`
+  lazy-start, poll start/stop on `active` toggle + on all-terminal + on
+  `document.hidden`, single-flight, 429-stops-loop, **late-registration re-poll on
+  empty then stop after the window**, headSha re-fetch + abort (fake timers). Hook
+  arrangement: render `active=false` → no fetch; `active=true` → first fetch; push a
+  non-terminal check, advance timers → re-fetch; `active=false` → no further fetch.
 - **Accessibility:** tab `aria-label` health summary; reduced-motion static dot.
 - **e2e (Playwright, prod project):** open a PR → Checks tab → assert the list +
   tab-strip glyph, `FakePrChecksReader` fixture with mixed states. The
