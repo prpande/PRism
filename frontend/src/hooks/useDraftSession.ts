@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { getDraft } from '../api/draft';
+import { prRefKey } from '../api/types';
 import type { DraftCommentDto, DraftReplyDto, PrReference, ReviewSessionDto } from '../api/types';
 import { isPrRootDraft } from '../components/PrDetail/draftKinds';
 
@@ -100,6 +101,25 @@ export function useDraftSession(prRef: PrReference): UseDraftSessionResult {
   const sessionRef = useRef<ReviewSessionDto | null>(null);
   sessionRef.current = session;
 
+  // #612 C — generation guard for the imperative refetch. The mount effect below
+  // guards its async resolution with a local `cancelled` flag; refetch needs the
+  // equivalent or a late refetch for the previous PR clobbers the new PR's session
+  // (refetch is wired to SSE subscribers and useReconcile.onReloadComplete). The
+  // load-bearing guard is the prRef key — a primitive, compared against a
+  // render-tracked ref — NOT the closure's own prRef (stale-by-design, would always
+  // match) and NOT object identity (prRef is a fresh literal each render, #331).
+  const activePrKeyRef = useRef('');
+  activePrKeyRef.current = prRefKey(prRef);
+  // Secondary backstop: a refetch that resolves after the hook unmounts (an SSE /
+  // onReloadComplete callback firing post-teardown) must not setState on a dead hook.
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
   const getPrRootHolder = useCallback((): ComposerOwnerKey | null => {
     const rootDraft = session?.draftComments.find(isPrRootDraft);
     if (!rootDraft) return null;
@@ -110,12 +130,16 @@ export function useDraftSession(prRef: PrReference): UseDraftSessionResult {
   }, [session]);
 
   const refetch = useCallback(async () => {
+    const key = activePrKeyRef.current;
     try {
       const server = await getDraft(prRef);
+      // Drop the result if the active PR changed mid-flight or the hook unmounted.
+      if (!mountedRef.current || activePrKeyRef.current !== key) return;
       setSession(mergeSession(sessionRef.current, server, isOpen, setOutOfBandToast));
       setStatus('ready');
       setError(null);
     } catch (e) {
+      if (!mountedRef.current || activePrKeyRef.current !== key) return;
       setError(e as Error);
       setStatus('error');
     }

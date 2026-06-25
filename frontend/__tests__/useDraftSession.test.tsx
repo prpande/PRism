@@ -366,6 +366,48 @@ describe('useDraftSession — registerOpenComposer ownerKey set semantics', () =
   });
 });
 
+describe('useDraftSession — refetch generation guard (#612 C)', () => {
+  it('drops a stale refetch for the previous PR instead of clobbering the new PR session', async () => {
+    const refA: PrReference = { owner: 'octocat', repo: 'hello', number: 1 };
+    const refB: PrReference = { owner: 'octocat', repo: 'hello', number: 2 };
+    const sessionA = { ...emptySession(), draftComments: [comment('a1', 'A-body')] };
+    const sessionB = { ...emptySession(), draftComments: [comment('b1', 'B-body')] };
+
+    // The imperative refetch for PR-A is held pending until after the switch to PR-B.
+    let resolveRefetchA!: (v: ReviewSessionDto) => void;
+    const refetchAPending = new Promise<ReviewSessionDto>((res) => {
+      resolveRefetchA = res;
+    });
+
+    vi.spyOn(draftApi, 'getDraft')
+      .mockResolvedValueOnce(sessionA) // 1: PR-A mount load
+      .mockReturnValueOnce(refetchAPending) // 2: PR-A imperative refetch (still in flight)
+      .mockResolvedValueOnce(sessionB); // 3: PR-B mount load after rerender
+
+    const { result, rerender } = renderHook(({ r }) => useDraftSession(r), {
+      initialProps: { r: refA },
+    });
+    await waitFor(() => expect(result.current.session?.draftComments[0]?.id).toBe('a1'));
+
+    // Kick off a refetch for PR-A (e.g. an SSE subscriber / onReloadComplete); it stays pending.
+    const refetchACall = result.current.refetch();
+
+    // User switches to PR-B; its mount effect loads sessionB.
+    rerender({ r: refB });
+    await waitFor(() => expect(result.current.session?.draftComments[0]?.id).toBe('b1'));
+
+    // The stale PR-A refetch finally resolves — its result must be discarded.
+    await act(async () => {
+      resolveRefetchA(sessionA);
+      await refetchACall;
+    });
+
+    // PR-B's session survives; PR-A's late response did not overwrite it.
+    expect(result.current.session?.draftComments).toHaveLength(1);
+    expect(result.current.session?.draftComments[0]?.id).toBe('b1');
+  });
+});
+
 describe('useDraftSession — getPrRootHolder', () => {
   function prRootComment(id: string, body: string): DraftCommentDto {
     return comment(id, body, {

@@ -23,7 +23,16 @@ export function applyThemeToDocument(theme: Theme, accent: Accent): void {
       : false;
   const resolved = theme === 'system' ? (prefersDark ? 'dark' : 'light') : theme;
   document.documentElement.dataset.theme = resolved;
-  const hue = ACCENT_HUES[accent];
+  // Defensive on any accent outside the enum, mirroring applyDensity/
+  // applyContentScale below: the wire shape (UiPreferencesDto.Accent) is `string`,
+  // validated by ConfigStore for type only, not enum membership (plan Deviation 6) —
+  // an out-of-band config.json edit or FE/backend skew could yield an arbitrary
+  // string. The `Record<Accent, …>` lookup type is total, so widen it to partial
+  // here to keep the `??` fallback reachable and fall back to the default indigo
+  // hue (tokens.css default accent) instead of throwing on `hue.h`.
+  const hue =
+    (ACCENT_HUES as Partial<Record<Accent, { h: number; c: number }>>)[accent] ??
+    ACCENT_HUES.indigo;
   document.documentElement.style.setProperty('--accent-h', String(hue.h));
   document.documentElement.style.setProperty('--accent-c', String(hue.c));
 }
