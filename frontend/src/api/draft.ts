@@ -101,8 +101,8 @@ export async function sendPatch(
     }
     // Non-ApiError = network / fetch / programmer error. sendPatch never
     // throws on this path so callers never have to wrap it in try/catch
-    // (the auto-save flow's `await inFlightCreate.current` and the
-    // discard handlers all rely on this no-throw contract).
+    // (the auto-save flow's serialized save chain and the discard handlers
+    // all rely on this no-throw contract).
     return {
       ok: false,
       status: 0,

@@ -78,9 +78,13 @@ export const COMPOSER_CREATE_THRESHOLD = 3;
 export function useComposerAutoSave(props: UseComposerAutoSaveProps): UseComposerAutoSaveResult {
   const [badge, setBadge] = useState<ComposerSaveBadge>('saved');
 
-  // In-flight create promise. Subsequent debounces await it rather than
-  // firing a duplicate create (spec § 5.3 "in-flight create promise").
-  const inFlightCreate = useRef<Promise<string | null> | null>(null);
+  // All saves are serialized through one in-flight promise chain (#602 Defect
+  // C). A new save awaits the chain tail before dispatching, so overlapping
+  // update/delete saves resolve in submission order. This also subsumes the
+  // old create-dedup `inFlightCreate` ref: a second save now awaits the first
+  // create, by which point `draftIdRef` is set (synchronously, see doSave), so
+  // it fires an update rather than a duplicate create (spec § 5.3).
+  const saveChain = useRef<Promise<void>>(Promise.resolve());
   const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Mirrors the latest known draftId in a ref so save flows can read the
@@ -97,34 +101,26 @@ export function useComposerAutoSave(props: UseComposerAutoSaveProps): UseCompose
     propsRef.current = props;
   });
 
-  const performSave = useCallback(async (currentBody: string): Promise<void> => {
+  // The core save. Runs one create/update/delete based on the current body and
+  // the freshest draftId. Serialization (ordering, create-dedup) is owned by
+  // performSave's chain — doSave assumes it is the only save running.
+  //
+  // #602 Defect B: after each `await sendPatch`, re-read the LIVE
+  // `propsRef.current.disabled` and bail BEFORE applying any effect — including
+  // the local `draftIdRef` write. A cross-tab take-over that flips `disabled`
+  // mid-PUT must leave this now-read-only tab with no state change and no
+  // notification (spec § 5.7a). The PUT already dispatched can't be recalled,
+  // but everything observable downstream is suppressed.
+  const doSave = useCallback(async (currentBody: string): Promise<void> => {
+    // `p` snapshots the patch target (prRef, anchor) at dispatch time — a PUT
+    // already in flight can't retarget. `disabled` and the callbacks, by
+    // contrast, are read LIVE from propsRef.current after each await, so a
+    // mid-flight take-over is honored (Defect B). prRef/anchor are assumed
+    // stable for the in-flight PUT: a PR change unmounts this composer tree, so
+    // the snapshot/live split can't cross PRs in practice.
     const p = propsRef.current;
     if (p.disabled) return;
     const trimmed = currentBody.trim();
-
-    // Drain any in-flight create first. The next save needs the assigned id
-    // before deciding create-vs-update; queueing here also dedupes the
-    // simultaneous-debounces-during-create race.
-    //
-    // The wrapped IIFE below resolves the promise with `null` on failure
-    // (sendPatch returns a SendPatchResult; never throws), so the await
-    // here cannot throw under the current contract. The try/catch is
-    // defense-in-depth against a future refactor that reintroduces a
-    // throw path — without it, an uncaught rejection here would crash
-    // the debounced callback (no-op badge, no retry).
-    if (inFlightCreate.current !== null) {
-      let id: string | null = null;
-      try {
-        id = await inFlightCreate.current;
-      } catch {
-        // Defense-in-depth: keep id at the initial null so the
-        // post-await branch falls through to a fresh create.
-      }
-      if (id !== null) {
-        draftIdRef.current = id;
-      }
-    }
-
     const id = draftIdRef.current;
 
     if (id === null) {
@@ -132,25 +128,20 @@ export function useComposerAutoSave(props: UseComposerAutoSaveProps): UseCompose
       // Empty composer also lands here — never creates a zero-body draft.
       if (trimmed.length < COMPOSER_CREATE_THRESHOLD) return;
 
-      const promise: Promise<string | null> = (async () => {
-        setBadge('saving');
-        const result = await sendPatch(p.prRef, makeCreatePatch(currentBody, p.anchor));
-        if (result.ok && result.assignedId) {
-          draftIdRef.current = result.assignedId;
-          setBadge('saved');
-          p.onAssignedId?.(result.assignedId);
-          p.onSaved?.();
-          return result.assignedId;
-        }
-        applyErrorBadge(result, setBadge);
-        return null;
-      })();
-      inFlightCreate.current = promise;
-      try {
-        await promise;
-      } finally {
-        if (inFlightCreate.current === promise) inFlightCreate.current = null;
+      setBadge('saving');
+      const result = await sendPatch(p.prRef, makeCreatePatch(currentBody, p.anchor));
+      if (propsRef.current.disabled) return;
+      if (result.ok && result.assignedId) {
+        // Synchronous (no await before this write): the next chained save reads
+        // draftIdRef to choose create-vs-update — this is what carries the
+        // create-dedup obligation now that `inFlightCreate` is gone.
+        draftIdRef.current = result.assignedId;
+        setBadge('saved');
+        propsRef.current.onAssignedId?.(result.assignedId);
+        propsRef.current.onSaved?.();
+        return;
       }
+      applyErrorBadge(result, setBadge);
       return;
     }
 
@@ -158,10 +149,11 @@ export function useComposerAutoSave(props: UseComposerAutoSaveProps): UseCompose
     if (trimmed.length === 0) {
       setBadge('saving');
       const result = await sendPatch(p.prRef, makeDeletePatch(id, p.anchor));
+      if (propsRef.current.disabled) return;
       if (result.ok) {
         draftIdRef.current = null;
         setBadge('saved');
-        p.onLocalDelete?.();
+        propsRef.current.onLocalDelete?.();
         return;
       }
       applyErrorBadge(result, setBadge);
@@ -172,28 +164,80 @@ export function useComposerAutoSave(props: UseComposerAutoSaveProps): UseCompose
     // only; a user mid-edit at 2 chars on an existing draft is trusted.
     setBadge('saving');
     const result = await sendPatch(p.prRef, makeUpdatePatch(id, currentBody, p.anchor));
+    if (propsRef.current.disabled) return;
     if (result.ok) {
       setBadge('saved');
-      p.onSaved?.();
+      propsRef.current.onSaved?.();
       return;
     }
     if (result.kind === 'draft-not-found') {
       // 404: the draft was deleted elsewhere. Composer's recovery modal.
       draftIdRef.current = null;
       setBadge('unsaved');
-      p.onDraftDeletedByServer?.();
+      propsRef.current.onDraftDeletedByServer?.();
       return;
     }
     applyErrorBadge(result, setBadge);
   }, []);
 
+  // Serialize every save through one tail-chained promise (#602 Defect C). The
+  // next save cannot dispatch its `sendPatch` until the prior save resolves, so
+  // server writes land in submission order and the terminal badge reflects the
+  // latest write.
+  const performSave = useCallback(
+    (currentBody: string): Promise<void> => {
+      const next = saveChain.current.then(() => doSave(currentBody));
+      // Swallow rejections on the STORED tail so one failed link can't poison
+      // later saves; the returned `next` still surfaces the real result.
+      saveChain.current = next.catch(() => undefined);
+      return next;
+    },
+    [doSave],
+  );
+
   const flush = useCallback(async (): Promise<string | null> => {
+    // #602 §5.7a call-site guard: a flush() on a taken-over (read-only) tab must
+    // perform no write AND leak no id. doSave's entry check already blocks the
+    // write, but flush() would still return draftIdRef.current — a draft id this
+    // now-read-only tab created before the take-over. Short-circuit to null so a
+    // caller (e.g. an external flushRef consumer) never receives a stale id to
+    // act on.
+    if (propsRef.current.disabled) return null;
     if (debounceTimer.current) {
       clearTimeout(debounceTimer.current);
       debounceTimer.current = null;
     }
     await performSave(propsRef.current.body);
     return draftIdRef.current;
+  }, [performSave]);
+
+  // #602 Defect A — flush a pending debounced edit on unmount. Without this, an
+  // unmount within COMPOSER_DEBOUNCE_MS of the last keystroke that bypasses the
+  // explicit flush handlers (PR navigation tearing the tree down, file-tree
+  // collapse, sub-tab switch) silently drops that keystroke. The body-keyed
+  // debounce effect below cannot flush in its cleanup — that runs on every
+  // keystroke — so this empty-dep effect's cleanup, which runs only at unmount,
+  // owns it. `performSave` is stable, so the dependency never re-fires the
+  // cleanup before unmount.
+  //
+  // ORDERING INVARIANT: this effect MUST be declared BEFORE the body-keyed
+  // debounce effect below. React runs unmount cleanups in registration order
+  // (top-to-bottom), so this cleanup must fire first to grab the live
+  // `debounceTimer` and flush it; if the body-keyed effect were declared first,
+  // its cleanup would null the timer and this one would silently no-op, dropping
+  // the keystroke. `UnmountWithPendingDebounce_FlushesLastKeystroke` goes red if
+  // the two effects are ever reordered.
+  useEffect(() => {
+    return () => {
+      if (debounceTimer.current !== null) {
+        clearTimeout(debounceTimer.current);
+        debounceTimer.current = null;
+        // Fire-and-forget (cleanups cannot await). doSave re-checks `disabled`
+        // at entry, so a taken-over tab still no-ops; setBadge after unmount is
+        // a React no-op, but the PUT still lands.
+        void performSave(propsRef.current.body);
+      }
+    };
   }, [performSave]);
 
   useEffect(() => {
