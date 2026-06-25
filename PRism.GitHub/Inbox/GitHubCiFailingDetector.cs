@@ -196,19 +196,15 @@ public sealed class GitHubCiFailingDetector : ICiFailingDetector
             // invalidates an old cancellation) is not handled here; v2 may refine.
             foreach (var r in runs.EnumerateArray())
             {
-                var status = r.GetProperty("status").GetString();
-                var conclusion = r.TryGetProperty("conclusion", out var cn) ? cn.GetString() : null;
-                if (status != "completed") { anyPending = true; continue; }
-                if (conclusion is "failure" or "timed_out" or "cancelled") anyFailing = true;
-                else if (conclusion == "success") anySuccess = true;
-                // Other completed conclusions (skipped / neutral / action_required /
-                // startup_failure / stale) contribute neither failing nor success: a PR whose
-                // checks were all skipped (path filters, matrix exclusions) is NOT a positive
-                // signal and must not show a false green tick — it stays None unless a real
-                // success exists. `action_required` (a manual gate awaiting human action) is
-                // DELIBERATELY left as None here rather than mapped to Failing/Pending —
-                // surfacing manual-gate state in the 4-state inbox model is a separate design
-                // call tracked in #305, not an oversight. #264
+                var (st, concl) = GitHubCheckClassifier.ClassifyCheckRun(r);
+                if (st != CheckRunStatus.Completed) { anyPending = true; continue; }
+                if (concl is CheckConclusion.Failure or CheckConclusion.TimedOut or CheckConclusion.Cancelled)
+                    anyFailing = true;
+                else if (concl == CheckConclusion.Success)
+                    anySuccess = true;
+                // Other completed conclusions (skipped / neutral / action_required / startup_failure / stale)
+                // contribute neither failing nor success — unchanged from the inline version. action_required
+                // stays None in the 4-state model (#305 tracks surfacing manual gates). #264
             }
 
             nextUrl = GitHubLinkHeader.TryGetRel(resp, "next", out var n) ? n : null;
@@ -246,31 +242,13 @@ public sealed class GitHubCiFailingDetector : ICiFailingDetector
         var status = state switch
         {
             "failure" or "error" => CiStatus.Failing,
-            "pending" when HasRegisteredStatuses(doc.RootElement) => CiStatus.Pending,
+            "pending" when GitHubCheckClassifier.HasRegisteredStatuses(doc.RootElement) => CiStatus.Pending,
             // A registered success is a positive signal → Passing. Success with no
             // registered statuses stays None (the #286 "no legacy CI" case). (#264)
-            "success" when HasRegisteredStatuses(doc.RootElement) => CiStatus.Passing,
+            "success" when GitHubCheckClassifier.HasRegisteredStatuses(doc.RootElement) => CiStatus.Passing,
             _ => CiStatus.None,
         };
         return (status, false);
-    }
-
-    // A registered status context surfaces as a positive `total_count` OR a non-empty
-    // inline `statuses` array. The two agree in practice, but OR-ing them (rather than
-    // letting `total_count` short-circuit) matches the documented intent and tolerates
-    // payload quirks. `total_count` is read with TryGetInt32 so an unexpected non-integer
-    // number degrades to the array signal instead of throwing. An absent/zero count with
-    // an empty array means "none registered", which GitHub still labels state="pending". (#286)
-    private static bool HasRegisteredStatuses(JsonElement root)
-    {
-        var hasStatuses = root.TryGetProperty("statuses", out var statuses)
-            && statuses.ValueKind == JsonValueKind.Array
-            && statuses.GetArrayLength() > 0;
-        var hasCount = root.TryGetProperty("total_count", out var count)
-            && count.ValueKind == JsonValueKind.Number
-            && count.TryGetInt32(out var n)
-            && n > 0;
-        return hasStatuses || hasCount;
     }
 
     private async Task<HttpResponseMessage> SendAsync(string url, string? token, CancellationToken ct)
