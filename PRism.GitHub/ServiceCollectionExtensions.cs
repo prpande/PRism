@@ -141,6 +141,15 @@ public static class ServiceCollectionExtensions
                 sp.GetRequiredService<IClock>());
         });
 
+        services.AddSingleton<IPrChecksReader>(sp =>
+        {
+            var tokens = sp.GetRequiredService<ITokenStore>();
+            var factory = sp.GetRequiredService<IHttpClientFactory>();
+            return new GitHubPrChecksReader(
+                factory,
+                () => tokens.ReadAsync(CancellationToken.None));
+        });
+
         services.AddSingleton<PRism.Core.Activity.IReceivedEventsReader>(sp =>
         {
             var tokens = sp.GetRequiredService<ITokenStore>();
