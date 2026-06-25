@@ -128,11 +128,14 @@ public sealed partial class ActivePrPoller : BackgroundService
         // re-subscribe AFTER an observed unsubscribe re-fires first-poll. _state.Keys is a
         // snapshot, so removing during iteration is safe. This runs BEFORE the empty-candidates
         // early return below so a tick that observes zero subscribers still reclaims their state.
+        // The cache (_snapshots) is the sibling per-PR map with the same leak (#624) — prune both
+        // against the SAME live set so they can never diverge.
         var live = new HashSet<PrReference>(prs);
         foreach (var key in _state.Keys)
         {
             if (!live.Contains(key)) _state.TryRemove(key, out _);
         }
+        _cache.Retain(live);
 
         // #598 Slice B: gather every subscribed PR not currently in backoff, then issue ONE
         // batched GraphQL read for the whole set. Whole-tick-abort contract: a rate-limited or

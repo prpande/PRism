@@ -38,4 +38,17 @@ internal sealed class ActivePrCache : IActivePrCache
     }
 
     public void Clear() => _snapshots.Clear();
+
+    public void Retain(IReadOnlyCollection<PrReference> live)
+    {
+        ArgumentNullException.ThrowIfNull(live);
+        // Reuse the caller's set when it already is one (the poller passes the same HashSet it
+        // built for the _state prune) to avoid a second allocation; otherwise build one for O(1)
+        // membership. _snapshots.Keys is a snapshot, so removing during iteration is safe.
+        var keep = live as ISet<PrReference> ?? new HashSet<PrReference>(live);
+        foreach (var key in _snapshots.Keys)
+        {
+            if (!keep.Contains(key)) _snapshots.TryRemove(key, out _);
+        }
+    }
 }

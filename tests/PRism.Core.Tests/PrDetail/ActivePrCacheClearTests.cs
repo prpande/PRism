@@ -28,4 +28,33 @@ public class ActivePrCacheClearTests
         var act = () => new ActivePrCache(new ActivePrSubscriberRegistry()).Clear();
         act.Should().NotThrow();
     }
+
+    [Fact]
+    public void Retain_DropsSnapshotsForPrsNotInLiveSet_KeepsLiveOnes()
+    {
+        // Issue #624 (folded into #609): the sibling of the _state prune. _snapshots had the
+        // same unbounded-growth leak — only a wholesale Clear() ever removed entries.
+        var cache = new ActivePrCache(new ActivePrSubscriberRegistry());
+        var live = new PrReference("octocat", "Hello-World", 1);
+        var dead = new PrReference("octocat", "Hello-World", 2);
+        cache.Update(live, new ActivePrSnapshot("sha-a", null, DateTimeOffset.UtcNow));
+        cache.Update(dead, new ActivePrSnapshot("sha-b", null, DateTimeOffset.UtcNow));
+
+        cache.Retain(new[] { live });
+
+        cache.GetCurrent(live).Should().NotBeNull("a PR still in the live set keeps its snapshot");
+        cache.GetCurrent(dead).Should().BeNull("a PR absent from the live set is evicted");
+    }
+
+    [Fact]
+    public void Retain_EmptyLiveSet_DropsEverything()
+    {
+        var cache = new ActivePrCache(new ActivePrSubscriberRegistry());
+        var pr = new PrReference("octocat", "Hello-World", 1);
+        cache.Update(pr, new ActivePrSnapshot("sha-a", null, DateTimeOffset.UtcNow));
+
+        cache.Retain(Array.Empty<PrReference>());
+
+        cache.GetCurrent(pr).Should().BeNull();
+    }
 }

@@ -342,4 +342,50 @@ public class ActivePrPollerBackoffTests
 
         poller.TrackedStateCount.Should().Be(0, "state for PRs with no active subscribers is reclaimed each tick");
     }
+
+    [Fact]
+    public async Task Cache_snapshot_is_evicted_for_prs_that_lose_all_subscribers()
+    {
+        // Issue #624 (folded into #609) — ActivePrCache._snapshots had the same unbounded-growth
+        // leak as _state. The tick prune now also evicts the cache snapshot for any PR that has
+        // lost its last subscriber. Reads are gated by IsSubscribed, so eviction is safe; a
+        // re-subscribe repopulates the snapshot on the next poll.
+        var (poller, batch, _, registry, cache) = Build();
+        var pr = new PrReference("o", "r", 1);
+        registry.Add("sub1", pr);
+        batch.SetSnapshot(pr, Snapshot(headSha: "h1"));
+
+        await poller.TickAsync(T0, default);
+        cache.GetCurrent(pr).Should().NotBeNull("the poll populated the cache snapshot");
+
+        registry.Remove("sub1", pr);
+        await poller.TickAsync(T0.AddSeconds(30), default);
+
+        cache.GetCurrent(pr).Should().BeNull("the cache snapshot is evicted once the PR loses its last subscriber");
+    }
+
+    [Fact]
+    public async Task Resubscribe_within_same_cadence_window_keeps_state_and_does_not_re_emit()
+    {
+        // Documents the accepted boundary of prune-on-tick (issue #609): if a PR is unsubscribed
+        // and re-subscribed BETWEEN two ticks, the tick never observes zero subscribers, so its
+        // _state survives and first-poll does NOT re-fire. Acceptable — the user never left the
+        // polling window. Only a re-subscribe AFTER an observed zero-subscriber tick re-fires
+        // (covered by Resubscribe_after_observed_unsubscribe_re_emits_first_poll_for_quiet_pr).
+        var (poller, batch, bus, registry, _) = Build();
+        var pr = new PrReference("o", "r", 1);
+        registry.Add("sub1", pr);
+        batch.SetSnapshot(pr, Snapshot(headSha: "h1", commentCount: 0));
+
+        await poller.TickAsync(T0, default);                 // first poll → hydration event
+        bus.Published.Should().ContainSingle("first poll publishes a hydration event");
+
+        // Unsubscribe then immediately re-subscribe, with NO tick in between.
+        registry.Remove("sub1", pr);
+        registry.Add("sub2", pr);
+
+        await poller.TickAsync(T0.AddSeconds(30), default);  // tick still sees pr subscribed → state retained
+
+        bus.Published.Should().ContainSingle("a re-subscribe within the same cadence window keeps state, so first-poll does not re-fire");
+    }
 }
