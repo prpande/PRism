@@ -14,6 +14,10 @@ function resp(over: Partial<ChecksResponse> = {}): ChecksResponse {
 
 describe('useCheckRuns', () => {
   beforeEach(() => {
+    // shouldAdvanceTime: true lets waitFor's internal setTimeout drain. The sinon fake clock
+    // still governs Date.now(), and advanceTimersByTimeAsync advances BOTH the timers AND
+    // Date.now() — so the hook's LATE_REGISTRATION_MS window expires correctly in the
+    // "re-polls empty then stops" test. Don't switch to a real-clock Date.now() mock.
     vi.useFakeTimers({ shouldAdvanceTime: true });
     Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true });
   });
@@ -109,23 +113,21 @@ describe('useCheckRuns', () => {
   });
 
   it('does NOT fetch again while the document is hidden (scope R1)', async () => {
-    const spy = vi
-      .spyOn(api, 'getCheckRuns')
-      .mockResolvedValue(
-        resp({
-          checks: [
-            {
-              name: 'b',
-              status: 'in-progress',
-              conclusion: null,
-              source: 'check-run',
-              startedAt: null,
-              completedAt: null,
-              detailsUrl: null,
-            },
-          ],
-        }),
-      );
+    const spy = vi.spyOn(api, 'getCheckRuns').mockResolvedValue(
+      resp({
+        checks: [
+          {
+            name: 'b',
+            status: 'in-progress',
+            conclusion: null,
+            source: 'check-run',
+            startedAt: null,
+            completedAt: null,
+            detailsUrl: null,
+          },
+        ],
+      }),
+    );
     renderHook(() => useCheckRuns(PR, SHA, true));
     await waitFor(() => expect(spy).toHaveBeenCalledTimes(1));
     // hide the window AFTER activation; the next scheduled tick must no-op
@@ -137,23 +139,21 @@ describe('useCheckRuns', () => {
   });
 
   it('resumes polling when the window becomes visible again (adversarial R2)', async () => {
-    const spy = vi
-      .spyOn(api, 'getCheckRuns')
-      .mockResolvedValue(
-        resp({
-          checks: [
-            {
-              name: 'b',
-              status: 'in-progress',
-              conclusion: null,
-              source: 'check-run',
-              startedAt: null,
-              completedAt: null,
-              detailsUrl: null,
-            },
-          ],
-        }),
-      );
+    const spy = vi.spyOn(api, 'getCheckRuns').mockResolvedValue(
+      resp({
+        checks: [
+          {
+            name: 'b',
+            status: 'in-progress',
+            conclusion: null,
+            source: 'check-run',
+            startedAt: null,
+            completedAt: null,
+            detailsUrl: null,
+          },
+        ],
+      }),
+    );
     renderHook(() => useCheckRuns(PR, SHA, true));
     await waitFor(() => expect(spy).toHaveBeenCalledTimes(1));
     Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true });
@@ -170,23 +170,21 @@ describe('useCheckRuns', () => {
   });
 
   it('stops polling when active toggles to false (scope R2)', async () => {
-    const spy = vi
-      .spyOn(api, 'getCheckRuns')
-      .mockResolvedValue(
-        resp({
-          checks: [
-            {
-              name: 'b',
-              status: 'in-progress',
-              conclusion: null,
-              source: 'check-run',
-              startedAt: null,
-              completedAt: null,
-              detailsUrl: null,
-            },
-          ],
-        }),
-      );
+    const spy = vi.spyOn(api, 'getCheckRuns').mockResolvedValue(
+      resp({
+        checks: [
+          {
+            name: 'b',
+            status: 'in-progress',
+            conclusion: null,
+            source: 'check-run',
+            startedAt: null,
+            completedAt: null,
+            detailsUrl: null,
+          },
+        ],
+      }),
+    );
     const { rerender } = renderHook(({ a }) => useCheckRuns(PR, SHA, a), {
       initialProps: { a: true },
     });
