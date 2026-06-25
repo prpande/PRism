@@ -160,6 +160,11 @@ public sealed class FileLoggerIntegrationTests : IDisposable
         content.Should().NotContain("ghp_exceptiontoken", "a PAT in exception text must not reach disk");
         content.Should().NotContain("ghp_freetextarg", "a PAT in a non-sensitive-keyed arg must not reach disk");
         content.Should().Contain("[REDACTED]", "the free-text scrubber must replace PAT-shaped tokens");
+
+        // The scrubber must redact only the secret, not swallow surrounding message text — guards
+        // against a future over-broad regex dropping the log line's diagnostic content.
+        content.Should().Contain("request pipeline failed", "the non-secret message must survive scrubbing");
+        content.Should().Contain("auth detail", "the non-secret message must survive scrubbing");
     }
 
     [Fact]
