@@ -87,8 +87,25 @@ public sealed class ClaudeCodeLlmProvider(
             throw new LlmProviderException($"claude -p failed (exit {result.ExitCode}).", result.Stderr, result.ExitCode);
         }
 
-        var envelope = JsonSerializer.Deserialize<ClaudeCliEnvelope>(result.Stdout, ClaudeCliEnvelope.Options)
-            ?? throw new LlmProviderException("claude -p returned unparseable JSON.", stderr: string.Empty, exitCode: 0);
+        ClaudeCliEnvelope? envelope;
+        try
+        {
+            envelope = JsonSerializer.Deserialize<ClaudeCliEnvelope>(result.Stdout, ClaudeCliEnvelope.Options);
+        }
+        catch (JsonException ex)
+        {
+            // claude -p exited 0 but emitted malformed/partial/non-object stdout (a prepended banner line,
+            // a CLI version drift, an interrupted write). The `?? throw` below only handles literal-null —
+            // JsonException must be wrapped here so AiEndpoints maps it to 503 (never 500), matching the
+            // sibling parsers (ClaudeStreamJson, JsonClaudeCliStateStore). The raw bytes JsonException.Message
+            // may embed stay confined to the inner exception (logged by type-name only), never the outer
+            // message which routes through LlmProviderException's redaction contract.
+            throw new LlmProviderException(
+                "claude -p returned unparseable JSON.", stderr: string.Empty, exitCode: 0, innerException: ex);
+        }
+
+        if (envelope is null)
+            throw new LlmProviderException("claude -p returned unparseable JSON.", stderr: string.Empty, exitCode: 0);
         if (envelope.Result is null)
             throw new LlmProviderException("claude -p returned JSON without a result field.", stderr: string.Empty, exitCode: 0);
 

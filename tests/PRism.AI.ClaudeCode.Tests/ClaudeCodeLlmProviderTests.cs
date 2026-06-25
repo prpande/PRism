@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Text.Json;
 using FluentAssertions;
 using PRism.AI.ClaudeCode;
 using PRism.AI.Contracts.Provider;
@@ -152,6 +153,35 @@ public sealed class ClaudeCodeLlmProviderTests
         }, locator);
         var act = async () => await provider.CompleteAsync(Req(), CancellationToken.None);
         await act.Should().ThrowAsync<LlmProviderException>();
+    }
+
+    [Fact]
+    public async Task Malformed_stdout_throws_LlmProviderException_not_JsonException()
+    {
+        // #606: claude -p exits 0 but emits non-JSON (a banner line prepended, CLI version drift, an
+        // interrupted write). Deserialize throws JsonException; the `?? throw` only handles literal-null,
+        // so the seam must wrap JsonException as LlmProviderException — matching the null-envelope branch
+        // and the sibling parsers — so AiEndpoints maps it to 503 (never 500). The inner JsonException is
+        // preserved for diagnostics.
+        var (provider, _) = Build(new ProcessResult(0, "claude: starting\n{ \"result\": \"trunc", "", false));
+        var ex = (await ((Func<Task>)(async () => await provider.CompleteAsync(Req(), CancellationToken.None)))
+            .Should().ThrowAsync<LlmProviderException>()).Which;
+        ex.InnerException.Should().BeOfType<JsonException>();
+    }
+
+    [Fact]
+    public async Task Malformed_stdout_does_not_leak_raw_bytes_in_outer_exception()
+    {
+        // #606 AC#2: System.Text.Json's JsonException.Message can embed a snippet of the offending bytes
+        // (raw CLI/model output). That must NOT reach an un-redacted outer-exception message/stderr — the
+        // outer Message is a fixed string and Stderr is empty (the raw bytes stay confined to the inner
+        // JsonException, which the summarizer logs by type-name only, never raw).
+        const string garbage = "not json at all sk-ant-deadbeefdeadbeef trailing";
+        var (provider, _) = Build(new ProcessResult(0, garbage, "", false));
+        var ex = (await ((Func<Task>)(async () => await provider.CompleteAsync(Req(), CancellationToken.None)))
+            .Should().ThrowAsync<LlmProviderException>()).Which;
+        ex.Message.Should().NotContain("sk-ant-deadbeef");
+        ex.Stderr.Should().BeEmpty();
     }
 
     [Fact]
