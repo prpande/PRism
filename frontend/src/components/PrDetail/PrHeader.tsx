@@ -23,6 +23,7 @@ import { useAiGate } from '../../hooks/useAiGate';
 import { useSubmitToasts } from '../../hooks/useSubmitToasts';
 import { useToast } from '../Toast';
 import { PrSubTabStrip, type PrTabId } from './PrSubTabStrip';
+import type { ChecksLeadGlyph } from './checksGlyphState';
 import { DiscardPendingReviewConfirmationModal } from './DiscardPendingReviewConfirmationModal';
 import { DiscardAllConfirmationModal } from './DiscardAllConfirmationModal';
 import { ImportedDraftsBanner } from './ForeignPendingReviewModal/ImportedDraftsBanner';
@@ -117,6 +118,11 @@ interface PrHeaderProps {
   // Hotspots tab-label marker state (spec §3): threaded from PrDetailView via
   // fileFocusStatusToMarkerState. Absent / null = no marker.
   hotspotsAiState?: 'idle' | 'working' | null;
+  // Checks tab lead glyph primitives (Task 11). Threaded from PrDetailView via
+  // checksGlyphState; PrSubTabStrip builds <ChecksTabGlyph> at the leaf.
+  checksLead?: ChecksLeadGlyph;
+  checksFailingCount?: number;
+  checksAriaLabel?: string;
   // S5 — the draft session drives the verdict picker + Submit button + the
   // in-flight-submit recovery badge. Null while the PR detail is loading.
   session?: ReviewSessionDto | null;
@@ -185,6 +191,9 @@ export function PrHeader({
   draftsCount,
   showHotspots = false,
   hotspotsAiState,
+  checksLead,
+  checksFailingCount,
+  checksAriaLabel,
   session = null,
   headShaDrift = false,
   currentHeadSha = '',
@@ -588,6 +597,9 @@ export function PrHeader({
           draftsCount={draftsCount}
           showHotspots={showHotspots}
           aiMarkerState={hotspotsAiState ?? null}
+          checksLead={checksLead}
+          checksFailingCount={checksFailingCount}
+          checksAriaLabel={checksAriaLabel}
         />
         {/* No collapse toggle during cold load — keep buttons out of the loading
             state (there's nothing to collapse yet). */}

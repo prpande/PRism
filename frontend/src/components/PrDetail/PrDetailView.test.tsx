@@ -1,4 +1,4 @@
-import { describe, test, expect, vi, beforeEach } from 'vitest';
+import { describe, it, test, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
@@ -15,12 +15,27 @@ import { makePrDetailDto, makePr } from '../../../__tests__/helpers/prDetail';
 import type { PrTabId } from './PrSubTabStrip';
 import { PrDetailView } from './PrDetailView';
 import * as prDetailApi from '../../api/prDetail';
+import type { CheckRunsResult } from '../../hooks/useCheckRuns';
 
 // #344 — observe the usePrDetail.reload() that the refresh hook fires. The
 // usePrDetail mock is fully stubbed (no getPrDetail spy), so a hoisted, stable
 // reload mock is the only way to assert the post-refresh re-GET. Declared via
 // vi.hoisted so it exists before the vi.mock factory below references it.
 const { reloadMock } = vi.hoisted(() => ({ reloadMock: vi.fn() }));
+
+// Task 11 — Control the hook's output per test (no real timers / fetches at the view level).
+// Default to idle so existing tests that don't set checksState work without crashing ChecksTab.
+const checksState = vi.hoisted(() => ({
+  current: {
+    status: 'idle' as const,
+    degraded: 'none' as const,
+    checks: [],
+    retry: () => {},
+  } as CheckRunsResult,
+}));
+vi.mock('../../hooks/useCheckRuns', () => ({
+  useCheckRuns: () => checksState.current,
+}));
 
 // ---------------------------------------------------------------------------
 // PrDetailView depends on the same data/SSE hooks PrDetailPageInner did. We
@@ -317,5 +332,56 @@ describe('PrDetailView — title propagation on resolve (Task 11)', () => {
         'open',
       );
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Task 11 (#138) — Checks tab wiring: hook, glyph, panel, context.
+// The useCheckRuns mock above replaces only the hook so checksGlyphState still
+// runs for real over the mocked checks array (glyph derivation is integration-tested,
+// not stubbed). The new-SHA reset path is unit-tested in Task 7; this view test
+// covers the strip's in-progress→glyph and empty→no-glyph wiring.
+// ---------------------------------------------------------------------------
+describe('PrDetailView — Checks tab wiring (Task 11 / #138)', () => {
+  const PR = { owner: 'acme', repo: 'api', number: 7 };
+
+  const inProgress: CheckRunsResult = {
+    status: 'ok',
+    degraded: 'none',
+    checks: [
+      {
+        name: 'build',
+        status: 'in-progress',
+        conclusion: null,
+        source: 'check-run',
+        startedAt: null,
+        completedAt: null,
+        detailsUrl: null,
+      },
+    ],
+    retry: vi.fn(),
+  };
+  const empty: CheckRunsResult = { status: 'empty', degraded: 'none', checks: [], retry: vi.fn() };
+
+  beforeEach(() => {
+    // Reset to idle default so tests that don't set checksState are unaffected.
+    checksState.current = { status: 'idle', degraded: 'none', checks: [], retry: vi.fn() };
+  });
+
+  it('always shows the Checks tab and reflects in-progress on the strip glyph', async () => {
+    checksState.current = inProgress;
+    renderPrDetailView({ prRef: PR });
+    const tab = await screen.findByTestId('pr-tab-checks');
+    expect(tab).toBeInTheDocument();
+    expect(tab.querySelector('[data-glyph="in-progress"]')).not.toBeNull();
+    await userEvent.click(tab);
+    expect(await screen.findByTestId('check-name')).toHaveTextContent('build'); // panel mounted
+  });
+
+  it('clears the strip glyph when the loaded checks list is empty', async () => {
+    checksState.current = empty;
+    renderPrDetailView({ prRef: PR });
+    const tab = await screen.findByTestId('pr-tab-checks');
+    expect(tab.querySelector('[data-glyph]')).toBeNull(); // lead 'none' → no glyph
   });
 });
