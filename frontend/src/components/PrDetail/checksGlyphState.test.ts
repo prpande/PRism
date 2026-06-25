@@ -73,4 +73,27 @@ describe('checksGlyphState', () => {
     expect(s.lead).toBe('none');
     expect(s.failingCount).toBe(0);
   });
+
+  it('skipped checks do not block the all-green tick when the rest succeeded', () => {
+    const s = checksGlyphState([
+      run({ conclusion: 'success' }),
+      run({ conclusion: 'skipped' }),
+      run({ conclusion: 'success' }),
+    ]);
+    expect(s.lead).toBe('all-green');
+    expect(s.failingCount).toBe(0);
+    expect(s.ariaSummary).toBe('Checks — all passing');
+  });
+
+  it('skipped-only → no lead glyph (nothing actually passed)', () => {
+    const s = checksGlyphState([run({ conclusion: 'skipped' }), run({ conclusion: 'skipped' })]);
+    expect(s.lead).toBe('none');
+    expect(s.failingCount).toBe(0);
+  });
+
+  it('skipped alongside a failure → no green tick, failure still counted', () => {
+    const s = checksGlyphState([run({ conclusion: 'skipped' }), run({ conclusion: 'failure' })]);
+    expect(s.lead).toBe('none');
+    expect(s.failingCount).toBe(1);
+  });
 });
