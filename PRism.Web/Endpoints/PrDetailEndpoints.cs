@@ -269,6 +269,25 @@ internal static partial class PrDetailEndpoints
                 return capExceeded ?? Results.NoContent();
             }).WithMetadata(new RequestSizeLimitAttribute(EndpointExtensions.MutatingBodyCapBytes));
 
+        app.MapGet("/api/pr/{owner}/{repo}/{number:int}/checks",
+            async (string owner, string repo, int number,
+                   [FromQuery] string? sha,
+                   IPrChecksReader checks, CancellationToken ct) =>
+            {
+                // Validate path params (owner/repo, which form the GitHub REST path) BEFORE the
+                // query param (sha), so the trust boundary reads outermost-first (security S1).
+                if (!SharedRegexes.OwnerRepo().IsMatch(owner) || !SharedRegexes.OwnerRepo().IsMatch(repo))
+                    return Results.Problem(type: "/owner-repo/invalid", statusCode: 422);
+                if (string.IsNullOrEmpty(sha))
+                    return Results.Problem(type: "/checks/missing-sha", statusCode: 422);
+                if (!IsValidGitOid(sha))
+                    return Results.Problem(type: "/sha/invalid", statusCode: 422);
+
+                var prRef = new PrReference(owner, repo, number);
+                var result = await checks.ReadAsync(prRef, sha, ct).ConfigureAwait(false);
+                return Results.Ok(result);
+            });
+
         return app;
     }
 
