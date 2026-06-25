@@ -36,6 +36,7 @@ function Harness({
     baseShaChanged: false,
     onSelectSubTab,
     fileFocus: { status: 'ok', entries, retry: vi.fn() },
+    checks: { status: 'idle', degraded: 'none', checks: [], retry: vi.fn() },
     pendingFilePath,
     requestFileView,
     clearPendingFilePath: () => setPendingFilePath(null),

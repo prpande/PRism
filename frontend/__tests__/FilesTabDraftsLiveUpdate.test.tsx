@@ -156,6 +156,7 @@ function Wrapper({ prDetail }: { prDetail: PrDetailDto }) {
         baseShaChanged: false,
         onSelectSubTab: () => {},
         fileFocus: { status: 'no-changes', entries: [], retry: () => {} },
+        checks: { status: 'idle', degraded: 'none', checks: [], retry: () => {} },
         pendingFilePath: null,
         requestFileView: () => {},
         clearPendingFilePath: () => {},

@@ -393,6 +393,7 @@ export function PrDetailView({
       baseShaChanged: updates.baseShaChanged,
       onSelectSubTab: selectSubTab,
       fileFocus,
+      checks: { status: 'idle', degraded: 'none', checks: [], retry: () => {} },
       pendingFilePath,
       requestFileView,
       clearPendingFilePath,
