@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { apiClient } from '../api/client';
 import type { MergeReadiness, PrReference, Reviewer } from '../api/types';
+import { snapshot } from '../utils/snapshotMerge';
 import { useEventSource } from './useEventSource';
 
 export interface ActivePrUpdates {
@@ -81,14 +82,15 @@ export function useActivePrUpdates(prRef: PrReference): ActivePrUpdates {
         // (non-none) readiness (anti-flicker None guard), so we keep the last meaningful value and
         // ignore transient None ticks that carry mergeReadinessChanged=false.
         mergeReadiness: event.mergeReadinessChanged ? event.mergeReadiness : s.mergeReadiness,
-        // #593 — popover data is a snapshot of the current poll: assign from the event when it
-        // carries the field, else keep the last value. No anti-flicker latch (these aren't
-        // subject to the transient-None recompute that gates mergeReadiness).
-        approvals: event.approvals ?? s.approvals,
-        changesRequested: event.changesRequested ?? s.changesRequested,
-        approvers: event.approvers ?? s.approvers,
-        changesRequestedBy: event.changesRequestedBy ?? s.changesRequestedBy,
-        awaitingReviewers: event.awaitingReviewers ?? s.awaitingReviewers,
+        // #593 — popover data is a snapshot of the current poll: take the event's value whenever it
+        // carries the field (incl. an explicit null that clears a now-empty category), else keep the
+        // last value. No anti-flicker latch (these aren't subject to the transient-None recompute
+        // that gates mergeReadiness). See `snapshot` for why this is `!== undefined`, not `??`.
+        approvals: snapshot(event.approvals, s.approvals),
+        changesRequested: snapshot(event.changesRequested, s.changesRequested),
+        approvers: snapshot(event.approvers, s.approvers),
+        changesRequestedBy: snapshot(event.changesRequestedBy, s.changesRequestedBy),
+        awaitingReviewers: snapshot(event.awaitingReviewers, s.awaitingReviewers),
       }));
     });
 

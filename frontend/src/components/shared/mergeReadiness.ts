@@ -79,18 +79,3 @@ export const READINESS_TONE: Record<MergeReadiness, ReadinessTone | ''> = {
   'ready-with-changes-requested': 'success',
   ready: 'success',
 };
-
-// Global chip class (defined in tokens.css, Task 4). Shared by both surfaces.
-export const READINESS_CHIP_CLASS: Record<MergeReadiness, string> = {
-  none: '',
-  merged: '',
-  closed: '',
-  conflicts: 'chip-readiness-conflicts',
-  'behind-base': 'chip-readiness-behind-base',
-  'changes-requested': 'chip-readiness-changes-requested',
-  'review-required': 'chip-readiness-review-required',
-  'blocked-by-protection': 'chip-readiness-blocked-by-protection',
-  unstable: 'chip-readiness-unstable',
-  'ready-with-changes-requested': 'chip-readiness-ready-with-changes-requested',
-  ready: 'chip-readiness-ready',
-};

@@ -96,4 +96,77 @@ describe('useActivePrUpdates', () => {
     });
     expect(result.current.mergeReadiness).toBe('ready');
   });
+
+  it('clears reviewer lists when a later event sends null (snapshot, not ??) — #621', async () => {
+    const { result } = renderHook(() =>
+      useActivePrUpdates({ owner: 'acme', repo: 'api', number: 1 }),
+    );
+    await waitFor(() => expect(listeners['pr-updated']?.length).toBeGreaterThan(0));
+
+    // First tick: an approver is present.
+    act(() => {
+      fireSse('pr-updated', {
+        prRef: 'acme/api/1',
+        headShaChanged: false,
+        baseShaChanged: false,
+        commentCountDelta: 0,
+        isMerged: false,
+        isClosed: false,
+        approvals: 1,
+        approvers: [{ login: 'octocat', avatarUrl: null }],
+      });
+    });
+    expect(result.current.approvers).toEqual([{ login: 'octocat', avatarUrl: null }]);
+    expect(result.current.approvals).toBe(1);
+
+    // Second tick: the approval was dismissed — the wire sends null to CLEAR the category.
+    // With `??` the stale approver would persist; snapshot() takes the explicit null.
+    act(() => {
+      fireSse('pr-updated', {
+        prRef: 'acme/api/1',
+        headShaChanged: false,
+        baseShaChanged: false,
+        commentCountDelta: 0,
+        isMerged: false,
+        isClosed: false,
+        approvals: null,
+        approvers: null,
+      });
+    });
+    expect(result.current.approvers).toBeNull();
+    expect(result.current.approvals).toBeNull();
+  });
+
+  it('keeps the prior reviewer list when a later event omits the field (undefined ≠ clear)', async () => {
+    const { result } = renderHook(() =>
+      useActivePrUpdates({ owner: 'acme', repo: 'api', number: 1 }),
+    );
+    await waitFor(() => expect(listeners['pr-updated']?.length).toBeGreaterThan(0));
+
+    act(() => {
+      fireSse('pr-updated', {
+        prRef: 'acme/api/1',
+        headShaChanged: false,
+        baseShaChanged: false,
+        commentCountDelta: 0,
+        isMerged: false,
+        isClosed: false,
+        approvers: [{ login: 'octocat', avatarUrl: null }],
+      });
+    });
+
+    // A reduced event (e.g. a head-only tick / older fixture) that doesn't carry approvers
+    // must NOT wipe the list — undefined means "no update", distinct from a null clear.
+    act(() => {
+      fireSse('pr-updated', {
+        prRef: 'acme/api/1',
+        headShaChanged: true,
+        baseShaChanged: false,
+        commentCountDelta: 0,
+        isMerged: false,
+        isClosed: false,
+      });
+    });
+    expect(result.current.approvers).toEqual([{ login: 'octocat', avatarUrl: null }]);
+  });
 });

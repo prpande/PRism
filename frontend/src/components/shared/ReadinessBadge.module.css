@@ -25,7 +25,7 @@
    The inbox stays the bare glyph (.compact, glyph-only); the detail header has the
    horizontal room for the label, matching the earlier inbox text-pill design the
    user approved. The soft background + fg text mirror the app's chip language
-   (tokens.css .chip-readiness-*). */
+   (the same --success/-warning/-danger-soft tone tokens the global chips use). */
 .expanded {
   gap: 6px;
   padding: 3px 10px;

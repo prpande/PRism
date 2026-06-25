@@ -15,6 +15,7 @@ import { PrDetailSkeleton } from './PrDetailSkeleton';
 import type { PrTabId } from './PrSubTabStrip';
 import { usePrDetail } from '../../hooks/usePrDetail';
 import { useActivePrUpdates } from '../../hooks/useActivePrUpdates';
+import { snapshot } from '../../utils/snapshotMerge';
 import { usePrDetailRefresh } from '../../hooks/usePrDetailRefresh';
 import { useToast } from '../Toast/useToast';
 import { useDraftSession } from '../../hooks/useDraftSession';
@@ -463,12 +464,12 @@ export function PrDetailView({
         }
         mergeability={data?.pr.mergeability}
         mergeReadiness={updates.mergeReadiness ?? data?.pr.mergeReadiness}
-        approvals={updates.approvals ?? data?.pr.approvals}
-        changesRequested={updates.changesRequested ?? data?.pr.changesRequested}
+        approvals={snapshot(updates.approvals, data?.pr.approvals)}
+        changesRequested={snapshot(updates.changesRequested, data?.pr.changesRequested)}
         updatedAt={data?.pr.updatedAt}
-        approvers={updates.approvers ?? data?.pr.approvers}
-        changesRequestedBy={updates.changesRequestedBy ?? data?.pr.changesRequestedBy}
-        awaitingReviewers={updates.awaitingReviewers ?? data?.pr.awaitingReviewers}
+        approvers={snapshot(updates.approvers, data?.pr.approvers)}
+        changesRequestedBy={snapshot(updates.changesRequestedBy, data?.pr.changesRequestedBy)}
+        awaitingReviewers={snapshot(updates.awaitingReviewers, data?.pr.awaitingReviewers)}
         ciSummary={data?.pr.ciSummary}
         activeTab={effectiveSubTab}
         onTabChange={selectSubTab}

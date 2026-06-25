@@ -680,18 +680,6 @@ a:hover { text-decoration: underline; }
 .chip-status-stale { background: var(--danger-soft); color: var(--danger-fg); }
 .chip-override     { background: var(--surface-3); color: var(--text-2); border: 1px dashed var(--border-strong); }
 
-/* #593 merge-readiness chip classes — 8 open states (none/merged/closed render no badge).
-   Defined globally so both InboxRow (compact) and PR-detail (expanded) reference the same
-   token without duplicating color decisions. The caveat-soft token is per-theme (see above). */
-.chip-readiness-ready { background: var(--success-soft); color: var(--success-fg); }
-.chip-readiness-ready-with-changes-requested { background: var(--readiness-ready-caveat-soft); color: var(--success-fg); }
-.chip-readiness-conflicts { background: var(--danger-soft); color: var(--danger-fg); }
-.chip-readiness-changes-requested { background: var(--danger-soft); color: var(--danger-fg); }
-.chip-readiness-behind-base { background: var(--warning-soft); color: var(--warning-fg); }
-.chip-readiness-review-required { background: var(--warning-soft); color: var(--warning-fg); }
-.chip-readiness-blocked-by-protection { background: var(--warning-soft); color: var(--warning-fg); }
-.chip-readiness-unstable { background: var(--warning-soft); color: var(--warning-fg); }
-
 .dot {
   width: 6px;
   height: 6px;

@@ -185,7 +185,14 @@ export function ReadinessBadge({
 
   const place = useCallback(() => {
     const r = triggerRef.current?.getBoundingClientRect();
-    if (r) setCoords({ top: r.bottom + 6, left: r.left });
+    if (!r) return;
+    // Clamp left so the popover (POPOVER_W, mirrors .popover width in the CSS module) doesn't
+    // overflow the right viewport edge for a trigger near the edge or in a narrow pane (#621
+    // review). 8px gutter on both sides; a no-op for mid-row triggers. The CSS max-width keeps it
+    // on-screen on viewports narrower than the popover itself, where the clamp floors left at 8.
+    const POPOVER_W = 268;
+    const left = Math.max(8, Math.min(r.left, window.innerWidth - POPOVER_W - 8));
+    setCoords({ top: r.bottom + 6, left });
   }, []);
 
   const openNow = useCallback(() => {

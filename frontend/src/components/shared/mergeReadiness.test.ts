@@ -3,7 +3,6 @@ import {
   READINESS_SHORT,
   READINESS_LONG,
   READINESS_TOOLTIP,
-  READINESS_CHIP_CLASS,
   isBadgeRendered,
   type MergeReadiness,
 } from './mergeReadiness';
@@ -26,12 +25,11 @@ describe('mergeReadiness module', () => {
       expect(isBadgeRendered(s)).toBe(false);
   });
 
-  it('has a non-empty short, long, tooltip, and chip class for every open state', () => {
+  it('has a non-empty short, long, and tooltip string for every open state', () => {
     for (const s of OPEN_STATES) {
       expect(READINESS_SHORT[s]).toBeTruthy();
       expect(READINESS_LONG[s]).toBeTruthy();
       expect(READINESS_TOOLTIP[s]).toBeTruthy();
-      expect(READINESS_CHIP_CLASS[s]).toMatch(/^chip-readiness-/);
     }
   });
 
