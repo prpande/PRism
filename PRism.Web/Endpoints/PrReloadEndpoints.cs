@@ -34,6 +34,18 @@ internal static class PrReloadEndpoints
         public string Error { get; } = "reload-stale-head";
     }
 
+    // Cold/unverifiable-head reload response (#611). When the active-PR cache has no snapshot for
+    // this PR, the head-shift guard cannot verify request.HeadSha against a known head, so the
+    // reconcile is refused with this retryable 409 rather than running against an unverified head.
+    // Distinct from ReloadStaleHeadResponse: there is no currentHeadSha to retry with (we don't
+    // know the current head). The frontend's parseReloadConflictKind (api/draft.ts) doesn't
+    // recognize this `error` value, so useReconcile surfaces the generic retry banner — the
+    // intended fail-safe degrade until a follow-up adds bespoke handling.
+    internal sealed record ReloadHeadUnverifiedResponse
+    {
+        public string Error { get; } = "reload-head-unverified";
+    }
+
     public static IEndpointRouteBuilder MapPrReloadEndpoints(this IEndpointRouteBuilder app)
     {
         ArgumentNullException.ThrowIfNull(app);
@@ -106,14 +118,32 @@ internal static class PrReloadEndpoints
             // between Phase 1's read and this Phase 2 apply — return 409 with the current
             // sha so the frontend can auto-retry (S4 Task 46).
             string? currentHeadShaForRetry = null;
+            bool headUnverified = false;
             ReviewSessionState? updatedSession = null;
             await store.UpdateAsync(state =>
             {
                 if (!state.Reviews.Sessions.TryGetValue(refKey, out var current))
                     return state;
 
+                // Head-shift guard. The active-PR cache snapshot (populated by ActivePrPoller) is the
+                // only VERIFIED view of the PR's current head; request.HeadSha is client-supplied.
                 var cached = activePrCache.GetCurrent(prRef);
-                if (cached is not null && cached.HeadSha != request.HeadSha)
+                if (cached is null)
+                {
+                    // Cold cache: the poller hasn't populated a snapshot for this PR yet (subscribe→poll
+                    // race) or it was cleared by POST /api/auth/replace. We cannot verify request.HeadSha
+                    // against a known-good head, so we must NOT fall through and reconcile against an
+                    // unverified head (#611) — a stale client head would silently corrupt draft state.
+                    // Signal a retryable conflict instead; the frontend retries once the next poll lands.
+                    // GetCurrent != null is the true "first poll completed" signal — a STRONGER precondition
+                    // than IsSubscribed, which is true after subscribe but before the first poll. Returns
+                    // BEFORE the tab-stamp write below (no stamp written), and the post-transform
+                    // headUnverified check short-circuits to a 409 before bus.Publish is reached, so the
+                    // cold path emits no StateChanged.
+                    headUnverified = true;
+                    return state;
+                }
+                if (cached.HeadSha != request.HeadSha)
                 {
                     currentHeadShaForRetry = cached.HeadSha;
                     return state;
@@ -176,6 +206,11 @@ internal static class PrReloadEndpoints
                 updatedSession = updated;
                 return state.WithSession(refKey, updated);
             }, ct).ConfigureAwait(false);
+
+            if (headUnverified)
+                return Results.Json(
+                    new ReloadHeadUnverifiedResponse(),
+                    statusCode: StatusCodes.Status409Conflict);
 
             if (currentHeadShaForRetry is not null)
                 return Results.Json(

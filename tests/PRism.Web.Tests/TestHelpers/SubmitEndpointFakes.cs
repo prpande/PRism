@@ -9,8 +9,12 @@ using PRism.Core.Submit;
 namespace PRism.Web.Tests.TestHelpers;
 
 // IActivePrCache stub that reports every PR as subscribed (so the broader-than-spec authz check
-// passes) and returns a configurable poll snapshot (null by default — the head-sha-drift rule is
-// then skipped because the endpoint only compares when a snapshot exists).
+// passes) and returns a configurable poll snapshot (null by default — a "cold" cache). Submit-side
+// drift detection treats a null snapshot as "no drift to report" (it only compares when a snapshot
+// exists), which is why the null default suits the submit / AI endpoint tests that use this fake.
+// NOTE since #611: POST /reload instead treats a null snapshot as "head unverified" and returns
+// 409 reload-head-unverified — so warm-cache reload tests must set Current (or use a snapshot-bearing
+// fake like FakeCacheWithSnapshot); the null default models the cold-cache case for reload.
 internal sealed class AllSubscribedActivePrCache : IActivePrCache
 {
     public ActivePrSnapshot? Current { get; set; }
