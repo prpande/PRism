@@ -17,6 +17,12 @@ public sealed partial class ActivePrPoller : BackgroundService
     private readonly IActivePrCache _cache;
     private readonly ILogger<ActivePrPoller> _logger;
     private readonly ConcurrentDictionary<PrReference, ActivePrPollerState> _state = new();
+
+    // Read-only observability seam for tests: the number of PRs with retained poller state.
+    // Backs the regression assertion that _state does not grow without bound across
+    // subscribe/unsubscribe cycles (issue #609). No behavior; surfaces _state.Count only.
+    internal int TrackedStateCount => _state.Count;
+
     // Default 30s for production; PRISM_POLLER_CADENCE_SECONDS overrides ONLY
     // when the host is running under Test env so that a stray env var set on a
     // production host cannot drive the poller into GitHub secondary-rate-limit
@@ -103,6 +109,25 @@ public sealed partial class ActivePrPoller : BackgroundService
     internal async Task TickAsync(DateTimeOffset now, CancellationToken ct)
     {
         var prs = _registry.UniquePrRefs();
+
+        // Prune retained state for PRs that no longer have any active subscriber (issue #609).
+        // Two reasons: (1) without this, _state grows one entry per distinct PR ever subscribed
+        // for the process lifetime; (2) a re-subscribe to a previously-viewed quiet PR would
+        // otherwise find the stale entry, so firstPoll is false and no hydration ActivePrUpdated
+        // fires, leaving the frontend Mark-all-read gate (useFirstActivePrPollComplete) closed.
+        // A re-subscribe that lands inside the same cadence window as the unsubscribe keeps its
+        // state — the tick never observed zero subscribers — which is acceptable: only a
+        // re-subscribe AFTER an observed unsubscribe re-fires first-poll. _state.Keys is a
+        // snapshot, so removing during iteration is safe.
+        if (!_state.IsEmpty)
+        {
+            var live = new HashSet<PrReference>(prs);
+            foreach (var key in _state.Keys)
+            {
+                if (!live.Contains(key)) _state.TryRemove(key, out _);
+            }
+        }
+
         foreach (var prRef in prs)
         {
             ct.ThrowIfCancellationRequested();

@@ -286,4 +286,57 @@ public class ActivePrPollerBackoffTests
         bus.Published.Should().ContainSingle();
         ((ActivePrUpdated)bus.Published[0]).BaseShaChanged.Should().BeFalse();
     }
+
+    [Fact]
+    public async Task Resubscribe_after_observed_unsubscribe_re_emits_first_poll_for_quiet_pr()
+    {
+        // Issue #609 — the user-visible defect. Open PR A → close tab (unsubscribe) →
+        // reopen the still-quiet PR A (re-subscribe). Because the poller retained _state
+        // from the first view, firstPoll was false on re-subscribe and a quiet PR with no
+        // head/base/comment/state change emitted nothing — leaving the frontend
+        // Mark-all-read gate (useFirstActivePrPollComplete) closed for the process lifetime.
+        // Pruning state when a PR loses its last subscriber resets first-poll detection.
+        var (poller, review, bus, registry, _) = Build();
+        var pr = new PrReference("o", "r", 1);
+        registry.Add("sub1", pr);
+        review.SetSnapshot(pr, Snapshot(headSha: "h1", commentCount: 0));
+
+        await poller.TickAsync(T0, default);                 // first poll → hydration event
+        bus.Published.Should().ContainSingle("first poll publishes a hydration event");
+
+        registry.Remove("sub1", pr);                         // last subscriber gone
+        await poller.TickAsync(T0.AddSeconds(30), default);  // tick observes zero subscribers → prunes state
+        bus.Published.Should().ContainSingle("with no subscribers nothing is polled or published");
+
+        registry.Add("sub2", pr);                            // re-subscribe; PR is still quiet (same head/comments)
+        await poller.TickAsync(T0.AddSeconds(60), default);
+
+        bus.Published.Should().HaveCount(2, "re-subscribe after an observed unsubscribe must re-fire the first-poll hydration event");
+        var evt = (ActivePrUpdated)bus.Published[1];
+        evt.HeadShaChanged.Should().BeFalse("a re-fired hydration event has no prior state to diff against");
+        evt.CommentCountChanged.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task State_is_pruned_for_prs_that_lose_all_subscribers()
+    {
+        // Issue #609 — the resource leak. _state accumulated one entry per distinct PR ever
+        // subscribed in the process lifetime; entries were never reclaimed. Pruning on tick
+        // bounds _state to the set of currently-subscribed PRs.
+        var (poller, review, _, registry, _) = Build();
+        var prA = new PrReference("o", "r", 1);
+        var prB = new PrReference("o", "r", 2);
+        registry.Add("sub1", prA);
+        registry.Add("sub1", prB);
+        review.SetSnapshot(prA, Snapshot());
+        review.SetSnapshot(prB, Snapshot());
+
+        await poller.TickAsync(T0, default);
+        poller.TrackedStateCount.Should().Be(2, "both subscribed PRs are tracked after a poll");
+
+        registry.RemoveSubscriber("sub1");                   // both PRs lose their only subscriber
+        await poller.TickAsync(T0.AddSeconds(30), default);
+
+        poller.TrackedStateCount.Should().Be(0, "state for PRs with no active subscribers is reclaimed each tick");
+    }
 }
