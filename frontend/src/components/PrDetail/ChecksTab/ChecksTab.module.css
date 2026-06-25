@@ -35,9 +35,9 @@
 
 .rowSelected {
   background: var(--surface-3);
-  /* Neutral accent (--text-3), NOT --warning-fg: the selection marker is state-agnostic;
-     an amber bar on a passing check read as a warning. Verified token (see glyph block). */
-  border-left: 3px solid var(--text-3);
+  /* Accent selection marker — state-agnostic (the brand accent, not a CI status hue, so it
+     never reads as a warning/pass signal on the selected row). --accent is theme-aware. */
+  border-left: 3px solid var(--accent);
 }
 
 .statusBadge {
@@ -143,7 +143,9 @@
 }
 
 .listPane {
-  flex: 0 0 min(40%, 360px);
+  /* 1.5× the original min(40%, 360px) — wider rows fit long check/action names; the
+     detail pane (flex: 1) absorbs the loss, trimming its empty space. */
+  flex: 0 0 min(60%, 540px);
   min-width: 200px;
   display: flex;
   flex-direction: column;
