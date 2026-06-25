@@ -11,6 +11,10 @@
   animation: checksPulse 1.4s ease-in-out infinite;
 }
 
+.cross {
+  color: var(--danger-fg); /* same red as InboxRow .ciFailing */
+}
+
 .tick {
   color: var(--success-fg); /* same green as InboxRow .ciPassing */
 }

@@ -33,9 +33,9 @@ describe('checksGlyphState', () => {
     expect(s.failingCount).toBe(1);
   });
 
-  it('cancelled-only → red badge + NO lead glyph (cancelled is failing tier)', () => {
+  it('cancelled-only → failing cross lead + red badge (cancelled is failing tier)', () => {
     const s = checksGlyphState([run({ conclusion: 'cancelled' })]);
-    expect(s.lead).toBe('none');
+    expect(s.lead).toBe('failing');
     expect(s.failingCount).toBe(1);
     expect(s.ariaSummary).toBe('Checks — 1 cancelled');
   });
@@ -47,13 +47,13 @@ describe('checksGlyphState', () => {
     expect(s.ariaSummary).toBe('Checks — all passing');
   });
 
-  it('failure + success terminal → no lead glyph, count + plural aria', () => {
+  it('failure + success terminal → failing cross lead, count + plural aria', () => {
     const s = checksGlyphState([
       run({ conclusion: 'failure' }),
       run({ conclusion: 'timed-out' }),
       run({ conclusion: 'success' }),
     ]);
-    expect(s.lead).toBe('none');
+    expect(s.lead).toBe('failing');
     expect(s.failingCount).toBe(2);
     expect(s.ariaSummary).toBe('Checks — 2 failing');
   });
@@ -91,9 +91,9 @@ describe('checksGlyphState', () => {
     expect(s.failingCount).toBe(0);
   });
 
-  it('skipped alongside a failure → no green tick, failure still counted', () => {
+  it('skipped alongside a failure → failing cross lead, failure still counted', () => {
     const s = checksGlyphState([run({ conclusion: 'skipped' }), run({ conclusion: 'failure' })]);
-    expect(s.lead).toBe('none');
+    expect(s.lead).toBe('failing');
     expect(s.failingCount).toBe(1);
   });
 });

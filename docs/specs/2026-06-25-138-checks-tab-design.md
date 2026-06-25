@@ -395,18 +395,33 @@ rendered** (unlike the AI-gated Hotspots tab).
 to `Tab` (the Hotspots `AiMarker` becomes one consumer of it; checks pass a
 `ChecksTabGlyph`). This is a real change to the shared `PrSubTabStrip` + its tests.
 
-Two orthogonal signals, from the inbox CI vocabulary (`InboxRow.tsx` octicons):
+Two orthogonal signals, from the inbox CI vocabulary (`InboxRow.tsx` octicons).
 
-- **Leading glyph** (the new slot):
-  - **in-progress** — `checks.some(c => c.status === 'queued' || c.status === 'in-progress')`
+> **Owner-directed change (post-implementation):** the lead slot now carries a
+> **third state — `failing` → red cross** — so failure is as glanceable as running
+> (pulse) and passing (tick), instead of being signalled by the count badge alone.
+> And **`skipped` checks are ignored uniformly across all three glyph decisions** (a
+> `skipped` check didn't run, so it never counts toward running, failing, or
+> passing): `[success, skipped]` → green tick; `[failure, skipped]` → red cross.
+> `action-required` is still **not** ignored — it remains a manual gate that
+> suppresses the green tick.
+
+- **Leading glyph** (the new slot), priority **in-progress → failing → all-green**,
+  all derived from the same skipped-filtered "considered" set:
+  - **in-progress** — `considered.some(c => c.status === 'queued' || c.status === 'in-progress')`
     → **pulsing amber dot** (inbox `pending` color). "Non-terminal" is **defined**
     as `Status ∈ {queued, in-progress}` — a queued-but-not-started check still
-    pulses. Wins the lead slot even if some checks have already failed.
+    pulses. Wins the lead slot while the verdict isn't final, even if some checks
+    have already failed.
+  - **failing** — terminal with ≥1 failing conclusion → **red cross** (inbox
+    `failing` x octicon, same path as the panel row cross).
   - **all-green** — all terminal, ≥1 `success`, 0 failing, 0 in-progress → **green
-    tick** (inbox `passing` check octicon).
-  - otherwise → no leading glyph.
-- **Trailing badge** — **failing count**, red warn-styled, shown when failing > 0.
-  **"Failing" = `Conclusion ∈ {failure, timed-out, cancelled}`** — the same
+    tick** (inbox `passing` check octicon), `skipped` ignored.
+  - otherwise → no leading glyph (e.g. a skipped/neutral-only terminal state where
+    nothing actually passed).
+- **Trailing badge** — **failing count**, red warn-styled, shown when failing > 0
+  (kept alongside the failing cross: the cross says *failing*, the badge says *how
+  many*). **"Failing" = `Conclusion ∈ {failure, timed-out, cancelled}`** — the same
   conclusions the header chip treats as failing (the detector counts
   `cancelled`/`timed_out` as failing), so the badge matches the chip.
 
@@ -424,11 +439,12 @@ tier (below failing, above in-progress). It does not drive the lead glyph or the
 badge in v1; revisit surfacing manual gates more prominently if users ask (tracked
 against the existing #305 thread).
 
-**Lead-glyph completeness (design R2).** The lead slot has exactly three outcomes:
-in-progress → amber pulse; all-green → green tick; **everything else → no lead
-glyph** (including a failing-only / cancelled-only terminal state — the **red badge
-is the signal there, intentionally, with no lead glyph**). This is deliberate, not
-an omission.
+**Lead-glyph completeness (design R2, revised).** The lead slot has exactly four
+outcomes, in priority order: in-progress → amber pulse; failing → red cross;
+all-green → green tick; **everything else → no lead glyph** (a terminal state with
+no failures where nothing passed — e.g. skipped/neutral-only). A failing terminal
+state shows the **red cross** lead glyph **and** the red count badge (owner-directed
+revision — the earlier draft showed the badge alone).
 
 **Idle/loading glyph (stale-while-revalidate, with a reload reset — product R2):**
 - *Same-SHA re-fetch* (a poll tick): while `status ∈ {idle, loading}` **preserve

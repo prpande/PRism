@@ -7,6 +7,10 @@ describe('ChecksTabGlyph', () => {
     const { container } = render(<ChecksTabGlyph lead="in-progress" />);
     expect(container.querySelector('[data-glyph="in-progress"]')).not.toBeNull();
   });
+  it('renders the red cross when failing', () => {
+    const { container } = render(<ChecksTabGlyph lead="failing" />);
+    expect(container.querySelector('[data-glyph="failing"]')).not.toBeNull();
+  });
   it('renders the green tick when all-green', () => {
     const { container } = render(<ChecksTabGlyph lead="all-green" />);
     expect(container.querySelector('[data-glyph="all-green"]')).not.toBeNull();
