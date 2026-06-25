@@ -147,7 +147,9 @@
   color: var(--danger-fg);
 }
 .ciPending {
-  color: var(--warning-fg);
+  /* base --warning (not -fg): dark amber reads muddy/brown as a glyph; keeps the
+     CI in-progress indicator matched with the Checks tab pending glyph. */
+  color: var(--warning);
 }
 
 /* Main column — title + meta stack. flex: 1 so it fills .midCol and the CI glyph

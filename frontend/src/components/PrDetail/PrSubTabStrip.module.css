@@ -59,6 +59,11 @@
   color: var(--warning-fg) !important;
 }
 
+.prTabCountDanger {
+  background: var(--danger-soft) !important;
+  color: var(--danger-fg) !important;
+}
+
 /* AI marker hover/focus affordance on the Hotspots tab (#489, owner B1).
    Mirrors how the tab LABEL responds to hover: muted while the tab is idle,
    full strength on hover / keyboard focus / when active — the same instant

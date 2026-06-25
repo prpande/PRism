@@ -121,6 +121,39 @@ export interface ConnectResponse {
 
 export type CiStatus = 'none' | 'pending' | 'failing' | 'passing';
 
+// Checks tab (#138) — kebab-case wire enums (match the C# JsonStringEnumConverter output).
+export type CheckRunStatus = 'queued' | 'in-progress' | 'completed';
+export type CheckConclusion =
+  | 'success'
+  | 'failure'
+  | 'cancelled'
+  | 'timed-out'
+  | 'skipped'
+  | 'neutral'
+  | 'action-required'
+  | 'stale'
+  | 'startup-failure';
+export type DegradedReason = 'none' | 'auth' | 'transient';
+
+export interface CheckRun {
+  name: string;
+  status: CheckRunStatus;
+  conclusion: CheckConclusion | null;
+  source: 'check-run' | 'status';
+  startedAt: string | null;
+  completedAt: string | null;
+  detailsUrl: string | null;
+  summary: string | null;
+  appName: string | null;
+  body: string | null;
+}
+
+export interface ChecksResponse {
+  checks: CheckRun[];
+  headSha: string;
+  degraded: DegradedReason;
+}
+
 // Imported for use in PrInboxItem below, and re-exported so consumers can import
 // from the single api/types barrel without reaching into the component tree.
 import type { MergeReadiness } from '../components/shared/mergeReadiness';

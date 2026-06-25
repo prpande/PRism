@@ -1,0 +1,256 @@
+/* frontend/src/components/PrDetail/ChecksTab/ChecksTab.module.css */
+.checks {
+  width: min(80%, var(--pr-detail-content-max));
+  margin: 0 auto;
+  padding: var(--s-4) 0;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  padding: var(--s-2) var(--s-3);
+  background: var(--surface-2);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-2);
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+}
+
+.row:hover {
+  background: var(--surface-3);
+}
+
+.rowSelected {
+  background: var(--surface-3);
+  /* Accent selection marker — state-agnostic (the brand accent, not a CI status hue, so it
+     never reads as a warning/pass signal on the selected row). --accent is theme-aware. */
+  border-left: 3px solid var(--accent);
+}
+
+.statusBadge {
+  flex: none;
+  color: var(--text-3);
+  font-size: var(--text-sm);
+}
+
+.glyph {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  display: inline-block;
+}
+/* Token names verified against tokens.css + InboxRow.module.css (design R1):
+   --danger-fg / --success-fg / --warning-fg / --text-3. NO --ci-* tokens exist;
+   no hex fallbacks (a fallback masks a missing-token typo + breaks theming). */
+.glyphFail {
+  color: var(--danger-fg); /* InboxRow .ciFailing */
+}
+.glyphPass {
+  color: var(--success-fg); /* InboxRow .ciPassing */
+}
+/* Amber glyphs use the BASE --warning (L 0.62 light), not --warning-fg (L 0.42):
+   the -fg variant is tuned dark for TEXT contrast, and a darkened amber hue reads
+   muddy/brown as an icon fill. Red/green -fg stay legible when dark, so only the
+   amber indicators move to the base token. InboxRow .ciPending matches. */
+.glyphPending {
+  color: var(--warning); /* InboxRow .ciPending */
+}
+.glyphAlert {
+  color: var(--warning); /* action-required manual gate — amber */
+}
+.glyphNeutral {
+  color: var(--text-3);
+}
+
+.name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.duration {
+  flex: none;
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.details {
+  flex: none;
+}
+
+.message {
+  width: min(80%, var(--pr-detail-content-max));
+  margin: var(--s-4) auto;
+  color: var(--text-3);
+}
+
+/* Error state: a centred card (matches .detail's surface/border/radius) holding a
+   warning glyph, the message, and a standard .btn Retry — purpose-built for this tab
+   but styled to the app's design language. */
+.errorWrap {
+  width: min(80%, var(--pr-detail-content-max));
+  margin: var(--s-6) auto;
+  display: flex;
+  justify-content: center;
+}
+
+.errorCard {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: var(--s-3);
+  max-width: 32rem;
+  padding: var(--s-6);
+  background: var(--surface-2);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-3);
+}
+
+.errorIcon {
+  color: var(--warning); /* base amber (see glyph block) — warning, not danger */
+}
+
+.errorText {
+  margin: 0;
+  max-width: 42ch;
+  color: var(--text-2);
+}
+
+.degradedBanner {
+  margin-bottom: var(--s-3);
+  padding: var(--s-2) var(--s-3);
+  border-radius: var(--radius-2);
+  background: var(--surface-3);
+  color: var(--text-3);
+  font-size: var(--text-sm); /* verified token — there is no --font-size-sm (design R2) */
+}
+
+/* Skeleton: reuse HotspotsTab's `pulse` shimmer (design R3) — NOT an inline gradient,
+   which would render static and skip the reduced-motion guard. */
+.skeleton {
+  height: 2.25rem;
+  background: var(--surface-3);
+  border: none;
+  animation: pulse 1.2s ease-in-out infinite;
+}
+
+/* Detail-pane placeholder: a single tall block standing in for the detail card,
+   so the skeleton previews the two-pane shape the loaded tab renders. */
+.skeletonDetail {
+  height: 12rem;
+  border-radius: var(--radius-2);
+  background: var(--surface-3);
+  animation: pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  50% {
+    opacity: 0.5;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .skeleton,
+  .skeletonDetail {
+    animation: none;
+  }
+}
+
+/* Master-detail layout */
+.masterDetail {
+  display: flex;
+  gap: var(--s-3);
+  align-items: flex-start;
+  width: min(95%, var(--pr-detail-content-max));
+  margin: var(--s-4) auto;
+}
+
+.listPane {
+  /* 1.5× the original min(40%, 360px) — wider rows fit long check/action names; the
+     detail pane (flex: 1) absorbs the loss, trimming its empty space. */
+  flex: 0 0 min(60%, 540px);
+  min-width: 200px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+}
+
+/* Detail pane */
+.detailPane {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.detail {
+  background: var(--surface-2);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-2);
+  padding: var(--s-3) var(--s-4);
+}
+
+.detailHeader {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  margin-bottom: var(--s-2);
+}
+
+.detailName {
+  font-weight: 600;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.detailStatus {
+  flex: none;
+  color: var(--text-3);
+  font-size: var(--text-sm);
+}
+
+.detailMeta {
+  color: var(--text-3);
+  font-size: var(--text-sm);
+  margin: 0 0 var(--s-2) 0;
+}
+
+.detailSummary {
+  font-weight: 500;
+  margin: 0 0 var(--s-2) 0;
+}
+
+.detailNoBody {
+  color: var(--text-3);
+  font-size: var(--text-sm);
+  margin: 0 0 var(--s-2) 0;
+}
+
+.body {
+  margin-bottom: var(--s-2);
+}
+
+.detailLink {
+  display: inline-block;
+  margin-top: var(--s-2);
+}
+
+/* Narrow: stack vertically */
+@media (max-width: 640px) {
+  .masterDetail {
+    flex-direction: column;
+  }
+  .listPane {
+    flex: none;
+    width: 100%;
+    min-width: unset;
+  }
+}

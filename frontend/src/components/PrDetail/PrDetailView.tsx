@@ -11,6 +11,8 @@ import { OverviewTab } from './OverviewTab/OverviewTab';
 import { FilesTab } from './FilesTab/FilesTab';
 import { HotspotsTab } from './HotspotsTab/HotspotsTab';
 import { DraftsTabRoute } from './DraftsTab/DraftsTabRoute';
+import { ChecksTab } from './ChecksTab/ChecksTab';
+import { checksGlyphState } from './checksGlyphState';
 import { PrDetailSkeleton } from './PrDetailSkeleton';
 import type { PrTabId } from './PrSubTabStrip';
 import { usePrDetail } from '../../hooks/usePrDetail';
@@ -36,6 +38,7 @@ import { glyphStateFor, type GlyphState } from '../shared/prStateGlyph';
 import { useTabScrollMemory } from '../../hooks/useTabScrollMemory';
 import { useDiffScrollRestore } from '../../hooks/diffScrollMemory';
 import { LoadingBar } from '../LoadingBar';
+import { useCheckRuns } from '../../hooks/useCheckRuns';
 import { useActivationTransition } from '../../hooks/useActivationTransition';
 import { useAiFailure } from '../Ai/aiFailure';
 import { fileFocusStatusToMarkerState } from '../Ai/fileFocusMarkerState';
@@ -258,6 +261,10 @@ export function PrDetailView({
   // `subTab` state is left untouched, so the live tab is restored once caps load.
   const effectiveSubTab: PrTabId = subTab === 'hotspots' && !fileFocusEnabled ? 'overview' : subTab;
 
+  const checksActive = active && effectiveSubTab === 'checks';
+  const checks = useCheckRuns(prRef, data?.pr.headSha, checksActive);
+  const checksDerived = useMemo(() => checksGlyphState(checks.checks), [checks.checks]);
+
   // Deep-link navigation intent (spec §8). HotspotsTab calls requestFileView(path):
   // switch to Files and stash the path; FilesTab consumes pendingFilePath (resets
   // the diff range, selects the file, focuses + announces), then clears it. Focus
@@ -393,6 +400,7 @@ export function PrDetailView({
       baseShaChanged: updates.baseShaChanged,
       onSelectSubTab: selectSubTab,
       fileFocus,
+      checks,
       pendingFilePath,
       requestFileView,
       clearPendingFilePath,
@@ -408,6 +416,7 @@ export function PrDetailView({
       updates.baseShaChanged,
       selectSubTab,
       fileFocus,
+      checks,
       pendingFilePath,
       requestFileView,
       clearPendingFilePath,
@@ -476,6 +485,9 @@ export function PrDetailView({
         showHotspots={fileFocusEnabled}
         hotspotsAiState={hotspotsAiState}
         draftsCount={draftsCount}
+        checksLead={checksDerived.lead}
+        checksFailingCount={checksDerived.failingCount}
+        checksAriaLabel={checksDerived.ariaSummary}
         hotspotsCount={
           // Only a real (Live) ranking with signal gets a numeric badge. Preview
           // (placeholder data) + loading/empty/error/fallback/no-changes/
@@ -605,6 +617,11 @@ export function PrDetailView({
           {visited.current.has('drafts') && (
             <div data-subtab="drafts" hidden={effectiveSubTab !== 'drafts'}>
               <DraftsTabRoute />
+            </div>
+          )}
+          {(visited.current.has('checks') || effectiveSubTab === 'checks') && (
+            <div data-subtab="checks" hidden={effectiveSubTab !== 'checks'}>
+              <ChecksTab />
             </div>
           )}
         </PrDetailContextProvider>

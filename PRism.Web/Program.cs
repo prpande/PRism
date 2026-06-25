@@ -139,6 +139,7 @@ if (builder.Environment.IsEnvironment("Test")
              {
                  typeof(IReviewAuth), typeof(IPrDiscovery), typeof(IPrReader), typeof(IReviewSubmitter),
                  typeof(PRism.Core.Inbox.ISectionQueryRunner), typeof(PRism.Core.Inbox.IPrBatchReader), typeof(PRism.Core.Inbox.ICiFailingDetector),
+                 typeof(PRism.Core.IPrChecksReader),
              })
     {
         // RemoveAll (vs. removing the first match) in case any of these were registered
@@ -153,6 +154,7 @@ if (builder.Environment.IsEnvironment("Test")
     builder.Services.AddSingleton<PRism.Core.Inbox.ISectionQueryRunner, FakeSectionQueryRunner>();
     builder.Services.AddSingleton<PRism.Core.Inbox.IPrBatchReader, FakePrBatchReader>();
     builder.Services.AddSingleton<PRism.Core.Inbox.ICiFailingDetector, FakeCiFailingDetector>();
+    builder.Services.AddSingleton<PRism.Core.IPrChecksReader, FakePrChecksReader>();
     builder.Services.RemoveAll<PRism.Core.Activity.IActivityProvider>();
     builder.Services.AddSingleton<PRism.Core.Activity.IActivityProvider, PRism.Web.TestHooks.FakeActivityProvider>();
 }

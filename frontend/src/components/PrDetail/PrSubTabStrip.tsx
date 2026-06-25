@@ -1,7 +1,10 @@
+import type { ReactNode } from 'react';
 import { AiMarker } from '../Ai/AiMarker';
+import { ChecksTabGlyph } from './ChecksTabGlyph';
+import type { ChecksLeadGlyph } from './checksGlyphState';
 import styles from './PrSubTabStrip.module.css';
 
-export type PrTabId = 'overview' | 'files' | 'hotspots' | 'drafts';
+export type PrTabId = 'overview' | 'files' | 'hotspots' | 'drafts' | 'checks';
 
 interface PrSubTabStripProps {
   activeTab: PrTabId;
@@ -20,6 +23,11 @@ interface PrSubTabStripProps {
   // tab's accessible name); 'idle' = AI resolved (decorative provenance glyph);
   // null / omitted = no marker (AI off or error/no-changes/not-subscribed).
   aiMarkerState?: 'idle' | 'working' | null;
+  // Checks tab primitive props (Task 8). PrSubTabStrip builds <ChecksTabGlyph>
+  // at the leaf; passing primitives (not a node) keeps PrHeader memo-stable.
+  checksLead?: ChecksLeadGlyph; // 'in-progress' | 'all-green' | 'none'
+  checksFailingCount?: number; // failing-tier count; undefined/0 → no badge
+  checksAriaLabel?: string; // health summary, e.g. "Checks — 2 failing"
 }
 
 export function PrSubTabStrip({
@@ -30,6 +38,9 @@ export function PrSubTabStrip({
   draftsCount,
   showHotspots = false,
   aiMarkerState = null,
+  checksLead,
+  checksFailingCount,
+  checksAriaLabel,
 }: PrSubTabStripProps) {
   return (
     <div role="tablist" className={styles.prTabs}>
@@ -53,7 +64,15 @@ export function PrSubTabStrip({
           active={activeTab === 'hotspots'}
           onSelect={onTabChange}
           count={hotspotsCount}
-          aiMarkerState={aiMarkerState ?? null}
+          leadingGlyph={
+            aiMarkerState ? (
+              <AiMarker
+                variant="lead"
+                state={aiMarkerState}
+                decorative={aiMarkerState === 'idle'}
+              />
+            ) : undefined
+          }
           // Spec § 6.1 — the hotspots badge announces "N files need attention"
           // rather than the generic "N items". Built at the call site (single
           // consumer) so the generic Tab keeps its default wording.
@@ -70,6 +89,22 @@ export function PrSubTabStrip({
         active={activeTab === 'drafts'}
         onSelect={onTabChange}
         count={draftsCount}
+        warn
+      />
+      <Tab
+        id="checks"
+        label="Checks"
+        active={activeTab === 'checks'}
+        onSelect={onTabChange}
+        count={checksFailingCount}
+        // gate `danger` on a positive count so the class precedence matches badge visibility
+        // (the count badge only renders when count > 0; an unconditional `danger` is harmless
+        // but misleading at zero — coherence R2)
+        danger={(checksFailingCount ?? 0) > 0}
+        leadingGlyph={
+          checksLead && checksLead !== 'none' ? <ChecksTabGlyph lead={checksLead} /> : undefined
+        }
+        ariaLabel={checksAriaLabel}
       />
     </div>
   );
@@ -86,11 +121,12 @@ interface TabProps {
   // visible numeric badge is unchanged). Single consumer = Hotspots; not worth
   // a function-valued prop on the generic Tab.
   srCountSuffix?: string;
-  // When provided, renders a larger leading AiMarker immediately before the label
-  // text. 'working' = non-decorative (sr-only "AI is working…" enters accessible
-  // name); 'idle' = decorative provenance glyph (no sr-only label); null = no
-  // marker. Single consumer = Hotspots tab.
-  aiMarkerState?: 'idle' | 'working' | null;
+  // Generic leading glyph slot (Hotspots passes an <AiMarker/>, Checks passes <ChecksTabGlyph/>).
+  leadingGlyph?: ReactNode;
+  // When set, overrides the tab's accessible name (Checks carries a health summary).
+  ariaLabel?: string;
+  warn?: boolean; // amber count badge (Drafts pending)
+  danger?: boolean; // red count badge (Checks failing) — NEW prTabCountDanger class
 }
 
 function Tab({
@@ -101,19 +137,23 @@ function Tab({
   disabled,
   count,
   srCountSuffix,
-  aiMarkerState,
+  leadingGlyph,
+  ariaLabel,
+  warn,
+  danger,
 }: TabProps) {
   // D11/D103 — the handoff (design/handoff/pr-detail.jsx:124 + :134) applies
   // `.pr-tab-count-warn` drafts-only, never on files. The base `.pr-tab-count`
   // class is shared. Conditional-render of the span (count > 0) already covers
-  // both tabs; this gates ONLY the warn class.
-  const warn = id === 'drafts';
+  // both tabs; this gates ONLY the warn/danger class.
+  const countClass = danger ? styles.prTabCountDanger : warn ? styles.prTabCountWarn : undefined;
   return (
     <button
       type="button"
       role="tab"
       aria-selected={active}
       aria-disabled={disabled || undefined}
+      aria-label={ariaLabel}
       tabIndex={disabled ? -1 : 0}
       className={[styles.prTab, active && styles.isActive, disabled && styles.isDisabled]
         .filter(Boolean)
@@ -123,14 +163,12 @@ function Tab({
         if (!disabled) onSelect(id);
       }}
     >
-      {aiMarkerState && (
-        <AiMarker variant="lead" state={aiMarkerState} decorative={aiMarkerState === 'idle'} />
-      )}
+      {leadingGlyph}
       {label}
       {count !== undefined && count > 0 && (
         <>
           <span
-            className={[styles.prTabCount, warn && styles.prTabCountWarn].filter(Boolean).join(' ')}
+            className={[styles.prTabCount, countClass].filter(Boolean).join(' ')}
             data-testid="pr-tab-count"
             aria-hidden="true"
           >

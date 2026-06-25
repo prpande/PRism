@@ -22,6 +22,7 @@ test('provides prRef + session to children', () => {
     baseShaChanged: false,
     onSelectSubTab: vi.fn(),
     fileFocus: { status: 'no-changes', entries: [], retry: vi.fn() },
+    checks: { status: 'idle', degraded: 'none', checks: [], retry: vi.fn() },
     pendingFilePath: null,
     requestFileView: vi.fn(),
     clearPendingFilePath: vi.fn(),
