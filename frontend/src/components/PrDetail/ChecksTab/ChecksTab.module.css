@@ -35,7 +35,9 @@
 
 .rowSelected {
   background: var(--surface-3);
-  border-left: 3px solid var(--warning-fg);
+  /* Neutral accent (--text-3), NOT --warning-fg: the selection marker is state-agnostic;
+     an amber bar on a passing check read as a warning. Verified token (see glyph block). */
+  border-left: 3px solid var(--text-3);
 }
 
 .statusBadge {

@@ -68,6 +68,13 @@ test('Checks tab lists fixture checks with health summary, failing badge, and de
   // FakePrChecksReader sets Summary: "2 errors, 0 warnings" for build.
   await expect(page.getByText('2 errors, 0 warnings')).toBeVisible();
 
+  // --- Assert: the markdown body renders via MarkdownRenderer (data-testid="check-body") ---
+  // FakePrChecksReader sets build's Body to "### Build failed\n\n- ...". The hardened
+  // renderer turns the heading into DOM, so the body region is visible with that text.
+  const body = page.getByTestId('check-body');
+  await expect(body).toBeVisible();
+  await expect(body).toContainText('Build failed');
+
   // --- Assert: detail panel "View on GitHub" link points at an https:// URL ---
   // CheckDetail renders <a href={c.detailsUrl}>View on GitHub ↗</a> when detailsUrl is set.
   // FakePrChecksReader sets detailsUrl for all three checks.

@@ -88,8 +88,12 @@ describe('ChecksTab', () => {
       status: 'ok',
       checks: [run({ name: 'build', summary: '2 errors', body: null })],
     });
-    // detail panel should show the selected check name
-    expect(screen.getAllByText('build').length).toBeGreaterThan(0);
+    // Assert the panel itself is rendered and bound to the first row — not just
+    // that the name appears somewhere (it also appears in the list row, so a bare
+    // getAllByText would pass even with the panel removed).
+    const panel = screen.getByRole('region', { name: 'build' });
+    expect(panel).toBeInTheDocument();
+    expect(panel).toHaveTextContent('2 errors');
   });
 
   it('clicking a different row updates the detail panel', async () => {

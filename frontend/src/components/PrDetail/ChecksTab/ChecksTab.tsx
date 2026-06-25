@@ -117,10 +117,15 @@ function ChecksBody({ state, now }: { state: CheckRunsResult; now: number }) {
   const { status, degraded } = state;
   const sorted = status === 'ok' ? sortChecks(state.checks) : [];
   const defaultKey = sorted.length > 0 ? `${sorted[0].source}:${sorted[0].name}` : null;
+  // The useState initial value is only a seed — useState ignores it on every later
+  // render, so when the component first mounts in loading state (sorted empty →
+  // defaultKey null) selectedKey stays null. Auto-selection is driven by
+  // effectiveKey below (which falls back to defaultKey when selectedKey is null or
+  // stale), NOT by this initial value. Do not "fix" this to an effect.
   const [selectedKey, setSelectedKey] = useState<string | null>(defaultKey);
 
-  // Derive the effective selected key: if the current selection is no longer in
-  // the list (check removed after a poll), fall back to the first row.
+  // Derive the effective selected key: if the current selection is null or no
+  // longer in the list (check removed after a poll), fall back to the first row.
   const effectiveKey =
     selectedKey != null && sorted.some((c) => `${c.source}:${c.name}` === selectedKey)
       ? selectedKey
