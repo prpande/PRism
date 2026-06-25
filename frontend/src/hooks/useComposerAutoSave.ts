@@ -126,10 +126,9 @@ export function useComposerAutoSave(props: UseComposerAutoSaveProps): UseCompose
       const result = await sendPatch(p.prRef, makeCreatePatch(currentBody, p.anchor));
       if (propsRef.current.disabled) return;
       if (result.ok && result.assignedId) {
-        // Must be written synchronously here (no await between the resolve
-        // above and this assignment): the next chained save reads draftIdRef
-        // to choose create-vs-update. This is the create-dedup obligation that
-        // moved off `inFlightCreate` onto the chain (#602 Defect C).
+        // Synchronous (no await before this write): the next chained save reads
+        // draftIdRef to choose create-vs-update — this is what carries the
+        // create-dedup obligation now that `inFlightCreate` is gone.
         draftIdRef.current = result.assignedId;
         setBadge('saved');
         propsRef.current.onAssignedId?.(result.assignedId);
@@ -182,10 +181,8 @@ export function useComposerAutoSave(props: UseComposerAutoSaveProps): UseCompose
   const performSave = useCallback(
     (currentBody: string): Promise<void> => {
       const next = saveChain.current.then(() => doSave(currentBody));
-      // Swallow rejections on the STORED tail so one failed save can't poison
-      // later links; the returned `next` still surfaces the real result. doSave
-      // never throws under the current contract (sendPatch returns a result),
-      // so this is defense-in-depth against a future throw path.
+      // Swallow rejections on the STORED tail so one failed link can't poison
+      // later saves; the returned `next` still surfaces the real result.
       saveChain.current = next.catch(() => undefined);
       return next;
     },
