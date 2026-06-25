@@ -72,82 +72,83 @@ function announce(state: CheckRunsResult): string {
 
 export function ChecksTab() {
   const { checks: state } = usePrDetailContext();
-  const { status, degraded } = state;
   const now = Date.now(); // single read per render; no per-second ticker (updates each 15s poll)
-
-  const body = (() => {
-    if (status === 'idle' || (status === 'loading' && state.checks.length === 0)) {
-      return <SkeletonRows />;
-    }
-    if (status === 'empty') {
-      return <p className={styles.message}>No checks for this commit.</p>;
-    }
-    if (status === 'error') {
-      // role="alert" so the async error transition is announced (design R2) -- matches
-      // DraftsTabError / FilesTab error states.
-      return (
-        <div className={styles.message} role="alert">
-          <p>
-            {degraded === 'auth'
-              ? "Couldn't load checks -- the current token may lack access (a classic `repo` token is required for the Checks API)."
-              : "Couldn't load checks."}
-          </p>
-          <button type="button" className={styles.retry} onClick={state.retry}>
-            Retry
-          </button>
-        </div>
-      );
-    }
-
-    const rows = sortChecks(state.checks);
-    return (
-      <div className={styles.checks}>
-        {degraded !== 'none' && (
-          <div className={styles.degradedBanner} role="status">
-            {degraded === 'auth'
-              ? "PRism couldn't read some checks -- the current token may lack access (a classic `repo` token is required for the Checks API)."
-              : "Some checks couldn't be loaded -- retry."}
-          </div>
-        )}
-        <ul className={styles.rows} role="list">
-          {rows.map((c) => {
-            const duration = formatDuration(c, now);
-            return (
-              <li key={`${c.source}:${c.name}`} className={styles.row}>
-                <RowGlyphIcon glyph={glyphFor(c)} />
-                <span className={styles.name} data-testid="check-name" title={c.name}>
-                  {c.name}
-                </span>
-                {duration != null && (
-                  <span className={styles.duration} data-testid="check-duration">
-                    {duration}
-                  </span>
-                )}
-                {c.detailsUrl != null && (
-                  <a
-                    className={styles.details}
-                    href={c.detailsUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                  >
-                    Details &#x2197;
-                  </a>
-                )}
-              </li>
-            );
-          })}
-        </ul>
-      </div>
-    );
-  })();
 
   return (
     <>
       <span role="status" className="sr-only">
         {announce(state)}
       </span>
-      {body}
+      <ChecksBody state={state} now={now} />
     </>
+  );
+}
+
+function ChecksBody({ state, now }: { state: CheckRunsResult; now: number }) {
+  const { status, degraded } = state;
+
+  if (status === 'idle' || (status === 'loading' && state.checks.length === 0)) {
+    return <SkeletonRows />;
+  }
+  if (status === 'empty') {
+    return <p className={styles.message}>No checks for this commit.</p>;
+  }
+  if (status === 'error') {
+    // role="alert" so the async error transition is announced (design R2) -- matches
+    // DraftsTabError / FilesTab error states.
+    return (
+      <div className={styles.message} role="alert">
+        <p>
+          {degraded === 'auth'
+            ? "Couldn't load checks -- the current token may lack access (a classic `repo` token is required for the Checks API)."
+            : "Couldn't load checks."}
+        </p>
+        <button type="button" className={styles.retry} onClick={state.retry}>
+          Retry
+        </button>
+      </div>
+    );
+  }
+
+  const rows = sortChecks(state.checks);
+  return (
+    <div className={styles.checks}>
+      {degraded !== 'none' && (
+        <div className={styles.degradedBanner} role="status">
+          {degraded === 'auth'
+            ? "PRism couldn't read some checks -- the current token may lack access (a classic `repo` token is required for the Checks API)."
+            : "Some checks couldn't be loaded -- retry."}
+        </div>
+      )}
+      <ul className={styles.rows} role="list">
+        {rows.map((c) => {
+          const duration = formatDuration(c, now);
+          return (
+            <li key={`${c.source}:${c.name}`} className={styles.row}>
+              <RowGlyphIcon glyph={glyphFor(c)} />
+              <span className={styles.name} data-testid="check-name" title={c.name}>
+                {c.name}
+              </span>
+              {duration != null && (
+                <span className={styles.duration} data-testid="check-duration">
+                  {duration}
+                </span>
+              )}
+              {c.detailsUrl != null && (
+                <a
+                  className={styles.details}
+                  href={c.detailsUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  Details &#x2197;
+                </a>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+    </div>
   );
 }
 
@@ -181,16 +182,23 @@ const GLYPH_PATH: Record<RowGlyph, string> = {
 };
 
 function RowGlyphIcon({ glyph }: { glyph: RowGlyph }) {
-  const cls =
-    glyph === 'cross'
-      ? styles.glyphFail
-      : glyph === 'alert'
-        ? styles.glyphAlert
-        : glyph === 'spinner'
-          ? styles.glyphPending
-          : glyph === 'check'
-            ? styles.glyphPass
-            : styles.glyphNeutral;
+  let cls: string;
+  switch (glyph) {
+    case 'cross':
+      cls = styles.glyphFail;
+      break;
+    case 'alert':
+      cls = styles.glyphAlert;
+      break;
+    case 'spinner':
+      cls = styles.glyphPending;
+      break;
+    case 'check':
+      cls = styles.glyphPass;
+      break;
+    default:
+      cls = styles.glyphNeutral;
+  }
   return (
     <svg
       className={`${styles.glyph} ${cls}`}
