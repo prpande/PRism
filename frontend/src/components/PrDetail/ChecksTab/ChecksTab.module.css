@@ -5,15 +5,6 @@
   padding: var(--s-4) 0;
 }
 
-.rows {
-  display: flex;
-  flex-direction: column;
-  gap: var(--s-2);
-  list-style: none;
-  margin: 0;
-  padding: 0;
-}
-
 .row {
   display: flex;
   align-items: center;
@@ -99,8 +90,37 @@
   color: var(--text-3);
 }
 
-.retry {
-  margin-top: var(--s-2);
+/* Error state: a centred card (matches .detail's surface/border/radius) holding a
+   warning glyph, the message, and a standard .btn Retry — purpose-built for this tab
+   but styled to the app's design language. */
+.errorWrap {
+  width: min(80%, var(--pr-detail-content-max));
+  margin: var(--s-6) auto;
+  display: flex;
+  justify-content: center;
+}
+
+.errorCard {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: var(--s-3);
+  max-width: 32rem;
+  padding: var(--s-6);
+  background: var(--surface-2);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-3);
+}
+
+.errorIcon {
+  color: var(--warning); /* base amber (see glyph block) — warning, not danger */
+}
+
+.errorText {
+  margin: 0;
+  max-width: 42ch;
+  color: var(--text-2);
 }
 
 .degradedBanner {
@@ -121,6 +141,15 @@
   animation: pulse 1.2s ease-in-out infinite;
 }
 
+/* Detail-pane placeholder: a single tall block standing in for the detail card,
+   so the skeleton previews the two-pane shape the loaded tab renders. */
+.skeletonDetail {
+  height: 12rem;
+  border-radius: var(--radius-2);
+  background: var(--surface-3);
+  animation: pulse 1.2s ease-in-out infinite;
+}
+
 @keyframes pulse {
   50% {
     opacity: 0.5;
@@ -128,7 +157,8 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .skeleton {
+  .skeleton,
+  .skeletonDetail {
     animation: none;
   }
 }

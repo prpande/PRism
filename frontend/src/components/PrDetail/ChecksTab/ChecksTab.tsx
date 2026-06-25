@@ -140,18 +140,22 @@ function ChecksBody({ state, now }: { state: CheckRunsResult; now: number }) {
     return <p className={styles.message}>No checks for this commit.</p>;
   }
   if (status === 'error') {
-    // role="alert" so the async error transition is announced (design R2) -- matches
-    // DraftsTabError / FilesTab error states.
+    // Centred card with a warning glyph + a standard app button — purpose-built for
+    // this tab but matching the app's surface/border/btn design language. role="alert"
+    // so the async error transition is announced (design R2).
     return (
-      <div className={styles.message} role="alert">
-        <p>
-          {degraded === 'auth'
-            ? "Couldn't load checks -- the current token may lack access (a classic `repo` token is required for the Checks API)."
-            : "Couldn't load checks."}
-        </p>
-        <button type="button" className={styles.retry} onClick={state.retry}>
-          Retry
-        </button>
+      <div className={styles.errorWrap}>
+        <div className={styles.errorCard} role="alert">
+          <AlertTriangleIcon />
+          <p className={styles.errorText}>
+            {degraded === 'auth'
+              ? "Couldn't load checks — the current token may lack access (a classic `repo` token is required for the Checks API)."
+              : "Couldn't load checks."}
+          </p>
+          <button type="button" className="btn btn-secondary" onClick={state.retry}>
+            Retry
+          </button>
+        </div>
       </div>
     );
   }
@@ -255,13 +259,23 @@ function CheckDetail({ check: c, now }: { check: CheckRun; now: number }) {
   );
 }
 
+// Loading skeleton mirrors the real master-detail layout (capped width, list pane +
+// detail pane) so the placeholder occupies the same footprint the loaded tab will —
+// no full-width sprawl, no jump when content arrives.
 function SkeletonRows() {
   return (
-    <ul className={styles.rows} role="list" aria-busy="true">
-      {[0, 1, 2].map((i) => (
-        <li key={i} className={`${styles.row} ${styles.skeleton}`} />
-      ))}
-    </ul>
+    <div className={styles.checks} aria-busy="true">
+      <div className={styles.masterDetail}>
+        <div className={styles.listPane} role="list">
+          {[0, 1, 2].map((i) => (
+            <div key={i} className={`${styles.row} ${styles.skeleton}`} />
+          ))}
+        </div>
+        <div className={styles.detailPane}>
+          <div className={styles.skeletonDetail} />
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -291,6 +305,23 @@ const GLYPH_CLS: Record<RowGlyph, string> = {
   check: styles.glyphPass,
   dash: styles.glyphNeutral,
 };
+
+// octicon alert-16 — the same triangle the action-required row glyph uses, rendered
+// larger and amber for the error-state card.
+function AlertTriangleIcon() {
+  return (
+    <svg
+      className={styles.errorIcon}
+      aria-hidden="true"
+      viewBox="0 0 16 16"
+      width="32"
+      height="32"
+      fill="currentColor"
+    >
+      <path d={GLYPH_PATH.alert} />
+    </svg>
+  );
+}
 
 function RowGlyphIcon({ glyph }: { glyph: RowGlyph }) {
   return (
