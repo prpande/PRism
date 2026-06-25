@@ -642,6 +642,13 @@ follow-up's own design call, not bound here):
 - This is a **B2 (risk-surface) write mutation** → retains the human approach gate,
   unlike this read-only slice (B1 only).
 
+## Deferred work
+
+Per [`.ai/docs/documentation-maintenance.md`](../../.ai/docs/documentation-maintenance.md) deferred-work convention (GitHub issue = system of record; thin pointer here). `#TBD` markers are replaced with the bare issue number once filed.
+
+- **[Defer] PR detail Checks tab: re-trigger failed checks** — #TBD. B2 write/mutation surface (Actions re-run / re-request); retains the human approach gate. Full scope in `## Deferred follow-up — re-trigger` above. Revisit: when read-only Checks ships and re-trigger is prioritized.
+- **[Defer] Validate owner/repo on all PR-detail endpoints** — #TBD. The new `/checks` endpoint validates `owner`/`repo` via `SharedRegexes.OwnerRepo()`; sibling PR-detail endpoints (`/diff`, `/file`, `/mark-viewed`, base detail route) forward unvalidated `owner`/`repo` into GitHub REST paths — a pre-existing gap this slice neither introduces nor widens, kept out of this B1 read-only scope. Revisit: a dedicated security-hardening pass on the PR-detail endpoint family.
+
 ## Risk classification (this slice)
 
 - **Tier:** T3 — slice-sized, new behavior, backend + frontend.
