@@ -219,6 +219,14 @@ export function useComposerAutoSave(props: UseComposerAutoSaveProps): UseCompose
   // keystroke — so this empty-dep effect's cleanup, which runs only at unmount,
   // owns it. `performSave` is stable, so the dependency never re-fires the
   // cleanup before unmount.
+  //
+  // ORDERING INVARIANT: this effect MUST be declared BEFORE the body-keyed
+  // debounce effect below. React runs unmount cleanups in registration order
+  // (top-to-bottom), so this cleanup must fire first to grab the live
+  // `debounceTimer` and flush it; if the body-keyed effect were declared first,
+  // its cleanup would null the timer and this one would silently no-op, dropping
+  // the keystroke. `UnmountWithPendingDebounce_FlushesLastKeystroke` goes red if
+  // the two effects are ever reordered.
   useEffect(() => {
     return () => {
       if (debounceTimer.current !== null) {
