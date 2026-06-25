@@ -7,8 +7,10 @@ using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using PRism.Core.Contracts;
+using PRism.Core.Events;
 using PRism.Core.Json;
 using PRism.Core.PrDetail;
+using PRism.Core.State;
 using PRism.Web.Endpoints;
 using PRism.Web.Tests.TestHelpers;
 
@@ -29,6 +31,19 @@ public class PrReloadEndpointTests : IClassFixture<PRismWebApplicationFactory>
     private static HttpClient AuthedClient(WebApplicationFactory<Program> factory, string tabId) =>
         factory.CreateAuthenticatedClient(tabId);
 
+    // Builds a per-test factory whose IActivePrCache returns a WARM snapshot for prRef with the
+    // given head — the production happy-path precondition (#611): the poller has populated the
+    // cache and its head matches the request. The shared IClassFixture _factory is a process-wide
+    // singleton that can't take a per-test service override, so warm-cache tests derive their own
+    // factory (mirrors Reload_with_diverged_cached_head). Caller owns disposal via `await using`.
+    private WebApplicationFactory<Program> WithWarmCache(PrReference prRef, string headSha) =>
+        _factory.WithWebHostBuilder(b => b.ConfigureServices(s =>
+        {
+            s.RemoveAll<IActivePrCache>();
+            s.AddSingleton<IActivePrCache>(
+                new FakeCacheWithSnapshot(prRef, new ActivePrSnapshot(headSha, null, DateTimeOffset.UtcNow)));
+        }));
+
     private static async Task<T?> ReadApiJsonAsync<T>(HttpResponseMessage resp)
         => await resp.Content.ReadFromJsonAsync<T>(JsonSerializerOptionsFactory.Api).ConfigureAwait(false);
 
@@ -48,10 +63,16 @@ public class PrReloadEndpointTests : IClassFixture<PRismWebApplicationFactory>
     [Fact]
     public async Task Reload_happy_path_returns_full_session_dto()
     {
-        var client = ClientWithTab();
+        // Production happy path: the active-PR cache is warm and its head matches the request, so
+        // reconcile proceeds and returns the session DTO (#611 AC3). Pre-#611 this passed against
+        // the default COLD cache via the now-closed head-shift bypass; it must now register a
+        // populated cache to exercise the real matching-head path.
+        var sha = new string('a', 40);
+        var prRef = new PrReference("acme", "api", 1001);
+        await using var factory = WithWarmCache(prRef, sha);
+        var client = AuthedClient(factory, "tab-reload-1");
         await SeedSessionAsync(client, "acme/api/1001");
 
-        var sha = new string('a', 40);
         var resp = await client.PostAsJsonAsync("/api/pr/acme/api/1001/reload", new { headSha = sha });
 
         resp.StatusCode.Should().Be(HttpStatusCode.OK);
@@ -64,19 +85,22 @@ public class PrReloadEndpointTests : IClassFixture<PRismWebApplicationFactory>
     [Fact]
     public async Task Reload_concurrent_requests_at_most_one_returns_409()
     {
-        var client = ClientWithTab();
+        var sha = new string('b', 40);
+        var prRef = new PrReference("acme", "api", 1002);
+        await using var factory = WithWarmCache(prRef, sha);
+        var client = AuthedClient(factory, "tab-reload-1");
         await SeedSessionAsync(client, "acme/api/1002");
 
-        var sha = new string('b', 40);
-        var t1 = client.PostAsJsonAsync("/api/pr/acme/api/1002/reload", new { headSha = sha });
-        var t2 = client.PostAsJsonAsync("/api/pr/acme/api/1002/reload", new { headSha = sha });
-
-        var responses = await Task.WhenAll(t1, t2);
-        // One semaphore slot — exactly one should be 409. The race is best-effort, so
-        // tolerate either order: either both succeed (semaphore was released between
-        // calls) or one is 409. The semaphore is process-wide so under WebApplicationFactory
-        // the race typically yields one 409 reliably; tolerate both-200 as a spurious
-        // pass that doesn't invalidate the contract.
+        // Inline the two POSTs into WhenAll (no escaping task locals) so the in-flight
+        // requests are guaranteed complete before `await using` disposes the factory (CA2025).
+        var responses = await Task.WhenAll(
+            client.PostAsJsonAsync("/api/pr/acme/api/1002/reload", new { headSha = sha }),
+            client.PostAsJsonAsync("/api/pr/acme/api/1002/reload", new { headSha = sha }));
+        // One semaphore slot — at most one should be 409 (reload-in-progress); the other reconciles
+        // against the warm matching head and returns 200. The race is best-effort, so tolerate either
+        // order: either both succeed (semaphore released between calls) or one is 409. The semaphore is
+        // process-wide so under WebApplicationFactory the race typically yields one 409 reliably;
+        // tolerate both-200 as a spurious pass that doesn't invalidate the contract.
         var conflictCount = responses.Count(r => r.StatusCode == HttpStatusCode.Conflict);
         conflictCount.Should().BeLessOrEqualTo(1);
         responses.Count(r => r.IsSuccessStatusCode).Should().BeGreaterOrEqualTo(1);
@@ -86,14 +110,16 @@ public class PrReloadEndpointTests : IClassFixture<PRismWebApplicationFactory>
     public async Task Reload_writes_tab_stamp_under_caller_tab_id()
     {
         // Spec § 5.3 — the per-tab stamp lands under X-PRism-Tab-Id (not "tab-PLACEHOLDER").
-        var client = ClientWithTab("tab-RELOAD");
+        var sha = new string('f', 40);
+        var prRef = new PrReference("acme", "api", 1100);
+        await using var factory = WithWarmCache(prRef, sha);
+        var client = AuthedClient(factory, "tab-RELOAD");
         await SeedSessionAsync(client, "acme/api/1100");
 
-        var sha = new string('f', 40);
         var resp = await client.PostAsJsonAsync("/api/pr/acme/api/1100/reload", new { headSha = sha });
         resp.StatusCode.Should().Be(HttpStatusCode.OK);
 
-        var stateStore = _factory.Services.GetRequiredService<PRism.Core.State.IAppStateStore>();
+        var stateStore = factory.Services.GetRequiredService<IAppStateStore>();
         var state = await stateStore.LoadAsync(CancellationToken.None);
         var stamps = state.Reviews.Sessions["acme/api/1100"].TabStamps;
         stamps.Should().ContainKey("tab-RELOAD");
@@ -188,6 +214,64 @@ public class PrReloadEndpointTests : IClassFixture<PRismWebApplicationFactory>
         var raw = await resp.Content.ReadAsStringAsync();
         raw.Should().Contain("\"error\":\"reload-stale-head\"");
         raw.Should().Contain($"\"currentHeadSha\":\"{cachedSha}\"");
+    }
+
+    [Fact]
+    public async Task Reload_with_cold_null_cache_returns_409_reload_head_unverified()
+    {
+        // #611: the cache is COLD (GetCurrent → null) — the poller hasn't populated a snapshot for
+        // this PR yet (subscribe→poll race) or it was cleared by POST /api/auth/replace. The
+        // head-shift guard cannot verify request.HeadSha against a known-good head, so reload must
+        // NOT reconcile against the unverified client head; it returns a retryable
+        // 409 reload-head-unverified. Red on main: the cold-cache bypass returns 200 (silent
+        // reconcile against the unverified head) instead.
+        // AllSubscribedActivePrCache with its default (Current == null) models a cold cache:
+        // IsSubscribed → true (subscribe→poll race) but GetCurrent → null (no snapshot yet).
+        await using var factory = _factory.WithWebHostBuilder(b => b.ConfigureServices(s =>
+        {
+            s.RemoveAll<IActivePrCache>();
+            s.AddSingleton<IActivePrCache>(new AllSubscribedActivePrCache());
+        }));
+        var client = AuthedClient(factory, "tab-cold");
+        await SeedSessionAsync(client, "acme/api/1200");
+
+        var resp = await client.PostAsJsonAsync(
+            "/api/pr/acme/api/1200/reload", new { headSha = new string('a', 40) });
+
+        resp.StatusCode.Should().Be(HttpStatusCode.Conflict);
+        var raw = await resp.Content.ReadAsStringAsync();
+        raw.Should().Contain("\"error\":\"reload-head-unverified\"");
+        // Distinct from reload-stale-head: there is no currentHeadSha to retry with.
+        raw.Should().NotContain("currentHeadSha");
+    }
+
+    [Fact]
+    public async Task Reload_cold_null_cache_writes_no_tab_stamp_and_publishes_no_state_changed()
+    {
+        // #611 AC4: the cold-cache 409 returns from the UpdateAsync transform before the apply, so
+        // it writes no per-tab stamp and (via the updatedSession-null gate) publishes no
+        // StateChanged — a no-op reload must not trigger a spurious FE refetch. Red on main: the
+        // silent reconcile both stamps the caller's tab and publishes StateChanged.
+        var fakeBus = new FakeReviewEventBus();
+        await using var factory = _factory.WithWebHostBuilder(b => b.ConfigureServices(s =>
+        {
+            s.RemoveAll<IActivePrCache>();
+            s.AddSingleton<IActivePrCache>(new AllSubscribedActivePrCache()); // Current == null → cold
+            s.RemoveAll<IReviewEventBus>();
+            s.AddSingleton<IReviewEventBus>(fakeBus);
+        }));
+        var client = AuthedClient(factory, "tab-cold-2");
+        await SeedSessionAsync(client, "acme/api/1201");
+        fakeBus.Clear(); // drop events emitted by the seed PUT
+
+        var resp = await client.PostAsJsonAsync(
+            "/api/pr/acme/api/1201/reload", new { headSha = new string('a', 40) });
+        resp.StatusCode.Should().Be(HttpStatusCode.Conflict);
+
+        var stateStore = factory.Services.GetRequiredService<IAppStateStore>();
+        var state = await stateStore.LoadAsync(CancellationToken.None);
+        state.Reviews.Sessions["acme/api/1201"].TabStamps.Should().NotContainKey("tab-cold-2");
+        fakeBus.Published.OfType<StateChanged>().Should().BeEmpty();
     }
 
     [Fact]
