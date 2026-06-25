@@ -66,9 +66,7 @@ describe('ChecksTab', () => {
 
   it('shows a degraded banner above a partial list', () => {
     renderTab({ status: 'ok', degraded: 'auth', checks: [run({})], retry: () => {} });
-    expect(
-      screen.getByText(/couldn't read some checks|couldn't read some checks/i),
-    ).toBeInTheDocument();
+    expect(screen.getByText(/couldn't read some checks/i)).toBeInTheDocument();
   });
 
   it('omits duration for a legacy status source', () => {

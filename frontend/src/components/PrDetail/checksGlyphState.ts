@@ -22,6 +22,11 @@ export interface ChecksGlyphState {
 export function checksGlyphState(checks: CheckRun[]): ChecksGlyphState {
   const failingCount = checks.filter(isFailing).length;
   const anyRunning = checks.some(isNonTerminal);
+  // Stricter than the plan's `failingCount===0 && anySuccess`: the green tick means
+  // EVERY check literally succeeded. A mixed success+skipped/neutral PR shows no tab
+  // glyph (the panel still lists detail). This also naturally keeps `action-required`
+  // out of all-green without a special case. Deviation accepted at final review as the
+  // more-correct rule.
   const allGreen = checks.length > 0 && checks.every(isGreen);
 
   let lead: ChecksLeadGlyph;
