@@ -90,4 +90,30 @@ describe('PrSubTabStrip AI marker', () => {
     );
     expect(within(screen.getByTestId('pr-tab-hotspots')).queryByTestId('ai-marker')).toBeNull();
   });
+  it('renders an always-visible Checks tab with the red failing badge and aria health', () => {
+    render(
+      <PrSubTabStrip
+        activeTab="overview"
+        onTabChange={() => {}}
+        checksLead="in-progress"
+        checksFailingCount={2}
+        checksAriaLabel="Checks — 2 failing"
+      />,
+    );
+    const tab = screen.getByTestId('pr-tab-checks');
+    expect(tab).toBeInTheDocument();
+    expect(tab).toHaveAttribute('aria-label', 'Checks — 2 failing');
+    // the strip builds the glyph from the primitive lead
+    expect(tab.querySelector('[data-glyph="in-progress"]')).not.toBeNull();
+    // failing badge uses the DANGER (red) variant, not the amber drafts warn class
+    const badge = tab.querySelector('[data-testid="pr-tab-count"]');
+    expect(badge).toHaveTextContent('2');
+    expect(badge?.className).toMatch(/Danger/i); // prTabCountDanger
+  });
+
+  it('does NOT render the in-progress glyph when lead is none', () => {
+    render(<PrSubTabStrip activeTab="overview" onTabChange={() => {}} checksLead="none" />);
+    const tab = screen.getByTestId('pr-tab-checks');
+    expect(tab.querySelector('[data-glyph]')).toBeNull();
+  });
 });

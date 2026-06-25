@@ -1,0 +1,34 @@
+/* Token names verified against tokens.css + InboxRow.module.css (design R1):
+   InboxRow uses --warning-fg (amber, .ciPending), --success-fg (green, .ciPassing),
+   --danger-fg (red, .ciFailing). There are NO --ci-* tokens. No hex fallbacks — a
+   fallback would mask a missing-token typo and break theme switching. */
+.dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--warning-fg); /* same amber as InboxRow .ciPending */
+  animation: checksPulse 1.4s ease-in-out infinite;
+}
+
+.tick {
+  color: var(--success-fg); /* same green as InboxRow .ciPassing */
+}
+
+@keyframes checksPulse {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.45;
+    transform: scale(0.82);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dot {
+    animation: none; /* static dot still conveys in-progress; motion is decorative */
+  }
+}
