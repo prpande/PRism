@@ -21,6 +21,10 @@ internal sealed class SensitiveFieldScrubber
 {
     public const int MaxStringLength = 1024;
 
+    // The single redaction token used across the logging path. Both the field-name scrubber
+    // (here) and the free-text backstop (LogScrub) write this, so a log file carries one marker.
+    public const string RedactionMarker = "[REDACTED]";
+
     private static readonly string[] BlockedFieldNames =
     {
         "subscriberId",
@@ -39,7 +43,7 @@ internal sealed class SensitiveFieldScrubber
         foreach (var blocked in BlockedFieldNames)
         {
             if (string.Equals(blocked, fieldName, StringComparison.OrdinalIgnoreCase))
-                return "[REDACTED]";
+                return RedactionMarker;
         }
 
         return value;
