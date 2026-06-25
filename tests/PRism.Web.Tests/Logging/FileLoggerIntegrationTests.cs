@@ -122,6 +122,47 @@ public sealed class FileLoggerIntegrationTests : IDisposable
     }
 
     [Fact]
+    public async Task EndToEnd_pat_in_exception_text_and_nonsensitive_arg_is_scrubbed_on_disk()
+    {
+        // Regression for #610: the file sink never ran LogScrub, so a PAT in free text —
+        // an exception's .ToString() or an arg under a non-sensitive key — reached disk verbatim
+        // and persisted for the 14-day retention window. The field-name scrubber only redacts
+        // values whose structured KEY is sensitive (`pat`/`token`/…), so neither path below is
+        // caught by it; only the free-text backstop redacts them.
+        var todayPath = Path.Combine(_logsDir, $"prism-{DateTime.Now:yyyy-MM-dd}.log");
+
+        await using (var factory = new PRismWebApplicationFactory()
+            .WithWebHostBuilder(b => b.ConfigureServices(s =>
+            {
+                s.AddSingleton<FileLoggerProvider>(_ => new FileLoggerProvider(_logsDir));
+                s.AddSingleton<ILoggerProvider>(sp => sp.GetRequiredService<FileLoggerProvider>());
+            })))
+        {
+            using var client = factory.CreateClient();
+            var loggerFactory = factory.Services.GetRequiredService<ILoggerFactory>();
+            var logger = loggerFactory.CreateLogger("PRism.IntegrationTest");
+
+            // (a) PAT embedded in an exception message — written via exception?.ToString(),
+            //     which the field-name scrubber never touches.
+            var ex = new InvalidOperationException(
+                "GET https://x:ghp_exceptiontoken1234567890abcd@api.github.com/repos failed");
+            logger.LogError(ex, "request pipeline failed");
+
+            // (b) PAT passed positionally under a NON-sensitive key — the key `detail` is not in
+            //     SensitiveFieldScrubber's blocklist, so the value survives field-name scrubbing
+            //     and only the free-text backstop catches it.
+            logger.LogError("auth detail: {detail}", "token ghp_freetextarg0987654321zyxw rejected");
+        }
+
+        File.Exists(todayPath).Should().BeTrue($"the daily log file should exist at {todayPath}");
+        var content = await ReadAllTextWithRetryAsync(todayPath, TimeSpan.FromSeconds(5));
+
+        content.Should().NotContain("ghp_exceptiontoken", "a PAT in exception text must not reach disk");
+        content.Should().NotContain("ghp_freetextarg", "a PAT in a non-sensitive-keyed arg must not reach disk");
+        content.Should().Contain("[REDACTED]", "the free-text scrubber must replace PAT-shaped tokens");
+    }
+
+    [Fact]
     public async Task EndToEnd_host_shutdown_flushes_all_in_flight_events()
     {
         var todayPath = Path.Combine(_logsDir, $"prism-{DateTime.Now:yyyy-MM-dd}.log");
