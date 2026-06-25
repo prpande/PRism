@@ -265,8 +265,11 @@ function CheckDetail({ check: c, now }: { check: CheckRun; now: number }) {
 function SkeletonRows() {
   return (
     <div className={styles.checks} aria-busy="true">
+      {/* No role on the placeholder panes — they're decorative; the persistent
+          role="status" announcer ("Loading checks…") carries the SR signal, so the
+          skeleton doesn't expose a misleading empty list/listbox landmark. */}
       <div className={styles.masterDetail}>
-        <div className={styles.listPane} role="list">
+        <div className={styles.listPane}>
           {[0, 1, 2].map((i) => (
             <div key={i} className={`${styles.row} ${styles.skeleton}`} />
           ))}

@@ -3,6 +3,7 @@ import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { useCheckRuns } from './useCheckRuns';
 import * as api from '../api/checks';
+import { ApiError } from '../api/client';
 import type { ChecksResponse } from '../api/types';
 
 const PR = { owner: 'o', repo: 'r', number: 1 };
@@ -119,6 +120,49 @@ describe('useCheckRuns', () => {
     vi.spyOn(api, 'getCheckRuns').mockRejectedValue(new Error('boom'));
     const { result } = renderHook(() => useCheckRuns(PR, SHA, true));
     await waitFor(() => expect(result.current.status).toBe('error'));
+    expect(result.current.degraded).toBe('transient'); // non-ApiError → transient
+  });
+
+  it.each([401, 403])('classifies a %s ApiError as auth-degraded', async (status) => {
+    vi.spyOn(api, 'getCheckRuns').mockRejectedValue(new ApiError(status, null, null));
+    const { result } = renderHook(() => useCheckRuns(PR, SHA, true));
+    await waitFor(() => expect(result.current.status).toBe('error'));
+    expect(result.current.degraded).toBe('auth');
+  });
+
+  it('keeps the last-known list (no error screen) when a later poll fails', async () => {
+    const spy = vi
+      .spyOn(api, 'getCheckRuns')
+      .mockResolvedValueOnce(
+        resp({
+          checks: [
+            {
+              name: 'b',
+              status: 'in-progress',
+              conclusion: null,
+              source: 'check-run',
+              startedAt: null,
+              completedAt: null,
+              detailsUrl: null,
+              summary: null,
+              appName: null,
+              body: null,
+            },
+          ],
+        }),
+      )
+      .mockRejectedValue(new Error('boom'));
+    const { result } = renderHook(() => useCheckRuns(PR, SHA, true));
+    await waitFor(() => expect(result.current.status).toBe('ok'));
+    expect(result.current.checks).toHaveLength(1);
+    // The next poll (15s) fails — but a valid list is already on screen.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(15000);
+    });
+    expect(spy).toHaveBeenCalledTimes(2);
+    await waitFor(() => expect(result.current.degraded).toBe('transient'));
+    expect(result.current.status).toBe('ok'); // stale list retained, NOT 'error'
+    expect(result.current.checks).toHaveLength(1);
   });
 
   it('does NOT fetch again while the document is hidden (scope R1)', async () => {

@@ -35,6 +35,13 @@ export function useCheckRuns(
   // window before shouldKeepPolling reads it — adversarial/scope R1).
   const seriesShaRef = useRef<string | undefined>(undefined);
   const windowOpenedAtRef = useRef<number>(0);
+  // Latest list + whether THIS series ever fetched successfully — read in the tick
+  // catch block, which can't see fresh `checks` state (its closure captures the value
+  // from effect-run time). Used for stale-while-revalidate on failure: a poll error
+  // only surfaces the error screen on a cold series (no success yet); once a fetch has
+  // landed we keep the last-known list on screen and just flag it degraded.
+  const checksRef = useRef<CheckRun[]>([]);
+  const hadSuccessRef = useRef(false);
 
   const refKey = `${prRef.owner}/${prRef.repo}/${prRef.number}`;
   // setStatus('loading') gives immediate feedback when retrying from the error screen
@@ -57,6 +64,8 @@ export function useCheckRuns(
       seriesShaRef.current = headSha;
       windowOpenedAtRef.current = Date.now();
       setChecks([]);
+      checksRef.current = [];
+      hadSuccessRef.current = false;
       setDegraded('none');
       setStatus('loading');
     }
@@ -86,6 +95,8 @@ export function useCheckRuns(
         const res = await getCheckRuns(prRef, headSha!, ctrl.signal);
         if (cancelled || res.headSha !== headSha) return; // cross-series backstop
         setChecks(res.checks);
+        checksRef.current = res.checks;
+        hadSuccessRef.current = true;
         setDegraded(res.degraded);
         setStatus(res.checks.length === 0 ? 'empty' : 'ok');
         if (shouldKeepPolling(res.checks)) {
@@ -93,8 +104,27 @@ export function useCheckRuns(
         }
       } catch (err) {
         if (cancelled || ctrl.signal.aborted) return;
-        setDegraded(err instanceof ApiError && err.status === 403 ? 'auth' : 'transient');
-        setStatus('error'); // stop the loop; retry() restarts via the nonce
+        // 401/403 from PRism's own endpoint = auth (mirrors the reader's DegradedFor);
+        // anything else is transient.
+        setDegraded(
+          err instanceof ApiError && (err.status === 401 || err.status === 403)
+            ? 'auth'
+            : 'transient',
+        );
+        if (!hadSuccessRef.current) {
+          // Cold series — nothing cached to fall back on. Surface the error screen;
+          // retry() restarts the loop via the nonce.
+          setStatus('error');
+        } else {
+          // Stale-while-revalidate: a prior fetch landed this series, so keep its
+          // last-known list on screen (the degraded banner signals the refresh failed)
+          // rather than replacing a working view with the error card. Keep polling on
+          // the same cadence so a transient blip self-heals without a manual Retry.
+          setStatus(checksRef.current.length === 0 ? 'empty' : 'ok');
+          if (shouldKeepPolling(checksRef.current)) {
+            timer = setTimeout(tick, POLL_MS);
+          }
+        }
       } finally {
         inFlight = false;
       }

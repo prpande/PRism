@@ -97,6 +97,10 @@ public sealed class GitHubPrChecksReader : IPrChecksReader
         string? nextUrl = null;
         var initial = $"repos/{pr.Owner}/{pr.Repo}/commits/{sha}/status?per_page=100";
 
+        // The combined-status endpoint (singular /status) DOES paginate: it accepts
+        // per_page/page and emits Link rel=next when a commit has >100 contexts (GitHub
+        // returns the most recent status per context, up to 100 per page). The walk is
+        // intentional, not dead code — it mirrors the /check-runs walk above.
         for (var page = 0; page < MaxPages; page++)
         {
             using var resp = await SendAsync(nextUrl ?? initial, token, ct).ConfigureAwait(false);
@@ -137,8 +141,13 @@ public sealed class GitHubPrChecksReader : IPrChecksReader
         return (checks, DegradedReason.None);
     }
 
+    // 401 (bad/expired credentials) and 403 (insufficient scope) both mean the token,
+    // not the network, is the problem — surface the auth-specific banner. Everything else
+    // (5xx, 429-after-rate-limit-throw, etc.) is transient.
     private static DegradedReason DegradedFor(HttpResponseMessage resp) =>
-        resp.StatusCode == HttpStatusCode.Forbidden ? DegradedReason.Auth : DegradedReason.Transient;
+        resp.StatusCode is HttpStatusCode.Forbidden or HttpStatusCode.Unauthorized
+            ? DegradedReason.Auth
+            : DegradedReason.Transient;
 
     private static string? StringProp(JsonElement el, string name) =>
         el.TryGetProperty(name, out var p) && p.ValueKind == JsonValueKind.String ? p.GetString() : null;

@@ -156,6 +156,22 @@ public class GitHubPrChecksReaderTests
     }
 
     [Fact]
+    public async Task Unauthorized_on_check_runs_returns_partial_with_Auth()
+    {
+        // 401 (expired/invalid token) is an auth failure just like 403 — the user must
+        // see the "token may lack access" banner, not the transient "retry" copy.
+        var reader = ReaderFor(req =>
+            req.RequestUri!.AbsolutePath.EndsWith("/check-runs", StringComparison.Ordinal)
+                ? new HttpResponseMessage(HttpStatusCode.Unauthorized)
+                : Json("""{"state":"success","total_count":1,"statuses":[{"context":"x","state":"success"}]}"""));
+
+        var resp = await reader.ReadAsync(Pr, Sha, CancellationToken.None);
+
+        Assert.Equal(DegradedReason.Auth, resp.Degraded);
+        Assert.Single(resp.Checks); // the legacy status still came through
+    }
+
+    [Fact]
     public async Task Both_fail_different_reasons_reports_Auth_before_Transient()
     {
         var reader = ReaderFor(req =>
