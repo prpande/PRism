@@ -120,6 +120,11 @@ export function useCheckRuns(
       if (timer) clearTimeout(timer);
       ctrl.abort(); // cross-series race guard: an in-flight old-SHA fetch is aborted
     };
+    // refKey is the stable string proxy for prRef's primitives (owner/repo/number):
+    // keying on it (not the prRef object) means a new prRef object with identical
+    // fields does NOT spuriously reset the polling series. Same pattern as
+    // useActivePrUpdates. prRef itself is read inside tick() but only via those primitives.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- refKey captures prRef's identity
   }, [active, headSha, refKey, retryNonce]);
 
   return { status, degraded, checks, retry };
