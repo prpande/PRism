@@ -26,6 +26,17 @@ public interface IActivePrCache
     /// matching wipe on the registry side and is called alongside.
     /// </summary>
     void Clear();
+
+    /// <summary>
+    /// Drops every cached snapshot whose PR is NOT in <paramref name="live"/>. Called by
+    /// <see cref="ActivePrPoller"/> once per tick with the current subscriber set so a PR that
+    /// has lost its last subscriber does not retain its snapshot for the process lifetime
+    /// (issue #624 — the sibling of the <c>_state</c> prune in #609). Eviction is safe because
+    /// every read is gated by <see cref="IsSubscribed"/>: nothing serves an unsubscribed PR's
+    /// snapshot, and a re-subscribe repopulates it on the next poll. Defaults to a no-op so test
+    /// fakes that don't model eviction need no change; the production cache overrides it.
+    /// </summary>
+    void Retain(IReadOnlyCollection<PrReference> live) { }
 }
 
 public sealed record ActivePrSnapshot(

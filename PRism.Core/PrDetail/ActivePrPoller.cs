@@ -22,6 +22,12 @@ public sealed partial class ActivePrPoller : BackgroundService
     private readonly IActivePrCache _cache;
     private readonly ILogger<ActivePrPoller> _logger;
     private readonly ConcurrentDictionary<PrReference, ActivePrPollerState> _state = new();
+
+    // Read-only observability seam for tests: the number of PRs with retained poller state.
+    // Backs the regression assertion that _state does not grow without bound across
+    // subscribe/unsubscribe cycles (issue #609). No behavior; surfaces _state.Count only.
+    internal int TrackedStateCount => _state.Count;
+
     // Default 30s for production; PRISM_POLLER_CADENCE_SECONDS overrides ONLY
     // when the host is running under Test env so that a stray env var set on a
     // production host cannot drive the poller into GitHub secondary-rate-limit
@@ -110,11 +116,32 @@ public sealed partial class ActivePrPoller : BackgroundService
     // requiring a TimeProvider injection.
     internal async Task TickAsync(DateTimeOffset now, CancellationToken ct)
     {
+        var prs = _registry.UniquePrRefs();
+
+        // Prune retained state for PRs that no longer have any active subscriber (issue #609).
+        // Two reasons: (1) without this, _state grows one entry per distinct PR ever subscribed
+        // for the process lifetime; (2) a re-subscribe to a previously-viewed quiet PR would
+        // otherwise find the stale entry, so firstPoll is false and no hydration ActivePrUpdated
+        // fires, leaving the frontend Mark-all-read gate (useFirstActivePrPollComplete) closed.
+        // A re-subscribe that lands inside the same cadence window as the unsubscribe keeps its
+        // state — the tick never observed zero subscribers — which is acceptable: only a
+        // re-subscribe AFTER an observed unsubscribe re-fires first-poll. _state.Keys is a
+        // snapshot, so removing during iteration is safe. This runs BEFORE the empty-candidates
+        // early return below so a tick that observes zero subscribers still reclaims their state.
+        // The cache (_snapshots) is the sibling per-PR map with the same leak (#624) — prune both
+        // against the SAME live set so they can never diverge.
+        var live = new HashSet<PrReference>(prs);
+        foreach (var key in _state.Keys)
+        {
+            if (!live.Contains(key)) _state.TryRemove(key, out _);
+        }
+        _cache.Retain(live);
+
         // #598 Slice B: gather every subscribed PR not currently in backoff, then issue ONE
         // batched GraphQL read for the whole set. Whole-tick-abort contract: a rate-limited or
         // poison tick retains last-known for ALL candidates and publishes nothing — one query
         // serves all PRs, so an aborted tick must never blank any PR's readiness/counts.
-        var candidates = _registry.UniquePrRefs()
+        var candidates = prs
             .Where(r => _state.GetOrAdd(r, _ => new ActivePrPollerState()).NextRetryAt is not { } t || t <= now)
             .ToList();
         if (candidates.Count == 0) return;
