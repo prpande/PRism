@@ -436,3 +436,259 @@ describe('useComposerAutoSave — pr-root anchor variant', () => {
     });
   });
 });
+
+// A deferred promise whose resolution we drive manually, to hold a save
+// in-flight while we mutate props (#602 Defects B and C).
+function deferred<T>(): { promise: Promise<T>; resolve: (v: T) => void } {
+  let resolve: (v: T) => void = () => undefined;
+  const promise = new Promise<T>((r) => {
+    resolve = r;
+  });
+  return { promise, resolve };
+}
+
+// Drains microtasks without advancing timers — used after an unmount or a
+// manual promise resolution that kicks off an async save chain.
+async function drainMicrotasks() {
+  await act(async () => {
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+}
+
+describe('useComposerAutoSave — flush on unmount (#602 Defect A)', () => {
+  it('UnmountWithPendingDebounce_FlushesLastKeystroke', async () => {
+    const spy = vi
+      .spyOn(draftApi, 'sendPatch')
+      .mockResolvedValue({ ok: true, assignedId: 'uuid-1' });
+    const { unmount } = renderHook(() => useComposerAutoSave(defaultProps({ body: 'abcd' })));
+
+    // Timer pending but debounce window not elapsed → no save yet.
+    await act(async () => {
+      vi.advanceTimersByTime(50);
+    });
+    expect(spy).not.toHaveBeenCalled();
+
+    // Unmount before the 250 ms debounce fires. The pending edit must still persist.
+    unmount();
+    await drainMicrotasks();
+
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(spy.mock.calls[0][1]).toMatchObject({
+      kind: 'newDraftComment',
+      payload: expect.objectContaining({ bodyMarkdown: 'abcd' }),
+    });
+  });
+
+  it('UnmountSubThreshold_NoFlush — empty/short composer never creates a stray draft', async () => {
+    const spy = vi.spyOn(draftApi, 'sendPatch').mockResolvedValue({ ok: true, assignedId: null });
+    const { unmount } = renderHook(() => useComposerAutoSave(defaultProps({ body: 'ab' })));
+
+    await act(async () => {
+      vi.advanceTimersByTime(50);
+    });
+    unmount();
+    await drainMicrotasks();
+
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it('UnmountWhenDisabled_NoFlush — taken-over tab does not write on unmount', async () => {
+    const spy = vi.spyOn(draftApi, 'sendPatch').mockResolvedValue({ ok: true, assignedId: null });
+    const { unmount } = renderHook(() =>
+      useComposerAutoSave(defaultProps({ body: 'abcd', disabled: true })),
+    );
+
+    await act(async () => {
+      vi.advanceTimersByTime(50);
+    });
+    unmount();
+    await drainMicrotasks();
+
+    expect(spy).not.toHaveBeenCalled();
+  });
+});
+
+describe('useComposerAutoSave — post-await disabled re-check (#602 Defect B)', () => {
+  it('DisabledFlipsDuringCreate_NoNotify_NoIdRetained', async () => {
+    const create = deferred<{ ok: true; assignedId: string }>();
+    const spy = vi
+      .spyOn(draftApi, 'sendPatch')
+      .mockImplementationOnce(() => create.promise)
+      .mockResolvedValue({ ok: true, assignedId: 'uuid-2' });
+    const onAssignedId = vi.fn();
+
+    const { result, rerender } = renderHook(
+      ({ body, disabled }: { body: string; disabled: boolean }) =>
+        useComposerAutoSave(defaultProps({ body, disabled, onAssignedId })),
+      { initialProps: { body: 'abc', disabled: false } },
+    );
+
+    await flushTimersAndPromises(); // create fired, held in-flight
+    expect(spy).toHaveBeenCalledTimes(1);
+
+    // Cross-tab take-over flips disabled while the PUT is in flight.
+    rerender({ body: 'abc', disabled: true });
+    await act(async () => {
+      create.resolve({ ok: true, assignedId: 'uuid-1' });
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    // §5.7a: no notification fired, badge did not advance to 'saved'.
+    expect(onAssignedId).not.toHaveBeenCalled();
+    expect(result.current.badge).not.toBe('saved');
+
+    // The local id must NOT have been retained: re-enabling and editing fires a
+    // fresh CREATE, not an update against the suppressed assigned id.
+    rerender({ body: 'abcde', disabled: false });
+    await flushTimersAndPromises();
+    expect(spy).toHaveBeenCalledTimes(2);
+    expect(spy.mock.calls[1][1]).toMatchObject({ kind: 'newDraftComment' });
+  });
+
+  it('DisabledFlipsDuringUpdate_NoOnSaved', async () => {
+    const update = deferred<{ ok: true; assignedId: null }>();
+    const spy = vi.spyOn(draftApi, 'sendPatch').mockImplementationOnce(() => update.promise);
+    const onSaved = vi.fn();
+
+    const { result, rerender } = renderHook(
+      ({ body, disabled }: { body: string; disabled: boolean }) =>
+        useComposerAutoSave(defaultProps({ body, disabled, draftId: 'uuid-x', onSaved })),
+      { initialProps: { body: 'abcd', disabled: false } },
+    );
+
+    await flushTimersAndPromises();
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(spy.mock.calls[0][1]).toMatchObject({ kind: 'updateDraftComment' });
+
+    rerender({ body: 'abcd', disabled: true });
+    await act(async () => {
+      update.resolve({ ok: true, assignedId: null });
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(onSaved).not.toHaveBeenCalled();
+    expect(result.current.badge).not.toBe('saved');
+  });
+
+  it('DisabledFlipsDuringDelete_NoOnLocalDelete', async () => {
+    const del = deferred<{ ok: true; assignedId: null }>();
+    const spy = vi.spyOn(draftApi, 'sendPatch').mockImplementationOnce(() => del.promise);
+    const onLocalDelete = vi.fn();
+
+    const { rerender } = renderHook(
+      ({ body, disabled }: { body: string; disabled: boolean }) =>
+        useComposerAutoSave(defaultProps({ body, disabled, draftId: 'uuid-x', onLocalDelete })),
+      { initialProps: { body: '', disabled: false } },
+    );
+
+    await flushTimersAndPromises();
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(spy.mock.calls[0][1]).toMatchObject({ kind: 'deleteDraftComment' });
+
+    rerender({ body: '', disabled: true });
+    await act(async () => {
+      del.resolve({ ok: true, assignedId: null });
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(onLocalDelete).not.toHaveBeenCalled();
+  });
+
+  // Regression guard for the §5.7a flush-path guarantee (ce-doc-review security
+  // finding): a flush() invoked on a taken-over tab performs no write.
+  it('FlushWhenDisabled_NoWrite_ReturnsNull', async () => {
+    const spy = vi.spyOn(draftApi, 'sendPatch').mockResolvedValue({ ok: true, assignedId: null });
+    const { result } = renderHook(() =>
+      useComposerAutoSave(defaultProps({ body: 'abc', disabled: true })),
+    );
+
+    let returned: string | null = 'sentinel';
+    await act(async () => {
+      returned = await result.current.flush();
+    });
+
+    expect(spy).not.toHaveBeenCalled();
+    expect(returned).toBeNull();
+  });
+
+  // §5.7a leak guard: a draft is created (id assigned), THEN a cross-tab
+  // take-over flips disabled. A flush() on the now-read-only tab must not hand
+  // the previously-assigned id back to the caller — it returns null, exactly as
+  // if no write had occurred. (Preflight adversarial finding.)
+  it('FlushAfterCreateThenDisabled_ReturnsNull_NoForeignId', async () => {
+    const spy = vi
+      .spyOn(draftApi, 'sendPatch')
+      .mockResolvedValue({ ok: true, assignedId: 'uuid-1' });
+
+    const { result, rerender } = renderHook(
+      ({ body, disabled }: { body: string; disabled: boolean }) =>
+        useComposerAutoSave(defaultProps({ body, disabled })),
+      { initialProps: { body: 'abc', disabled: false } },
+    );
+
+    // Create completes; the hook now holds the assigned id internally.
+    await flushTimersAndPromises();
+    expect(spy).toHaveBeenCalledTimes(1);
+
+    // Cross-tab take-over flips this tab read-only.
+    rerender({ body: 'abc', disabled: true });
+
+    let returned: string | null = 'sentinel';
+    await act(async () => {
+      returned = await result.current.flush();
+    });
+
+    // No second write, and no foreign id handed back to the caller.
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(returned).toBeNull();
+  });
+});
+
+describe('useComposerAutoSave — serialized saves (#602 Defect C)', () => {
+  it('OverlappingUpdateThenDelete_ResolveInOrder_SecondWaitsForFirst', async () => {
+    const update = deferred<{ ok: true; assignedId: null }>();
+    const spy = vi
+      .spyOn(draftApi, 'sendPatch')
+      .mockImplementationOnce(() => update.promise) // update (held in-flight)
+      .mockResolvedValue({ ok: true, assignedId: null }); // delete
+
+    const { result, rerender } = renderHook(
+      ({ body }: { body: string }) =>
+        useComposerAutoSave(defaultProps({ body, draftId: 'uuid-x' })),
+      { initialProps: { body: 'abcd' } },
+    );
+
+    // First save: update, fired via debounce, now held in-flight.
+    await flushTimersAndPromises();
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(spy.mock.calls[0][1]).toMatchObject({ kind: 'updateDraftComment' });
+
+    // User clears the body then flushes → a delete, while the update is still in flight.
+    rerender({ body: '' });
+    act(() => {
+      void result.current.flush();
+    });
+
+    // Serialization: the delete must NOT dispatch until the update resolves.
+    await drainMicrotasks();
+    expect(spy).toHaveBeenCalledTimes(1);
+
+    // Resolve the update → the queued delete now dispatches, in order.
+    await act(async () => {
+      update.resolve({ ok: true, assignedId: null });
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(spy).toHaveBeenCalledTimes(2);
+    expect(spy.mock.calls[1][1]).toMatchObject({ kind: 'deleteDraftComment' });
+  });
+});
