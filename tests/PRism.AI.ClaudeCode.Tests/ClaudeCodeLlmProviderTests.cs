@@ -180,7 +180,9 @@ public sealed class ClaudeCodeLlmProviderTests
         var (provider, _) = Build(new ProcessResult(0, garbage, "", false));
         var ex = (await ((Func<Task>)(async () => await provider.CompleteAsync(Req(), CancellationToken.None)))
             .Should().ThrowAsync<LlmProviderException>()).Which;
-        ex.Message.Should().NotContain("sk-ant-deadbeef");
+        // Exact-match (not just NotContain, which would pass tautologically against the fixed message):
+        // a regression that routed any of the raw stdout into the outer message would fail this.
+        ex.Message.Should().Be("claude -p returned unparseable JSON.");
         ex.Stderr.Should().BeEmpty();
     }
 
