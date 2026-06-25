@@ -1,6 +1,8 @@
 // frontend/src/components/PrDetail/ChecksTab/ChecksTab.tsx
+import { useState } from 'react';
 import { usePrDetailContext } from '../prDetailContext';
 import { FAILING_CONCLUSIONS } from '../checksGlyphState';
+import { MarkdownRenderer } from '../../Markdown/MarkdownRenderer';
 import type { CheckRun } from '../../../api/types';
 import type { CheckRunsResult } from '../../../hooks/useCheckRuns';
 import styles from './ChecksTab.module.css';
@@ -42,6 +44,33 @@ function formatDuration(c: CheckRun, now: number): string | null {
   if (secs < 60) return `${secs}s`;
   if (secs < 3600) return `${Math.floor(secs / 60)}m ${secs % 60}s`;
   return `${Math.floor(secs / 3600)}h ${Math.floor((secs % 3600) / 60)}m`;
+}
+
+function statusLabel(c: CheckRun): string {
+  if (c.status === 'queued') return 'Queued';
+  if (c.status === 'in-progress') return 'In progress';
+  switch (c.conclusion) {
+    case 'success':
+      return 'Passing';
+    case 'failure':
+      return 'Failing';
+    case 'timed-out':
+      return 'Timed out';
+    case 'cancelled':
+      return 'Cancelled';
+    case 'action-required':
+      return 'Action required';
+    case 'skipped':
+      return 'Skipped';
+    case 'neutral':
+      return 'Neutral';
+    case 'stale':
+      return 'Stale';
+    case 'startup-failure':
+      return 'Startup failure';
+    default:
+      return 'Completed';
+  }
 }
 
 // SR announcement per status -- mirrors HotspotsTab's persistent role="status" announcer
@@ -86,6 +115,18 @@ export function ChecksTab() {
 
 function ChecksBody({ state, now }: { state: CheckRunsResult; now: number }) {
   const { status, degraded } = state;
+  const sorted = status === 'ok' ? sortChecks(state.checks) : [];
+  const defaultKey = sorted.length > 0 ? `${sorted[0].source}:${sorted[0].name}` : null;
+  const [selectedKey, setSelectedKey] = useState<string | null>(defaultKey);
+
+  // Derive the effective selected key: if the current selection is no longer in
+  // the list (check removed after a poll), fall back to the first row.
+  const effectiveKey =
+    selectedKey != null && sorted.some((c) => `${c.source}:${c.name}` === selectedKey)
+      ? selectedKey
+      : defaultKey;
+
+  const selected = sorted.find((c) => `${c.source}:${c.name}` === effectiveKey) ?? null;
 
   if (status === 'idle' || (status === 'loading' && state.checks.length === 0)) {
     return <SkeletonRows />;
@@ -110,7 +151,6 @@ function ChecksBody({ state, now }: { state: CheckRunsResult; now: number }) {
     );
   }
 
-  const rows = sortChecks(state.checks);
   return (
     <div className={styles.checks}>
       {degraded !== 'none' && (
@@ -120,34 +160,92 @@ function ChecksBody({ state, now }: { state: CheckRunsResult; now: number }) {
             : "Some checks couldn't be loaded -- retry."}
         </div>
       )}
-      <ul className={styles.rows} role="list">
-        {rows.map((c) => {
-          const duration = formatDuration(c, now);
-          return (
-            <li key={`${c.source}:${c.name}`} className={styles.row}>
-              <RowGlyphIcon glyph={glyphFor(c)} />
-              <span className={styles.name} data-testid="check-name" title={c.name}>
-                {c.name}
-              </span>
-              {duration != null && (
-                <span className={styles.duration} data-testid="check-duration">
-                  {duration}
+      <div className={styles.masterDetail}>
+        {/* Left pane: check list */}
+        <div className={styles.listPane} role="listbox" aria-label="Checks">
+          {sorted.map((c) => {
+            const key = `${c.source}:${c.name}`;
+            const duration = formatDuration(c, now);
+            const isSelected = key === effectiveKey;
+            return (
+              <button
+                key={key}
+                role="option"
+                aria-selected={isSelected}
+                className={`${styles.row} ${isSelected ? styles.rowSelected : ''}`}
+                onClick={() => setSelectedKey(key)}
+                type="button"
+              >
+                <RowGlyphIcon glyph={glyphFor(c)} />
+                <span className={styles.name} data-testid="check-name" title={c.name}>
+                  {c.name}
                 </span>
-              )}
-              {c.detailsUrl != null && (
-                <a
-                  className={styles.details}
-                  href={c.detailsUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                >
-                  Details &#x2197;
-                </a>
-              )}
-            </li>
-          );
-        })}
-      </ul>
+                <span className={styles.statusBadge}>{statusLabel(c)}</span>
+                {duration != null && (
+                  <span className={styles.duration} data-testid="check-duration">
+                    {duration}
+                  </span>
+                )}
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Right pane: detail panel */}
+        <div
+          className={styles.detailPane}
+          role="region"
+          aria-label={selected != null ? selected.name : 'Check details'}
+        >
+          {selected != null ? <CheckDetail check={selected} now={now} /> : null}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function CheckDetail({ check: c, now }: { check: CheckRun; now: number }) {
+  const duration = formatDuration(c, now);
+  const sourceLabel = c.source === 'check-run' ? 'GitHub check' : 'Status';
+
+  const metaParts: string[] = [];
+  if (c.appName != null) metaParts.push(c.appName);
+  metaParts.push(sourceLabel);
+  if (duration != null) metaParts.push(duration);
+
+  return (
+    <div className={styles.detail}>
+      {/* Header */}
+      <div className={styles.detailHeader}>
+        <RowGlyphIcon glyph={glyphFor(c)} />
+        <span className={styles.detailName}>{c.name}</span>
+        <span className={styles.detailStatus}>{statusLabel(c)}</span>
+      </div>
+
+      {/* Meta line */}
+      <p className={styles.detailMeta}>{metaParts.join(' · ')}</p>
+
+      {/* Summary title */}
+      {c.summary != null && <p className={styles.detailSummary}>{c.summary}</p>}
+
+      {/* Markdown body */}
+      {c.body != null ? (
+        <MarkdownRenderer source={c.body} className={styles.body} dataTestId="check-body" />
+      ) : (
+        <p className={styles.detailNoBody}>No additional details from this check.</p>
+      )}
+
+      {/* GitHub link */}
+      {c.detailsUrl != null && (
+        <a
+          className={styles.detailLink}
+          href={c.detailsUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          View on GitHub ↗
+        </a>
+      )}
     </div>
   );
 }

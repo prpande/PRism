@@ -143,6 +143,9 @@ export interface CheckRun {
   startedAt: string | null;
   completedAt: string | null;
   detailsUrl: string | null;
+  summary: string | null;
+  appName: string | null;
+  body: string | null;
 }
 
 export interface ChecksResponse {

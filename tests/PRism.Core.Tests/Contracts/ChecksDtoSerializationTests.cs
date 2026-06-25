@@ -30,7 +30,7 @@ public class ChecksDtoSerializationTests
                     DateTimeOffset.Parse("2026-06-25T10:00:00Z", System.Globalization.CultureInfo.InvariantCulture),
                     DateTimeOffset.Parse("2026-06-25T10:01:30Z", System.Globalization.CultureInfo.InvariantCulture),
                     "https://github.com/o/r/runs/1",
-                    Summary: "All checks passed", AppName: "GitHub Actions"),
+                    Summary: "All checks passed", Body: "Run output details", AppName: "GitHub Actions"),
             },
             "0123456789abcdef0123456789abcdef01234567",
             DegradedReason.None);
@@ -44,11 +44,13 @@ public class ChecksDtoSerializationTests
         Assert.Equal(CheckConclusion.Success, back.Checks[0].Conclusion);
         Assert.Equal("check-run", back.Checks[0].Source);
         Assert.Equal("All checks passed", back.Checks[0].Summary);
+        Assert.Equal("Run output details", back.Checks[0].Body);
         Assert.Equal("GitHub Actions", back.Checks[0].AppName);
         Assert.Equal("0123456789abcdef0123456789abcdef01234567", back.HeadSha);
         Assert.Equal(DegradedReason.None, back.Degraded);
         Assert.Contains("\"status\":\"completed\"", json, System.StringComparison.Ordinal);
         Assert.Contains("\"summary\":\"All checks passed\"", json, System.StringComparison.Ordinal);
+        Assert.Contains("\"body\":\"Run output details\"", json, System.StringComparison.Ordinal);
         Assert.Contains("\"appName\":\"GitHub Actions\"", json, System.StringComparison.Ordinal);
         Assert.Contains("\"degraded\":\"none\"", json, System.StringComparison.Ordinal);
     }
@@ -56,8 +58,8 @@ public class ChecksDtoSerializationTests
     [Fact]
     public void CheckDto_with_all_null_optionals_roundtrips()
     {
-        // A legacy-status / in-progress check carries null Conclusion/StartedAt/CompletedAt/DetailsUrl/Summary/AppName.
-        var dto = new CheckDto("ci/legacy", CheckRunStatus.InProgress, null, "status", null, null, null, null, null);
+        // A legacy-status / in-progress check carries null Conclusion/StartedAt/CompletedAt/DetailsUrl/Summary/Body/AppName.
+        var dto = new CheckDto("ci/legacy", CheckRunStatus.InProgress, null, "status", null, null, null, null, null, null);
         var back = JsonSerializer.Deserialize<CheckDto>(JsonSerializer.Serialize(dto, Api), Api)!;
         Assert.Equal("ci/legacy", back.Name);
         Assert.Equal(CheckRunStatus.InProgress, back.Status);
@@ -66,6 +68,7 @@ public class ChecksDtoSerializationTests
         Assert.Null(back.CompletedAt);
         Assert.Null(back.DetailsUrl);
         Assert.Null(back.Summary);
+        Assert.Null(back.Body);
         Assert.Null(back.AppName);
     }
 }

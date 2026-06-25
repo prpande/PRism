@@ -30,8 +30,7 @@ gets its own design + B2 risk gate.
 ## Non-goals
 
 - **No re-trigger / re-run** in this slice (deferred).
-- **No log streaming, inline check output, or annotations.** Those live on
-  GitHub; the per-check `detailsUrl` is the escape hatch.
+- **No log streaming or annotations.** Those live on GitHub; the per-check `detailsUrl` is the escape hatch. Inline check **output** (`output.summary` / `output.text` as markdown) **is** surfaced in the detail panel (owner-directed, C2) via the existing hardened `MarkdownRenderer` (no `rehype-raw` → no new XSS surface).
 - **No change to the aggregate header chip or inbox CI octicon.** The new tab is
   **additive at the surface level.** One internal refactor *is* in scope and
   called out honestly: the per-check **classification** logic
@@ -44,6 +43,10 @@ gets its own design + B2 risk gate.
   correctness requirement, not gold-plating: the rules encode ~5 issues of
   hard-won edge cases (#213, #264, #286, #305) that would silently drift if
   copy-pasted.
+
+## Detail panel (C2)
+
+The populated Checks tab uses a master-detail layout: the sorted check list on the left; clicking a row opens a detail panel on the right showing the check's full information — status glyph + name, meta line (app · source · duration), the summary title, the markdown `body` (`output.summary` ?? `output.text`), and the GitHub link. The body is rendered via the existing `MarkdownRenderer` (react-markdown + no `rehype-raw`), which drops raw HTML and sanitizes URLs — no new XSS surface.
 
 ## Acceptance criteria
 

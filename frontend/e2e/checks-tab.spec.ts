@@ -28,7 +28,7 @@ test.beforeEach(async () => {
   await ctx.dispose();
 });
 
-test('Checks tab lists fixture checks with health summary, failing badge, and Details links', async ({
+test('Checks tab lists fixture checks with health summary, failing badge, and detail panel', async ({
   page,
 }) => {
   // Authenticate and land on the inbox (fresh DataDir → no-token state).
@@ -63,10 +63,14 @@ test('Checks tab lists fixture checks with health summary, failing badge, and De
   const checksTab = page.getByTestId('pr-tab-checks');
   await expect(checksTab.getByTestId('pr-tab-count')).toHaveText('1');
 
-  // --- Assert: at least one Details link points at an https:// URL ---
-  // ChecksTab.tsx renders <a href={c.detailsUrl}>Details &#x2197;</a> for each check
-  // with a detailsUrl. FakePrChecksReader sets detailsUrl for all three checks.
-  // The accessible name is "Details ↗" (U+2197 = ↗).
-  const link = page.getByRole('link', { name: /details/i }).first();
+  // --- Assert: detail panel shows summary for the auto-selected first row (build, failing) ---
+  // sortChecks puts build first (failing tier). The detail panel auto-selects it.
+  // FakePrChecksReader sets Summary: "2 errors, 0 warnings" for build.
+  await expect(page.getByText('2 errors, 0 warnings')).toBeVisible();
+
+  // --- Assert: detail panel "View on GitHub" link points at an https:// URL ---
+  // CheckDetail renders <a href={c.detailsUrl}>View on GitHub ↗</a> when detailsUrl is set.
+  // FakePrChecksReader sets detailsUrl for all three checks.
+  const link = page.getByRole('link', { name: /view on github/i }).first();
   await expect(link).toHaveAttribute('href', /^https:\/\//);
 });

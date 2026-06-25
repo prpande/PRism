@@ -78,6 +78,39 @@ public class GitHubPrChecksReaderTests
     }
 
     [Fact]
+    public async Task Parses_output_summary_and_text_as_body_for_check_runs()
+    {
+        var reader = ReaderFor(req =>
+        {
+            if (req.RequestUri!.AbsolutePath.EndsWith("/check-runs", StringComparison.Ordinal))
+                return Json(
+                    """{"check_runs":[{"name":"a","status":"completed","conclusion":"success","output":{"title":"t","summary":"Detailed output"}},{"name":"b","status":"completed","conclusion":"success","output":{"title":"t2","text":"fallback text"}}]}""");
+            return Json("""{"state":"success","total_count":0,"statuses":[]}""");
+        });
+
+        var resp = await reader.ReadAsync(Pr, Sha, CancellationToken.None);
+
+        var withSummary = Assert.Single(resp.Checks, c => c.Name == "a");
+        Assert.Equal("Detailed output", withSummary.Body); // output.summary preferred
+        var withText = Assert.Single(resp.Checks, c => c.Name == "b");
+        Assert.Equal("fallback text", withText.Body); // output.text as fallback when summary absent
+    }
+
+    [Fact]
+    public async Task Status_checks_have_null_body()
+    {
+        var reader = ReaderFor(req =>
+            req.RequestUri!.AbsolutePath.EndsWith("/check-runs", StringComparison.Ordinal)
+                ? Json("""{"check_runs":[]}""")
+                : Json("""{"state":"success","total_count":1,"statuses":[{"context":"ci/legacy","state":"success","description":"Build ok"}]}"""));
+
+        var resp = await reader.ReadAsync(Pr, Sha, CancellationToken.None);
+
+        var status = Assert.Single(resp.Checks);
+        Assert.Null(status.Body);
+    }
+
+    [Fact]
     public async Task Missing_output_app_and_description_yield_null_summary_and_appname()
     {
         var reader = ReaderFor(req =>

@@ -22,6 +22,26 @@
   background: var(--surface-2);
   border: 1px solid var(--border-1);
   border-radius: var(--radius-2);
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+}
+
+.row:hover {
+  background: var(--surface-3);
+}
+
+.rowSelected {
+  background: var(--surface-3);
+  border-left: 3px solid var(--warning-fg);
+}
+
+.statusBadge {
+  flex: none;
+  color: var(--text-3);
+  font-size: var(--text-sm);
 }
 
 .glyph {
@@ -104,5 +124,95 @@
 @media (prefers-reduced-motion: reduce) {
   .skeleton {
     animation: none;
+  }
+}
+
+/* Master-detail layout */
+.masterDetail {
+  display: flex;
+  gap: var(--s-3);
+  align-items: flex-start;
+  width: min(95%, var(--pr-detail-content-max));
+  margin: var(--s-4) auto;
+}
+
+.listPane {
+  flex: 0 0 min(40%, 360px);
+  min-width: 200px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+}
+
+/* Detail pane */
+.detailPane {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.detail {
+  background: var(--surface-2);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-2);
+  padding: var(--s-3) var(--s-4);
+}
+
+.detailHeader {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  margin-bottom: var(--s-2);
+}
+
+.detailName {
+  font-weight: 600;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.detailStatus {
+  flex: none;
+  color: var(--text-3);
+  font-size: var(--text-sm);
+}
+
+.detailMeta {
+  color: var(--text-3);
+  font-size: var(--text-sm);
+  margin: 0 0 var(--s-2) 0;
+}
+
+.detailSummary {
+  font-weight: 500;
+  margin: 0 0 var(--s-2) 0;
+}
+
+.detailNoBody {
+  color: var(--text-3);
+  font-size: var(--text-sm);
+  margin: 0 0 var(--s-2) 0;
+}
+
+.body {
+  margin-bottom: var(--s-2);
+}
+
+.detailLink {
+  display: inline-block;
+  margin-top: var(--s-2);
+}
+
+/* Narrow: stack vertically */
+@media (max-width: 640px) {
+  .masterDetail {
+    flex-direction: column;
+  }
+  .listPane {
+    flex: none;
+    width: 100%;
+    min-width: unset;
   }
 }

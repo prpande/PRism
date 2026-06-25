@@ -1,6 +1,7 @@
 // frontend/src/components/PrDetail/ChecksTab/ChecksTab.test.tsx
 import { describe, expect, it } from 'vitest';
 import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { ChecksTab } from './ChecksTab';
 import { PrDetailContextProvider } from '../prDetailContext';
 import { makePrDetailContextValue } from '../testUtils';
@@ -15,6 +16,9 @@ const run = (over: Partial<CheckRun>): CheckRun => ({
   startedAt: '2026-06-25T10:00:00Z',
   completedAt: '2026-06-25T10:00:45Z',
   detailsUrl: 'https://github.com/o/r/runs/1',
+  summary: null,
+  appName: null,
+  body: null,
   ...over,
 });
 
@@ -78,18 +82,74 @@ describe('ChecksTab', () => {
     expect(screen.queryByTestId('check-duration')).toBeNull();
   });
 
-  it('renders Details link only when detailsUrl is present', () => {
-    renderTab({ ...base, status: 'ok', checks: [run({ detailsUrl: null })] });
-    expect(screen.queryByRole('link')).toBeNull();
-  });
-
-  it('Details link carries target=_blank + rel=noopener noreferrer (security S3)', () => {
+  it('first row auto-selects and shows detail panel', () => {
     renderTab({
       ...base,
       status: 'ok',
-      checks: [run({ detailsUrl: 'https://github.com/o/r/runs/1' })],
+      checks: [run({ name: 'build', summary: '2 errors', body: null })],
     });
-    const link = screen.getByRole('link', { name: /details/i });
+    // detail panel should show the selected check name
+    expect(screen.getAllByText('build').length).toBeGreaterThan(0);
+  });
+
+  it('clicking a different row updates the detail panel', async () => {
+    renderTab({
+      ...base,
+      status: 'ok',
+      checks: [
+        run({ name: 'fail', conclusion: 'failure' }),
+        run({ name: 'pass', conclusion: 'success' }),
+      ],
+    });
+    // fail is first (failing tier sorts first)
+    const passButton = screen.getAllByRole('option').find((el) => el.textContent?.includes('pass'));
+    expect(passButton).toBeTruthy();
+    await userEvent.click(passButton!);
+    // after clicking pass row, detail panel aria-label should update
+    const detailPanel = screen.getByRole('region', { name: 'pass' });
+    expect(detailPanel).toBeInTheDocument();
+  });
+
+  it('renders markdown body in detail panel', () => {
+    renderTab({
+      ...base,
+      status: 'ok',
+      checks: [run({ name: 'build', body: '### Build output\n\nSome details' })],
+    });
+    expect(screen.getByTestId('check-body')).toBeInTheDocument();
+  });
+
+  it('renders "No additional details" fallback when body is null', () => {
+    renderTab({
+      ...base,
+      status: 'ok',
+      checks: [run({ name: 'build', body: null })],
+    });
+    expect(screen.getByText(/no additional details from this check/i)).toBeInTheDocument();
+  });
+
+  it('View on GitHub link appears only when detailsUrl is not null', () => {
+    const { rerender } = renderTab({
+      ...base,
+      status: 'ok',
+      checks: [run({ detailsUrl: null })],
+    });
+    expect(screen.queryByRole('link', { name: /view on github/i })).toBeNull();
+
+    rerender(
+      <PrDetailContextProvider
+        value={makePrDetailContextValue({
+          checks: {
+            ...base,
+            status: 'ok',
+            checks: [run({ detailsUrl: 'https://github.com/o/r/runs/1' })],
+          },
+        })}
+      >
+        <ChecksTab />
+      </PrDetailContextProvider>,
+    );
+    const link = screen.getByRole('link', { name: /view on github/i });
     expect(link).toHaveAttribute('target', '_blank');
     expect(link).toHaveAttribute('rel', 'noopener noreferrer');
   });

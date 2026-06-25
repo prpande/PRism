@@ -17,4 +17,5 @@ public sealed record CheckDto(
     DateTimeOffset? CompletedAt,  // check-runs only
     string? DetailsUrl,           // sanitized https-only; else null
     string? Summary,              // check-run "output.title" / status "description"; null if absent
+    string? Body,                 // check-run "output.summary" ?? "output.text"; null for legacy status
     string? AppName);             // check-run "app.name" (e.g. "GitHub Actions"); null for legacy status

@@ -10,6 +10,9 @@ const run = (over: Partial<CheckRun>): CheckRun => ({
   startedAt: null,
   completedAt: null,
   detailsUrl: null,
+  summary: null,
+  appName: null,
+  body: null,
   ...over,
 });
 

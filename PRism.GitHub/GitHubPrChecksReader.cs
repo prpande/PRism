@@ -79,6 +79,7 @@ public sealed class GitHubPrChecksReader : IPrChecksReader
                     CompletedAt: ParseTime(r, "completed_at"),
                     DetailsUrl: SanitizeUrl(StringProp(r, "details_url") ?? StringProp(r, "html_url")),
                     Summary: NestedStringProp(r, "output", "title"),
+                    Body: NestedStringProp(r, "output", "summary") ?? NestedStringProp(r, "output", "text"),
                     AppName: NestedStringProp(r, "app", "name")));
             }
 
@@ -124,6 +125,7 @@ public sealed class GitHubPrChecksReader : IPrChecksReader
                         CompletedAt: null,
                         DetailsUrl: SanitizeUrl(StringProp(s, "target_url")),
                         Summary: StringProp(s, "description"),
+                        Body: null, // legacy status has no output body
                         AppName: null)); // legacy status has no app object; the context name is the source
                 }
             }
