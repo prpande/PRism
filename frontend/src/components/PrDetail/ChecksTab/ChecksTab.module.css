@@ -1,0 +1,108 @@
+/* frontend/src/components/PrDetail/ChecksTab/ChecksTab.module.css */
+.checks {
+  width: min(80%, var(--pr-detail-content-max));
+  margin: 0 auto;
+  padding: var(--s-4) 0;
+}
+
+.rows {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  padding: var(--s-2) var(--s-3);
+  background: var(--surface-2);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-2);
+}
+
+.glyph {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  display: inline-block;
+}
+/* Token names verified against tokens.css + InboxRow.module.css (design R1):
+   --danger-fg / --success-fg / --warning-fg / --text-3. NO --ci-* tokens exist;
+   no hex fallbacks (a fallback masks a missing-token typo + breaks theming). */
+.glyphFail {
+  color: var(--danger-fg); /* InboxRow .ciFailing */
+}
+.glyphPass {
+  color: var(--success-fg); /* InboxRow .ciPassing */
+}
+.glyphPending {
+  color: var(--warning-fg); /* InboxRow .ciPending */
+}
+.glyphAlert {
+  color: var(--warning-fg); /* action-required manual gate — amber */
+}
+.glyphNeutral {
+  color: var(--text-3);
+}
+
+.name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.duration {
+  flex: none;
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.details {
+  flex: none;
+}
+
+.message {
+  width: min(80%, var(--pr-detail-content-max));
+  margin: var(--s-4) auto;
+  color: var(--text-3);
+}
+
+.retry {
+  margin-top: var(--s-2);
+}
+
+.degradedBanner {
+  margin-bottom: var(--s-3);
+  padding: var(--s-2) var(--s-3);
+  border-radius: var(--radius-2);
+  background: var(--surface-3);
+  color: var(--text-3);
+  font-size: var(--text-sm); /* verified token — there is no --font-size-sm (design R2) */
+}
+
+/* Skeleton: reuse HotspotsTab's `pulse` shimmer (design R3) — NOT an inline gradient,
+   which would render static and skip the reduced-motion guard. */
+.skeleton {
+  height: 2.25rem;
+  background: var(--surface-3);
+  border: none;
+  animation: pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  50% {
+    opacity: 0.5;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .skeleton {
+    animation: none;
+  }
+}
