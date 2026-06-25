@@ -134,8 +134,13 @@ public sealed partial class InboxRefreshOrchestrator : IInboxRefreshOrchestrator
                 Log.ClosedHistoryFetched(_log, closedRaw.Count);
             }
 
-            // Hydrate every PR across all sections in one aliased-batch GraphQL read (deduplicated by ref)
-            var allRawDistinct = raw.Values.SelectMany(v => v).Concat(closedRaw)
+            // Hydrate every PR via the batch reader (deduplicated by ref). Recently-closed items are
+            // flagged IsClosedHistory so the reader fetches them with the light selection (no merge-
+            // readiness compute fields — they render no badge, D5); open section items keep the full
+            // selection. Open items come first in the concat, so on a rare open/closed ref collision
+            // GroupBy.First() keeps the open (full) variant. (#593 — avoids the GraphQL 502 timeout.)
+            var allRawDistinct = raw.Values.SelectMany(v => v)
+                .Concat(closedRaw.Select(r => r with { IsClosedHistory = true }))
                 .GroupBy(p => p.Reference).Select(g => g.First()).ToList();
             var viewerLogin = _viewerLoginProvider();
             var batch = await _batchReader.ReadAsync(allRawDistinct, viewerLogin, ct).ConfigureAwait(false);
@@ -149,6 +154,12 @@ public sealed partial class InboxRefreshOrchestrator : IInboxRefreshOrchestrator
                         HeadSha = b.HeadSha, Additions = b.Additions, Deletions = b.Deletions,
                         CommitCount = b.CommitCount, ChangedFiles = b.ChangedFiles, PushedAt = b.PushedAt,
                         MergedAt = b.MergedAt, ClosedAt = b.ClosedAt,
+                        MergeReadiness = b.MergeReadiness,
+                        Approvals = b.Approvals,
+                        ChangesRequested = b.ChangesRequested,
+                        Approvers = b.Approvers,
+                        ChangesRequestedBy = b.ChangesRequestedBy,
+                        AwaitingReviewers = b.AwaitingReviewers,
                     };
             Log.PrEnrichmentComplete(_log, allRawDistinct.Count, byRef.Count);
 
@@ -364,7 +375,13 @@ public sealed partial class InboxRefreshOrchestrator : IInboxRefreshOrchestrator
             ClosedAt: r.ClosedAt,
             AvatarUrl: r.AvatarUrl,
             IsDraft: r.IsDraft,
-            Description: r.Description);
+            Description: r.Description,
+            MergeReadiness: r.MergeReadiness,
+            Approvals: r.Approvals,
+            ChangesRequested: r.ChangesRequested,
+            Approvers: r.Approvers,
+            ChangesRequestedBy: r.ChangesRequestedBy,
+            AwaitingReviewers: r.AwaitingReviewers);
     }
 
     // NewOrUpdatedPrCount is named for the common case (added or updated PRs) but its
@@ -394,7 +411,8 @@ public sealed partial class InboxRefreshOrchestrator : IInboxRefreshOrchestrator
                 {
                     newOrUpdated++; sectionChanged = true; continue;
                 }
-                if (o.HeadSha != n.HeadSha || o.CommentCount != n.CommentCount || o.Ci != n.Ci)
+                if (o.HeadSha != n.HeadSha || o.CommentCount != n.CommentCount || o.Ci != n.Ci
+                    || o.MergeReadiness != n.MergeReadiness)
                 {
                     newOrUpdated++; sectionChanged = true;
                 }

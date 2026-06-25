@@ -51,16 +51,16 @@ public class ActivePrCacheTests
         // the rest of the system reads from. Asserts the head-SHA path; HighestIssueCommentId
         // remains null in S4 production (see IActivePrCache class comment).
         var registry = new ActivePrSubscriberRegistry();
-        var review = new FakePollerReviewService();
+        var batch = new FakeActivePrBatchReader();
         var bus = new FakeReviewEventBus();
         var cache = new ActivePrCache(registry);
         var poller = new ActivePrPoller(
-            registry, review, bus, cache,
+            registry, new FakePollerReviewService(), batch, bus, cache,
             NullLogger<ActivePrPoller>.Instance,
             new FakeHostEnvironment("Production"));
 
         registry.Add("sub1", Pr);
-        review.SetSnapshot(Pr, new ActivePrPollSnapshot("h-fresh", "base1", "MERGEABLE", PrState.Open, 0, 0));
+        batch.SetSnapshot(Pr, new ActivePrPollSnapshot("h-fresh", "base1", "MERGEABLE", PrState.Open, 0, 0));
 
         await poller.TickAsync(T0, default);
 

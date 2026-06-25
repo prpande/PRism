@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { apiClient } from '../api/client';
-import type { PrReference } from '../api/types';
+import type { MergeReadiness, PrReference, Reviewer } from '../api/types';
+import { snapshot } from '../utils/snapshotMerge';
 import { useEventSource } from './useEventSource';
 
 export interface ActivePrUpdates {
@@ -13,6 +14,16 @@ export interface ActivePrUpdates {
   // true only after the first subscribe POST settles; gates AI fetches that
   // must not fire before the SSE subscription is established (D111 204 guard).
   subscribed: boolean;
+  // populated by Task 7 (SSE); undefined until then → the ?? fallback uses the full-load value
+  mergeReadiness?: MergeReadiness;
+  // #593 — live readiness popover data (counts + reviewer names). undefined until the first
+  // pr-updated event; consumers ?? back to the full-load value. Snapshot semantics (assigned from
+  // each event, not accumulated), so a later tick can correct or clear them.
+  approvals?: number | null;
+  changesRequested?: number | null;
+  approvers?: Reviewer[] | null;
+  changesRequestedBy?: Reviewer[] | null;
+  awaitingReviewers?: Reviewer[] | null;
   clear(): void;
 }
 
@@ -23,6 +34,15 @@ const initial = {
   commentCountDelta: 0,
   isMerged: false,
   isClosed: false,
+  // #598 Slice B — latest live readiness. undefined until the first pr-updated event with
+  // mergeReadinessChanged arrives; the ?? fallback in consumers uses the full-load value until then.
+  mergeReadiness: undefined as MergeReadiness | undefined,
+  // #593 — latest live popover data (snapshot from each event).
+  approvals: undefined as number | null | undefined,
+  changesRequested: undefined as number | null | undefined,
+  approvers: undefined as Reviewer[] | null | undefined,
+  changesRequestedBy: undefined as Reviewer[] | null | undefined,
+  awaitingReviewers: undefined as Reviewer[] | null | undefined,
 };
 
 export function useActivePrUpdates(prRef: PrReference): ActivePrUpdates {
@@ -58,6 +78,19 @@ export function useActivePrUpdates(prRef: PrReference): ActivePrUpdates {
         // mutually exclusive per Task 15a; if both ever arrive, PrDetailPage prioritizes merged.
         isMerged: s.isMerged || event.isMerged,
         isClosed: s.isClosed || event.isClosed,
+        // Latch on mergeReadinessChanged: the backend sets that flag only on a change TO a real
+        // (non-none) readiness (anti-flicker None guard), so we keep the last meaningful value and
+        // ignore transient None ticks that carry mergeReadinessChanged=false.
+        mergeReadiness: event.mergeReadinessChanged ? event.mergeReadiness : s.mergeReadiness,
+        // #593 — popover data is a snapshot of the current poll: take the event's value whenever it
+        // carries the field (incl. an explicit null that clears a now-empty category), else keep the
+        // last value. No anti-flicker latch (these aren't subject to the transient-None recompute
+        // that gates mergeReadiness). See `snapshot` for why this is `!== undefined`, not `??`.
+        approvals: snapshot(event.approvals, s.approvals),
+        changesRequested: snapshot(event.changesRequested, s.changesRequested),
+        approvers: snapshot(event.approvers, s.approvers),
+        changesRequestedBy: snapshot(event.changesRequestedBy, s.changesRequestedBy),
+        awaitingReviewers: snapshot(event.awaitingReviewers, s.awaitingReviewers),
       }));
     });
 

@@ -552,4 +552,52 @@ public class GitHubReviewServicePrDetailTests
 
         dto!.Pr.IsDraft.Should().BeFalse();
     }
+
+    [Fact]
+    public async Task GetPrDetailAsync_derives_merge_readiness_counts_and_updatedAt()
+    {
+        // Reviewer first requested changes, then approved (latestReviews collapses to 1 APPROVED).
+        // reviewDecision=REVIEW_REQUIRED + mergeStateStatus=BLOCKED → MergeReadiness.ReviewRequired.
+        const string body = """
+        {
+          "data": {
+            "repository": {
+              "pullRequest": {
+                "state": "OPEN", "isDraft": false,
+                "mergeable": "MERGEABLE", "mergeStateStatus": "BLOCKED",
+                "reviewDecision": "REVIEW_REQUIRED",
+                "updatedAt": "2026-06-24T10:00:00Z",
+                "headRefName": "f", "baseRefName": "main",
+                "headRefOid": "h", "baseRefOid": "b",
+                "author": { "login": "a", "avatarUrl": "u" },
+                "createdAt": "2026-06-20T00:00:00Z",
+                "closedAt": null, "mergedAt": null,
+                "changedFiles": 1, "title": "t", "body": "", "url": "https://x",
+                "comments": { "pageInfo": { "hasNextPage": false }, "nodes": [] },
+                "reviewThreads": { "pageInfo": { "hasNextPage": false }, "nodes": [] },
+                "reviews": { "nodes": [
+                  { "author": { "login": "alice" }, "state": "CHANGES_REQUESTED",
+                    "submittedAt": "2026-06-21T00:00:00Z", "commit": { "oid": "h" } },
+                  { "author": { "login": "alice" }, "state": "APPROVED",
+                    "submittedAt": "2026-06-22T00:00:00Z", "commit": { "oid": "h" } }
+                ] },
+                "latestReviews": { "nodes": [
+                  { "author": { "login": "alice" }, "state": "APPROVED" }
+                ] },
+                "timelineItems": { "pageInfo": { "hasNextPage": false }, "nodes": [] }
+              }
+            }
+          }
+        }
+        """;
+        var service = NewService(new GraphQLPlusRestHandler { GraphQLBody = body });
+
+        var dto = await service.GetPrDetailAsync(new PrReference("acme", "api", 7), CancellationToken.None);
+
+        dto.Should().NotBeNull();
+        dto!.Pr.MergeReadiness.Should().Be(MergeReadiness.ReviewRequired);
+        dto.Pr.Approvals.Should().Be(1);
+        dto.Pr.ChangesRequested.Should().Be(0);
+        dto.Pr.UpdatedAt.Should().Be(DateTimeOffset.Parse("2026-06-24T10:00:00Z", System.Globalization.CultureInfo.InvariantCulture));
+    }
 }

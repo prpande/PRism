@@ -8,6 +8,8 @@ import { AI_PROVENANCE_LABEL, AI_INBOX_ENRICHING_LABEL } from '../Ai/aiStrings';
 import { prId } from './groupByRepo';
 import { DiffBar } from './DiffBar';
 import { PrStateGlyph, glyphStateFor, type GlyphState } from '../shared/prStateGlyph';
+import { ReadinessBadge } from '../shared/ReadinessBadge';
+import { isBadgeRendered, READINESS_SHORT } from '../shared/mergeReadiness';
 import styles from './InboxRow.module.css';
 
 // ---- CI title-suffix octicons (bare check / cross, no enclosing circle) ----
@@ -80,6 +82,15 @@ export function InboxRow({
   // CI_GLYPH_LABEL so the suffix and the <title> tooltip never drift.
   const ciSuffix = !isDone && pr.ci !== 'none' ? ` · ${CI_GLYPH_LABEL[pr.ci]}` : '';
 
+  // #593: readiness badge appends its short label to the row aria-label (the badge button
+  // itself also carries "Merge readiness: …" but the row-level announcement reaches SR
+  // users who tab to the row without entering the badge). Open states only — isBadgeRendered
+  // already gates merged/closed/none.
+  const readinessSuffix =
+    !isDone && pr.mergeReadiness != null && isBadgeRendered(pr.mergeReadiness)
+      ? ` — ${READINESS_SHORT[pr.mergeReadiness]}`
+      : '';
+
   const commitLabel = `${pr.commitCount} ${pr.commitCount === 1 ? 'commit' : 'commits'}`;
 
   // #489: the chip's sparkle is visual-only (button swallows descendant labels),
@@ -108,12 +119,12 @@ export function InboxRow({
 
   // On an open row the state word is glyphState ('draft' for an open draft, else 'open');
   // merged/closed rows use doneState. Open rows announce commit count — main's commit/changed
-  // split replaced V2's iteration metric. Unread / CI / AI suffixes unchanged.
+  // split replaced V2's iteration metric. Unread / CI / readiness / AI suffixes unchanged.
   const ariaLabel = isDone
     ? `${pr.title} · ${pr.repo} · ${doneState}${aiSuffix}${aiLoadingSuffix}`
     : `${pr.title} · ${pr.repo} · ${glyphState} · ${commitLabel}${
         hasUnseenActivity ? ' · unread' : ''
-      }${ciSuffix}${aiSuffix}${aiLoadingSuffix}`;
+      }${ciSuffix}${readinessSuffix}${aiSuffix}${aiLoadingSuffix}`;
 
   return (
     <button
@@ -123,12 +134,35 @@ export function InboxRow({
       onClick={onClick}
       aria-label={ariaLabel}
     >
-      <span className={styles.status}>
-        <PrStateGlyph state={glyphState} />
+      {/* #593 leading status pair — the PR-state glyph and CI glyph sit together as one
+          tight group at the row start, instead of two columns separated by the full row
+          gap. The CI slot still always reserves its width (empty when CI is none) so the
+          title/number start at a constant offset across rows regardless of CI state. */}
+      <span className={styles.leading}>
+        <span className={styles.status}>
+          <PrStateGlyph state={glyphState} />
+        </span>
+        <span className={styles.ciSlot} data-ci-slot aria-hidden="true">
+          {!isDone && pr.ci !== 'none' && (
+            <svg
+              className={`${styles.ciSuffix} ${styles[CI_GLYPH_CLASS[pr.ci]]}`}
+              data-ci={pr.ci}
+              viewBox="0 0 16 16"
+              width="14"
+              height="14"
+              fill="currentColor"
+            >
+              <title>{CI_GLYPH_LABEL[pr.ci]}</title>
+              <path d={CI_GLYPH_PATH[pr.ci]} />
+            </svg>
+          )}
+        </span>
       </span>
       <span className={styles.midCol}>
         <span className={styles.main}>
           <span className={styles.titleRow}>
+            {/* #516 PR number — mono/muted prefix, truncates before the title */}
+            <span className={styles.num}>#{pr.reference.number}</span>
             <span className={styles.title} title={pr.title}>
               {pr.title}
             </span>
@@ -179,69 +213,71 @@ export function InboxRow({
             <span>{formatAge(pr.updatedAt)}</span>
           </span>
         </span>
-        {/* CI glyph — sibling of .main inside the row-centering .midCol so it sits on
-            the row's vertical center, in line with the right-side metrics it reads with,
-            rather than pinned to the title's first line (#345). */}
-        {!isDone && pr.ci !== 'none' && (
-          <svg
-            className={`${styles.ciSuffix} ${styles[CI_GLYPH_CLASS[pr.ci]]}`}
-            data-ci={pr.ci}
-            viewBox="0 0 16 16"
-            width="14"
-            height="14"
-            fill="currentColor"
-            aria-hidden="true"
-          >
-            <title>{CI_GLYPH_LABEL[pr.ci]}</title>
-            <path d={CI_GLYPH_PATH[pr.ci]} />
-          </svg>
-        )}
       </span>
       <span className={styles.tail}>
-        <span className={styles.metrics}>
-          <span className={styles.diffSlot}>
-            <DiffBar additions={pr.additions} deletions={pr.deletions} max={maxDiff} />
-          </span>
-          <span className={`${styles.counts} ${styles.countsSlot}`}>
-            <span className={styles.add}>+{pr.additions}</span>
-            <span className={styles.del}>−{pr.deletions}</span>
-          </span>
-          <span className={styles.commentSlot}>
-            {pr.commentCount > 0 && (
-              <span className={styles.comments}>
-                <svg
-                  className={styles.commentIcon}
-                  viewBox="0 0 16 16"
-                  width="12"
-                  height="12"
-                  fill="currentColor"
-                  aria-hidden="true"
-                >
-                  {/* Octicon comment-16 — signals the number is a comment count */}
-                  <path d="M1.75 1h12.5c.966 0 1.75.784 1.75 1.75v9.5A1.75 1.75 0 0 1 14.25 13H8.061l-2.574 2.573A1.458 1.458 0 0 1 3 14.543V13H1.75A1.75 1.75 0 0 1 0 11.25v-9.5C0 1.784.784 1 1.75 1ZM1.5 2.75v8.5a.25.25 0 0 0 .25.25h2a.75.75 0 0 1 .75.75v2.19l2.72-2.72a.749.749 0 0 1 .53-.22h6.5a.25.25 0 0 0 .25-.25v-8.5a.25.25 0 0 0-.25-.25H1.75a.25.25 0 0 0-.25.25Z" />
-                </svg>
-                {pr.commentCount}
-              </span>
-            )}
-          </span>
-          <span className={styles.filesSlot}>
-            {pr.changedFiles > 0 && (
-              <span className={styles.files}>
-                <svg
-                  className={styles.fileIcon}
-                  viewBox="0 0 16 16"
-                  width="12"
-                  height="12"
-                  fill="currentColor"
-                  aria-hidden="true"
-                >
-                  {/* Octicon file-16 */}
-                  <path d="M2 1.75C2 .784 2.784 0 3.75 0h6.586c.464 0 .909.184 1.237.513l2.914 2.914c.329.328.513.773.513 1.237v9.586A1.75 1.75 0 0 1 13.25 16h-9.5A1.75 1.75 0 0 1 2 14.25Zm1.75-.25a.25.25 0 0 0-.25.25v12.5c0 .138.112.25.25.25h9.5a.25.25 0 0 0 .25-.25V6h-2.75A1.75 1.75 0 0 1 9 4.25V1.5Zm6.75.062V4.25c0 .138.112.25.25.25h2.688l-.011-.013-2.914-2.914-.013-.011Z" />
-                </svg>
-                {pr.changedFiles}
-              </span>
-            )}
-          </span>
+        {/* #593 metric grid — five fixed columns that line up across rows. Every cell
+            is always present (empty cells still reserve their track) so the populated
+            metrics stay column-aligned regardless of which are absent on a given row. */}
+        {/* Readiness glyph column. Renders the badge only for the 8 open states
+            (isBadgeRendered gates merged/closed/none); the cell still holds the track
+            when absent. Falls back gracefully when mergeReadiness is absent (older payload). */}
+        <span className={styles.metricCell}>
+          {pr.mergeReadiness != null && isBadgeRendered(pr.mergeReadiness) && (
+            <ReadinessBadge
+              readiness={pr.mergeReadiness}
+              variant="compact"
+              id={`inbox-readiness-${pr.reference.owner}-${pr.reference.repo}-${pr.reference.number}`}
+              approvals={pr.approvals}
+              changesRequested={pr.changesRequested}
+              updatedAt={pr.updatedAt}
+              approvers={pr.approvers}
+              changesRequestedBy={pr.changesRequestedBy}
+              awaitingReviewers={pr.awaitingReviewers}
+            />
+          )}
+        </span>
+        <span className={styles.diffCell}>
+          <DiffBar additions={pr.additions} deletions={pr.deletions} max={maxDiff} />
+        </span>
+        <span className={styles.counts}>
+          <span className={styles.add}>+{pr.additions}</span>
+          <span className={styles.del}>−{pr.deletions}</span>
+        </span>
+        <span className={styles.metricCell}>
+          {pr.commentCount > 0 && (
+            <span className={styles.comments}>
+              <svg
+                className={styles.commentIcon}
+                viewBox="0 0 16 16"
+                width="12"
+                height="12"
+                fill="currentColor"
+                aria-hidden="true"
+              >
+                {/* Octicon comment-16 — signals the number is a comment count */}
+                <path d="M1.75 1h12.5c.966 0 1.75.784 1.75 1.75v9.5A1.75 1.75 0 0 1 14.25 13H8.061l-2.574 2.573A1.458 1.458 0 0 1 3 14.543V13H1.75A1.75 1.75 0 0 1 0 11.25v-9.5C0 1.784.784 1 1.75 1ZM1.5 2.75v8.5a.25.25 0 0 0 .25.25h2a.75.75 0 0 1 .75.75v2.19l2.72-2.72a.749.749 0 0 1 .53-.22h6.5a.25.25 0 0 0 .25-.25v-8.5a.25.25 0 0 0-.25-.25H1.75a.25.25 0 0 0-.25.25Z" />
+              </svg>
+              {pr.commentCount}
+            </span>
+          )}
+        </span>
+        <span className={styles.metricCell}>
+          {pr.changedFiles > 0 && (
+            <span className={styles.files}>
+              <svg
+                className={styles.fileIcon}
+                viewBox="0 0 16 16"
+                width="12"
+                height="12"
+                fill="currentColor"
+                aria-hidden="true"
+              >
+                {/* Octicon file-16 */}
+                <path d="M2 1.75C2 .784 2.784 0 3.75 0h6.586c.464 0 .909.184 1.237.513l2.914 2.914c.329.328.513.773.513 1.237v9.586A1.75 1.75 0 0 1 13.25 16h-9.5A1.75 1.75 0 0 1 2 14.25Zm1.75-.25a.25.25 0 0 0-.25.25v12.5c0 .138.112.25.25.25h9.5a.25.25 0 0 0 .25-.25V6h-2.75A1.75 1.75 0 0 1 9 4.25V1.5Zm6.75.062V4.25c0 .138.112.25.25.25h2.688l-.011-.013-2.914-2.914-.013-.011Z" />
+              </svg>
+              {pr.changedFiles}
+            </span>
+          )}
         </span>
       </span>
     </button>

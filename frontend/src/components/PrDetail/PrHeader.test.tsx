@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { MemoryRouter } from 'react-router-dom';
 import { PrHeader } from './PrHeader';
 import { AskAiDrawerProvider } from '../../contexts/AskAiDrawerContext';
+import { ReadinessTooltipProvider } from '../shared/ReadinessTooltipContext';
 import type { ReviewSessionDto } from '../../api/types';
 
 const OPEN_SESSION: ReviewSessionDto = {
@@ -20,16 +21,18 @@ const OPEN_SESSION: ReviewSessionDto = {
 function renderHeader(extra: Partial<React.ComponentProps<typeof PrHeader>> = {}) {
   return render(
     <MemoryRouter>
-      <AskAiDrawerProvider>
-        <PrHeader
-          reference={{ owner: 'acme', repo: 'api', number: 7 }}
-          title=""
-          author=""
-          activeTab="overview"
-          onTabChange={() => {}}
-          {...extra}
-        />
-      </AskAiDrawerProvider>
+      <ReadinessTooltipProvider>
+        <AskAiDrawerProvider>
+          <PrHeader
+            reference={{ owner: 'acme', repo: 'api', number: 7 }}
+            title=""
+            author=""
+            activeTab="overview"
+            onTabChange={() => {}}
+            {...extra}
+          />
+        </AskAiDrawerProvider>
+      </ReadinessTooltipProvider>
     </MemoryRouter>,
   );
 }
@@ -79,32 +82,28 @@ describe('PrHeader unified ReviewActionButton', () => {
   });
 });
 
-describe('PrHeader mergeability chip', () => {
-  it('renders the chip for a concrete mergeability state', () => {
+// #593: the bare mergeability chip was replaced by the ReadinessBadge (expanded variant).
+// The `mergeability` prop is kept for legacy compat (§9) but no longer drives a visible chip.
+// These tests verify the prop acceptance contract; badge rendering is covered by the
+// 'PrHeader readiness badge (#593)' suite below.
+describe('PrHeader mergeability prop (legacy §9)', () => {
+  it('accepts the mergeability prop without error (does not render a chip-mergeability chip)', () => {
     const { container } = renderHeader({ loading: false, mergeability: 'mergeable' });
-    const chip = container.querySelector('.chip-mergeability');
-    expect(chip).not.toBeNull();
-    expect(chip).toHaveTextContent('mergeable');
+    // The old chip-mergeability is gone; no chip-mergeability class expected.
+    expect(container.querySelector('.chip-mergeability')).toBeNull();
   });
 
-  it('renders the chip for conflicting', () => {
+  it('accepts "conflicting" mergeability without rendering a chip', () => {
     const { container } = renderHeader({ loading: false, mergeability: 'conflicting' });
-    const chip = container.querySelector('.chip-mergeability');
-    expect(chip).not.toBeNull();
-    expect(chip).toHaveTextContent('conflicting');
+    expect(container.querySelector('.chip-mergeability')).toBeNull();
   });
 
-  // GitHub returns "unknown" as its not-yet-computed / indeterminate sentinel.
-  // It carries no actionable meaning, so the chip is suppressed (Truthful-by-default).
-  // In production this prop only holds the uppercase GraphQL value ("UNKNOWN"); the
-  // lowercase "unknown" is the REST poll's mergeable_state, which is currently dropped
-  // before it reaches the frontend. We guard/test both casings defensively.
-  it('hides the chip when mergeability is unknown (lowercase REST poll value)', () => {
+  it('accepts "unknown" mergeability without rendering a chip', () => {
     const { container } = renderHeader({ loading: false, mergeability: 'unknown' });
     expect(container.querySelector('.chip-mergeability')).toBeNull();
   });
 
-  it('hides the chip when mergeability is UNKNOWN (uppercase GraphQL value)', () => {
+  it('accepts "UNKNOWN" mergeability without rendering a chip', () => {
     const { container } = renderHeader({ loading: false, mergeability: 'UNKNOWN' });
     expect(container.querySelector('.chip-mergeability')).toBeNull();
   });
@@ -229,5 +228,36 @@ describe('PrHeader viewerReview wiring', () => {
     });
     expect(screen.getByTestId('review-action-caption')).toHaveTextContent(/You reviewed/);
     expect(screen.getByTestId('review-action-caption')).toHaveTextContent(/out of date/);
+  });
+});
+
+describe('PrHeader readiness badge (#593)', () => {
+  it('renders the expanded readiness badge (glyph + full-text label) for an open state', () => {
+    const { container } = renderHeader({
+      loading: false,
+      mergeReadiness: 'conflicts',
+      prState: 'open',
+      isDraft: false,
+    });
+    // #593 — the detail header uses the expanded variant: glyph + inline full-text label
+    // ("Has conflicts"). Assert the trigger via its accessible name, data-readiness, and
+    // the visible label. (Inbox uses the compact glyph-only variant.)
+    const badge = container.querySelector('[data-readiness="conflicts"]');
+    expect(badge).not.toBeNull();
+    expect(badge).toHaveAttribute('aria-label', 'Merge readiness: Conflicts');
+    expect(badge).toHaveTextContent('Has conflicts');
+  });
+
+  it('renders NO badge for merged/closed/draft/none', () => {
+    for (const props of [
+      { prState: 'merged' as const, mergeReadiness: 'merged' as const },
+      { prState: 'closed' as const, mergeReadiness: 'closed' as const },
+      { prState: 'open' as const, isDraft: true, mergeReadiness: 'none' as const },
+      { prState: 'open' as const, mergeReadiness: 'none' as const },
+    ]) {
+      const { container, unmount } = renderHeader({ loading: false, ...props });
+      expect(container.querySelector('[data-readiness]')).toBeNull();
+      unmount();
+    }
   });
 });

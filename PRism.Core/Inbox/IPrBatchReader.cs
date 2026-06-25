@@ -17,7 +17,8 @@ public interface IPrBatchReader
 }
 
 /// <summary>Hydration fields from the GraphQL pullRequest node, plus the viewer's
-/// last-review head SHA (computed at parse time from <c>reviews(last:100)</c>).</summary>
+/// last-review head SHA (computed at parse time from <c>reviews(last:100)</c>),
+/// and merge-readiness signals derived from the collapsed <c>latestReviews</c> connection.</summary>
 public sealed record BatchPrData(
     string HeadSha,
     int Additions,
@@ -27,4 +28,11 @@ public sealed record BatchPrData(
     DateTimeOffset PushedAt,
     DateTimeOffset? MergedAt,
     DateTimeOffset? ClosedAt,
-    string? ViewerLastReviewSha);
+    string? ViewerLastReviewSha,
+    MergeReadiness MergeReadiness = MergeReadiness.None,
+    int? Approvals = null,
+    int? ChangesRequested = null,
+    // #593 reviewer name-lists parsed from latestReviews (approvers/changes) + reviewRequests (waiting).
+    IReadOnlyList<Reviewer>? Approvers = null,
+    IReadOnlyList<Reviewer>? ChangesRequestedBy = null,
+    IReadOnlyList<Reviewer>? AwaitingReviewers = null);

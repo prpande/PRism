@@ -21,7 +21,12 @@ namespace PRism.GitHub.Inbox;
 /// </summary>
 public sealed partial class GitHubPrBatchReader : IPrBatchReader
 {
-    private const int MaxBatch = 100;        // GitHub aliased-batch safety cap (mirrors GitHubPrTimelineReader)
+    // GitHub aliased-batch cap. Lowered from 100 (#593): the merge-readiness fields
+    // (mergeable / mergeStateStatus force per-PR server-side merge-state computation) make the FULL
+    // (open-PR) query expensive — measured ≈7.2s at 50 aliases, ≈9.1s at 75, timeout (→502) near 100.
+    // 50 keeps each full chunk comfortably under GitHub's ~11s GraphQL execution limit. The light
+    // (closed-PR) query omits those fields entirely, so this cap only really bounds the open query.
+    private const int MaxBatch = 50;
     private const int MaxReviewNodes = 100;  // reviews(last:100) page size — a full page signals possible truncation
     private readonly IHttpClientFactory _httpFactory;
     private readonly Func<Task<string?>> _readToken;
@@ -61,45 +66,65 @@ public sealed partial class GitHubPrBatchReader : IPrBatchReader
 
         // Partition into cache hits vs stale (key = (ref, UpdatedAt) — UpdatedAt bumps on any PR
         // activity, including a new review, so an unchanged key guarantees nothing we read changed).
+        // Stale refs split by IsClosedHistory: open candidates take the full merge-readiness
+        // selection; recently-closed/merged PRs take a light selection (#593) — see BuildQuery.
         // Collect the live ref set in the same pass for the eviction prune below.
-        var stale = new List<RawPrInboxItem>();
+        var staleOpen = new List<RawPrInboxItem>();
+        var staleClosed = new List<RawPrInboxItem>();
         var liveRefs = new HashSet<PrReference>();
         foreach (var it in items)
         {
             liveRefs.Add(it.Reference);
             if (_cache.TryGetValue((it.Reference, it.UpdatedAt), out var hit))
                 result[it.Reference] = hit;
+            else if (it.IsClosedHistory)
+                staleClosed.Add(it);
             else
-                stale.Add(it);
+                staleOpen.Add(it);
         }
 
-        if (stale.Count > 0)
+        if (staleOpen.Count > 0 || staleClosed.Count > 0)
         {
             var token = await _readToken().ConfigureAwait(false);
             var host = _readHost();
             using var http = _httpFactory.CreateClient("github");
-
-            for (var i = 0; i < stale.Count; i += MaxBatch)
-            {
-                var chunk = stale.GetRange(i, Math.Min(MaxBatch, stale.Count - i));
-                foreach (var (it, data) in await FetchChunkAsync(http, token, host, chunk, viewerLogin, ct).ConfigureAwait(false))
-                {
-                    _cache[(it.Reference, it.UpdatedAt)] = data;
-                    result[it.Reference] = data;
-                }
-            }
+            // Two queries: open PRs need mergeable/mergeStateStatus (which force per-PR server-side
+            // merge-state computation) + reviews(last:100) + latestReviews; closed PRs render no
+            // badge (D5) and need none of that. Requesting the compute fields for ~100 mixed PRs in
+            // one query blew GitHub's ~11s GraphQL execution limit → 502 (#593). Splitting keeps the
+            // open query small and the closed query cheap.
+            await FetchInto(http, token, host, staleOpen, viewerLogin, includeReadiness: true, result, ct).ConfigureAwait(false);
+            await FetchInto(http, token, host, staleClosed, viewerLogin, includeReadiness: false, result, ct).ConfigureAwait(false);
         }
 
         InboxCacheEviction.PruneAbsent(_cache, liveRefs);
         return result;
     }
 
+    // Chunks one provenance-uniform stale list (all open or all closed) at MaxBatch and writes each
+    // resolved ref into the cache and the result dict. includeReadiness selects full vs light query.
+    private async Task FetchInto(
+        HttpClient http, string? token, string host, List<RawPrInboxItem> stale,
+        string viewerLogin, bool includeReadiness,
+        Dictionary<PrReference, BatchPrData> result, CancellationToken ct)
+    {
+        for (var i = 0; i < stale.Count; i += MaxBatch)
+        {
+            var chunk = stale.GetRange(i, Math.Min(MaxBatch, stale.Count - i));
+            foreach (var (it, data) in await FetchChunkAsync(http, token, host, chunk, viewerLogin, includeReadiness, ct).ConfigureAwait(false))
+            {
+                _cache[(it.Reference, it.UpdatedAt)] = data;
+                result[it.Reference] = data;
+            }
+        }
+    }
+
     private async Task<List<(RawPrInboxItem Item, BatchPrData Data)>> FetchChunkAsync(
         HttpClient http, string? token, string host,
-        List<RawPrInboxItem> chunk, string viewerLogin, CancellationToken ct)
+        List<RawPrInboxItem> chunk, string viewerLogin, bool includeReadiness, CancellationToken ct)
     {
         var aliased = chunk.Select((it, idx) => (Alias: $"a{idx}", Item: it)).ToList();
-        var query = BuildQuery(aliased);
+        var query = BuildQuery(aliased, includeReadiness);
 
         string body;
         try
@@ -121,10 +146,9 @@ public sealed partial class GitHubPrBatchReader : IPrBatchReader
         using var doc = JsonDocument.Parse(body);
 
         // Primary rate limit arrives as HTTP 200 with errors[].type == RATE_LIMITED (data:null).
-        // Inspect errors[] BEFORE reading data (which is null in that case).
-        if (HasRateLimitError(doc.RootElement))
-            throw new RateLimitExceededException(
-                "GitHub GraphQL rate limit (200/RATE_LIMITED) during inbox batch hydration.", retryAfter: null);
+        // Inspect errors[] BEFORE reading data (which is null in that case). Shared guard
+        // (GitHubGraphQL.ThrowIfRateLimited) so the active-PR batch reader uses the same model.
+        GitHubGraphQL.ThrowIfRateLimited(doc.RootElement, "inbox batch hydration");
 
         var results = new List<(RawPrInboxItem, BatchPrData)>();
         if (!doc.RootElement.TryGetProperty("data", out var data) || data.ValueKind != JsonValueKind.Object)
@@ -164,7 +188,13 @@ public sealed partial class GitHubPrBatchReader : IPrBatchReader
         return results;
     }
 
-    private static string BuildQuery(List<(string Alias, RawPrInboxItem Item)> aliased)
+    // Builds the aliased-batch query. The common selection (core hydration scalars) is requested
+    // for every PR; the merge-readiness selection is added ONLY when includeReadiness is true (open
+    // candidates). mergeable/mergeStateStatus force per-PR server-side merge-state computation and
+    // reviews(last:100)/latestReviews are heavy, so closed PRs — which render no badge (D5) and need
+    // no ViewerLastReviewSha (awaiting-author is open-only) — omit all of it (#593). TryParse is
+    // tolerant: absent readiness fields parse to None/null, which is correct for terminal PRs.
+    private static string BuildQuery(List<(string Alias, RawPrInboxItem Item)> aliased, bool includeReadiness)
     {
         var sb = new StringBuilder("query{");
         foreach (var (alias, it) in aliased)
@@ -174,8 +204,17 @@ public sealed partial class GitHubPrBatchReader : IPrBatchReader
               .Append(JsonSerializer.Serialize(it.Reference.Repo)).Append("){ pullRequest(number:")
               .Append(it.Reference.Number.ToString(CultureInfo.InvariantCulture))
               .Append("){ headRefOid additions deletions changedFiles commits{ totalCount } ")
-              .Append("mergedAt closedAt headRepository{ pushedAt } ")
-              .Append("reviews(last:100){ nodes{ author{ login } submittedAt commit{ oid } } } } } ");
+              .Append("mergedAt closedAt headRepository{ pushedAt } ");
+            if (includeReadiness)
+                sb.Append("isDraft mergeable mergeStateStatus reviewDecision ")
+                  .Append("reviews(last:100){ nodes{ author{ login } submittedAt commit{ oid } } } ")
+                  // latestReviews is collapsed (one entry per reviewer); 20 covers any real PR's
+                  // distinct reviewers for the approval/changes-requested counts (cheap vs first:100).
+                  // avatarUrl (#593) feeds the popover people section's avatars.
+                  .Append("latestReviews(first:20){ nodes{ author{ login avatarUrl } state } } ")
+                  // reviewRequests (#593) = still-requested ("waiting on") reviewers; union over User|Team.
+                  .Append("reviewRequests(first:20){ nodes{ requestedReviewer{ ... on User{ login avatarUrl } ... on Team{ name } } } } ");
+            sb.Append("} } "); // close pullRequest selection, repository selection
         }
         sb.Append("rateLimit{ cost remaining } }");
         return sb.ToString();
@@ -206,8 +245,22 @@ public sealed partial class GitHubPrBatchReader : IPrBatchReader
         DateTimeOffset? closedAt = pr.TryGetProperty("closedAt", out var ca) && ca.ValueKind == JsonValueKind.String
             ? ca.GetDateTimeOffset() : null;
 
+        var isDraft = pr.TryGetProperty("isDraft", out var dr) && dr.ValueKind == JsonValueKind.True;
+        var mergeable = pr.TryGetProperty("mergeable", out var mg) && mg.ValueKind == JsonValueKind.String ? mg.GetString() : null;
+        var mergeStateStatus = pr.TryGetProperty("mergeStateStatus", out var mss) && mss.ValueKind == JsonValueKind.String ? mss.GetString() : null;
+        var reviewDecision = pr.TryGetProperty("reviewDecision", out var rdv) && rdv.ValueKind == JsonValueKind.String ? rdv.GetString() : null;
+
+        var prState = PrStates.FromTimestamps(mergedAt, closedAt);
+        var readiness = MergeReadinessRule.Derive(prState, isDraft, mergeable, mergeStateStatus, reviewDecision);
+        var (approvals, changesRequested) = GitHubPrParser.CountLatestReviews(pr);
+        var (approvers, changesRequestedBy) = GitHubPrParser.ParseLatestReviewers(pr);
+        var awaitingReviewers = GitHubPrParser.ParseRequestedReviewers(pr);
+
         data = new BatchPrData(headSha, additions, deletions, commitCount, changedFiles,
-                               pushedAt, mergedAt, closedAt, ParseViewerLastReviewSha(pr, viewerLogin, raw.Reference));
+                               pushedAt, mergedAt, closedAt,
+                               ParseViewerLastReviewSha(pr, viewerLogin, raw.Reference),
+                               readiness, approvals, changesRequested,
+                               approvers, changesRequestedBy, awaitingReviewers);
         return true;
     }
 
@@ -258,17 +311,6 @@ public sealed partial class GitHubPrBatchReader : IPrBatchReader
             }
         }
         return best;
-    }
-
-    private static bool HasRateLimitError(JsonElement root)
-    {
-        if (!root.TryGetProperty("errors", out var errors) || errors.ValueKind != JsonValueKind.Array)
-            return false;
-        foreach (var e in errors.EnumerateArray())
-            if (e.ValueKind == JsonValueKind.Object && e.TryGetProperty("type", out var t)
-                && string.Equals(t.GetString(), "RATE_LIMITED", StringComparison.Ordinal))
-                return true;
-        return false;
     }
 
     private static partial class Log

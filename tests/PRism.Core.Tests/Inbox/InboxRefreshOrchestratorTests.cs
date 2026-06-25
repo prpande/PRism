@@ -1262,4 +1262,52 @@ public sealed class InboxRefreshOrchestratorTests
         published.Should().OnlyContain(u => u.NewOrUpdatedPrCount == 0,
             "an enrichment-only refill reports no new/updated PRs");
     }
+
+    [Fact]
+    public async Task Readiness_only_flip_publishes_InboxUpdated()
+    {
+        // GitHub recomputes mergeStateStatus asynchronously (e.g. UNKNOWN→CLEAN) without bumping
+        // updatedAt — so a readiness-only change must still trigger InboxUpdated.
+        var bus = new RecordingEventBus();
+
+        // Batch reader that returns MergeReadiness.None on the first call and MergeReadiness.Ready
+        // on the second (simulating a mergeStateStatus flip without any other field change).
+        var batchReader = new ReadinessFlipBatchReader();
+
+        var sections = new FakeSectionQueryRunner(_ => new Dictionary<string, IReadOnlyList<RawPrInboxItem>>
+        {
+            ["review-requested"] = new[] { RawPr(1, "sha1") }
+        });
+
+        var configFake = ConfigStoreFake(ConfigWithSections(
+            reviewRequested: true, awaitingAuthor: false, authoredByMe: false, mentioned: false));
+        using var sut = Build(config: configFake, sections: sections, batchReader: batchReader, events: bus);
+
+        await sut.RefreshAsync(CancellationToken.None);   // first: MergeReadiness.None
+        bus.Published.Clear();
+        await sut.RefreshAsync(CancellationToken.None);   // second: MergeReadiness.Ready
+
+        bus.Published.OfType<InboxUpdated>().Should().NotBeEmpty(
+            "a readiness-only flip must publish InboxUpdated even when HeadSha/CommentCount/Ci are unchanged");
+    }
+
+    // Batch reader that returns MergeReadiness.None on odd calls and MergeReadiness.Ready on
+    // even calls; all other fields are passed through unchanged (HeadSha, CI, CommentCount stay
+    // identical so only MergeReadiness differs between refreshes).
+    private sealed class ReadinessFlipBatchReader : IPrBatchReader
+    {
+        private int _call;
+        public Task<IReadOnlyDictionary<PrReference, BatchPrData>> ReadAsync(
+            IReadOnlyList<RawPrInboxItem> items, string viewerLogin, CancellationToken ct)
+        {
+            var isFirstCall = ++_call % 2 == 1;
+            var readiness = isFirstCall ? MergeReadiness.None : MergeReadiness.Ready;
+            return Task.FromResult<IReadOnlyDictionary<PrReference, BatchPrData>>(
+                items.ToDictionary(i => i.Reference, i => new BatchPrData(
+                    i.HeadSha, i.Additions, i.Deletions, i.CommitCount, i.ChangedFiles,
+                    i.PushedAt, i.MergedAt, i.ClosedAt,
+                    ViewerLastReviewSha: i.HeadSha + "-prev",
+                    MergeReadiness: readiness)));
+        }
+    }
 }
