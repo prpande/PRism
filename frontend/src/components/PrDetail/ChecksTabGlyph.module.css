@@ -7,7 +7,9 @@
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: var(--warning-fg); /* same amber as InboxRow .ciPending */
+  background: var(
+    --warning
+  ); /* base amber (not -fg, which is dark-for-text → muddy); matches InboxRow .ciPending */
   animation: checksPulse 1.4s ease-in-out infinite;
 }
 

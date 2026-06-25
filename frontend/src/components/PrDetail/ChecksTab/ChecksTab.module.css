@@ -61,11 +61,15 @@
 .glyphPass {
   color: var(--success-fg); /* InboxRow .ciPassing */
 }
+/* Amber glyphs use the BASE --warning (L 0.62 light), not --warning-fg (L 0.42):
+   the -fg variant is tuned dark for TEXT contrast, and a darkened amber hue reads
+   muddy/brown as an icon fill. Red/green -fg stay legible when dark, so only the
+   amber indicators move to the base token. InboxRow .ciPending matches. */
 .glyphPending {
-  color: var(--warning-fg); /* InboxRow .ciPending */
+  color: var(--warning); /* InboxRow .ciPending */
 }
 .glyphAlert {
-  color: var(--warning-fg); /* action-required manual gate — amber */
+  color: var(--warning); /* action-required manual gate — amber */
 }
 .glyphNeutral {
   color: var(--text-3);
