@@ -118,14 +118,12 @@ public sealed partial class ActivePrPoller : BackgroundService
         // A re-subscribe that lands inside the same cadence window as the unsubscribe keeps its
         // state — the tick never observed zero subscribers — which is acceptable: only a
         // re-subscribe AFTER an observed unsubscribe re-fires first-poll. _state.Keys is a
-        // snapshot, so removing during iteration is safe.
-        if (!_state.IsEmpty)
+        // snapshot, so removing during iteration is safe. When _state is empty the loop is
+        // already a no-op (empty key snapshot), so no guard is needed.
+        var live = new HashSet<PrReference>(prs);
+        foreach (var key in _state.Keys)
         {
-            var live = new HashSet<PrReference>(prs);
-            foreach (var key in _state.Keys)
-            {
-                if (!live.Contains(key)) _state.TryRemove(key, out _);
-            }
+            if (!live.Contains(key)) _state.TryRemove(key, out _);
         }
 
         foreach (var prRef in prs)
