@@ -72,13 +72,19 @@ internal sealed class FileLogger : ILogger
             formatted = formatter(state, exception);
         }
 
+        // #610: free-text secret backstop, single chokepoint before the event is enqueued.
+        // SensitiveFieldScrubber (above) only redacts values whose structured KEY is a sensitive
+        // name; LogScrub catches PAT/Bearer/sk-ant shapes anywhere in the formatted message or
+        // the raw exception text — a token in an exception message or under a non-sensitive key
+        // would otherwise reach the 14-day on-disk log verbatim.
+        var exceptionText = exception?.ToString();
         var evt = new FileLogEvent(
             _parent.Now(),
             logLevel,
             _category,
             eventId,
-            formatted,
-            exception?.ToString());
+            LogScrub.Apply(formatted),
+            exceptionText is null ? null : LogScrub.Apply(exceptionText));
 
         _parent.TryEnqueue(evt);
     }
