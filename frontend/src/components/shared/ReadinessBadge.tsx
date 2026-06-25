@@ -253,12 +253,14 @@ export function ReadinessBadge({
     (approvers?.length ?? 0) > 0 ||
     (changesRequestedBy?.length ?? 0) > 0 ||
     (awaitingReviewers?.length ?? 0) > 0;
-  const counts = countsLine(approvals, changesRequested);
-  const age = ageLine(updatedAt);
+  // Popover-only content — compute solely when the popover is open (the closed
+  // badge, the common case for an inbox of rows, does no date parse / allocation).
+  const counts = open ? countsLine(approvals, changesRequested) : null;
+  const age = open ? ageLine(updatedAt) : null;
   const showCountsFallback = !hasPeople && counts != null;
 
   return (
-    <span className={styles.wrap}>
+    <>
       <button
         ref={triggerRef}
         type="button"
@@ -280,6 +282,10 @@ export function ReadinessBadge({
         }}
       >
         <ReadinessGlyph readiness={readiness} />
+        {/* PR detail has room for the label (#593) — inbox stays glyph-only. */}
+        {variant === 'expanded' && (
+          <span className={styles.label}>{READINESS_LONG[readiness]}</span>
+        )}
       </button>
       {open &&
         coords &&
@@ -312,6 +318,6 @@ export function ReadinessBadge({
           </div>,
           document.body,
         )}
-    </span>
+    </>
   );
 }

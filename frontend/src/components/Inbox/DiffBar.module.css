@@ -6,7 +6,7 @@
 
 .track {
   display: block;
-  width: 64px;
+  width: 52px; /* #593 — trimmed from 64px so the bar occupies less of the row */
   height: 4px;
   background: var(--surface-3);
   border-radius: 999px;

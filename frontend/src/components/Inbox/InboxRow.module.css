@@ -1,13 +1,33 @@
 /* InboxRow — single PR row in the inbox list */
 .row {
   display: grid;
-  /* #593: 4-column grid — state glyph | CI slot | title/meta (elastic) | tail metrics.
-     The CI slot is a fixed 16px column so #N and title start at a constant offset
-     across all rows regardless of CI state (empty slot = invisible spacer). The 1fr
-     mid column absorbs the ~16px the CI glyph previously occupied inside it. */
-  grid-template-columns: 16px 16px minmax(0, 1fr) var(--inbox-tail-w);
-  --inbox-tail-w: 288px; /* metrics only: 64 diff + 72 counts + 52 comments + 52 files + 3×12 gaps = 276, +12 slack; tuned in B1 */
-  gap: var(--s-3);
+  /* #593: 3-column grid — leading status pair (PR-state + CI glyphs, grouped) |
+     title/meta (elastic) | tail metrics. The leading group is content-width and
+     constant across rows (its CI slot always reserves width), so #N and the title
+     start at a constant offset regardless of CI state. Collapsing the two former
+     16px glyph columns + their gaps into one tight group reclaims leading space for
+     the title/number. */
+  grid-template-columns: auto minmax(0, 1fr) var(--inbox-tail-w);
+  /* #593 — the five tail-metric track widths, named once here so the metric grid
+     (.tail) and the tail-column width below derive from the same source. The diff
+     track (60px) is wider than the 52px bar so an 8px gap sits between the readiness
+     glyph and the bar (see .tail). */
+  --tail-glyph: 18px;
+  --tail-diff: 60px;
+  --tail-counts: 56px;
+  --tail-comments: 42px;
+  --tail-files: 42px;
+  /* Tail-column width = the metric grid's total (the five tracks + their 4 inter-track
+     gaps), computed — not asserted — so changing a track above can't drift the width.
+     Matching it exactly keeps the cluster flush-right with no slack between title and
+     metrics. */
+  --inbox-tail-w: calc(
+    var(--tail-glyph) + var(--tail-diff) + var(--tail-counts) + var(--tail-comments) +
+      var(--tail-files) + 4 * var(--s-2)
+  );
+  /* #593 — row gap reduced 12→8px to give the title/number more room on both sides
+     (leading group → title, and title → tail metrics). */
+  gap: var(--s-2);
   width: 100%;
   padding: var(--s-3) var(--s-4);
   text-align: left;
@@ -42,9 +62,17 @@
   border-radius: 0 2px 2px 0;
 }
 
-/* Status column (16px wide) — grid-row-centred (the grid's align-items: center),
-   so the leading PR-state octicon shares the row's vertical centre with the CI glyph
-   and the right-side metrics (#345). */
+/* #593 leading status pair — the PR-state glyph and CI glyph as one tight group
+   (4px apart) at the row start, forming the first grid column. Vertically centred
+   with the row (grid align-items: center). */
+.leading {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* PR-state octicon — vertically centred so it shares the row's centre with the CI
+   glyph and the right-side metrics (#345). */
 .status {
   display: inline-flex;
   align-items: center;
@@ -52,9 +80,9 @@
   flex: none;
 }
 
-/* #593 fixed-width CI slot (16px column, 2nd grid column). Always renders as a spacer
-   so the title/meta column starts at a consistent left edge. aria-hidden on the slot
-   wrapper; CI is announced via the row aria-label suffix instead. */
+/* #593 fixed-width CI slot (16px) inside the leading group. Always reserves its width
+   (empty spacer when CI is none) so the title/number start at a constant offset across
+   rows regardless of CI state. aria-hidden; CI is announced via the row aria-label. */
 .ciSlot {
   display: inline-flex;
   align-items: center;
@@ -63,10 +91,9 @@
   flex: none;
 }
 
-/* Middle column wrapper: the title/meta stack (.main) plus the CI glyph, laid out as
-   a row and vertically centred. Centring here puts the CI glyph on the row's vertical
-   centre — in line with the right-side metrics it reads with — instead of pinned to
-   the title's first line, while .main keeps the title clamp and meta line (#345). */
+/* Middle column wrapper: the title/meta stack (.main), the elastic 1fr grid track.
+   The CI glyph moved into the leading status pair (#593), so this column now holds
+   only .main; align-items:center keeps it on the row's vertical centre. */
 .midCol {
   display: flex;
   align-items: center;
@@ -105,9 +132,9 @@
 }
 
 /* CI suffix octicon — bare check / cross / amber dot, no enclosing circle, so the
-   three shapes stay distinct in greyscale (spec Decision 4). Lives in .midCol and is
-   row-centred by it (no align-self / margin-top): it sits on the row's vertical centre,
-   in line with the right-side metrics, not pinned to the title's first line (#345). */
+   three shapes stay distinct in greyscale (spec Decision 4). Lives in the leading
+   status pair (.ciSlot, #593), row-centred so it sits on the row's vertical centre in
+   line with the right-side metrics, not pinned to the title's first line (#345). */
 .ciSuffix {
   flex: none;
   width: 14px;
@@ -183,52 +210,42 @@
    live on the meta line (they're labels, not metrics, and a variable-width pill
    can't sit in a fixed-width aligned column without clipping). Right-align so
    the metrics sit flush with the row's right edge. */
+/* #593 — fixed-track grid so every metric forms a vertical column that lines up
+   across rows (glyph | diff | ±counts | comments | files). Each track is sized to
+   its max content — the diff bar and PR-state glyph are constant; ±counts holds a
+   side-by-side pair and wraps to two stacked lines past ~5 digits (see .counts);
+   comments/files fit two digits beside their glyph. The grid right-anchors
+   (justify-content:end) so the cluster's right edge pins to the row edge. Gap is
+   the standard 8px (--s-2), reduced from the prior 12px to tighten inter-column
+   spacing without dropping below the spacing scale. */
 .tail {
+  display: grid;
+  /* Tracks come from the named --tail-* vars on .row (the bar right-aligns within the
+     wider diff track, so an 8px gap sits between the readiness glyph and the bar — 16px
+     total with the column gap — separating the readiness badge from the diff cluster,
+     which reads as one group with its ±counts). */
+  grid-template-columns:
+    var(--tail-glyph) var(--tail-diff) var(--tail-counts)
+    var(--tail-comments) var(--tail-files);
+  gap: var(--s-2);
+  align-items: center;
+  justify-content: end;
+  min-width: 0;
+}
+
+/* One metric per track. Content right-aligns so the right edges form clean
+   columns; empty cells (no badge / zero comments / zero files) still reserve
+   their track, keeping the populated cells aligned across rows. */
+.metricCell {
   display: flex;
   align-items: center;
   justify-content: flex-end;
   min-width: 0;
-  /* #593 — space between the readiness glyph and the metrics block. */
-  gap: var(--s-2);
 }
 
-/* Right-pinned, fixed-width slots in fixed order — this is what makes the
-   numbers line up column-for-column across rows. #593 tightened 12px→8px to
-   make room for the readiness glyph without widening the tail. */
-.metrics {
-  flex: none;
-  display: flex;
-  align-items: center;
-  gap: var(--s-2);
-}
-
-.diffSlot {
-  flex: none;
-  width: 64px; /* matches DiffBar track width */
-  display: flex;
-  justify-content: flex-end;
-}
-
-/* 72px fits up to 4-digit +adds / −dels (the realistic inbox ceiling); a PR
-   with BOTH counts at 5 digits (~20k-line churn) overflows ~7px into the gap.
-   That tail case is accepted rather than widening every row's tail — the right
-   edge stays pinned so column alignment holds either way (#227 B1). */
-.countsSlot {
-  flex: none;
-  width: 72px;
-  display: flex;
-  justify-content: flex-end;
-  font-variant-numeric: tabular-nums;
-}
-
-/* 52px fits a 3-digit comment count (~48px pill) without the pill bleeding into
-   the adjacent gap; 2-digit is the common case. Right-pinned so the glyph+count
-   right edge aligns across rows regardless of digit count. */
-.commentSlot {
-  flex: none;
-  width: 52px;
-  display: flex;
-  justify-content: flex-end;
+/* Hook for the responsive query to drop the diff column below the breakpoint. */
+.diffCell {
+  composes: metricCell;
 }
 
 /* Chip + its trailing separator as one unit, so the narrow-width drop removes
@@ -292,11 +309,21 @@
   white-space: nowrap;
 }
 
+/* ±counts cell — right-aligned, wraps to two stacked lines when the +adds/−dels
+   are too wide to sit side-by-side (large diffs). Each number is a whole flex item
+   so it never breaks mid-token; row-gap 0 keeps the stacked pair tight. This keeps
+   the column narrow (one number wide) instead of reserving width for the widest
+   side-by-side pair. */
 .counts {
   display: flex;
-  gap: 6px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-content: center;
+  gap: 0 6px;
   font-family: var(--font-mono);
   font-size: 11px;
+  line-height: 1.2;
+  min-width: 0;
 }
 
 .add {
@@ -339,15 +366,6 @@
   composes: metricPillIcon;
 }
 
-/* 52px fits a 3-digit file count without the pill bleeding into the adjacent gap;
-   right-pinned so the glyph+count right edge aligns across rows regardless of digit count. */
-.filesSlot {
-  flex: none;
-  width: 52px;
-  display: flex;
-  justify-content: flex-end;
-}
-
 .files {
   composes: metricPill;
 }
@@ -377,15 +395,25 @@
    Alignment is a within-regime invariant — the metrics column shifts once at
    the breakpoint (tail width changes), by design. Thresholds tuned in B1. */
 @container inbox-sections (max-width: 560px) {
-  /* Override --inbox-tail-w declared on .row itself; the grid template re-resolves.
-     72 counts + 52 comments + 52 files + 2×12 gaps = 200, +8 slack (diff bar is hidden below). */
+  /* Drop the diff column: the four remaining tracks + their 3 gaps, computed from the
+     same --tail-* vars so the width can't drift from the track list below. */
   .row {
-    --inbox-tail-w: 208px;
+    --inbox-tail-w: calc(
+      var(--tail-glyph) + var(--tail-counts) + var(--tail-comments) + var(--tail-files) + 3 *
+        var(--s-2)
+    );
+  }
+  /* Re-resolve the metric grid without the diff track so the remaining cells keep
+     their columns (grid auto-places the cells into the 4 tracks in order). */
+  .tail {
+    grid-template-columns:
+      var(--tail-glyph) var(--tail-counts)
+      var(--tail-comments) var(--tail-files);
   }
   /* Drop the diff bar AND the AI category chip together: at this width the chip
      would otherwise clamp to a cryptic ~1-char stub rather than read as a label.
      The +/− counts and comment count are kept (last to go). */
-  .diffSlot {
+  .diffCell {
     display: none;
   }
   /* Hide the chip AND its trailing separator together (no orphan "· "). */

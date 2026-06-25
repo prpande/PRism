@@ -37,6 +37,18 @@ describe('ReadinessBadge', () => {
     expect(trigger).not.toHaveTextContent('Behind');
   });
 
+  it('renders the full-text label alongside the glyph in the expanded (PR-detail) variant', () => {
+    render(
+      <ReadinessTooltipProvider>
+        <ReadinessBadge readiness="blocked-by-protection" variant="expanded" id="e1" />
+      </ReadinessTooltipProvider>,
+    );
+    const trigger = screen.getByRole('button', { name: 'Merge readiness: Blocked' });
+    // #593 — the detail surface has room for the label; inbox stays glyph-only (see above).
+    expect(trigger).toHaveTextContent('Blocked by branch protection');
+    expect(trigger.querySelector('svg')).not.toBeNull();
+  });
+
   it('opens the popover immediately on focus and closes on Escape', async () => {
     renderBadge('conflicts');
     const trigger = screen.getAllByRole('button')[0];

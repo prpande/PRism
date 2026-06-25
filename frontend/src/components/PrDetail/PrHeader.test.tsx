@@ -232,18 +232,20 @@ describe('PrHeader viewerReview wiring', () => {
 });
 
 describe('PrHeader readiness badge (#593)', () => {
-  it('renders the expanded readiness badge (glyph) for an open state', () => {
+  it('renders the expanded readiness badge (glyph + full-text label) for an open state', () => {
     const { container } = renderHeader({
       loading: false,
       mergeReadiness: 'conflicts',
       prState: 'open',
       isDraft: false,
     });
-    // #593 — the badge is a bare glyph; the long reason ("Has conflicts") lives in the
-    // hover popover. Assert the trigger via its accessible name + data-readiness.
+    // #593 — the detail header uses the expanded variant: glyph + inline full-text label
+    // ("Has conflicts"). Assert the trigger via its accessible name, data-readiness, and
+    // the visible label. (Inbox uses the compact glyph-only variant.)
     const badge = container.querySelector('[data-readiness="conflicts"]');
     expect(badge).not.toBeNull();
     expect(badge).toHaveAttribute('aria-label', 'Merge readiness: Conflicts');
+    expect(badge).toHaveTextContent('Has conflicts');
   });
 
   it('renders NO badge for merged/closed/draft/none', () => {
