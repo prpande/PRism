@@ -70,9 +70,8 @@ public sealed class GitHubPrChecksRerunner : IPrChecksRerunner
     private static RerunOutcome OutcomeFor(HttpStatusCode code) => code switch
     {
         HttpStatusCode.Unauthorized => RerunOutcome.Auth,
-        HttpStatusCode.Forbidden => RerunOutcome.NotRerunnable,
-        HttpStatusCode.NotFound => RerunOutcome.NotRerunnable,
-        HttpStatusCode.UnprocessableEntity => RerunOutcome.NotRerunnable,
+        HttpStatusCode.Forbidden or HttpStatusCode.NotFound or HttpStatusCode.UnprocessableEntity
+            => RerunOutcome.NotRerunnable,
         _ => RerunOutcome.Transient,
     };
 }

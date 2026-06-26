@@ -14,9 +14,13 @@ const TIER_IN_PROGRESS = 2;
 const TIER_NEUTRAL = 3;
 const TIER_PASSING = 4;
 
+function isFailing(c: CheckRun): boolean {
+  return c.conclusion != null && FAILING_CONCLUSIONS.has(c.conclusion);
+}
+
 function tierOf(c: CheckRun): number {
   if (c.status === 'queued' || c.status === 'in-progress') return TIER_IN_PROGRESS;
-  if (c.conclusion != null && FAILING_CONCLUSIONS.has(c.conclusion)) return TIER_FAILING;
+  if (isFailing(c)) return TIER_FAILING;
   if (c.conclusion === 'action-required') return TIER_ACTION_REQUIRED;
   if (c.conclusion === 'success') return TIER_PASSING;
   return TIER_NEUTRAL; // skipped / neutral / stale / startup-failure / null
@@ -30,7 +34,7 @@ type RowGlyph = 'cross' | 'alert' | 'spinner' | 'dash' | 'check';
 
 function glyphFor(c: CheckRun): RowGlyph {
   if (c.status === 'queued' || c.status === 'in-progress') return 'spinner';
-  if (c.conclusion != null && FAILING_CONCLUSIONS.has(c.conclusion)) return 'cross';
+  if (isFailing(c)) return 'cross';
   if (c.conclusion === 'action-required') return 'alert';
   if (c.conclusion === 'success') return 'check';
   return 'dash';
@@ -88,9 +92,7 @@ function announce(state: CheckRunsResult): string {
         ? "Couldn't load checks -- the token may lack access"
         : "Couldn't load checks";
     case 'ok': {
-      const failing = state.checks.filter(
-        (c) => c.conclusion != null && FAILING_CONCLUSIONS.has(c.conclusion),
-      ).length;
+      const failing = state.checks.filter(isFailing).length;
       return failing > 0
         ? `${failing} ${failing === 1 ? 'check' : 'checks'} failing`
         : 'All checks passing';
