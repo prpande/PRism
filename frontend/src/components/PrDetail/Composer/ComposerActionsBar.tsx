@@ -1,6 +1,7 @@
 import { useId } from 'react';
 import { AiComposerAssistant } from '../../Ai/AiComposerAssistant';
-import { badgeLabel, type ComposerSaveBadge } from '../../../hooks/useComposerAutoSave';
+import type { ComposerSaveBadge } from '../../../hooks/useComposerAutoSave';
+import { ComposerStatusBadge } from './ComposerStatusBadge';
 
 export interface ComposerActionsBarProps {
   previewMode: boolean;
@@ -66,13 +67,7 @@ export function ComposerActionsBar({
 
       <AiComposerAssistant />
 
-      <span
-        className={`composer-badge composer-badge--${badge}`}
-        role="status"
-        data-testid="composer-badge"
-      >
-        {badgeLabel(badge)}
-      </span>
+      <ComposerStatusBadge badge={badge} readOnly={readOnly} />
 
       <span className="composer-actions-spacer" aria-hidden="true" />
 

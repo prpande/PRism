@@ -3,13 +3,13 @@ import { useCallback, useRef, useState } from 'react';
 import styles from './PrRootReplyComposer.module.css';
 import {
   COMPOSER_CREATE_THRESHOLD,
-  badgeLabel,
   type ComposerSaveBadge,
 } from '../../../hooks/useComposerAutoSave';
 import { sendPatch } from '../../../api/draft';
 import { postRootComment, type PostRootCommentError } from '../../../api/rootComment';
 import { Modal } from '../../Modal/Modal';
 import { AiComposerAssistant } from '../../Ai/AiComposerAssistant';
+import { ComposerStatusBadge } from './ComposerStatusBadge';
 import { ComposerMarkdownPreview } from './ComposerMarkdownPreview';
 import { PrRootBodyEditor } from './PrRootBodyEditor';
 import type { PrReference } from '../../../api/types';
@@ -221,13 +221,7 @@ export function PrRootReplyComposer({
 
         <AiComposerAssistant />
 
-        <span
-          className={`composer-badge composer-badge--${badge}`}
-          role="status"
-          data-testid="composer-badge"
-        >
-          {badgeLabel(badge)}
-        </span>
+        <ComposerStatusBadge badge={badge} readOnly={readOnly} />
 
         <span className="composer-actions-spacer" aria-hidden="true" />
 

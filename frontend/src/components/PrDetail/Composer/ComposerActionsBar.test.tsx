@@ -67,4 +67,23 @@ describe('ComposerActionsBar', () => {
     const save = screen.getByRole('button', { name: 'Add to review' });
     expect(save).toBeDisabled();
   });
+  it('supersedes the save badge with a read-only indicator when taken over (#630)', () => {
+    // A cross-tab take-over mid-PUT can leave the autosave badge stuck on
+    // 'Saving…'. When read-only, the status slot shows a neutral read-only
+    // indicator instead of the (possibly stuck) save-state badge.
+    render(<ComposerActionsBar {...baseProps} readOnly badge="saving" />);
+    const badge = screen.getByTestId('composer-badge');
+    expect(badge).toHaveTextContent('Read-only');
+    expect(badge).not.toHaveTextContent(/Saving/);
+    expect(badge).toHaveClass('composer-badge--readonly');
+    expect(badge).toHaveAttribute('title', 'Another tab is editing this PR.');
+    // Still a polite live region (role=status), intentionally not assertive.
+    expect(badge).toHaveAttribute('role', 'status');
+  });
+  it('renders the normal save badge when not read-only', () => {
+    render(<ComposerActionsBar {...baseProps} badge="saving" />);
+    const badge = screen.getByTestId('composer-badge');
+    expect(badge).toHaveTextContent('Saving…');
+    expect(badge).not.toHaveClass('composer-badge--readonly');
+  });
 });

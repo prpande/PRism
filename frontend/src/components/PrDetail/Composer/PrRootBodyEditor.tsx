@@ -1,11 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import styles from './PrRootBodyEditor.module.css';
-import {
-  useComposerAutoSave,
-  badgeLabel,
-  type ComposerSaveBadge,
-} from '../../../hooks/useComposerAutoSave';
+import { useComposerAutoSave, type ComposerSaveBadge } from '../../../hooks/useComposerAutoSave';
+import { ComposerStatusBadge } from './ComposerStatusBadge';
 import { Modal } from '../../Modal/Modal';
 import type { PrReference } from '../../../api/types';
 import type { ComposerOwnerKey } from '../../../hooks/useDraftSession';
@@ -153,15 +150,7 @@ export function PrRootBodyEditor({
         aria-readonly={readOnly || undefined}
       />
 
-      {showBadge && (
-        <span
-          className={`composer-badge composer-badge--${badge}`}
-          role="status"
-          data-testid="composer-badge"
-        >
-          {badgeLabel(badge)}
-        </span>
-      )}
+      {showBadge && <ComposerStatusBadge badge={badge} readOnly={readOnly} />}
 
       {createPortal(
         <Modal

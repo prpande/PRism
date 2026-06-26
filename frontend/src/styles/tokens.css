@@ -1145,6 +1145,14 @@ a:hover { text-decoration: underline; }
   background: var(--danger-soft);
   color: var(--danger-fg);
 }
+/* #630: a taken-over (cross-tab read-only) composer shows a neutral read-only
+   indicator in the status slot instead of the (possibly stuck) save badge.
+   Neutral on purpose — read-only is a lock, not an error/warning — so it keeps
+   the base .composer-badge surface/text tokens and adds no semantic color. */
+.composer-badge--readonly {
+  background: var(--surface-3);
+  color: var(--text-2);
+}
 .composer-discard {
   font-size: var(--text-sm);
   color: var(--danger-fg);
