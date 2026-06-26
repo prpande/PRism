@@ -54,6 +54,8 @@ The spec said pass `usePrDetail`'s "reload counter" into `usePrAction`. `usePrDe
 - `frontend/__tests__/PrActionsPanel.test.tsx`
 
 **Frontend — modify:**
+- `frontend/src/api/types.ts` — add the `PrLifecycleChangedEvent` payload type.
+- `frontend/src/api/events.ts` — register `'pr-lifecycle-changed'` in `EventPayloadByType` **and** the `EVENT_TYPES` runtime array.
 - `frontend/src/hooks/usePrDetail.ts` — (no change needed; `reload` already exported; freshness via `data` identity).
 - `frontend/src/components/PrDetail/prDetailContext.tsx` — add `reload` to context value + types.
 - `frontend/src/components/PrDetail/PrDetailView.tsx` — wire `useLifecycleChangedSubscriber`; pass `reload` into context.
@@ -66,41 +68,13 @@ The spec said pass `usePrDetail`'s "reload counter" into `usePrAction`. `usePrDe
 
 **Files:**
 - Modify: `PRism.Core/Events/SubmitBusEvents.cs`
-- Test: `tests/PRism.Core.Tests/Events/PrLifecycleChangedTests.cs` (create)
 
 **Interfaces:**
 - Produces: `public sealed record PrLifecycleChanged(PrReference PrRef) : IReviewEvent` — consumed by `PrDetailLoader`, `SseChannel`, `SseEventProjection`, `PrLifecycleEndpoints`.
 
-- [ ] **Step 1: Write the failing test**
+> **No standalone test for this record** (plan ce-doc-review — scope-guardian): a `record` with a primary-ctor param guarantees field round-trip, and `: IReviewEvent` is compiler-enforced — a dedicated test would assert only what the compiler already guarantees. The record is meaningfully exercised by the `PrDetailLoader` eviction test (Task 5) and the SSE projection/fan-out tests (Task 6). This task is a single mechanical add, folded into the next testable deliverable's history.
 
-```csharp
-// tests/PRism.Core.Tests/Events/PrLifecycleChangedTests.cs
-using FluentAssertions;
-using PRism.Core.Contracts;
-using PRism.Core.Events;
-using Xunit;
-
-namespace PRism.Core.Tests.Events;
-
-public class PrLifecycleChangedTests
-{
-    [Fact]
-    public void Carries_pr_ref_and_is_a_review_event()
-    {
-        var prRef = new PrReference("o", "r", 1);
-        var evt = new PrLifecycleChanged(prRef);
-        evt.PrRef.Should().Be(prRef);
-        evt.Should().BeAssignableTo<IReviewEvent>();
-    }
-}
-```
-
-- [ ] **Step 2: Run test to verify it fails**
-
-Run: `& 'C:\Program Files\dotnet\dotnet.exe' test tests/PRism.Core.Tests --filter PrLifecycleChangedTests`
-Expected: FAIL — `PrLifecycleChanged` does not exist.
-
-- [ ] **Step 3: Add the record**
+- [ ] **Step 1: Add the record**
 
 In `PRism.Core/Events/SubmitBusEvents.cs`, after the `SingleCommentPostedBusEvent` record (around line 55), add:
 
@@ -113,15 +87,15 @@ In `PRism.Core/Events/SubmitBusEvents.cs`, after the `SingleCommentPostedBusEven
 public sealed record PrLifecycleChanged(PrReference PrRef) : IReviewEvent;
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [ ] **Step 2: Build to verify it compiles**
 
-Run: `& 'C:\Program Files\dotnet\dotnet.exe' test tests/PRism.Core.Tests --filter PrLifecycleChangedTests`
-Expected: PASS.
+Run: `& 'C:\Program Files\dotnet\dotnet.exe' build PRism.Core`
+Expected: succeeds.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 3: Commit**
 
 ```bash
-git add PRism.Core/Events/SubmitBusEvents.cs tests/PRism.Core.Tests/Events/PrLifecycleChangedTests.cs
+git add PRism.Core/Events/SubmitBusEvents.cs
 git commit -m "feat(#566): add PrLifecycleChanged bus event"
 ```
 
@@ -213,7 +187,7 @@ git commit -m "feat(#566): add IPrLifecycleWriter interface + result types"
 - Consumes: `IPrLifecycleWriter`, `PrLifecycleResult`, `PrLifecycleErrorCode` (Task 2); `GitHubGraphQL.PostAsync`, `GitHubHttp.SendAsync`, `GitHubHttp.Truncate`, `GitHubHttp.ReadErrorBodyBestEffortAsync`, `HostUrlResolver` (existing internal transport).
 - Produces: `internal sealed class GitHubPrLifecycleWriter : IPrLifecycleWriter` (constructed exactly like `GitHubReviewSubmitter`).
 
-> **Note on transport:** `GitHubReviewSubmitter`'s `PostGraphQLAsync`/`SendGitHubAsync` are private instance wrappers — not shareable. Copy the same thin wrappers over the shared `internal static` `GitHubGraphQL.PostAsync` / `GitHubHttp.SendAsync` (the established "verbatim twin" pattern). The REST host base URL is `<host>/api/v3/`; build the pulls URL relative to it.
+> **Note on transport:** `GitHubReviewSubmitter`'s `PostGraphQLAsync`/`SendGitHubAsync` are private instance wrappers — not shareable. Copy the same thin wrappers over the shared `internal static` `GitHubGraphQL.PostAsync` / `GitHubHttp.SendAsync` (the established "verbatim twin" pattern). **Build the pulls URL as a BARE-RELATIVE path** (`repos/{o}/{r}/pulls/{n}`) resolved against the named `github` client's `BaseAddress`, exactly as `GitHubReviewSubmitter.IssueComments.cs` does — do **NOT** prepend `api/v3/`. (Plan ce-doc-review — adversarial: `/api/v3` is the **GHES** path; on dotcom the base is `https://api.github.com/`, so prepending it double-prefixes → 404. The test's `BaseAddress` happens to be the GHES form, but the bare-relative URL is correct against either base.)
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -351,8 +325,42 @@ public class GitHubPrLifecycleWriterTests
         var result = await MakeWriter(handler).CloseAsync(Pr, CancellationToken.None);
         result.ErrorCode.Should().Be(PrLifecycleErrorCode.RateLimited);
     }
+
+    // Plan ce-doc-review (adversarial): a 403 PRIMARY rate-limit body has neither "secondary"
+    // nor "abuse" — it must still map to RateLimited, not TokenCannotWrite.
+    [Fact]
+    public async Task CloseAsync_403_primary_rate_limit_maps_to_RateLimited()
+    {
+        var handler = new StubHandler(Resp(HttpStatusCode.Forbidden,
+            "{\"message\":\"API rate limit exceeded for user ID 1.\"}"));
+        var result = await MakeWriter(handler).CloseAsync(Pr, CancellationToken.None);
+        result.ErrorCode.Should().Be(PrLifecycleErrorCode.RateLimited);
+    }
+
+    // Plan ce-doc-review (feasibility + adversarial): the GraphQL mutation throws on non-2xx;
+    // a 401 on the mutation hop must map to TokenCannotWrite, NOT escape as an unhandled 500.
+    [Fact]
+    public async Task MarkReadyForReviewAsync_mutation_401_maps_to_TokenCannotWrite()
+    {
+        var handler = new StubHandler(
+            Resp(HttpStatusCode.OK, "{\"data\":{\"repository\":{\"pullRequest\":{\"id\":\"PR_node1\"}}}}"),
+            Resp(HttpStatusCode.Unauthorized, "{\"message\":\"Bad credentials\"}"));
+        var result = await MakeWriter(handler).MarkReadyForReviewAsync(Pr, CancellationToken.None);
+        result.ErrorCode.Should().Be(PrLifecycleErrorCode.TokenCannotWrite);
+    }
+
+    // A 429 on the node-id RESOLVE hop keeps its RateLimited meaning (not blanket Generic).
+    [Fact]
+    public async Task ConvertToDraftAsync_resolve_429_maps_to_RateLimited()
+    {
+        var handler = new StubHandler(Resp(HttpStatusCode.TooManyRequests, "{\"message\":\"rate limited\"}"));
+        var result = await MakeWriter(handler).ConvertToDraftAsync(Pr, CancellationToken.None);
+        result.ErrorCode.Should().Be(PrLifecycleErrorCode.RateLimited);
+    }
 }
 ```
+
+> **The GraphQL error-match strings are PROVISIONAL** (plan ce-doc-review — adversarial). The benign-no-op ("already a draft" / "already ready" / "not a draft"), plan-unsupported ("draft … not supported"), and permission ("Resource not accessible") matches are inferred, and the tests above feed those exact strings back (tautological). Before relying on them, capture GitHub's REAL response bodies once (a markReady on an already-ready PR; a convert-to-draft on an already-draft PR; a convert on a drafts-disabled repo) and pin the matches to the observed text. Task 14's B2 step exercises an already-in-state click to catch a mismatch.
 
 - [ ] **Step 2: Run tests to verify they fail**
 
@@ -430,8 +438,12 @@ internal sealed class GitHubPrLifecycleWriter : IPrLifecycleWriter
         if (isReopen && status == HttpStatusCode.UnprocessableEntity) return PrLifecycleErrorCode.ReopenNotPossible;
         if (status == HttpStatusCode.Forbidden)
         {
-            // GitHub 403 secondary rate-limit / abuse bodies mention "secondary rate limit" / "abuse".
-            if (body.Contains("secondary rate limit", StringComparison.OrdinalIgnoreCase)
+            // CORRECTED (plan ce-doc-review — adversarial): GitHub returns 403 for BOTH the
+            // secondary-rate-limit/abuse family AND PRIMARY rate-limit exhaustion ("API rate
+            // limit exceeded for …", X-RateLimit-Remaining: 0). Match "rate limit" broadly so a
+            // rate-limited user is NOT told to fix their PAT scopes. This subsumes the secondary
+            // wording.
+            if (body.Contains("rate limit", StringComparison.OrdinalIgnoreCase)
                 || body.Contains("abuse", StringComparison.OrdinalIgnoreCase))
                 return PrLifecycleErrorCode.RateLimited;
             if (body.Contains("Protected branch", StringComparison.OrdinalIgnoreCase)
@@ -443,9 +455,19 @@ internal sealed class GitHubPrLifecycleWriter : IPrLifecycleWriter
         return PrLifecycleErrorCode.Generic;
     }
 
+    // Map a non-2xx HTTP failure (thrown by GitHubGraphQL.PostAsync) to a code via its status.
+    private static PrLifecycleErrorCode ClassifyHttpStatus(HttpStatusCode? status) => status switch
+    {
+        HttpStatusCode.TooManyRequests => PrLifecycleErrorCode.RateLimited,
+        HttpStatusCode.Unauthorized => PrLifecycleErrorCode.TokenCannotWrite,
+        HttpStatusCode.Forbidden => PrLifecycleErrorCode.TokenCannotWrite,
+        _ => PrLifecycleErrorCode.Generic,
+    };
+
     // ---- GraphQL draft toggles ----
     private async Task<PrLifecycleResult> RunDraftMutationAsync(PrReference reference, string mutation, CancellationToken ct)
     {
+        var prLabel = $"{reference.Owner}/{reference.Repo}#{reference.Number}";
         string nodeId;
         try
         {
@@ -453,8 +475,10 @@ internal sealed class GitHubPrLifecycleWriter : IPrLifecycleWriter
         }
         catch (HttpRequestException ex)
         {
-            Log.LifecycleFailed(_log, $"{reference.Owner}/{reference.Repo}#{reference.Number}", $"{mutation}:resolve", (int?)ex.StatusCode ?? 0, ex.Message);
-            return PrLifecycleResult.Fail(PrLifecycleErrorCode.Generic);
+            // CORRECTED (plan ce-doc-review — feasibility + adversarial): classify on status,
+            // don't blanket-Generic (a 401/403/429 during resolve keeps its meaning).
+            Log.LifecycleFailed(_log, prLabel, $"{mutation}:resolve", (int?)ex.StatusCode ?? 0, ex.Message);
+            return PrLifecycleResult.Fail(ClassifyHttpStatus(ex.StatusCode));
         }
 
         var query = $$"""
@@ -464,8 +488,20 @@ internal sealed class GitHubPrLifecycleWriter : IPrLifecycleWriter
               }
             }
             """;
-        var body = await PostGraphQLAsync(query, new { id = nodeId }, ct).ConfigureAwait(false);
-        return ClassifyGraphQLResult(body, mutation, reference);
+        try
+        {
+            // CORRECTED (plan ce-doc-review — feasibility + adversarial): GitHubGraphQL.PostAsync
+            // THROWS HttpRequestException on any non-2xx (only GraphQL field-errors arrive as
+            // 200 + errors[]). The mutation call MUST be wrapped or a real 401/403/429/5xx escapes
+            // as an unhandled 500 instead of a typed code.
+            var body = await PostGraphQLAsync(query, new { id = nodeId }, ct).ConfigureAwait(false);
+            return ClassifyGraphQLResult(body, mutation, reference);
+        }
+        catch (HttpRequestException ex)
+        {
+            Log.LifecycleFailed(_log, prLabel, mutation, (int?)ex.StatusCode ?? 0, ex.Message);
+            return PrLifecycleResult.Fail(ClassifyHttpStatus(ex.StatusCode));
+        }
     }
 
     private async Task<string> ResolveNodeIdAsync(PrReference reference, CancellationToken ct)
@@ -853,6 +889,15 @@ git commit -m "feat(#566): SSE fan-out + projection for PrLifecycleChanged"
 - Consumes: `IPrLifecycleWriter` + `PrLifecycleResult`/`PrLifecycleErrorCode` (Tasks 2–3); `IReviewEventBus`; `RequireSubscribed`; `TabStamps.TabIdHeader` + `PrDetailEndpoints.TabIdAllowlistRegex()`; `PrLifecycleChanged` (Task 1).
 - Produces: `POST /api/pr/{owner}/{repo}/{number:int}/{close|reopen|ready-for-review|convert-to-draft}` returning 200 / `{code}` + status.
 
+- [ ] **Step 0: Read the real submit-endpoint guard + DI seam FIRST (plan ce-doc-review — scope + security)**
+
+Before writing any code, read `PRism.Web/Endpoints/PrSubmitEndpoints.cs:91-123`, `PRism.Web/Endpoints/Shared/RequireSubscribed.cs`, and `PRism.Web/Endpoints/Shared/TabStamps.cs`. The real seam (verified by the plan review) is:
+- **Tab-id gate:** `http.Request.Headers[TabStamps.TabIdHeader].FirstOrDefault()` + `PrDetailEndpoints.TabIdAllowlistRegex().IsMatch(tabId)` → on miss, 422 `tab-id-missing`. **Do NOT reimplement the regex** — call `PrDetailEndpoints.TabIdAllowlistRegex()`.
+- **Subscribe gate:** `RequireSubscribed.Check(activePrCache, prRef, msg)` returns an `IResult` rejection (**HTTP 403 + code `"unauthorized"`** — NOT 401) when the session isn't subscribed; inject **`IActivePrCache`** (not an invented `ISubscriberRegistry`). Confirm the exact return contract (nullable `IResult` vs always-`IResult`) and mirror submit's call site.
+- **Mapping site:** `PRism.Web/Program.cs:~390` (where `MapPrSubmitEndpoints()` is called).
+
+The code below uses these real types. Substitute precisely if the source differs.
+
 - [ ] **Step 1: Write the failing endpoint tests + the test context**
 
 First the fake + context:
@@ -912,6 +957,21 @@ public class PrLifecycleEndpointsTests
         ctx.Bus.Published.OfType<PrLifecycleChanged>().Should().BeEmpty();
     }
 
+    // Plan ce-doc-review (scope): the spec lists repo-rule-blocked as a DISTINCT 403 case
+    // (different FE copy — does NOT advise changing the PAT). Exercise the MapError branch.
+    [Fact]
+    public async Task Close_repo_rule_blocked_returns_403_with_distinct_code()
+    {
+        using var ctx = PrLifecycleEndpointsTestContext.Create();
+        await ctx.SeedSessionAsync("o", "r", 1, PrLifecycleEndpointsTestContext.ValidSession());
+        ctx.Writer.NextResult = PrLifecycleResult.Fail(PrLifecycleErrorCode.RepoRuleBlocked);
+        using var client = ctx.CreateClient();
+
+        var resp = await client.SendAsync(Post("close"));
+        resp.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+        (await resp.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("code").GetString().Should().Be("repo-rule-blocked");
+    }
+
     [Fact]
     public async Task Reopen_not_possible_returns_422_with_code()
     {
@@ -937,20 +997,23 @@ public class PrLifecycleEndpointsTests
         ctx.Writer.Calls.Should().BeEmpty();
     }
 
+    // Plan ce-doc-review (security): assert the ACTUAL status + code (403 + "unauthorized"),
+    // not just "not 200" — a weak assertion masks the 401-vs-403 mismatch the FE depends on.
     [Fact]
-    public async Task Unsubscribed_session_is_rejected()
+    public async Task Unsubscribed_session_returns_403_unauthorized()
     {
         using var ctx = PrLifecycleEndpointsTestContext.Create();
         // no SeedSessionAsync → not subscribed
         using var client = ctx.CreateClient();
         var resp = await client.SendAsync(Post("close"));
-        resp.StatusCode.Should().NotBe(HttpStatusCode.OK);
+        resp.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+        (await resp.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("code").GetString().Should().Be("unauthorized");
         ctx.Writer.Calls.Should().BeEmpty();
     }
 }
 ```
 
-> Match the exact missing-tab-id status to what `…/submit` returns (the agent's notes say a distinct 422 `tab-id-missing`). If submit returns a different status, mirror it and update the assertion. Verify against `PrSubmitEndpoints.cs:120-123`.
+> The missing-tab-id status (422 `tab-id-missing`) and the unsubscribed reject (403 `unauthorized`) are the real submit-endpoint contracts confirmed in Step 0. If the source differs, mirror it and update these assertions. The success test asserts the `PrLifecycleChanged` publish; **snapshot eviction is directly covered by Task 5 and the SSE projection-arm by Task 6** (the dedicated subscriber tests), so the endpoint test asserts the publish that triggers them rather than re-asserting the full chain end-to-end.
 
 - [ ] **Step 2: Run to verify they fail**
 
@@ -972,35 +1035,41 @@ internal static class PrLifecycleEndpoints
     public static void MapPrLifecycleEndpoints(this IEndpointRouteBuilder app)
     {
         app.MapPost("/api/pr/{owner}/{repo}/{number:int}/close",
-            (string owner, string repo, int number, HttpContext http, IPrLifecycleWriter writer, IReviewEventBus bus, ISubscriberRegistry subs, ILoggerFactory lf, CancellationToken ct)
-                => HandleAsync(owner, repo, number, http, bus, subs, lf, ct, (w, r, c) => w.CloseAsync(r, c), writer));
+            (string owner, string repo, int number, HttpContext http, IPrLifecycleWriter writer, IReviewEventBus bus, IActivePrCache activePrCache, CancellationToken ct)
+                => HandleAsync(owner, repo, number, http, bus, activePrCache, ct, (w, r, c) => w.CloseAsync(r, c), writer));
 
         app.MapPost("/api/pr/{owner}/{repo}/{number:int}/reopen",
-            (string owner, string repo, int number, HttpContext http, IPrLifecycleWriter writer, IReviewEventBus bus, ISubscriberRegistry subs, ILoggerFactory lf, CancellationToken ct)
-                => HandleAsync(owner, repo, number, http, bus, subs, lf, ct, (w, r, c) => w.ReopenAsync(r, c), writer));
+            (string owner, string repo, int number, HttpContext http, IPrLifecycleWriter writer, IReviewEventBus bus, IActivePrCache activePrCache, CancellationToken ct)
+                => HandleAsync(owner, repo, number, http, bus, activePrCache, ct, (w, r, c) => w.ReopenAsync(r, c), writer));
 
         app.MapPost("/api/pr/{owner}/{repo}/{number:int}/ready-for-review",
-            (string owner, string repo, int number, HttpContext http, IPrLifecycleWriter writer, IReviewEventBus bus, ISubscriberRegistry subs, ILoggerFactory lf, CancellationToken ct)
-                => HandleAsync(owner, repo, number, http, bus, subs, lf, ct, (w, r, c) => w.MarkReadyForReviewAsync(r, c), writer));
+            (string owner, string repo, int number, HttpContext http, IPrLifecycleWriter writer, IReviewEventBus bus, IActivePrCache activePrCache, CancellationToken ct)
+                => HandleAsync(owner, repo, number, http, bus, activePrCache, ct, (w, r, c) => w.MarkReadyForReviewAsync(r, c), writer));
 
         app.MapPost("/api/pr/{owner}/{repo}/{number:int}/convert-to-draft",
-            (string owner, string repo, int number, HttpContext http, IPrLifecycleWriter writer, IReviewEventBus bus, ISubscriberRegistry subs, ILoggerFactory lf, CancellationToken ct)
-                => HandleAsync(owner, repo, number, http, bus, subs, lf, ct, (w, r, c) => w.ConvertToDraftAsync(r, c), writer));
+            (string owner, string repo, int number, HttpContext http, IPrLifecycleWriter writer, IReviewEventBus bus, IActivePrCache activePrCache, CancellationToken ct)
+                => HandleAsync(owner, repo, number, http, bus, activePrCache, ct, (w, r, c) => w.ConvertToDraftAsync(r, c), writer));
     }
 
     private static async Task<IResult> HandleAsync(
         string owner, string repo, int number, HttpContext http,
-        IReviewEventBus bus, ISubscriberRegistry subs, ILoggerFactory lf, CancellationToken ct,
+        IReviewEventBus bus, IActivePrCache activePrCache, CancellationToken ct,
         Func<IPrLifecycleWriter, PrReference, CancellationToken, Task<PrLifecycleResult>> action,
         IPrLifecycleWriter writer)
     {
         var prRef = new PrReference(owner, repo, number);
 
-        // CSRF parity + subscribe guard. Reuse the exact helpers the submit endpoint uses.
-        if (!PrLifecycleGuards.HasValidTabId(http))
+        // CSRF custom-header gate — mirror PrSubmitEndpoints.cs:120-123 EXACTLY (call the shared
+        // regex, do NOT reimplement it).
+        var tabId = http.Request.Headers[TabStamps.TabIdHeader].FirstOrDefault();
+        if (string.IsNullOrEmpty(tabId) || !PrDetailEndpoints.TabIdAllowlistRegex().IsMatch(tabId))
             return Results.Json(new { code = "tab-id-missing" }, statusCode: StatusCodes.Status422UnprocessableEntity);
-        if (!PrLifecycleGuards.IsSubscribed(subs, prRef, http))
-            return Results.Json(new { code = "not-subscribed" }, statusCode: StatusCodes.Status401Unauthorized);
+
+        // Subscribe guard — mirror PrSubmitEndpoints.cs:109-110. Returns a 403 + code "unauthorized"
+        // IResult when not subscribed; the FE disambiguates by body code (403 is shared with
+        // token-cannot-write). Confirm the exact nullable-IResult contract against the source.
+        var reject = RequireSubscribed.Check(activePrCache, prRef, "lifecycle action");
+        if (reject is not null) return reject;
 
         var result = await action(writer, prRef, ct).ConfigureAwait(false);
         if (result.Success)
@@ -1026,7 +1095,7 @@ internal static class PrLifecycleEndpoints
 }
 ```
 
-> **Adapt the guard + DI seam to the real code.** The exact types — how `…/submit` reads/validates `X-PRism-Tab-Id`, and how it checks subscription (the agent referenced `RequireSubscribed` + `PrDetailEndpoints.TabIdAllowlistRegex()`) — must be matched verbatim, not invented. Read `PrSubmitEndpoints.cs:91-123` and reuse the SAME helper calls (replace the placeholder `PrLifecycleGuards.HasValidTabId`/`IsSubscribed` + `ISubscriberRegistry` with whatever submit actually uses). If submit reads the tab id via a shared helper, call that helper; do not duplicate the regex.
+> The guard + DI types above are the real ones confirmed in Step 0 (`TabStamps.TabIdHeader`, `PrDetailEndpoints.TabIdAllowlistRegex()`, `RequireSubscribed.Check(activePrCache, …)`, `IActivePrCache`). If the source signatures differ, substitute precisely — do not reimplement the regex or the subscribe check.
 
 - [ ] **Step 3b: Map the endpoints**
 
@@ -1039,7 +1108,7 @@ app.MapPrLifecycleEndpoints();
 - [ ] **Step 4: Run to verify they pass**
 
 Run: `& 'C:\Program Files\dotnet\dotnet.exe' test tests/PRism.Web.Tests --filter PrLifecycleEndpointsTests`
-Expected: PASS (all 5).
+Expected: PASS (all 6).
 
 - [ ] **Step 5: Full backend gate + commit**
 
@@ -1073,12 +1142,21 @@ git commit -m "feat(#566): PrLifecycleEndpoints (close/reopen/ready/convert-to-d
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const post = vi.fn();
+// CORRECTED mock: the real ApiError is { status, requestId, body } (client.ts:4-14) — the
+// kebab code lives inside `body`, not a `.code` field. The mock MUST mirror that shape or the
+// test false-passes against a contract the backend never emits.
 vi.mock('./client', () => ({
   apiClient: { post: (...a: unknown[]) => post(...a) },
   ApiError: class ApiError extends Error {
     status: number;
-    code?: string;
-    constructor(status: number, code?: string) { super(code); this.status = status; this.code = code; }
+    requestId: string | null;
+    body: unknown;
+    constructor(status: number, body?: unknown) {
+      super(String(status));
+      this.status = status;
+      this.requestId = null;
+      this.body = body;
+    }
   },
 }));
 
@@ -1097,33 +1175,33 @@ describe('prLifecycle client', () => {
     expect(r).toEqual({ ok: true });
   });
 
-  it('maps a 403 token-cannot-write ApiError to a typed code', async () => {
-    post.mockRejectedValueOnce(new ApiError(403, 'token-cannot-write'));
+  it('maps a 403 token-cannot-write (code in body) to a typed code', async () => {
+    post.mockRejectedValueOnce(new ApiError(403, { code: 'token-cannot-write' }));
     const r = await closePr(prRef);
     expect(r).toEqual({ ok: false, code: 'token-cannot-write' });
   });
 
   it('maps a 422 reopen-not-possible from reopen', async () => {
-    post.mockRejectedValueOnce(new ApiError(422, 'reopen-not-possible'));
+    post.mockRejectedValueOnce(new ApiError(422, { code: 'reopen-not-possible' }));
     const r = await reopenPr(prRef);
     expect(r).toEqual({ ok: false, code: 'reopen-not-possible' });
   });
 
   it('falls back to generic for an unknown code', async () => {
-    post.mockRejectedValueOnce(new ApiError(502, 'something-weird'));
+    post.mockRejectedValueOnce(new ApiError(502, { code: 'something-weird' }));
     const r = await markReady(prRef);
     expect(r).toEqual({ ok: false, code: 'generic' });
   });
 
-  it('maps a 401 to subscribe-rejected', async () => {
-    post.mockRejectedValueOnce(new ApiError(401, 'not-subscribed'));
+  it('maps a 403 "unauthorized" (RequireSubscribed reject) to subscribe-rejected', async () => {
+    post.mockRejectedValueOnce(new ApiError(403, { code: 'unauthorized' }));
     const r = await convertToDraft(prRef);
     expect(r).toEqual({ ok: false, code: 'subscribe-rejected' });
   });
 });
 ```
 
-> Verify the real `ApiError` shape in `client.ts` (does it expose `.status` and a parsed `.code` from the JSON body?). The agent's excerpt cut off at "// error handling"; **read `client.ts`'s error path** and adjust the mock + the mapping to the actual fields. If the body code isn't parsed by `client.ts`, parse it in `prLifecycle.ts` from the error payload.
+> Confirm the real `ApiError` field names against `client.ts` (it is `{ status, requestId, body }`; on a non-OK response the JSON body is parsed into `.body`). If `client.ts` exposes the parsed body under a different name, adjust `e.body` in the implementation + the mock to match. The endpoint's subscribe-reject code is whatever `RequireSubscribed.Check` emits — the reviews observed `"unauthorized"`; confirm that exact string and map it.
 
 - [ ] **Step 2: Run to verify it fails**
 
@@ -1170,9 +1248,15 @@ async function run(prRef: PrReference, action: string): Promise<PrActionResult> 
     return { ok: true };
   } catch (e) {
     if (e instanceof ApiError) {
-      // 401 from the subscribe guard → its own "session lost access" copy.
-      if (e.status === 401) return { ok: false, code: 'subscribe-rejected' };
-      const code = e.code && KNOWN.has(e.code) ? (e.code as PrLifecycleErrorCode) : 'generic';
+      // CORRECTED (plan ce-doc-review — feasibility + security + adversarial, verified
+      // client.ts): ApiError is { status, requestId, body } — there is NO `.code` field.
+      // The endpoint returns the kebab code inside the JSON body ({ code }), so read e.body.code.
+      const raw = (e.body as { code?: string } | null | undefined)?.code;
+      // RequireSubscribed rejects with HTTP 403 + code "unauthorized" (NOT 401 — and client.ts
+      // pre-empts any real 401 with a global prism-auth-rejected dispatch before throwing). 403
+      // is shared with token-cannot-write, so disambiguate by CODE, not status.
+      if (raw === 'unauthorized') return { ok: false, code: 'subscribe-rejected' };
+      const code = raw && KNOWN.has(raw) ? (raw as PrLifecycleErrorCode) : 'generic';
       return { ok: false, code };
     }
     return { ok: false, code: 'generic' };
@@ -1200,15 +1284,31 @@ git commit -m "feat(#566): prLifecycle api client + typed error codes"
 
 ---
 
-## Task 9: `useLifecycleChangedSubscriber`
+## Task 9: `useLifecycleChangedSubscriber` (+ register the SSE event type)
 
 **Files:**
+- Modify: `frontend/src/api/types.ts` — add the `PrLifecycleChangedEvent` payload type.
+- Modify: `frontend/src/api/events.ts` — add `'pr-lifecycle-changed'` to **both** `EventPayloadByType` AND the `EVENT_TYPES` const array.
 - Create: `frontend/src/hooks/useLifecycleChangedSubscriber.ts`
 - Test: `frontend/src/hooks/useLifecycleChangedSubscriber.test.ts`
 
 **Interfaces:**
 - Consumes: `useEventSource`, `prRefKey` (mirror `useSingleCommentPostedSubscriber`). SSE event name `'pr-lifecycle-changed'` (Task 6).
 - Produces: `useLifecycleChangedSubscriber({ prRef, onChanged }): void`.
+
+> **CRITICAL (plan ce-doc-review — feasibility, verified `events.ts`).** `stream.on` is strictly typed: `on<T extends keyof EventPayloadByType>(type: T, …)`. Adding the type entry is **necessary but not sufficient** — `EventSource.addEventListener` is only called for names in the **`EVENT_TYPES` const array** (`events.ts`, ~lines 80-95 + 353-354; the file's own comment states this). If `'pr-lifecycle-changed'` is missing from `EVENT_TYPES`, the listener is never registered at runtime and the acting tab never reloads — **while the Task-9 vitest (which mocks `useEventSource` with a permissive fake `on`) still passes green.** Both edits below are load-bearing; do Step 0 first.
+
+- [ ] **Step 0: Register the event type + runtime name (do this FIRST)**
+
+In `frontend/src/api/types.ts`, add (next to the other SSE event payload types):
+
+```typescript
+export interface PrLifecycleChangedEvent {
+  prRef: string;
+}
+```
+
+In `frontend/src/api/events.ts`, add `'pr-lifecycle-changed': PrLifecycleChangedEvent` to the `EventPayloadByType` map (import the type), **and** add `'pr-lifecycle-changed'` to the `EVENT_TYPES` const array (the runtime registration list — find `'single-comment-posted'` in BOTH places and mirror it). Build to confirm: `cd frontend && node_modules/.bin/tsc -b`.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1290,7 +1390,7 @@ export function useLifecycleChangedSubscriber({
 }
 ```
 
-> If `stream.on`'s event param is typed per-event, add `'pr-lifecycle-changed'` to that event-map type (find where `'single-comment-posted'` is declared for `useEventSource` and add the new entry with `{ prRef: string }`).
+> The `EventPayloadByType` + `EVENT_TYPES` registration was done in Step 0 — `event.prRef` typechecks and the listener registers at runtime.
 
 - [ ] **Step 4: Run to verify it passes**
 
@@ -1393,7 +1493,7 @@ describe('usePrAction', () => {
     expect(reload).toHaveBeenCalledTimes(1);
   });
 
-  it('cancels the fallback when freshness changes (SSE reload landed)', async () => {
+  it('cancels the fallback when freshness changes (SSE reload landed after the timer armed)', async () => {
     vi.useFakeTimers();
     closePr.mockResolvedValueOnce({ ok: true });
     const reload = vi.fn();
@@ -1403,6 +1503,22 @@ describe('usePrAction', () => {
     // Simulate the SSE-driven reload swapping prDetail identity:
     freshness = { v: 2 };
     rerender();
+    await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
+    expect(reload).not.toHaveBeenCalled();
+  });
+
+  it('does NOT arm the fallback when the reload lands BEFORE the POST resolves (arm-after-reload race)', async () => {
+    vi.useFakeTimers();
+    let resolve!: (v: { ok: true }) => void;
+    closePr.mockReturnValueOnce(new Promise((r) => { resolve = r; }));
+    const reload = vi.fn();
+    let freshness: object = { v: 1 };
+    const { result, rerender } = renderHook(() => usePrAction({ prRef, reload, freshness }));
+    act(() => result.current.invoke('close'));
+    // Fast SSE reload swaps freshness BEFORE the POST 200 resolves:
+    freshness = { v: 2 };
+    rerender();
+    await act(async () => { resolve({ ok: true }); }); // .then runs now — must NOT arm a timer
     await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
     expect(reload).not.toHaveBeenCalled();
   });
@@ -1473,9 +1589,16 @@ export function usePrAction({ prRef, reload, freshness }: UsePrActionArgs): UseP
   const inFlight = useRef(false);                 // synchronous re-entrancy guard
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const freshnessAtPost = useRef<unknown>(undefined);
+  // latestFreshness mirrors the freshness prop on EVERY render so the POST's .then closure
+  // (which captured a stale `freshness`) can compare against the current value. This closes the
+  // arm-after-reload race (plan ce-doc-review — adversarial): the bus publishes synchronously
+  // before the POST's 200 resolves, so the SSE reload can land BEFORE .then runs — the
+  // freshness-effect would then no-op (timer still null) and .then would arm a doomed timer.
+  const latestFreshness = useRef<unknown>(freshness);
+  latestFreshness.current = freshness;
   const { show } = useToast();
 
-  // Cancel the fallback timer when freshness advances (a reload landed).
+  // Cancel the fallback timer when freshness advances (a reload landed) AFTER the timer is armed.
   useEffect(() => {
     if (timerRef.current !== null && freshness !== freshnessAtPost.current) {
       clearTimeout(timerRef.current);
@@ -1500,8 +1623,11 @@ export function usePrAction({ prRef, reload, freshness }: UsePrActionArgs): UseP
             show({ kind: 'error', message: copyFor(r.code) });
             return;
           }
-          // Success: arm the SSE-drop fallback. If freshness hasn't advanced by FALLBACK_MS,
-          // the SSE reload was likely dropped — reload directly.
+          // Success: arm the SSE-drop fallback — UNLESS the reload already landed between the
+          // POST firing and now (latestFreshness advanced past the value captured at POST time).
+          // Without this guard a fast SSE reload would still leave a doomed timer that fires a
+          // redundant reload at FALLBACK_MS.
+          if (latestFreshness.current !== freshnessAtPost.current) return;
           if (timerRef.current !== null) clearTimeout(timerRef.current);
           timerRef.current = setTimeout(() => {
             timerRef.current = null;
@@ -1526,7 +1652,7 @@ export function usePrAction({ prRef, reload, freshness }: UsePrActionArgs): UseP
 - [ ] **Step 4: Run to verify they pass**
 
 Run: `cd frontend && node_modules/.bin/vitest run src/hooks/usePrAction.test.ts`
-Expected: PASS (all 6).
+Expected: PASS (all 7).
 
 - [ ] **Step 5: Prettier + commit**
 
@@ -1604,10 +1730,29 @@ git commit -m "refactor(#566): split Overview DOM into scroller + content column
 - Test: `frontend/__tests__/PrActionsPanel.test.tsx`
 
 **Interfaces:**
-- Consumes: `usePrActionContext` data — `prDetail.pr` (`isDraft/isClosed/isMerged/state`), `readOnly`, `prRef`, `reload`, and `prDetail` (as `usePrAction`'s `freshness`). Reads these from `usePrDetailContext()` (after Task 13 adds `reload` to it). Uses `usePrAction` (Task 10).
+- Consumes: `usePrDetailContext()` data — `prDetail.pr` (`isDraft/isClosed/isMerged/state`), `readOnly`, `prRef`, `reload`, and `prDetail` (as `usePrAction`'s `freshness`). Uses `usePrAction` (Task 10). `reload` is added to the context in Step 0 below (ordering fix — plan ce-doc-review: this task reads `reload`, so it must exist before this task's tests compile).
 - Produces: `export function PrActionsPanel(): JSX.Element | null`.
 
 **Render rules (spec):** returns `null` when cold-load (no `prDetail`), `readOnly`, or merged. Otherwise renders the state-aware button set with the inline Close confirm.
+
+- [ ] **Step 0: Add `reload` to the context type + test default (must precede this task — ordering fix)**
+
+This task's component reads `reload` from context and its tests call `makePrDetailContextValue`, so both must know `reload` first. (Previously these edits lived in Task 13 step 1-2 which ran *after* this task — a compile-order bug caught by the plan review.)
+
+In `frontend/src/components/PrDetail/prDetailContext.tsx`, add to `PrDetailContextValue`:
+
+```typescript
+  // #566 — lets the Overview PrActionsPanel trigger a PR-detail reload (SSE-drop fallback).
+  reload: () => void;
+```
+
+In `frontend/src/components/PrDetail/testUtils.tsx`, add to the object `makePrDetailContextValue` returns:
+
+```typescript
+    reload: vi.fn(),
+```
+
+Build to confirm: `cd frontend && node_modules/.bin/tsc -b` (existing `renderWithPrDetailContext` tests still typecheck; the real provider value gets `reload` wired in Task 13).
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -1699,8 +1844,68 @@ describe('PrActionsPanel', () => {
     rerender(/* re-render with closed context — see note */);
     await waitFor(() => expect(screen.queryByText(/close this pr\?/i)).not.toBeInTheDocument());
   });
+
+  it('renders nothing during cold load (prDetail null)', () => {
+    const { container } = renderWithPrDetailContext(<PrActionsPanel />, { prDetail: null });
+    expect(container).toBeEmptyDOMElement();
+  });
+
+  it('Close confirm moves focus to Cancel and exposes a status live-region', async () => {
+    const user = userEvent.setup();
+    renderPanel({});
+    await user.click(screen.getByRole('button', { name: /^close$/i }));
+    expect(screen.getByRole('button', { name: /cancel/i })).toHaveFocus();
+    // live region, NOT a dialog role (inline morph, no focus trap):
+    expect(screen.getByRole('status')).toHaveTextContent(/close this pr\?/i);
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+  });
+
+  it('a click outside the panel dismisses the Close confirm', async () => {
+    const user = userEvent.setup();
+    render(
+      <div>
+        <button>outside</button>
+        {renderInPanel({})}
+      </div>,
+    );
+    // NOTE: mount the panel + an outside element together — see the harness note below.
+    await user.click(screen.getByRole('button', { name: /^close$/i }));
+    expect(screen.getByText(/close this pr\?/i)).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: /outside/i }));
+    expect(screen.queryByText(/close this pr\?/i)).not.toBeInTheDocument();
+  });
+
+  it('the plain Close button shows the pending label while a close is in flight', () => {
+    pending = 'close';
+    renderPanel({});
+    expect(screen.getByRole('button', { name: /closing…/i })).toBeInTheDocument();
+  });
+
+  it('a failed close clears the confirm back to the plain Close button', async () => {
+    const user = userEvent.setup();
+    // invoke('close') is mocked; the panel pre-clears confirm on Confirm-click, so after a
+    // failure the confirm is already gone and the plain Close button is present.
+    renderPanel({});
+    await user.click(screen.getByRole('button', { name: /^close$/i }));
+    await user.click(screen.getByRole('button', { name: /confirm close/i }));
+    expect(invoke).toHaveBeenCalledWith('close');
+    expect(screen.queryByText(/close this pr\?/i)).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^close$/i })).toBeInTheDocument();
+  });
+
+  it('focus moves into the panel when the action set swaps under it', async () => {
+    const user = userEvent.setup();
+    // Mount a harness that swaps prDetail (non-draft → draft) on demand so the action set
+    // changes (Convert-to-draft → Mark-ready) while a panel button holds focus.
+    // Tab to the Convert-to-draft button, swap, assert focus didn't fall to <body>.
+    // (Implement via the same context-swap harness as the external-state test.)
+    // Pseudocode shape — wire to the real harness:
+    //   tab to convert button → swap context to draft → expect(panel or first button).toHaveFocus()
+  });
 });
 ```
+
+> Test-harness notes: (1) the click-outside and focus-on-swap tests need the panel mounted alongside sibling DOM and a way to swap the context value — add a tiny local harness component that holds the context value in `useState` and renders `<PrDetailContextProvider value={v}><PrActionsPanel/></PrDetailContextProvider>` plus an outside button; `renderInPanel` above is a placeholder for that harness. Reuse it for the external-state test too (replacing its `rerender(/* … */)` placeholder). (2) `toHaveFocus` requires `@testing-library/jest-dom`. (3) For the pending-label test, the `usePrAction` mock already exposes the module-level `pending` var — set it before render.
 
 > `renderWithPrDetailContext` returns a plain RTL result; to re-render with a new context value, either expose a small wrapper that takes the value as state, or re-`render` into the same container. If `rerender` with a new provider value is awkward, restructure the last test to mount a tiny harness component that swaps the context value via `useState`. Adjust to whatever `testUtils.tsx` supports — do not invent an API. Confirm `makePr`/`makePrDetailDto` accept the `state/isDraft/isClosed/isMerged` fields (check `__tests__/helpers/prDetail.ts`).
 
@@ -1737,6 +1942,18 @@ export function PrActionsPanel() {
     if (confirmingClose) cancelRef.current?.focus();
   }, [confirmingClose]);
 
+  // Dismiss-on-click-outside (spec decision 2) — mirror ReviewActionMenu.tsx's mousedown pattern.
+  useEffect(() => {
+    if (!confirmingClose) return;
+    const onDocMouseDown = (e: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setConfirmingClose(false);
+      }
+    };
+    document.addEventListener('mousedown', onDocMouseDown);
+    return () => document.removeEventListener('mousedown', onDocMouseDown);
+  }, [confirmingClose]);
+
   // Suppression: cold-load, readOnly, merged.
   if (!pr || readOnly || pr.isMerged) return null;
 
@@ -1755,8 +1972,21 @@ export function PrActionsPanel() {
   const onInvoke = (kind: PrActionKind) => invoke(kind);
 
   return (
-    <div ref={containerRef} className={styles.panel} role="group" aria-label="PR actions">
+    // tabIndex={-1} so focus-on-swap (FocusOnActionSetSwap below) can land focus on the panel
+    // when the button set changes out from under the focused control.
+    <div ref={containerRef} className={styles.panel} role="group" aria-label="PR actions" tabIndex={-1}>
+      <FocusOnActionSetSwap
+        signature={`${showReady}|${showConvertDraft}|${showReopen}|${showClose}`}
+        containerRef={containerRef}
+      />
       <span className={styles.regionTag}>PR actions</span>
+
+      {/* Visually-hidden live region (NOT role="alertdialog" — that implies a modal w/ focus
+          trap, which this inline morph is not; codebase uses Modal for alertdialog). Announces
+          the confirm prompt. Pattern: AiFailureContainer / GitHubAuthBanner. */}
+      <span className="sr-only" role="status" aria-live="polite" aria-atomic="true">
+        {confirmingClose ? 'Close this PR? Use Cancel or Confirm close.' : ''}
+      </span>
 
       {showReady && (
         <button className={styles.btnReady} disabled={siblingsDisabled || pending === 'ready'} onClick={() => onInvoke('ready')}>
@@ -1777,35 +2007,56 @@ export function PrActionsPanel() {
       )}
 
       {showClose && !confirmingClose && (
+        // The pending label lives HERE (not on Confirm close): clicking Confirm sets
+        // confirmingClose=false + pending='close' in one batch, so the confirm span unmounts and
+        // the plain Close button is what renders during the in-flight state. (Plan ce-doc-review.)
         <button className={styles.btnClose} disabled={siblingsDisabled} onClick={() => setConfirmingClose(true)}>
-          Close
+          {pending === 'close' ? 'Closing…' : 'Close'}
         </button>
       )}
 
       {showClose && confirmingClose && (
         <span
           className={styles.confirm}
-          role="alertdialog"
-          aria-live="polite"
-          onKeyDown={(e) => { if (e.key === 'Escape') setConfirmingClose(false); }}
+          onKeyDown={(e) => { if (e.key === 'Escape') { e.preventDefault(); setConfirmingClose(false); } }}
         >
           <span className={styles.confirmQ}>Close this PR?</span>
           <button ref={cancelRef} className={styles.btn} onClick={() => setConfirmingClose(false)}>Cancel</button>
           <button
             className={styles.btnConfirm}
-            disabled={pending === 'close'}
             onClick={() => { setConfirmingClose(false); onInvoke('close'); }}
           >
-            {pending === 'close' ? 'Closing…' : 'Confirm close'}
+            Confirm close
           </button>
         </span>
       )}
     </div>
   );
 }
+
+// Moves focus to the panel container when the visible action set changes (e.g. a successful
+// Convert-to-draft swaps to Mark-ready) AND focus was inside the panel — so keyboard users
+// aren't dumped to <body> when the focused button is removed. (Plan ce-doc-review finding M.)
+function FocusOnActionSetSwap({
+  signature,
+  containerRef,
+}: {
+  signature: string;
+  containerRef: React.RefObject<HTMLDivElement | null>;
+}) {
+  const prev = useRef(signature);
+  useEffect(() => {
+    if (prev.current !== signature) {
+      const el = containerRef.current;
+      if (el && el.contains(document.activeElement)) el.focus();
+      prev.current = signature;
+    }
+  }, [signature, containerRef]);
+  return null;
+}
 ```
 
-> **Dismiss-on-click-outside** (spec decision 2): add a `useEffect` that, while `confirmingClose`, registers a `mousedown` document listener that calls `setConfirmingClose(false)` when the target is outside `containerRef`. Mirror any existing click-outside pattern in the codebase (search for one before hand-rolling). **Focus-on-swap** (finding M): when the action set changes after a successful reload, move focus into the panel — a `useEffect` keyed on the derived action-set signature that calls `containerRef.current?.focus()` (give the container `tabIndex={-1}`) when the set changes and the panel previously held focus. Keep it minimal; the exact focus-on-swap is gate-tunable but include a working version.
+> Confirm the project's `sr-only` utility class name (search an existing visually-hidden usage, e.g. `AiFailureContainer.tsx` / `GitHubAuthBanner.tsx`) and use it verbatim. The click-outside `useEffect` mirrors `ReviewActionMenu.tsx`'s `mousedown` pattern — verify that file and match it.
 
 `PrActionsPanel.module.css` — minimal structural styles (final visual polish deferred to the B1 gate):
 
@@ -1852,33 +2103,16 @@ git commit -m "feat(#566): PrActionsPanel state-aware lifecycle panel with inlin
 ## Task 13: Wire it together (context `reload`, subscriber in PrDetailView, mount the panel)
 
 **Files:**
-- Modify: `frontend/src/components/PrDetail/prDetailContext.tsx` (add `reload` to the value + type)
-- Modify: `frontend/src/components/PrDetail/testUtils.tsx` (add `reload` default)
 - Modify: `frontend/src/components/PrDetail/PrDetailView.tsx` (wire `useLifecycleChangedSubscriber`; pass `reload` into context)
 - Modify: `frontend/src/components/PrDetail/OverviewTab/OverviewTab.tsx` (mount `<PrActionsPanel />`)
-- Test: a focused integration test in `frontend/__tests__/` is optional; the unit tests above + the existing PrDetailView tests cover the seams. Add one assertion to an existing PrDetailView test if it already renders the SSE wiring.
+- Test: `frontend/__tests__/PrDetailView.test.tsx` (or a new focused file) — the banner-suppression assertion below is **required**, not optional.
+
+> The context `reload` field + the `makePrDetailContextValue` default were added in **Task 12 Step 0** (ordering fix). This task only wires the real provider value + the subscriber + mounts the panel.
 
 **Interfaces:**
-- Consumes: `useLifecycleChangedSubscriber` (Task 9), `PrActionsPanel` (Task 12). Produces: `PrDetailContextValue.reload: () => void`.
+- Consumes: `useLifecycleChangedSubscriber` (Task 9), `PrActionsPanel` (Task 12), `PrDetailContextValue.reload` (Task 12 Step 0).
 
-- [ ] **Step 1: Add `reload` to the context type + provider value**
-
-In `prDetailContext.tsx`, add to `PrDetailContextValue`:
-
-```typescript
-  // #566 — lets the Overview PrActionsPanel trigger a PR-detail reload (SSE-drop fallback).
-  reload: () => void;
-```
-
-- [ ] **Step 2: Update `makePrDetailContextValue` default**
-
-In `testUtils.tsx`, add to the returned object (so every `renderWithPrDetailContext` test still typechecks):
-
-```typescript
-    reload: vi.fn(),
-```
-
-- [ ] **Step 3: Wire PrDetailView**
+- [ ] **Step 1: Wire PrDetailView**
 
 (a) Add the subscriber near the other reload subscribers (after `useSingleCommentPostedSubscriber`):
 
@@ -1903,7 +2137,7 @@ useLifecycleChangedSubscriber({ prRef, onChanged: handleLifecycleChanged });
 
 and add `reload` to that `useMemo`'s dependency array (it's a stable `useCallback` from `usePrDetail`).
 
-- [ ] **Step 4: Mount the panel in OverviewTab**
+- [ ] **Step 2: Mount the panel in OverviewTab**
 
 In `OverviewTab.tsx` (after the Task 11 split), import and mount the panel as the grid's sibling:
 
@@ -1920,17 +2154,33 @@ import { PrActionsPanel } from './PrActionsPanel';
   );
 ```
 
-- [ ] **Step 5: Run the FE gate**
+- [ ] **Step 3: REQUIRED test — self-action banner suppression (`updates.clear()` ordering)**
+
+This is the specific guard the spec cited: the background `pr-updated` SSE latches `isClosed:true` on the acting tab, and without `updates.clear()` the user who clicked Close sees a redundant "PR was closed — Reload" banner. The `useLifecycleChangedSubscriber` unit test (Task 9) only checks `onChanged` fired — it cannot verify the `PrDetailView` wiring. Add a focused test in `frontend/__tests__/PrDetailView.test.tsx`:
+
+```tsx
+it('a self lifecycle action clears the update latch and does not flash the transition banner', async () => {
+  // Render PrDetailView for an OPEN pr. Fire BOTH a background pr-updated{isClosed:true}
+  // (latches updates.isClosed) AND the pr-lifecycle-changed SSE for the same pr.
+  // Assert: the "PR was closed — Reload" BannerTransition is NOT shown (updates.clear ran),
+  // and usePrDetail.reload was triggered (spy or assert the detail re-GET fired).
+  // Wire via the existing PrDetailView test harness + the SSE-fire helper used elsewhere.
+});
+```
+
+> If the existing `PrDetailView.test.tsx` harness can't easily fire SSE + spy `reload`, assert the observable instead: after firing `pr-updated{isClosed:true}` then `pr-lifecycle-changed`, `queryByText(/was closed.*reload/i)` is null. Match the real `BannerTransition` copy.
+
+- [ ] **Step 4: Run the FE gate**
 
 Run: `cd frontend && node_modules/.bin/vitest run` (full suite)
 Then: `cd frontend && node_modules/.bin/tsc -b` and `cd frontend && npm run lint`
 Expected: green; no type errors; lint clean.
 
-- [ ] **Step 6: Prettier + commit**
+- [ ] **Step 5: Prettier + commit**
 
 ```bash
-cd frontend && node_modules/.bin/prettier --write src/components/PrDetail/prDetailContext.tsx src/components/PrDetail/PrDetailView.tsx src/components/PrDetail/OverviewTab/OverviewTab.tsx src/components/PrDetail/testUtils.tsx
-git add frontend/src/components/PrDetail/prDetailContext.tsx frontend/src/components/PrDetail/PrDetailView.tsx frontend/src/components/PrDetail/OverviewTab/OverviewTab.tsx frontend/src/components/PrDetail/testUtils.tsx
+cd frontend && node_modules/.bin/prettier --write src/components/PrDetail/PrDetailView.tsx src/components/PrDetail/OverviewTab/OverviewTab.tsx
+git add frontend/src/components/PrDetail/PrDetailView.tsx frontend/src/components/PrDetail/OverviewTab/OverviewTab.tsx frontend/__tests__/PrDetailView.test.tsx
 git commit -m "feat(#566): wire lifecycle subscriber + mount PrActionsPanel in Overview"
 ```
 
@@ -1958,9 +2208,12 @@ Grep `frontend/e2e` for any SSE event allowlist/mock that enumerates event names
 
 Per repo memory, run the simplify pass over the diff before pushing.
 
-- [ ] **Step 5: B2 live-verification note for the owner**
+- [ ] **Step 5: B2 live-verification note for the owner (incl. error-string confirmation)**
 
-Document in the PR `## Proof` section: CI cannot assert a real GitHub write. The owner must, at the B2 gate, run a real Close → Reopen → Mark-ready → Convert-to-draft against a real PR using the live PAT (per the reference recipe: serve detached, auth the local instance, open a real PR), confirming the header glyph/badge reconcile without a manual refresh and no banner flash on self-Close.
+Document in the PR `## Proof` section: CI cannot assert a real GitHub write. At the B2 gate, run against a real PR using the live PAT (serve detached, auth the local instance, open a real PR):
+- **Happy path:** Close → Reopen → Mark-ready → Convert-to-draft — header glyph/badge reconcile without a manual refresh; no banner flash on self-Close.
+- **Already-in-state (confirms the guessed GraphQL strings — plan ce-doc-review):** click **Mark-ready on an already-ready PR** and **Convert-to-draft on an already-draft PR** — assert **no error toast** (the benign-no-op detection matched GitHub's real message). If an error toast appears, capture the real response body and fix the match strings in `GitHubPrLifecycleWriter.FirstGraphQLErrorCode` before merge.
+- **(If reachable) a branch-protected repo:** confirm the `repo-rule-blocked` copy doesn't advise changing the PAT.
 
 - [ ] **Step 6: Final commit / ready for PR**
 
@@ -1998,4 +2251,6 @@ Then hand off to `pr-autopilot` (or `gh pr create` fallback) targeting `main`.
 
 **Placeholder scan:** No "TBD"/"implement later". Where the real codebase shape must be confirmed (ApiError fields, submit's exact tab-id helper + status, makePr fields, token CSS names, click-outside pattern), the step says so explicitly and points at the file to read — these are "match the real pattern" instructions, not deferred work.
 
-**Type consistency:** `PrLifecycleErrorCode` (BE enum) ↔ kebab JSON `code` ↔ FE `PrLifecycleErrorCode` union align (token-cannot-write / repo-rule-blocked / reopen-not-possible / plan-unsupported-drafts / rate-limited / generic; FE adds subscribe-rejected from 401). `PrActionKind` ('close'|'reopen'|'ready'|'convert-to-draft') is consistent across Task 10 and Task 12. `freshness: unknown` = `prDetail` identity, used consistently in Tasks 10 + 12. Event name `'pr-lifecycle-changed'` consistent across Tasks 6 + 9.
+**Type consistency:** `PrLifecycleErrorCode` (BE enum) ↔ kebab JSON `code` (in the response **body**) ↔ FE `PrLifecycleErrorCode` union align (token-cannot-write / repo-rule-blocked / reopen-not-possible / plan-unsupported-drafts / rate-limited / generic; FE adds `subscribe-rejected`, mapped from the **403 body code `"unauthorized"`** that `RequireSubscribed` emits — NOT from a status code). The FE reads the code from `e.body.code`, not `e.code`. `PrActionKind` ('close'|'reopen'|'ready'|'convert-to-draft') is consistent across Task 10 and Task 12. `freshness: unknown` = `prDetail` identity, used consistently in Tasks 10 + 12. Event name `'pr-lifecycle-changed'` consistent across Tasks 6 + 9, registered in both `EventPayloadByType` and `EVENT_TYPES` (Task 9 Step 0).
+
+**Round-1 plan ce-doc-review applied (6 personas):** FE error mapping `e.body.code` + 403 `"unauthorized"` (quadruple-corroborated); SSE `EVENT_TYPES` runtime registration; GraphQL mutation HTTP-error catch; a11y/interaction promoted into the skeleton (group+sr-only status, Close pending label, click-outside, focus-on-swap, Escape preventDefault); Task-ordering fix (context `reload` → Task 12 Step 0); primary-rate-limit 403; fallback arm-after-reload race note; provisional-error-string + B2 already-in-state step; endpoint `repo-rule-blocked` + 403-code tests; vacuous record test removed; bare-relative REST URL.
