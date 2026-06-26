@@ -27,9 +27,9 @@ const store = new Map<string, number>();
 // The marker allow-list, single-sourced here so the marker effect (which makes the
 // slot a scroller) and this hook (which restores onto it) cannot drift. Mirrors the
 // `pinned` set in PrDetailView's marker layout effect and the tokens.css
-// `[data-detail-active]` rules. Keep the list closed under PrDetailView's
-// `effectiveSubTab` coercion (hotspots→overview) so the marker (fed raw subTab) and
-// this hook (fed effectiveSubTab) stay in agreement.
+// `[data-detail-active]` rules. Both the marker and this hook feed it
+// `effectiveSubTab` (the value that drives slot visibility), so they stay in agreement
+// by construction — no separate "keep the list closed under the coercion" invariant.
 export function isSlotScrollSubTab(subTab: string): boolean {
   return subTab === 'overview' || subTab === 'hotspots' || subTab === 'checks';
 }

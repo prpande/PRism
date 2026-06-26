@@ -1,4 +1,5 @@
 import { test, expect, request, type Page } from '@playwright/test';
+import { BACKEND_ORIGIN } from './helpers/backend-origin';
 import { resetBackendState, setupAndOpenScenarioPr } from './helpers/s4-setup';
 
 // #643 — the kept-alive Overview / Hotspots / Checks tabs must PRESERVE their inner
@@ -121,4 +122,55 @@ test('#643 Checks and Overview slots remember independent scroll offsets', async
   await page.getByTestId('pr-tab-checks').click();
   await expect(checks).toBeVisible();
   await expect.poll(() => checks.evaluate((el) => el.scrollTop), { timeout: 15000 }).toBe(250);
+});
+
+test('#643 Overview slot scroll survives a PR→Inbox→PR background/return', async ({ page }) => {
+  // Browser-observable proof of the PR background→return path (AC #2), the sibling of
+  // #590's diff-scroll-keepalive PR→Inbox→PR cycle. Backgrounding the PR tab deactivates
+  // the view (root `hidden`) but keep-alive keeps it mounted, so the injected filler and
+  // the slot survive; on return the marker re-applies and useSlotScrollMemory's restore
+  // writes the stored offset back.
+  await page.setViewportSize(VIEWPORT);
+  await setupAndOpenScenarioPr(page);
+
+  // Suppress the #485 AI-onboarding overlay (mirrors diff-scroll-keepalive.spec.ts):
+  // resetBackendState's onboardingSeen patch runs on a separate unauthenticated context
+  // and no-ops, so this authenticated POST is what actually lands — without it the dialog
+  // backdrop intercepts the return-via-tab-pill click.
+  const seenResp = await page.request.post(`${BACKEND_ORIGIN}/api/preferences`, {
+    data: { 'ui.ai.onboardingSeen': true },
+    headers: { 'Content-Type': 'application/json', Origin: BACKEND_ORIGIN },
+  });
+  expect(seenResp.ok(), `POST onboardingSeen=true failed: ${seenResp.status()}`).toBe(true);
+
+  await page.goto('/pr/acme/api/123');
+  await page.locator('[data-testid="pr-header"]').waitFor();
+  await page.getByTestId('pr-tab-overview').click();
+
+  const overview = page.locator('[data-subtab="overview"]:not([hidden])');
+  await expect(overview).toBeVisible();
+  await injectFiller(page, 'overview');
+  await overview.evaluate((el, top) => {
+    el.scrollTop = top;
+    el.dispatchEvent(new Event('scroll'));
+  }, TARGET_SCROLL);
+  await expect.poll(() => overview.evaluate((el) => el.scrollTop)).toBe(TARGET_SCROLL);
+
+  // --- BACKGROUND via the Header Inbox link (SPA, keep-alive) ---
+  await page.getByRole('link', { name: /^Inbox$/ }).click();
+  await expect(page.getByPlaceholder(/paste a pr url/i)).toBeVisible();
+
+  // --- RETURN via the PrTabStrip pill (SPA) ---
+  await page
+    .locator('[data-testid="pr-tabstrip"] [data-prref="acme/api/123"] [role="tab"]')
+    .click();
+  await expect(overview).toBeVisible();
+  await expect(page.locator('[data-app-scroll][data-detail-active]')).toHaveCount(1);
+
+  // THE #643 CONTRACT across a full deactivate/reactivate: the Overview slot scroll is
+  // restored, not reset to 0. Poll — restore runs in a layout effect after the marker
+  // re-applies; Windows CI is slow.
+  await expect
+    .poll(() => overview.evaluate((el) => el.scrollTop), { timeout: 15000 })
+    .toBe(TARGET_SCROLL);
 });
