@@ -50,4 +50,21 @@ describe('ComposerActionsBar', () => {
     render(<ComposerActionsBar {...baseProps} postError="boom" />);
     expect(screen.getByRole('alert')).toHaveTextContent('boom');
   });
+  it('disables Discard while a post is in flight (#601 Defect C)', () => {
+    // A post-now in flight owns the draft. Discarding mid-post would fire a
+    // delete that races the post (orphaned post or delete-of-already-posted),
+    // so Discard must be inert — matching post-now's own `posting` gate.
+    render(<ComposerActionsBar {...baseProps} posting />);
+    const discard = screen.getByRole('button', { name: 'Discard' });
+    expect(discard).toBeDisabled();
+    expect(discard).toHaveAttribute('aria-disabled', 'true');
+  });
+  it('disables Save while a post is in flight (#601 Defect C — Save sibling)', () => {
+    // The Save ("Add to review") button fires an update PUT against the same
+    // draft the post is shipping. Like Discard, it must be inert during a post
+    // so the update can't race the in-flight post.
+    render(<ComposerActionsBar {...baseProps} posting />);
+    const save = screen.getByRole('button', { name: 'Add to review' });
+    expect(save).toBeDisabled();
+  });
 });

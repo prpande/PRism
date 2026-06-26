@@ -77,6 +77,30 @@ public class GitHubPrChecksReaderTests
         Assert.Null(status.AppName); // legacy status has no app object
     }
 
+    // #604 Part C (defensive-parity extension) — GitHubPrChecksReader interpolates the head
+    // SHA into commits/{sha}/check-runs and commits/{sha}/status (the same pattern #604 fixes
+    // in GitHubCiFailingDetector, added later in #635). Escape it for parity with the audited
+    // siblings; a reserved-char SHA must not terminate the path or inject a query.
+    [Fact]
+    public async Task ReadAsync_escapes_reserved_chars_in_sha_on_checks_and_status_urls()
+    {
+        var capturedPaths = new List<string>();
+        var reader = ReaderFor(req =>
+        {
+            capturedPaths.Add(req.RequestUri!.AbsolutePath);
+            return req.RequestUri!.AbsoluteUri.Contains("/check-runs", StringComparison.Ordinal)
+                ? Json("""{"check_runs":[]}""")
+                : Json("""{"state":"success","total_count":0,"statuses":[]}""");
+        });
+
+        await reader.ReadAsync(Pr, "abc?inject=1", CancellationToken.None);
+
+        Assert.Contains(capturedPaths, p =>
+            p.Contains("abc%3Finject%3D1", StringComparison.Ordinal) && p.EndsWith("/check-runs", StringComparison.Ordinal));
+        Assert.Contains(capturedPaths, p =>
+            p.Contains("abc%3Finject%3D1", StringComparison.Ordinal) && p.EndsWith("/status", StringComparison.Ordinal));
+    }
+
     [Fact]
     public async Task Parses_output_summary_and_text_as_body_for_check_runs()
     {

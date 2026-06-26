@@ -19,6 +19,29 @@ public class GitHubReviewServiceDiffTests
     private static string PullJson(string baseSha, string headSha, int changedFiles) =>
         $"{{\"changed_files\":{changedFiles},\"head\":{{\"sha\":\"{headSha}\"}},\"base\":{{\"sha\":\"{baseSha}\"}}}}";
 
+    // #604 Part B — a JSON `null` changed_files (malformed 2xx). TryGetProperty returns true
+    // for a null element, so the pre-fix `cf.GetInt32()` throws InvalidOperationException and
+    // GetDiffAsync 500s instead of degrading. The value-kind guard must treat null as 0.
+    private static string PullJsonNullChangedFiles(string baseSha, string headSha) =>
+        $"{{\"changed_files\":null,\"head\":{{\"sha\":\"{headSha}\"}},\"base\":{{\"sha\":\"{baseSha}\"}}}}";
+
+    [Fact]
+    public async Task GetDiffAsync_does_not_throw_when_changed_files_is_json_null()
+    {
+        var handler = new PaginatedFakeHandler()
+            .RouteJson("/repos/o/r/pulls/1/files", FilePage(3, 0))
+            .RouteJson("/repos/o/r/pulls/1", PullJsonNullChangedFiles("base", "head"));
+
+        var diff = await NewService(handler).GetDiffAsync(
+            new PrReference("o", "r", 1),
+            new DiffRangeRequest("base", "head"),
+            CancellationToken.None);
+
+        diff.Files.Should().HaveCount(3);
+        // changed_files null degrades to 0 → truncated = 0 > 3 = false (documented limitation).
+        diff.Truncated.Should().BeFalse();
+    }
+
     [Fact]
     public async Task GetDiffAsync_paginates_pulls_files_until_link_next_exhausts()
     {

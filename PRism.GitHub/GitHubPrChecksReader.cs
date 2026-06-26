@@ -54,7 +54,8 @@ public sealed class GitHubPrChecksReader : IPrChecksReader
     {
         var checks = new List<CheckDto>();
         string? nextUrl = null;
-        var initial = $"repos/{pr.Owner}/{pr.Repo}/commits/{sha}/check-runs?per_page=100";
+        // #604 Part C: escape the SHA for parity with the audited sibling call sites.
+        var initial = $"repos/{pr.Owner}/{pr.Repo}/commits/{Uri.EscapeDataString(sha)}/check-runs?per_page=100";
 
         for (var page = 0; page < MaxPages; page++)
         {
@@ -95,7 +96,8 @@ public sealed class GitHubPrChecksReader : IPrChecksReader
     {
         var checks = new List<CheckDto>();
         string? nextUrl = null;
-        var initial = $"repos/{pr.Owner}/{pr.Repo}/commits/{sha}/status?per_page=100";
+        // #604 Part C: escape the SHA for parity with the audited sibling call sites.
+        var initial = $"repos/{pr.Owner}/{pr.Repo}/commits/{Uri.EscapeDataString(sha)}/status?per_page=100";
 
         // The combined-status endpoint (singular /status) DOES paginate: it accepts
         // per_page/page and emits Link rel=next when a commit has >100 contexts (GitHub

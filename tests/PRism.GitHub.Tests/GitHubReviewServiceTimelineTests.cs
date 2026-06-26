@@ -74,6 +74,33 @@ public class GitHubReviewServiceTimelineTests
         handler.PerCommitFetchCount.Should().Be(30);
     }
 
+    // #604 Part C — the per-commit fan-out interpolates commit.Sha (a GraphQL oid) into
+    // repos/{o}/{r}/commits/{sha}. A reserved char must be Uri.EscapeDataString-escaped so it
+    // cannot terminate the path or inject a query (parity with GetCommitAsync/GetFileContentAsync).
+    [Fact]
+    public async Task GetTimelineAsync_escapes_reserved_chars_in_per_commit_url()
+    {
+        const string timelineWithReservedOid =
+            "{\"data\":{\"repository\":{\"pullRequest\":{" +
+            "\"comments\":{\"nodes\":[]}," +
+            "\"timelineItems\":{\"nodes\":[" +
+            "{\"__typename\":\"PullRequestCommit\",\"commit\":{\"oid\":\"c?inject=1\"," +
+            "\"committedDate\":\"2026-01-01T00:00:00Z\",\"message\":\"m\",\"additions\":1,\"deletions\":0}}" +
+            "]}}}}}";
+
+        var capturedPaths = new List<string>();
+        var handler = new GraphQLPlusRestHandler
+        {
+            GraphQLBody = timelineWithReservedOid,
+            RestRoute = path => { capturedPaths.Add(path); return (HttpStatusCode.OK, CommitFilesJson()); },
+        };
+
+        await NewService(handler).GetTimelineAsync(new PrReference("o", "r", 1), CancellationToken.None);
+
+        capturedPaths.Should().Contain(p => p.EndsWith("/commits/c%3Finject%3D1", StringComparison.Ordinal),
+            because: "the per-commit oid must be percent-encoded into the path (#604 Part C)");
+    }
+
     [Fact]
     public async Task GetTimelineAsync_paces_inter_batch_with_100ms_delay()
     {

@@ -49,6 +49,9 @@ export function ComposerActionsBar({
     : undefined;
   const postNowTitle = mergedContext ?? postNowTooltip;
   const mergedContextId = useId();
+  // #601 — every mutating action (Discard, Save, post-now) is inert while a
+  // post is in flight or the tab is cross-tab read-only.
+  const actionsLocked = readOnly || posting;
   return (
     <div className="composer-actions">
       {/* left group */}
@@ -78,8 +81,8 @@ export function ComposerActionsBar({
         type="button"
         className="composer-discard"
         onClick={onDiscardClick}
-        disabled={readOnly}
-        aria-disabled={readOnly || undefined}
+        disabled={actionsLocked}
+        aria-disabled={actionsLocked || undefined}
       >
         Discard
       </button>
@@ -88,10 +91,10 @@ export function ComposerActionsBar({
         <button
           type="button"
           className="composer-save btn btn-primary btn-sm"
-          aria-disabled={saveDisabled}
+          aria-disabled={saveDisabled || posting}
           title={saveTooltip}
           onClick={onSaveClick}
-          disabled={readOnly}
+          disabled={actionsLocked}
         >
           {addLabel}
         </button>
@@ -103,7 +106,7 @@ export function ComposerActionsBar({
         title={postNowTitle}
         aria-describedby={mergedContext ? mergedContextId : undefined}
         onClick={onPostNow}
-        disabled={readOnly || posting}
+        disabled={actionsLocked}
       >
         {posting ? 'Posting…' : 'Comment'}
       </button>

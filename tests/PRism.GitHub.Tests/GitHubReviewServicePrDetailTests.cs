@@ -206,6 +206,93 @@ public class GitHubReviewServicePrDetailTests
         dto!.TimelineCapHit.Should().BeTrue();
     }
 
+    // #604 Part A — a review THREAD with >100 comments: the nested
+    // reviewThreads.nodes[].comments connection is truncated even though every TOP-LEVEL
+    // connection fits in one page. Pre-fix the read path ignored nested pageInfo, so this
+    // silently dropped replies with no cap banner.
+    private const string PrDetailNestedThreadCommentCapHitBody = """
+    {
+      "data": {
+        "repository": {
+          "pullRequest": {
+            "title": "nested-cap", "body": "", "url": "https://github.com/o/r/pull/1",
+            "state": "OPEN", "isDraft": false, "mergeable": "MERGEABLE", "mergeStateStatus": "CLEAN",
+            "headRefName": "h", "baseRefName": "main", "headRefOid": "h", "baseRefOid": "b",
+            "author": { "login": "alice" }, "createdAt": "2026-01-01T00:00:00Z",
+            "closedAt": null, "mergedAt": null, "changedFiles": 0,
+            "comments": { "pageInfo": { "hasNextPage": false, "endCursor": null }, "nodes": [] },
+            "reviewThreads": {
+              "pageInfo": { "hasNextPage": false, "endCursor": null },
+              "nodes": [
+                {
+                  "id": "PRRT_thread1", "path": "src/W.cs", "line": 1, "isResolved": false,
+                  "comments": {
+                    "pageInfo": { "hasNextPage": true },
+                    "nodes": [
+                      { "id": "PRC_c1", "author": { "login": "bob" }, "createdAt": "2026-01-02T00:00:00Z", "body": "reply", "lastEditedAt": null }
+                    ]
+                  }
+                }
+              ]
+            },
+            "reviews": { "pageInfo": { "hasPreviousPage": false }, "nodes": [] },
+            "timelineItems": { "pageInfo": { "hasNextPage": false, "endCursor": null }, "nodes": [] }
+          }
+        }
+      }
+    }
+    """;
+
+    // #604 Part A — >100 reviews. reviews(last:100) is BACKWARD pagination: the dropped
+    // (older) reviews are signaled by hasPreviousPage, NOT hasNextPage. A hasNextPage-based
+    // check would never fire against real GitHub here.
+    private const string PrDetailReviewsCapHitBody = """
+    {
+      "data": {
+        "repository": {
+          "pullRequest": {
+            "title": "reviews-cap", "body": "", "url": "https://github.com/o/r/pull/1",
+            "state": "OPEN", "isDraft": false, "mergeable": "MERGEABLE", "mergeStateStatus": "CLEAN",
+            "headRefName": "h", "baseRefName": "main", "headRefOid": "h", "baseRefOid": "b",
+            "author": { "login": "alice" }, "createdAt": "2026-01-01T00:00:00Z",
+            "closedAt": null, "mergedAt": null, "changedFiles": 0,
+            "comments": { "pageInfo": { "hasNextPage": false, "endCursor": null }, "nodes": [] },
+            "reviewThreads": { "pageInfo": { "hasNextPage": false, "endCursor": null }, "nodes": [] },
+            "reviews": {
+              "pageInfo": { "hasPreviousPage": true },
+              "nodes": [
+                { "author": { "login": "bob" }, "state": "APPROVED", "submittedAt": "2026-01-02T00:00:00Z", "commit": { "oid": "deadbeef" } }
+              ]
+            },
+            "timelineItems": { "pageInfo": { "hasNextPage": false, "endCursor": null }, "nodes": [] }
+          }
+        }
+      }
+    }
+    """;
+
+    [Fact]
+    public async Task GetPrDetailAsync_sets_TimelineCapHit_when_nested_thread_comments_truncate()
+    {
+        var handler = new GraphQLPlusRestHandler { GraphQLBody = PrDetailNestedThreadCommentCapHitBody };
+
+        var dto = await NewService(handler).GetPrDetailAsync(new PrReference("o", "r", 1), CancellationToken.None);
+
+        dto!.TimelineCapHit.Should().BeTrue(
+            because: "a review thread with >100 comments truncates nested replies (#604 Part A)");
+    }
+
+    [Fact]
+    public async Task GetPrDetailAsync_sets_TimelineCapHit_when_reviews_truncate_via_hasPreviousPage()
+    {
+        var handler = new GraphQLPlusRestHandler { GraphQLBody = PrDetailReviewsCapHitBody };
+
+        var dto = await NewService(handler).GetPrDetailAsync(new PrReference("o", "r", 1), CancellationToken.None);
+
+        dto!.TimelineCapHit.Should().BeTrue(
+            because: "reviews(last:100) signals >100 reviews via hasPreviousPage (#604 Part A)");
+    }
+
     [Fact]
     public async Task GetPrDetailAsync_returns_null_when_pull_request_node_is_null()
     {

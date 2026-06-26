@@ -38,6 +38,7 @@ import { useOpenTabs } from '../../contexts/OpenTabsContext';
 import { glyphStateFor, type GlyphState } from '../shared/prStateGlyph';
 import { useTabScrollMemory } from '../../hooks/useTabScrollMemory';
 import { useDiffScrollRestore } from '../../hooks/diffScrollMemory';
+import { useSlotScrollMemory, isSlotScrollSubTab } from '../../hooks/slotScrollMemory';
 import { LoadingBar } from '../LoadingBar';
 import { useCheckRuns } from '../../hooks/useCheckRuns';
 import { useActivationTransition } from '../../hooks/useActivationTransition';
@@ -290,18 +291,19 @@ export function PrDetailView({
   );
   const clearPendingFilePath = useCallback(() => setPendingFilePath(null), []);
 
-  // ORDER MATTERS — these three layout effects must stay in this sequence:
-  //   1. data-files-active marker effect (below)
+  // ORDER MATTERS — these layout effects must stay in this sequence:
+  //   1. data-files-active / data-detail-active marker effect (below)
   //   2. useTabScrollMemory (outer [data-app-scroll] offset)
   //   3. useDiffScrollRestore (inner .diff-pane-body offset, #590)
-  // The marker effect must precede the two restores so [data-app-scroll] is a
-  // scroll container before scrollTop is restored (in browser mode it's only
-  // scrollable when data-files-active is set; writing scrollTop to a
-  // non-scrollable element clamps to 0). React runs layout-effect setups in
-  // declaration order, so on Files re-activation this effect turns on overflow
-  // first, then the two restores write their saved offsets back. Reordering
-  // these silently breaks restore — there's no type/lint guard, only the e2e
-  // (diff-scroll-keepalive.spec.ts) catches it at CI time.
+  //   4. useSlotScrollMemory restore (non-Files [data-subtab] slot offset, #643)
+  // The marker effect must precede the three restores so the relevant element is a
+  // scroll container before scrollTop is restored (in browser mode the container/slot
+  // is only scrollable when its marker is set; writing scrollTop to a non-scrollable
+  // element clamps to 0). React runs layout-effect setups in declaration order, so on
+  // re-activation this effect turns on overflow first, then the restores write their
+  // saved offsets back. Reordering these silently breaks restore — there's no
+  // type/lint guard, only the e2e (diff-scroll-keepalive.spec.ts #590,
+  // pr-detail-header-pinned.spec.ts #640) catches it at CI time.
 
   // Viewport-bound Files layout marker. Under keep-alive every open PR tab keeps
   // a (hidden) Files sub-tab in the DOM, so the layout can no longer key off the
@@ -323,13 +325,31 @@ export function PrDetailView({
     if (!active) return;
     const slot = document.querySelector('[data-app-scroll]');
     if (!slot) return;
-    slot.toggleAttribute('data-files-active', subTab === 'files');
+    // #640 — the same viewport-binding shell sandwich that pins the Files header
+    // (data-files-active) is reused for the other scrollable sub-tabs via a
+    // parallel data-detail-active marker, so their header + sub-tab strip stay
+    // pinned and only the tab content scrolls. Gated to an explicit allow-list
+    // (NOT `subTab !== 'files'`): Drafts and any sub-tab added later keep today's
+    // document-scroll behavior until deliberately added here, because a slot-level
+    // overflow scroller vs a tab's own internal scroll regions is per-tab unanalyzed.
+    // isSlotScrollSubTab is the single source of the pinned allow-list, shared with
+    // useSlotScrollMemory (#643) so the marker that makes the slot a scroller and the
+    // restore that writes onto it can't drift. Both are computed from `effectiveSubTab`
+    // — the value that actually drives slot visibility (it coerces hotspots→overview
+    // when AI is off) — so the marker binds the shell for the slot the user really
+    // sees, with no separate "keep the allow-list closed under the coercion" invariant.
+    const pinned = isSlotScrollSubTab(effectiveSubTab);
+    slot.toggleAttribute('data-files-active', effectiveSubTab === 'files');
+    slot.toggleAttribute('data-detail-active', pinned);
     // Cleanup runs on deactivation / sub-tab change; the next active view's
     // setup (which runs after all cleanups in the commit) re-stamps correctly.
+    // BOTH markers are removed — a leaked data-detail-active would bind the
+    // inbox/other views' shell to 100dvh/overflow:hidden and break their scroll.
     return () => {
       slot.removeAttribute('data-files-active');
+      slot.removeAttribute('data-detail-active');
     };
-  }, [active, subTab]);
+  }, [active, effectiveSubTab]);
 
   // Save/restore per-(prRef, subTab) scroll offset on the shared [data-app-scroll]
   // scroller. Cleanup-before-setup ordering ensures the outgoing view's offset is
@@ -344,6 +364,14 @@ export function PrDetailView({
   // 0. DiffPane captures the live value; this writes it back. Declared AFTER the
   // marker effect (and useTabScrollMemory) so the body is bounded again when it runs.
   useDiffScrollRestore({ rootRef: pageRef, refKey, subTab, active });
+
+  // #643 — restore the non-Files [data-subtab] slot scroll on re-activation. For
+  // Overview/Hotspots/Checks the #640 header pin makes the visible slot (not
+  // [data-app-scroll]) the bounded scroller, so useTabScrollMemory above is a no-op
+  // there; this captures the live slot offset and writes it back. Keyed on
+  // effectiveSubTab (the value driving slot visibility). Declared last, after the
+  // marker effect, so the slot is bounded again when restore runs (see ordering note).
+  useSlotScrollMemory({ rootRef: pageRef, refKey, subTab: effectiveSubTab, active });
 
   const handleReload = () => {
     updates.clear();

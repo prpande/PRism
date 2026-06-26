@@ -102,6 +102,32 @@ public sealed class GitHubCiFailingDetectorTests
     // legacy commit statuses are registered — the default for an Actions-only or no-CI PR (#286).
     private const string EmptyPendingStatus = """{ "state": "pending", "total_count": 0, "statuses": [] }""";
 
+    // #604 Part C — the per-commit SHA must be Uri.EscapeDataString-escaped before it is
+    // interpolated into the check-runs / combined-status request paths (parity with the
+    // audited GetCommitAsync / GetFileContentAsync siblings). A SHA carrying a URL-reserved
+    // char ('?') would otherwise terminate the path early and inject a query string.
+    [Fact]
+    public async Task DetectAsync_escapes_reserved_chars_in_commit_sha_on_checks_and_status_urls()
+    {
+        var capturedPaths = new List<string>();
+        var handler = new FakeHttpMessageHandler(req =>
+        {
+            capturedPaths.Add(req.RequestUri!.AbsolutePath);
+            return req.RequestUri!.AbsoluteUri.Contains("/check-runs", StringComparison.Ordinal)
+                ? Respond(HttpStatusCode.OK, AllPassingCheckRuns)
+                : Respond(HttpStatusCode.OK, SuccessNoLegacyStatus);
+        });
+
+        await BuildSut(handler).DetectAsync(new[] { Raw(1, headSha: "abc?inject=1") }, CancellationToken.None);
+
+        // Escaped: the '?' becomes %3F and stays in the path, so the path keeps its
+        // /check-runs and /status suffixes. Raw interpolation would swallow them into a query.
+        capturedPaths.Should().Contain(p => p.Contains("abc%3Finject%3D1", StringComparison.Ordinal)
+            && p.EndsWith("/check-runs", StringComparison.Ordinal));
+        capturedPaths.Should().Contain(p => p.Contains("abc%3Finject%3D1", StringComparison.Ordinal)
+            && p.EndsWith("/status", StringComparison.Ordinal));
+    }
+
     // A genuinely in-progress legacy commit status (registered context, total_count > 0).
     private const string RegisteredPendingStatus = """
         { "state": "pending", "total_count": 1, "statuses": [ { "context": "ci/legacy", "state": "pending" } ] }
