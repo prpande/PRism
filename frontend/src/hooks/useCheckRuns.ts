@@ -6,12 +6,28 @@ import type { CheckRun, DegradedReason, PrReference } from '../api/types';
 
 const POLL_MS = 15_000;
 const LATE_REGISTRATION_MS = 120_000; // ~2 min re-poll window on a still-empty list
+// Bounded WALL-CLOCK deadline (from arm time) that keeps the loop alive after a rerequest so
+// the re-run's check is picked up even on an all-terminal list. NOT visible-time and NOT
+// re-armed on focus: the loop is frozen while hidden anyway, and a fixed deadline guarantees
+// the watch terminates regardless of focus-toggling (a visible-time re-arm could be pushed out
+// indefinitely by alt-tabbing → button hung "Re-running…" forever, violating AC#3). Tunable:
+// long enough for a rerequested run to appear on a cold runner. 90s is the default.
+const RERUN_WATCH_MS = 90_000;
 
 export interface CheckRunsResult {
   status: 'idle' | 'loading' | 'ok' | 'empty' | 'error';
   degraded: DegradedReason;
   checks: CheckRun[];
   retry: () => void;
+  // The three rerun members are OPTIONAL even though the hook ALWAYS returns them.
+  // CheckRunsResult is carried by PrDetailContextValue, which ~10 unrelated test files build
+  // inline with an idle `checks` stub for tabs that never touch rerun. Required members would
+  // force a mechanical edit in every one for zero behavioural reason. Optional confines the
+  // change to the hook + the single consumer (CheckDetail, which null-guards). These are
+  // internal result members, NOT a wire field — unlike CheckRun.checkRunId, which stays required.
+  refetch?: () => void; // off-timer poll, no loading flash
+  armRerunWatch?: (checkRunId: number) => void; // keep polling for a rerequested check
+  rerunPendingFor?: number | null; // which checkRunId is being watched (reactive)
 }
 
 const isNonTerminal = (c: CheckRun) => c.status === 'queued' || c.status === 'in-progress';
@@ -28,38 +44,48 @@ export function useCheckRuns(
   // effect re-runs — mirrors the useFileFocusResult retryNonce precedent. A ref bump
   // would not re-run the effect (refs aren't reactive).
   const [retryNonce, setRetryNonce] = useState(0);
+  const [refetchNonce, setRefetchNonce] = useState(0); // drives an off-timer poll
+  const [rerunPendingFor, setRerunPendingFor] = useState<number | null>(null); // reactive watch flag
 
   // Series identity: the SHA whose checks the current `checks`/window belong to.
-  // Owned by the polling effect only — there is NO second effect mutating these
-  // (a separate headSha-reset effect would race the polling effect and null the
-  // window before shouldKeepPolling reads it — adversarial/scope R1).
   const seriesShaRef = useRef<string | undefined>(undefined);
   const windowOpenedAtRef = useRef<number>(0);
   // Latest list + whether THIS series ever fetched successfully — read in the tick
-  // catch block, which can't see fresh `checks` state (its closure captures the value
-  // from effect-run time). Used for stale-while-revalidate on failure: a poll error
-  // only surfaces the error screen on a cold series (no success yet); once a fetch has
-  // landed we keep the last-known list on screen and just flag it degraded.
+  // catch block, which can't see fresh `checks` state.
   const checksRef = useRef<CheckRun[]>([]);
   const hadSuccessRef = useRef(false);
+  // Rerun-watch state read inside the tick closure (refs, fresh across renders).
+  const watchedIdRef = useRef<number | null>(null);
+  const watchUntilRef = useRef<number>(0);
 
   const refKey = `${prRef.owner}/${prRef.repo}/${prRef.number}`;
-  // setStatus('loading') gives immediate feedback when retrying from the error screen
-  // (a same-SHA retry does NOT hit the new-series 'loading' branch below). adversarial R2.
+
   const retry = useCallback(() => {
     setStatus('loading');
     setRetryNonce((n) => n + 1);
+  }, []);
+
+  // Off-timer poll that preserves the list (no setStatus('loading')).
+  const refetch = useCallback(() => {
+    setRefetchNonce((n) => n + 1);
+  }, []);
+
+  // Arm a watch on a specific check so the loop stays alive after a rerequest. The deadline is
+  // a fixed wall-clock instant from NOW and is never extended (see RERUN_WATCH_MS).
+  const armRerunWatch = useCallback((checkRunId: number) => {
+    watchedIdRef.current = checkRunId;
+    watchUntilRef.current = Date.now() + RERUN_WATCH_MS;
+    setRerunPendingFor(checkRunId);
+    setRefetchNonce((n) => n + 1); // kick an immediate poll
   }, []);
 
   useEffect(() => {
     const gateOpen = active && headSha != null && document.visibilityState === 'visible';
     if (!gateOpen) return;
 
-    // New SHA series: clear the prior head's verdict so its green tick / failing
-    // badge does NOT survive the Reload boundary (spec § Tab strip indicator), reset
-    // the degraded banner so a prior head's auth/transient caption doesn't flash on the
-    // new head (security R2), and (re)open the late-registration window. A same-SHA
-    // re-run (active re-toggle or retry) preserves the last list (stale-while-revalidate).
+    // New SHA series: clear the prior head's verdict, reset the degraded banner, (re)open the
+    // late-registration window, and drop any in-flight rerun-watch (its checkRunId belongs to
+    // the old series). A same-SHA re-run preserves the last list (stale-while-revalidate).
     if (seriesShaRef.current !== headSha) {
       seriesShaRef.current = headSha;
       windowOpenedAtRef.current = Date.now();
@@ -68,14 +94,19 @@ export function useCheckRuns(
       hadSuccessRef.current = false;
       setDegraded('none');
       setStatus('loading');
+      watchedIdRef.current = null;
+      watchUntilRef.current = 0;
+      setRerunPendingFor(null);
     }
 
     let cancelled = false;
     let inFlight = false; // single-flight, scoped to this effect run
     let timer: ReturnType<typeof setTimeout> | null = null;
-    const ctrl = new AbortController(); // one controller per series; cleanup aborts it
+    const ctrl = new AbortController();
 
     const shouldKeepPolling = (list: CheckRun[]): boolean => {
+      // A live rerun-watch keeps the loop alive even when all checks are terminal.
+      if (watchedIdRef.current != null && Date.now() < watchUntilRef.current) return true;
       if (list.some(isNonTerminal)) return true; // live work in progress
       if (list.length === 0) {
         // bounded late-registration re-poll, measured from THIS series' open time
@@ -84,10 +115,25 @@ export function useCheckRuns(
       return false; // all terminal, ≥1 present → done
     };
 
+    // Clear the watch when the watched check transitions OR the window expires. The
+    // transition-clear (same id flips non-terminal) is BEST-EFFORT: a GitHub Actions rerequest
+    // commonly emits a NEW check-run id while the original id stays terminal, so `watched` may
+    // never go non-terminal. The wall-clock expiry is the REAL guarantee that "Re-running…"
+    // clears; the re-run's new in-progress row is still surfaced by normal polling.
+    const updateRerunWatch = (list: CheckRun[]) => {
+      if (watchedIdRef.current == null) return;
+      const watched = list.find((c) => c.checkRunId === watchedIdRef.current);
+      const transitioned = watched != null && isNonTerminal(watched);
+      if (transitioned || Date.now() >= watchUntilRef.current) {
+        watchedIdRef.current = null;
+        watchUntilRef.current = 0;
+        setRerunPendingFor(null);
+      }
+    };
+
     const tick = async () => {
       // Re-check the gate on every scheduled tick — a window blurred AFTER the effect
-      // fired must stop polling (scope R1). The point-in-time gate above only covers
-      // the first tick.
+      // fired must stop polling. The point-in-time gate above only covers the first tick.
       if (document.visibilityState !== 'visible') return;
       if (inFlight) return; // single-flight: skip overlapping ticks
       inFlight = true;
@@ -99,6 +145,7 @@ export function useCheckRuns(
         hadSuccessRef.current = true;
         setDegraded(res.degraded);
         setStatus(res.checks.length === 0 ? 'empty' : 'ok');
+        updateRerunWatch(res.checks);
         if (shouldKeepPolling(res.checks)) {
           timer = setTimeout(tick, POLL_MS);
         }
@@ -111,15 +158,25 @@ export function useCheckRuns(
             ? 'auth'
             : 'transient',
         );
+        // Expire the rerun-watch on a FAILING tick too. Without this, a poll that throws while
+        // crossing the watch-window boundary never runs the window-expiry clear; the watch then
+        // stays armed, shouldKeepPolling can return false, the loop stops, and rerunPendingFor is
+        // stuck non-null → the button hangs "Re-running…" forever (AC#3). updateRerunWatch over
+        // the stale list won't clear early but DOES clear once the window has elapsed.
+        updateRerunWatch(checksRef.current);
         if (!hadSuccessRef.current) {
-          // Cold series — nothing cached to fall back on. Surface the error screen;
-          // retry() restarts the loop via the nonce.
+          // Cold series — nothing cached to fall back on. Surface the error screen.
           setStatus('error');
+          // The loop stops here without the window necessarily having elapsed; drop any armed
+          // watch so rerunPendingFor can't be left stuck (defensive — unreachable today because
+          // the Re-run button only renders when status==='ok', which forces hadSuccessRef true
+          // before a watch can be armed; this guards a future refactor).
+          watchedIdRef.current = null;
+          watchUntilRef.current = 0;
+          setRerunPendingFor(null);
         } else {
-          // Stale-while-revalidate: a prior fetch landed this series, so keep its
-          // last-known list on screen (the degraded banner signals the refresh failed)
-          // rather than replacing a working view with the error card. Keep polling on
-          // the same cadence so a transient blip self-heals without a manual Retry.
+          // Stale-while-revalidate: keep the last-known list on screen and keep polling so a
+          // transient blip self-heals without a manual Retry.
           setStatus(checksRef.current.length === 0 ? 'empty' : 'ok');
           if (shouldKeepPolling(checksRef.current)) {
             timer = setTimeout(tick, POLL_MS);
@@ -132,14 +189,12 @@ export function useCheckRuns(
 
     void tick();
 
-    // Resume on re-show. The tick() visibility guard STOPS the loop when the window is
-    // hidden (it returns before rescheduling), but nothing re-runs the effect when the
-    // window becomes visible again (visibilityState is not a dep). Without this listener
-    // the loop stays frozen on a stale glyph after the user switches windows mid-run —
-    // the exact "watch CI finish" use case (adversarial R2). One tick() on re-show
-    // restarts the loop if the series is still live; single-flight + shouldKeepPolling
-    // make a no-op-on-terminal safe.
     const onVisible = () => {
+      // Resume polling on re-show. Do NOT re-arm the rerun-watch here: re-arming reset the
+      // deadline on every focus-return, so an alt-tabbing user could push it out indefinitely
+      // and hang the button "Re-running…" forever (AC#3). The deadline stays fixed at arm time;
+      // if it elapsed while hidden, the first tick on re-show runs updateRerunWatch and clears it
+      // (nothing is rendered while hidden, so there is no visible hang in the meantime).
       if (document.visibilityState === 'visible' && !cancelled) void tick();
     };
     document.addEventListener('visibilitychange', onVisible);
@@ -150,12 +205,10 @@ export function useCheckRuns(
       if (timer) clearTimeout(timer);
       ctrl.abort(); // cross-series race guard: an in-flight old-SHA fetch is aborted
     };
-    // refKey is the stable string proxy for prRef's primitives (owner/repo/number):
-    // keying on it (not the prRef object) means a new prRef object with identical
-    // fields does NOT spuriously reset the polling series. Same pattern as
-    // useActivePrUpdates. prRef itself is read inside tick() but only via those primitives.
+    // refKey is the stable string proxy for prRef's primitives. refetchNonce drives off-timer
+    // polls (arm + manual refetch).
     // eslint-disable-next-line react-hooks/exhaustive-deps -- refKey captures prRef's identity
-  }, [active, headSha, refKey, retryNonce]);
+  }, [active, headSha, refKey, retryNonce, refetchNonce]);
 
-  return { status, degraded, checks, retry };
+  return { status, degraded, checks, retry, refetch, armRerunWatch, rerunPendingFor };
 }
