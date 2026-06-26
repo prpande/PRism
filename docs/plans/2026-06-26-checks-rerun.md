@@ -4,7 +4,7 @@
 
 **Goal:** Add a per-check "Re-run" action to the read-only Checks tab that re-triggers a GitHub check-run via the `rerequest` API, with a server-side SHA guard and bounded poll-convergence.
 
-**Architecture:** A new write path (`IPrChecksRerunner` → `GitHubPrChecksRerunner` → `POST /api/pr/{o}/{r}/{n}/checks/{checkRunId}/rerun?sha=`) sits alongside the untouched read path. The backend SHA-guards (GETs the check-run, compares `head_sha`) before rerequesting; a dedicated `RerunOutcome` enum carries the result. The frontend adds a Re-run button to `CheckDetail` and an armed, visible-time "rerun-watch" in `useCheckRuns` that keeps the poll alive (GitHub does not reset the individual check-run on rerequest).
+**Architecture:** A new write path (`IPrChecksRerunner` → `GitHubPrChecksRerunner` → `POST /api/pr/{o}/{r}/{n}/checks/{checkRunId}/rerun?sha=`) sits alongside the untouched read path. The backend SHA-guards (GETs the check-run, compares `head_sha`) before rerequesting; a dedicated `RerunOutcome` enum carries the result. The frontend adds a Re-run button to `CheckDetail` and an armed, bounded wall-clock "rerun-watch" in `useCheckRuns` that keeps the poll alive (GitHub does not reset the individual check-run on rerequest).
 
 **Tech Stack:** .NET 10 minimal APIs, System.Text.Json, raw `HttpClient` (no Octokit) for GitHub; React 18 + Vite + TypeScript + vitest/Testing-Library; xUnit for backend.
 
@@ -730,9 +730,9 @@ git commit -m "feat(#636): rerunCheck API client fn + RerunOutcome types"
 - Produces (added to `CheckRunsResult`): `refetch: () => void`; `armRerunWatch: (checkRunId: number) => void`; `rerunPendingFor: number | null` (the checkRunId currently watched, or null).
 - Consumes: nothing new.
 
-**Design:** A rerun arms a watch on a specific `checkRunId`. `shouldKeepPolling` returns true while the watch is active and inside its window, so the loop survives an all-terminal list (GitHub does not reset the run). The window is re-armed on `onVisible` so it measures *visible* time. The watch clears when the watched check is next seen non-terminal, or the window expires on a visible tick. `rerunPendingFor` is reactive so `CheckDetail` can render "Re-running…" only for the watched check.
+**Design:** A rerun arms a watch on a specific `checkRunId`. `shouldKeepPolling` returns true while the watch is active and inside its window, so the loop survives an all-terminal list (GitHub does not reset the run). The window is a **fixed wall-clock deadline from arm time** — it is NOT re-armed on `onVisible` (an earlier visible-time re-arm could be pushed out indefinitely by focus-toggling and hang the button forever; adversarial-R2 Finding 1). The watch clears when the watched check is next seen non-terminal (best-effort — an Actions rerequest may spawn a new check-run id, so this can be dead; Finding 2) OR when the deadline elapses on a tick (the real guarantee). While hidden the loop is frozen, so a deadline that passes while hidden clears on the first tick after re-show — no visible hang. `rerunPendingFor` is reactive so `CheckDetail` renders "Re-running…" only for the watched check.
 
-- [ ] **Step 1: Write the failing tests** — append to `frontend/src/hooks/useCheckRuns.test.ts`:
+- [ ] **Step 1: Write the failing tests** — add these `it()` blocks **inside the existing `describe('useCheckRuns', …)` block** (before its closing `})` at the end of the file), so they inherit its `beforeEach` (`vi.useFakeTimers({ shouldAdvanceTime: true })` + `visibilityState = 'visible'`). Appending them *after* the describe would run them with real timers and a hidden document — `advanceTimersByTimeAsync` would no-op and `gateOpen` would be false, so they'd hang/fail for the wrong reason.
 
 ```typescript
   it('refetch() fetches off-timer WITHOUT flipping status to loading (stale-while-revalidate)', async () => {
@@ -814,6 +814,48 @@ git commit -m "feat(#636): rerunCheck API client fn + RerunOutcome types"
 > against an implementation whose `catch` omits `updateRerunWatch(checksRef.current)` to
 > confirm it actually catches the hang (it should leave `rerunPendingFor === 42`).
 
+Add one more test — the focus-toggle guard proving the watch deadline is fixed (not re-armed
+on re-show), so alt-tabbing can't pin the button "Re-running…" forever (AC#3):
+
+```typescript
+  it('does NOT extend the rerun-watch on focus-toggling — terminates at the fixed deadline (AC#3)', async () => {
+    const terminal = [
+      {
+        name: 'build', status: 'completed', conclusion: 'failure', source: 'check-run',
+        startedAt: null, completedAt: null, detailsUrl: null, summary: null, appName: null,
+        body: null, checkRunId: 42,
+      },
+    ];
+    vi.spyOn(api, 'getCheckRuns').mockResolvedValue(resp({ checks: terminal as never }));
+    const { result } = renderHook(() => useCheckRuns(PR, SHA, true));
+    await waitFor(() => expect(result.current.status).toBe('ok'));
+
+    act(() => result.current.armRerunWatch!(42));
+    expect(result.current.rerunPendingFor).toBe(42);
+
+    // Three hide→show cycles, each 40s (< the 90s window) but spanning ~123s of wall-clock.
+    // A (buggy) re-arm-on-show would reset the deadline each return → it would NEVER expire and
+    // rerunPendingFor would stay 42. With the fixed deadline it clears on a visible tick past 90s.
+    for (let i = 0; i < 3; i++) {
+      Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true });
+      await act(async () => {
+        document.dispatchEvent(new Event('visibilitychange'));
+        await vi.advanceTimersByTimeAsync(40_000);
+      });
+      Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true });
+      await act(async () => {
+        document.dispatchEvent(new Event('visibilitychange'));
+        await vi.advanceTimersByTimeAsync(1_000);
+      });
+    }
+    expect(result.current.rerunPendingFor).toBeNull();
+  });
+```
+
+> This is the direct regression for adversarial-R2 Finding 1. Run it RED against an
+> implementation whose `onVisible` still does `watchUntilRef.current = Date.now() + RERUN_WATCH_MS`
+> — it must leave `rerunPendingFor === 42` (the hang) to prove the guard bites.
+
 - [ ] **Step 2: Run to verify it fails**
 
 Run: `cd frontend; ./node_modules/.bin/vitest run src/hooks/useCheckRuns.test.ts`
@@ -829,7 +871,14 @@ import type { CheckRun, DegradedReason, PrReference } from '../api/types';
 
 const POLL_MS = 15_000;
 const LATE_REGISTRATION_MS = 120_000;
-const RERUN_WATCH_MS = 90_000; // bounded, visible-time window kept alive after a rerequest
+// Bounded WALL-CLOCK deadline (from arm time) that keeps the loop alive after a rerequest so
+// the re-run's check is picked up even on an all-terminal list. NOT visible-time and NOT
+// re-armed on focus: the loop is frozen while hidden anyway, and a fixed deadline guarantees
+// the watch terminates regardless of focus-toggling (an earlier visible-time re-arm could be
+// pushed out indefinitely by alt-tabbing → button hung "Re-running…" forever, violating AC#3).
+// Tunable: long enough for a rerequested run to appear on a cold runner; revisit against a live
+// Actions PR (see Task 6 open question). 90s is the default.
+const RERUN_WATCH_MS = 90_000;
 
 export interface CheckRunsResult {
   status: 'idle' | 'loading' | 'ok' | 'empty' | 'error';
@@ -884,7 +933,8 @@ export function useCheckRuns(
     setRefetchNonce((n) => n + 1);
   }, []);
 
-  // NEW: arm a watch on a specific check so the loop stays alive after a rerequest.
+  // NEW: arm a watch on a specific check so the loop stays alive after a rerequest. The
+  // deadline is a fixed wall-clock instant from NOW and is never extended (see RERUN_WATCH_MS).
   const armRerunWatch = useCallback((checkRunId: number) => {
     watchedIdRef.current = checkRunId;
     watchUntilRef.current = Date.now() + RERUN_WATCH_MS;
@@ -926,7 +976,16 @@ export function useCheckRuns(
       return false;
     };
 
-    // NEW: clear the watch when the watched check transitions or the window expires.
+    // NEW: clear the watch when the watched check transitions OR the window expires.
+    // The transition-clear (same id flips non-terminal) is BEST-EFFORT: a GitHub Actions
+    // rerequest commonly emits a NEW check-run id for the re-executed jobs while the original
+    // id stays terminal, so `watched` may never go non-terminal. The wall-clock expiry is the
+    // REAL guarantee that the "Re-running…" label clears. The re-run's new in-progress row is
+    // still surfaced by normal polling (shouldKeepPolling sees it non-terminal independently of
+    // the watch). Confirm the Actions new-id-vs-same-id behavior against a live PR in Task 6; if
+    // the new-id case is the norm and the label lingering to expiry feels wrong, clear early on
+    // "any check-run id not present-and-terminal at arm time" — deferred as polish, not needed
+    // for correctness.
     const updateRerunWatch = (list: CheckRun[]) => {
       if (watchedIdRef.current == null) return;
       const watched = list.find((c) => c.checkRunId === watchedIdRef.current);
@@ -971,6 +1030,14 @@ export function useCheckRuns(
         updateRerunWatch(checksRef.current);
         if (!hadSuccessRef.current) {
           setStatus('error');
+          // Cold series: we give up and show the error screen, so the loop stops here without
+          // the window necessarily having elapsed. Drop any armed watch so rerunPendingFor can't
+          // be left stuck (defensive — unreachable today because the Re-run button only renders
+          // when status==='ok', which forces hadSuccessRef true before a watch can be armed; this
+          // guards a future refactor that surfaces the button in another state).
+          watchedIdRef.current = null;
+          watchUntilRef.current = 0;
+          setRerunPendingFor(null);
         } else {
           setStatus(checksRef.current.length === 0 ? 'empty' : 'ok');
           if (shouldKeepPolling(checksRef.current)) {
@@ -985,11 +1052,12 @@ export function useCheckRuns(
     void tick();
 
     const onVisible = () => {
-      if (document.visibilityState === 'visible' && !cancelled) {
-        // NEW: re-arm the watch window on resume so it measures visible time, not wall-clock.
-        if (watchedIdRef.current != null) watchUntilRef.current = Date.now() + RERUN_WATCH_MS;
-        void tick();
-      }
+      // Resume polling on re-show. Do NOT re-arm the rerun-watch here: re-arming reset the
+      // deadline on every focus-return, so an alt-tabbing user could push it out indefinitely
+      // and hang the button "Re-running…" forever (AC#3). The deadline stays fixed at arm time;
+      // if it elapsed while hidden, the first tick on re-show runs updateRerunWatch and clears
+      // it (nothing is rendered while hidden, so there is no visible hang in the meantime).
+      if (document.visibilityState === 'visible' && !cancelled) void tick();
     };
     document.addEventListener('visibilitychange', onVisible);
 
@@ -1036,13 +1104,14 @@ git commit -m "feat(#636): useCheckRuns refetch + per-check rerun-watch"
 - [ ] **Step 1: Write the failing tests** — extend `ChecksTab.test.tsx`. First widen the imports and add a rerun-aware render helper (the existing `run` factory now defaults `checkRunId: 1` from Task 1 Step 6b; the existing `renderTab` only sets `checks`, but rerun reads `prDetail.pr.headSha`, so these tests render with a `prDetail` override too):
 
 ```typescript
-// widen the existing imports:
-import { describe, expect, it, vi } from 'vitest';
-import { render, screen, waitFor, within } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
-import * as checksApi from '../../../api/checks';
-import type { PrDetailContextValue } from '../prDetailContext';
-import type { CheckRunsResult } from '../../../hooks/useCheckRuns';
+// MERGE these into the file's EXISTING import block — do not replace it wholesale (the file
+// already imports `ChecksTab`, `PrDetailContextProvider`, `makePrDetailContextValue`,
+// `type CheckRun`, `type CheckRunsResult`; dropping `import type { CheckRun }` would break the
+// `run` factory). New/extended pieces only:
+import { vi } from 'vitest';                       // add `vi` to the existing { describe, expect, it }
+import { waitFor, within } from '@testing-library/react'; // add to the existing { render, screen }
+import * as checksApi from '../../../api/checks';  // new
+import type { PrDetailContextValue } from '../prDetailContext'; // new
 
 const HEAD_SHA = '0123456789abcdef0123456789abcdef01234567';
 const DEFAULT_PR_REF = { owner: 'acme', repo: 'api', number: 123 }; // from makePrDetailContextValue
@@ -1427,17 +1496,19 @@ git commit -m "test(#636): add checkRunId to e2e checks route mocks"
 - `RerunOutcome` (incl. `superseded`) + `RerunResultDto` + `IPrChecksRerunner` + `GitHubPrChecksRerunner` (SHA guard + rerequest, own outcome map) + DI → **Task 2** ✅
 - Endpoint `POST .../rerun?sha=` + validation + `FakePrChecksRerunner` → **Task 3** ✅
 - FE `rerunCheck` + outcome types → **Task 4** ✅
-- `useCheckRuns` `refetch` (no loading flash) + `armRerunWatch` + window + visible-time re-arm + `rerunPendingFor` → **Task 5** ✅
+- `useCheckRuns` `refetch` (no loading flash) + `armRerunWatch` + fixed wall-clock window (no focus re-arm) + `rerunPendingFor` → **Task 5** ✅
 - `CheckDetail` button, eligibility, disabled caption, running/error/superseded states, Retry re-invokes, per-check isolation, SR `role=alert`/`status`, footer placement, spinner glyph → **Task 6** ✅
 - Token-scope doc → **Task 7** ✅
 - e2e route-mock parity + full-suite sanity → **Task 8** ✅
-- AC#3 "never hangs" (watch clears on transition OR expiry; visible-time) → **Tasks 5 + 6** ✅
+- AC#3 "never hangs" (watch clears on transition OR fixed wall-clock expiry — NOT re-armed on focus; cold-series error also drops the watch) → **Task 5** (focus-toggle + failure-path regression tests) ✅
 - B2 access-control (existing middleware, no new gate) → no code change required; the endpoint inherits the stack (recorded in spec) ✅
 
 **Deliberate deviations from the spec (documented):**
 1. **FakePrChecksReader keeps 3 check-run rows** (no added status-source row) to avoid churning e2e visual baselines; the disabled-for-status path is covered concretely by Task 6 Step 1's first test (`enables Re-run … disables it for ineligible rows`, which renders a `source:'status'` row and asserts the disabled button + caption). (Spec § Testing suggested a status row in the fake.)
 2. **Rerequest POST sends no body** (matches the reader's call style; github.com accepts a bodyless rerequest). The spec's "set `Content-Type` explicitly for some GHES versions" is deferred as YAGNI for the github.com target; revisit if GHES support is added.
 3. **`CheckRunsResult.refetch`/`armRerunWatch`/`rerunPendingFor` are typed OPTIONAL** even though the hook always returns them (Task 5 Step 3 interface comment). Keeps the ~10 unrelated inline `PrDetailContextValue` test stubs valid untouched; the single consumer null-guards. **This is a typing judgment, not a spec requirement — flag it at the plan gate.** Alternative (required members) is honest-but-churns-10-files; recommendation is optional. `CheckRun.checkRunId` stays **required** (it is a wire field, not an internal result member).
+4. **The rerun-watch window is a fixed wall-clock deadline, NOT visible-time re-armed on focus** (changed from the spec's "accounted in visible time, re-armed on `onVisible`"). The spec's re-arm reset the deadline on every focus-return, which an alt-tabbing user could push out indefinitely → permanent "Re-running…" hang (adversarial-R2 Finding 1). The fixed deadline guarantees termination. **Tradeoff to confirm at the gate:** if the user hides the tab for longer than `RERUN_WATCH_MS` (90s) the "Re-running…" feedback is lost (data stays correct via normal polling), and on a *slow* runner the window can expire before the re-run's check appears (the loop then stops on an all-terminal list; the user re-clicks Re-run or reloads). `RERUN_WATCH_MS` is the single tunable; 90s is the default, revisit against a live Actions PR.
+5. **The same-id transition-clear is best-effort** (adversarial-R2 Finding 2): a GitHub Actions rerequest may emit a *new* check-run id, so the original (watched) id can stay terminal and never trigger the early clear. The wall-clock expiry is the real guarantee; the new in-progress row is surfaced by normal polling regardless. Confirm the Actions behavior in Task 6; the early-clear-on-any-fresh-activity refinement is deferred polish, not needed for correctness.
 
 **Placeholder scan:** **No placeholders remain.** Task 6 Step 1 is now fully concrete (real DOM assertions, `rerunCheck` call-arg checks, role checks) against the existing `ChecksTab.test.tsx` harness (`run` factory + `makePrDetailContextValue`). Every code step has complete code.
 
@@ -1451,4 +1522,12 @@ git commit -m "test(#636): add checkRunId to e2e checks route mocks"
 - **Security** (zero findings; one spec-text nit on owner/repo escaping) → **Applied to the spec** (the `Uri.EscapeDataString` parenthetical was corrected — owner/repo are regex-gated; #604 escaped the SHA).
 - **Self-found wiring bug** (plan had `ChecksTab` calling `useCheckRuns` + prop-drilling; real `ChecksTab` reads the shared result from context) → **Applied**: Task 6 Step 3 corrected to read from `usePrDetailContext()`.
 
-**Open copy question (non-blocking, from spec):** whether a GitHub-Actions check-run rerequest re-runs the whole workflow or one job — resolve during Task 6 implementation when live behavior is observable; affects button/tooltip copy only.
+**Round-2 `ce-doc-review` dispositions (4 reviewers):**
+- **Coherence** — zero findings (round-1 edits introduced no new inconsistencies; all wiring assumptions verified against source).
+- **Security** — zero findings (`.`/`..` in owner/repo → GitHub 404 not exfiltration, off-host blocked; SHA guard fails closed; `MapPost` inherits the middleware; no error-body leak). DQ1: no explicit unauthenticated-401 test for the new POST — **flagged at the gate** as an optional B2 hardening (every other mutating endpoint shares the gap; pipeline-middleware audit covers it).
+- **Feasibility** — zero findings; two clarity residuals **Applied**: Task 5 tests must sit inside the existing `describe`; Task 6 imports are a merge (keep `import type { CheckRun }`).
+- **Adversarial P? (major) Finding 1** (onVisible re-arm → indefinite "Re-running…" hang; also defeats the round-1 catch fix) → **Applied**: removed the `onVisible` re-arm (fixed wall-clock deadline) + added the focus-toggle regression test; updated the Design note + AC#3 line + deviation 4.
+- **Adversarial Finding 2** (watch keys on an id an Actions rerequest may not reuse) → **Applied as doc + deviation 5**: transition-clear documented best-effort, expiry is the guarantee; early-clear refinement deferred.
+- **Adversarial cold-series residual** (prod-unreachable stuck `rerunPendingFor`) → **Applied**: the cold-series `catch` branch now drops the watch defensively.
+
+**Open copy question (non-blocking, from spec):** whether a GitHub-Actions check-run rerequest re-runs the whole workflow or one job — resolve during Task 6 implementation when live behavior is observable; affects button/tooltip copy AND the new-id-vs-same-id watch behavior (deviation 5).
