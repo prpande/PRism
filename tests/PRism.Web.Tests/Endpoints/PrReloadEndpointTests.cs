@@ -289,16 +289,15 @@ public class PrReloadEndpointTests : IClassFixture<PRismWebApplicationFactory>
         var clientSha = new string('d', 40);
         var prRef = new PrReference("acme", "api", 1302);
         var fakeBus = new FakeReviewEventBus();
-        await using var factory = _factory.WithWebHostBuilder(b => b.ConfigureServices(s =>
-        {
-            s.RemoveAll<IActivePrCache>();
-            s.AddSingleton<IActivePrCache>(
-                new FakeCacheWithSnapshot(prRef, new ActivePrSnapshot(cachedSha, null, DateTimeOffset.UtcNow)));
-            s.RemoveAll<IActivePrBatchReader>();
-            s.AddSingleton<IActivePrBatchReader>(new FakeBatchReader(prRef, head: null, rateLimited: true));
-            s.RemoveAll<IReviewEventBus>();
-            s.AddSingleton<IReviewEventBus>(fakeBus);
-        }));
+        // Reuse WithCacheAndBatch for the cache+batch wiring (WithWebHostBuilder stacks); add only
+        // the bus override this no-side-effects assertion needs.
+        await using var factory =
+            WithCacheAndBatch(prRef, cachedSha, new FakeBatchReader(prRef, head: null, rateLimited: true))
+                .WithWebHostBuilder(b => b.ConfigureServices(s =>
+                {
+                    s.RemoveAll<IReviewEventBus>();
+                    s.AddSingleton<IReviewEventBus>(fakeBus);
+                }));
         var client = AuthedClient(factory, "tab-fb");
         await SeedSessionAsync(client, "acme/api/1302");
         fakeBus.Clear(); // drop events emitted by the seed PUT

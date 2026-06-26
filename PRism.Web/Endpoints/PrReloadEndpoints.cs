@@ -114,64 +114,15 @@ internal static class PrReloadEndpoints
                 // head-shift checks use the caller's own stamp (spec § 5.4 branch 1).
                 callerTabId: sourceTabId).ConfigureAwait(false);
 
-            // Phase 1.5: head-shift guard (no _gate held — it may make a GitHub call, which must
-            // never run inside store.UpdateAsync's brief apply gate). Runs AFTER reconcile so the
-            // head is verified as late as possible before the apply, minimizing the window the
-            // guard exists to protect (#611); the wasted reconcile on a refusal is cheap for a
-            // single-user local tool. Every refusal returns here, BEFORE UpdateAsync — so no
-            // refusal can write a tab stamp or reach bus.Publish (the apply transform is the only
-            // writer of either). See docs/specs/2026-06-26-634-...-design.md.
-            var cached = activePrCache.GetCurrent(prRef);
-            if (cached is null)
-                // Cold cache: the poller hasn't populated a snapshot for this PR yet (subscribe→poll
-                // race) or it was cleared by POST /api/auth/replace. We cannot verify request.HeadSha
-                // against a known-good head, so we must NOT reconcile against an unverified head (#611)
-                // — a stale client head would silently corrupt draft state. Signal a retryable conflict;
-                // the frontend retries once the next poll lands. GetCurrent != null is the true "first
-                // poll completed" signal — a STRONGER precondition than IsSubscribed.
-                return Results.Json(
-                    new ReloadHeadUnverifiedResponse(),
-                    statusCode: StatusCodes.Status409Conflict);
-
-            string? currentHeadShaForRetry = null;
-            if (cached.HeadSha != request.HeadSha)
-            {
-                // Diverged: the cache disagrees with the client head. The cache is NOT authoritative —
-                // it can LAG the client head (both are independent GitHub reads), so trusting it blindly
-                // would tell the frontend to retry against a STALER head (#634). Consult GitHub for the
-                // actual current head via the SAME GraphQL seam the poller uses to populate the cache
-                // (IActivePrBatchReader) — using a different transport (REST PollActivePrAsync) would
-                // expose us to GitHub's REST-vs-GraphQL replication skew.
-                ActivePrPollSnapshot? authoritative = null;
-                try
-                {
-                    var batch = await batchReader.PollBatchAsync(new[] { prRef }, ct).ConfigureAwait(false);
-                    batch.TryGetValue(prRef, out authoritative);
-                }
-                catch (RateLimitExceededException)
-                {
-                    // Rate-limited read → authoritative stays null → fall back to the cached head below.
-                    // (Transport / poison-payload failures propagate as Phase 1's GitHub calls do.)
-                }
-
-                if (authoritative is null || string.IsNullOrEmpty(authoritative.HeadSha))
-                    // Could not read an authoritative head (rate-limited, or GitHub dropped this PR from
-                    // the batch — the poller's per-alias "keep last-known" contract). Degrade to the prior
-                    // behavior: return the cached head. No worse than the status quo, self-heals on the
-                    // next poll, and avoids a new 500 that would invite frantic re-clicks under rate-limit.
-                    currentHeadShaForRetry = cached.HeadSha;
-                else if (authoritative.HeadSha != request.HeadSha)
-                    // GitHub's current head differs from the client's → the client head IS stale. Return
-                    // GitHub's authoritative head (never the cache's) as the retry target.
-                    currentHeadShaForRetry = authoritative.HeadSha;
-                // else: GitHub's head == request.HeadSha → the client head IS current and the cache was
-                // merely lagging → fall through to the apply (the matching-head happy path).
-            }
-
-            if (currentHeadShaForRetry is not null)
-                return Results.Json(
-                    new ReloadStaleHeadResponse(currentHeadShaForRetry),
-                    statusCode: StatusCodes.Status409Conflict);
+            // Phase 1.5: head-shift guard — runs OUTSIDE store.UpdateAsync (it may make a GitHub
+            // call, which must never run inside the brief apply gate) and AFTER Phase 1 reconcile
+            // (verify the head as late as possible before the apply, keeping the window the guard
+            // protects tight — #611). Every refusal returns here, BEFORE UpdateAsync, so no refusal
+            // writes a tab stamp or reaches bus.Publish (the apply transform is the only writer of
+            // either). See ResolveHeadShiftRefusalAsync + docs/specs/2026-06-26-634-...-design.md.
+            if (await ResolveHeadShiftRefusalAsync(activePrCache, batchReader, prRef, request.HeadSha, ct)
+                    .ConfigureAwait(false) is { } refusal)
+                return refusal;
 
             // Phase 2: apply (gate held briefly). The head was verified above; UpdateAsync now does
             // the apply only. The in-transform TryGetValue re-checks session existence in case a
@@ -267,5 +218,59 @@ internal static class PrReloadEndpoints
         {
             sem.Release();
         }
+    }
+
+    // Head-shift guard (#611 cold cache + #634 diverged). Returns a 409 IResult to refuse the
+    // reload, or null to proceed to the apply. Extracted from PostReload so the happy path reads
+    // reconcile → guard → apply → publish; MUST run outside store.UpdateAsync (it may make a
+    // GitHub call) and after Phase 1 reconcile (verify the head as late as possible).
+    private static async Task<IResult?> ResolveHeadShiftRefusalAsync(
+        IActivePrCache activePrCache,
+        IActivePrBatchReader batchReader,
+        PrReference prRef,
+        string requestHeadSha,
+        CancellationToken ct)
+    {
+        // Cold cache: the poller hasn't populated a snapshot for this PR yet (subscribe→poll race) or
+        // it was cleared by POST /api/auth/replace. We cannot verify requestHeadSha against a known-good
+        // head, so we must NOT reconcile against an unverified head (#611) — a stale client head would
+        // silently corrupt draft state. GetCurrent != null is the true "first poll completed" signal —
+        // a STRONGER precondition than IsSubscribed (true after subscribe but before the first poll).
+        var cached = activePrCache.GetCurrent(prRef);
+        if (cached is null)
+            return Results.Json(new ReloadHeadUnverifiedResponse(), statusCode: StatusCodes.Status409Conflict);
+
+        // Matching head: the cache agrees with the client → proceed to the apply (the happy path; no
+        // GitHub call). This is also the only diverged-path exit that does NOT consult GitHub.
+        if (cached.HeadSha == requestHeadSha)
+            return null;
+
+        // Diverged: the cache disagrees with the client head. The cache is NOT authoritative — it can
+        // LAG the client (both are independent GitHub reads), so trusting it blindly would tell the
+        // frontend to retry against a STALER head (#634). Consult GitHub for the actual current head via
+        // the SAME GraphQL seam the poller uses to populate the cache (IActivePrBatchReader) — a different
+        // transport (REST PollActivePrAsync) would expose us to GitHub's REST-vs-GraphQL replication skew.
+        ActivePrPollSnapshot? authoritative = null;
+        try
+        {
+            var batch = await batchReader.PollBatchAsync(new[] { prRef }, ct).ConfigureAwait(false);
+            batch.TryGetValue(prRef, out authoritative);
+        }
+        catch (RateLimitExceededException)
+        {
+            // Rate-limited read → authoritative stays null → fall back to the cached head below.
+            // (Transport / poison-payload failures propagate as Phase 1's GitHub calls do.)
+        }
+
+        // The retry target is GitHub's authoritative head when we got one; otherwise we degrade to the
+        // cached head (the prior behavior — no worse than the status quo, self-heals on the next poll,
+        // and avoids a new 500 that would invite frantic re-clicks under rate-limit). When the chosen
+        // target equals the client head, the client was current and the cache merely lagged → proceed.
+        var retryHead = authoritative is null || string.IsNullOrEmpty(authoritative.HeadSha)
+            ? cached.HeadSha
+            : authoritative.HeadSha;
+        return retryHead == requestHeadSha
+            ? null
+            : Results.Json(new ReloadStaleHeadResponse(retryHead), statusCode: StatusCodes.Status409Conflict);
     }
 }
