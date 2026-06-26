@@ -38,6 +38,26 @@ it('renders exactly one composer-badge (footer only) on the Overview composer', 
   expect(screen.getAllByTestId('composer-badge')).toHaveLength(1);
 });
 
+it('shows a read-only indicator in the footer when the tab is taken over (#630)', () => {
+  // readOnly suppresses the editor-stub badge (showBadge={false} is passed by the
+  // composer), so the footer badge is the only one — and it must show the neutral
+  // read-only indicator, not a save-state label.
+  render(
+    <PrRootReplyComposer
+      prRef={prRef}
+      prState="open"
+      draftId={null}
+      onDraftIdChange={() => {}}
+      registerOpenComposer={() => () => {}}
+      onClose={() => {}}
+      readOnly
+    />,
+  );
+  const badge = screen.getByTestId('composer-badge');
+  expect(badge).toHaveTextContent('Read-only');
+  expect(badge).toHaveClass('composer-badge--readonly');
+});
+
 it('wraps the composer in the shared composer-frame', () => {
   const { container } = render(
     <PrRootReplyComposer

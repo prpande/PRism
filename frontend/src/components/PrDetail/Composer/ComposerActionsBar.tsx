@@ -1,6 +1,7 @@
 import { useId } from 'react';
 import { AiComposerAssistant } from '../../Ai/AiComposerAssistant';
-import { badgeLabel, type ComposerSaveBadge } from '../../../hooks/useComposerAutoSave';
+import type { ComposerSaveBadge } from '../../../hooks/useComposerAutoSave';
+import { ComposerStatusBadge } from './ComposerStatusBadge';
 
 export interface ComposerActionsBarProps {
   previewMode: boolean;
@@ -66,13 +67,7 @@ export function ComposerActionsBar({
 
       <AiComposerAssistant />
 
-      <span
-        className={`composer-badge composer-badge--${badge}`}
-        role="status"
-        data-testid="composer-badge"
-      >
-        {badgeLabel(badge)}
-      </span>
+      <ComposerStatusBadge badge={badge} readOnly={readOnly} />
 
       <span className="composer-actions-spacer" aria-hidden="true" />
 
@@ -91,7 +86,11 @@ export function ComposerActionsBar({
         <button
           type="button"
           className="composer-save btn btn-primary btn-sm"
-          aria-disabled={saveDisabled || posting}
+          // Mirror the native `disabled` (actionsLocked = readOnly || posting) so
+          // aria-disabled reflects the cross-tab read-only lock too. Kept as an
+          // always-present true/false (no `|| undefined`) — the A3 a11y test
+          // asserts an explicit aria-disabled="false" on the enabled Save button.
+          aria-disabled={saveDisabled || actionsLocked}
           title={saveTooltip}
           onClick={onSaveClick}
           disabled={actionsLocked}
