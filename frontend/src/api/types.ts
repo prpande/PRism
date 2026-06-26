@@ -135,6 +135,12 @@ export type CheckConclusion =
   | 'startup-failure';
 export type DegradedReason = 'none' | 'auth' | 'transient';
 
+export type RerunOutcome = 'accepted' | 'auth' | 'not-rerunnable' | 'superseded' | 'transient';
+
+export interface RerunResponse {
+  outcome: RerunOutcome;
+}
+
 export interface CheckRun {
   name: string;
   status: CheckRunStatus;
