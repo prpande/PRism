@@ -335,7 +335,12 @@
    selectors target the active view's `.pr-detail-page` + its visible
    `[data-subtab='files']` slot rather than the bare `.files-tab` class, since
    hidden sibling Files slots also carry `.files-tab`. Works in the browser and
-   composes with the desktop-shell rules above. */
+   composes with the desktop-shell rules above.
+
+   ⚠ DRIFT NOTE: the [data-detail-active] block BELOW (#640, Overview/Hotspots/
+   Checks) mirrors these shell-binding rules for the other tabs. A change to the
+   shared shell behaviour (100dvh bind, escape-hatch overflow-y, §3 overflow-x
+   guard) must be applied there too. */
 [data-app-shell]:has([data-app-scroll][data-files-active]) {
   height: 100dvh;
   display: flex;
@@ -391,6 +396,80 @@
 [data-files-active] [data-subtab='files']:not([hidden]) > .files-tab {
   flex: 1 1 0;
   min-height: 0;
+}
+
+/* PR-detail Overview / Hotspots / Checks (#640): reuse the SAME viewport-binding
+   shell sandwich as Files so the header + sub-tab strip stay pinned and only the
+   tab content scrolls. The trigger is a parallel `data-detail-active` marker that
+   PrDetailView stamps on [data-app-scroll] only while it is the ACTIVE view
+   showing one of those three sub-tabs (Drafts and any future tab get no marker,
+   so they keep the prior document-scroll behavior until deliberately opted in).
+   The two markers are mutually exclusive — a view shows exactly one sub-tab — so
+   these rules and the Files rules above never apply to the same element at once.
+   Composes with the desktop-shell rules; no-op in the browser when no marker.
+
+   ⚠ DRIFT NOTE: the shell-binding rules here (everything EXCEPT the slot scroller
+   at the bottom) intentionally MIRROR the [data-files-active] block above rather
+   than sharing a comma-grouped selector — keeping the Files diff-scroll contract
+   (#191/#156/#155/#590) physically isolated so a detail-tab edit can never touch a
+   line the Files path reads. The cost is forward drift: a change to the SHARED
+   shell behaviour (the 100dvh bind, the escape-hatch overflow-y, the CSS-Overflow
+   §3 overflow-x guard) must be applied to BOTH blocks. The genuinely-different bit
+   — the slot scroller — stays split on purpose. */
+[data-app-shell]:has([data-app-scroll][data-detail-active]) {
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+[data-app-shell]:has([data-app-scroll][data-detail-active]) > * {
+  flex-shrink: 0;
+}
+[data-app-scroll][data-detail-active] {
+  /* Escape hatch (overflow-y: auto, not hidden): if the rigid header stack
+     (PrHeader + banners + a tall UnresolvedPanel) exceeds the viewport, the page
+     scrolls vertically to reach it instead of clipping into a dead end — the same
+     Copilot-#155 rationale as the Files block. overflow-x: hidden because a
+     non-visible overflow-y forces the UA to compute overflow-x as `auto`
+     (CSS Overflow §3), which would surface a spurious outer horizontal scrollbar. */
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+[data-detail-active] .pr-detail-page:not([hidden]) {
+  /* min-height (not height) so the page can grow past the viewport when the
+     header stack is tall, letting [data-app-scroll] scroll to it. :not([hidden])
+     is essential under keep-alive: display:flex would otherwise override the
+     `hidden` attribute's UA display:none and un-hide the inactive PR tabs' roots. */
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+[data-detail-active] .pr-detail-page:not([hidden]) > * {
+  flex-shrink: 0;
+}
+[data-detail-active] [data-subtab]:not([hidden]) {
+  /* The visible sub-tab slot is the bounded internal scroller — the overflow
+     lands here, not on the document, so PrHeader + the sub-tab strip stay pinned.
+     Because the marker is set only for overview/hotspots/checks, this matches
+     exactly the visible in-scope slot (no tab-id enumeration needed). The slot is
+     full-width, so the scrollbar sits at the viewport edge (the Files model), not
+     at the centered content column's edge.
+
+     min-height:360px (not 0) is a deliberate floor mirroring the Files slot: a
+     min-height:0 slot flex-collapses to zero under an over-tall header, and the
+     [data-app-scroll] escape hatch would then scroll only to the header, leaving
+     the content unreachable. The floor keeps the slot a non-zero scroller so the
+     content stays reachable below a scrolled-to tall header.
+
+     overflow-x:hidden is on the slot (the actual scroller) for the same CSS
+     Overflow §3 reason as [data-app-scroll] above — wide tab content (a code
+     block, a table) must not surface a spurious horizontal scrollbar. */
+  flex: 1 1 0;
+  min-height: 360px;
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 
 /* ======================================================================
