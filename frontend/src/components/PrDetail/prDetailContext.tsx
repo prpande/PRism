@@ -43,6 +43,8 @@ export interface PrDetailContextValue {
   // useFileViewState — no consumer keeps its own copy.
   viewedPaths: Set<string>;
   toggleViewed: (path: string) => void;
+  // #566 — lets the Overview PrActionsPanel trigger a PR-detail reload (SSE-drop fallback).
+  reload: () => void;
 }
 
 const PrDetailContext = createContext<PrDetailContextValue | null>(null);

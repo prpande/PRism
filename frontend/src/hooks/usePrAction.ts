@@ -109,6 +109,11 @@ export function usePrAction({ prRef, reload, prState }: UsePrActionArgs): UsePrA
       pendingKindRef.current = null;
       clearTimer();
     }
+    // Intentional: depend on the booleans, not the prState object reference, so an unrelated
+    // reload that creates a new prState object without changing the lifecycle booleans does NOT
+    // cancel the fallback timer prematurely (round-2 finding A1). `prState` itself is accessed
+    // only via the reference-stable booleans already in the dep array.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [prState?.isClosed, prState?.isDraft, clearTimer]);
 
   // Tidy the timer on unmount.

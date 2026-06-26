@@ -406,6 +406,7 @@ export function PrDetailView({
       clearPendingFilePath,
       viewedPaths,
       toggleViewed,
+      reload,
     }),
     [
       prRef,
@@ -422,6 +423,7 @@ export function PrDetailView({
       clearPendingFilePath,
       viewedPaths,
       toggleViewed,
+      reload,
     ],
   );
 

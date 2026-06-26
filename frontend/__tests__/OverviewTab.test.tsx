@@ -193,6 +193,7 @@ function providerValue(
     clearPendingFilePath: vi.fn(),
     viewedPaths,
     toggleViewed: vi.fn(),
+    reload: vi.fn(),
   };
 }
 
