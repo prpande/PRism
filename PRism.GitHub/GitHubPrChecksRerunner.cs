@@ -55,6 +55,11 @@ public sealed partial class GitHubPrChecksRerunner : IPrChecksRerunner
 
             var headSha = root.TryGetProperty("head_sha", out var hs) && hs.ValueKind == JsonValueKind.String
                 ? hs.GetString() : null;
+            // A 2xx with no usable head_sha is a malformed/unexpected body, NOT a superseded
+            // commit — fall through to Transient rather than telling the user "the PR was
+            // updated" (which a null != expectedHeadSha comparison would otherwise imply).
+            if (headSha is null)
+                return new RerunResultDto(RerunOutcome.Transient);
             if (!string.Equals(headSha, expectedHeadSha, StringComparison.OrdinalIgnoreCase))
                 return new RerunResultDto(RerunOutcome.Superseded);
 

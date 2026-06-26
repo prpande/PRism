@@ -112,6 +112,20 @@ public class GitHubPrChecksRerunnerTests
         Assert.DoesNotContain(rec.Calls, c => c.Method == HttpMethod.Post);
     }
 
+    [Fact]
+    public async Task Get_response_missing_head_sha_returns_transient_and_does_NOT_post()
+    {
+        // A 2xx GET whose body has no head_sha is malformed, not "superseded" — must NOT
+        // surface the "PR was updated" note, and must not rerun.
+        var (rerunner, rec) = RerunnerFor(req =>
+            IsGet(req) ? Json(HttpStatusCode.OK, "{}") : Json(HttpStatusCode.Created, ""));
+
+        var result = await rerunner.RerunAsync(Pr, CheckRunId, Sha, CancellationToken.None);
+
+        Assert.Equal(RerunOutcome.Transient, result.Outcome);
+        Assert.DoesNotContain(rec.Calls, c => c.Method == HttpMethod.Post);
+    }
+
     [Theory]
     [InlineData(HttpStatusCode.Unauthorized, RerunOutcome.Auth)]
     [InlineData(HttpStatusCode.Forbidden, RerunOutcome.NotRerunnable)]
