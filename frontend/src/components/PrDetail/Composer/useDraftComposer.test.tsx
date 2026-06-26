@@ -3,6 +3,7 @@ import { renderHook, act } from '@testing-library/react';
 import type { KeyboardEvent } from 'react';
 import { useDraftComposer } from './useDraftComposer';
 import * as draftApi from '../../../api/draft';
+import * as commentApi from '../../../api/comment';
 import type { ComposerAnchor } from '../../../hooks/useComposerAutoSave';
 
 const inlineAnchor: ComposerAnchor = {
@@ -121,5 +122,227 @@ describe('useDraftComposer', () => {
     });
     expect(result.current.modals.recoveryModalOpen).toBe(true);
     expect(p.onClose).not.toHaveBeenCalled();
+  });
+
+  it('post-now does NOT post (nor surfaces an inline error) when a 404 recovery opened mid-flush (#601 Defect A)', async () => {
+    // Existing draft + update → 404 fires onDraftDeletedByServer, which opens the
+    // recovery modal and clears draftId. handlePostNow must short-circuit on that
+    // transition — never falling back to the stale `draftId` prop and posting
+    // against the deleted draft (which would double-surface a recovery modal AND
+    // an inline post error).
+    vi.spyOn(draftApi, 'sendPatch').mockResolvedValue({
+      ok: false,
+      status: 404,
+      kind: 'draft-not-found',
+      body: {},
+    });
+    const postSpy = vi
+      .spyOn(commentApi, 'postComment')
+      .mockResolvedValue({ ok: false, message: 'draft not found' } as never);
+    const p = params({ draftId: 'd1' });
+    const { result } = renderHook(() => useDraftComposer(p));
+    act(() => {
+      result.current.editor.setBody('an updated body');
+    });
+    await act(async () => {
+      await result.current.actions.onPostNow();
+    });
+    expect(postSpy).not.toHaveBeenCalled();
+    expect(result.current.modals.recoveryModalOpen).toBe(true);
+    expect(result.current.actions.postError).toBeNull();
+  });
+
+  it('discard is inert while a post-now is in flight (#601 Defect C)', async () => {
+    // A pending post owns the draft. Opening the discard modal mid-post would let
+    // the user confirm a delete that races the in-flight post.
+    vi.spyOn(draftApi, 'sendPatch').mockResolvedValue({ ok: true, assignedId: null });
+    let resolvePost: (v: unknown) => void = () => {};
+    vi.spyOn(commentApi, 'postComment').mockReturnValue(
+      new Promise((res) => {
+        resolvePost = res;
+      }) as never,
+    );
+    const p = params({ draftId: 'd1' });
+    const { result } = renderHook(() => useDraftComposer(p));
+    act(() => {
+      result.current.editor.setBody('body to post');
+    });
+    // Start the post; drain flush so we sit inside the pending postComment.
+    await act(async () => {
+      void result.current.actions.onPostNow();
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(result.current.actions.posting).toBe(true);
+    // Attempt to discard mid-post — must be a no-op.
+    act(() => {
+      result.current.actions.onDiscardClick();
+    });
+    expect(result.current.modals.discardModalOpen).toBe(false);
+    // Let the post settle so no act() warning leaks.
+    await act(async () => {
+      resolvePost({ ok: true, postedCommentId: 1 });
+      await Promise.resolve();
+    });
+  });
+
+  it('save is inert while a post-now is in flight (#601 Defect C — Save sibling)', async () => {
+    // handleSaveClick fires flush()→update PUT against the same draft the post is
+    // shipping. It must no-op during a post so the update can't race the post.
+    const sendSpy = vi.spyOn(draftApi, 'sendPatch').mockResolvedValue({
+      ok: true,
+      assignedId: null,
+    });
+    let resolvePost: (v: unknown) => void = () => {};
+    vi.spyOn(commentApi, 'postComment').mockReturnValue(
+      new Promise((res) => {
+        resolvePost = res;
+      }) as never,
+    );
+    const p = params({ draftId: 'd1' });
+    const { result } = renderHook(() => useDraftComposer(p));
+    act(() => {
+      result.current.editor.setBody('body to post');
+    });
+    await act(async () => {
+      void result.current.actions.onPostNow();
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(result.current.actions.posting).toBe(true);
+    const callsAfterPostFlush = sendSpy.mock.calls.length;
+    // Saving mid-post must NOT fire another sendPatch (update) against the draft.
+    act(() => {
+      result.current.actions.onSaveClick();
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(sendSpy.mock.calls.length).toBe(callsAfterPostFlush);
+    await act(async () => {
+      resolvePost({ ok: true, postedCommentId: 1 });
+      await Promise.resolve();
+    });
+  });
+
+  it('Cmd+Enter (submit) is inert while a post-now is in flight (#601 Defect C — keyboard sibling)', async () => {
+    // The submit shortcut does flush()+onClose() — the keyboard sibling of Save.
+    // During a post it must fire no update PUT and must not unmount mid-post.
+    const sendSpy = vi.spyOn(draftApi, 'sendPatch').mockResolvedValue({
+      ok: true,
+      assignedId: null,
+    });
+    let resolvePost: (v: unknown) => void = () => {};
+    vi.spyOn(commentApi, 'postComment').mockReturnValue(
+      new Promise((res) => {
+        resolvePost = res;
+      }) as never,
+    );
+    const p = params({ draftId: 'd1' });
+    const { result } = renderHook(() => useDraftComposer(p));
+    act(() => {
+      result.current.editor.setBody('body to post');
+    });
+    await act(async () => {
+      void result.current.actions.onPostNow();
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(result.current.actions.posting).toBe(true);
+    const callsAfterPostFlush = sendSpy.mock.calls.length;
+    act(() => {
+      result.current.editor.handleKeyDown({
+        metaKey: true,
+        key: 'Enter',
+        preventDefault: () => {},
+      } as unknown as KeyboardEvent<HTMLTextAreaElement>);
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(sendSpy.mock.calls.length).toBe(callsAfterPostFlush);
+    expect(p.onClose).not.toHaveBeenCalled();
+    await act(async () => {
+      resolvePost({ ok: true, postedCommentId: 1 });
+      await Promise.resolve();
+    });
+  });
+
+  it('recovery cancel resets recoveryModalOpenRef so post-now works again (#601 review finding)', async () => {
+    // handlePostNow/handleKeyDown short-circuit on recoveryModalOpenRef. If
+    // onRecoveryCancel only clears the state and not the ref, post-now stays
+    // silently broken after the modal is dismissed.
+    const sendSpy = vi.spyOn(draftApi, 'sendPatch').mockResolvedValue({
+      ok: false,
+      status: 404,
+      kind: 'draft-not-found',
+      body: {},
+    });
+    const postSpy = vi
+      .spyOn(commentApi, 'postComment')
+      .mockResolvedValue({ ok: true, postedCommentId: 7 } as never);
+    const p = params({ draftId: 'd1' });
+    const { result } = renderHook(() => useDraftComposer(p));
+    act(() => {
+      result.current.editor.setBody('an updated body');
+    });
+    // 1. Trigger recovery (404 mid-flush) — sets the ref true.
+    await act(async () => {
+      await result.current.actions.onPostNow();
+    });
+    expect(result.current.modals.recoveryModalOpen).toBe(true);
+    expect(postSpy).not.toHaveBeenCalled();
+    // 2. Cancel the recovery modal.
+    act(() => {
+      result.current.modals.onRecoveryCancel();
+    });
+    expect(result.current.modals.recoveryModalOpen).toBe(false);
+    // 3. A subsequent successful post-now must NOT be short-circuited by a stale ref.
+    sendSpy.mockResolvedValue({ ok: true, assignedId: 'd2' });
+    await act(async () => {
+      await result.current.actions.onPostNow();
+    });
+    expect(postSpy).toHaveBeenCalled();
+  });
+
+  it('discard-confirm is inert while a post is in flight (#601 review finding — defensive)', async () => {
+    // Unreachable via the UI today (the modal can't be open during a post), but
+    // the guard makes the delete-must-not-race-the-post invariant explicit.
+    // Invoked in isolation here, as guard tests should be.
+    const sendSpy = vi.spyOn(draftApi, 'sendPatch').mockResolvedValue({
+      ok: true,
+      assignedId: null,
+    });
+    let resolvePost: (v: unknown) => void = () => {};
+    vi.spyOn(commentApi, 'postComment').mockReturnValue(
+      new Promise((res) => {
+        resolvePost = res;
+      }) as never,
+    );
+    const p = params({ draftId: 'd1' });
+    const { result } = renderHook(() => useDraftComposer(p));
+    act(() => {
+      result.current.editor.setBody('body to post');
+    });
+    await act(async () => {
+      void result.current.actions.onPostNow();
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(result.current.actions.posting).toBe(true);
+    const callsAfterPostFlush = sendSpy.mock.calls.length;
+    await act(async () => {
+      await result.current.modals.onDiscardConfirm();
+    });
+    // No delete PUT fired against the draft the post is shipping.
+    expect(sendSpy.mock.calls.length).toBe(callsAfterPostFlush);
+    await act(async () => {
+      resolvePost({ ok: true, postedCommentId: 1 });
+      await Promise.resolve();
+    });
   });
 });
