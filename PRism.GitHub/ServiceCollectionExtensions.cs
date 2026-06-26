@@ -91,6 +91,20 @@ public static class ServiceCollectionExtensions
                 sp.GetRequiredService<ILogger<GitHubReviewSubmitter>>());
         });
 
+        // #566 — IPrLifecycleWriter (close/reopen/draft toggles). Same late-bound host + token closure
+        // as the submitter; lifecycle writes share no mutable state with read/submit.
+        services.AddSingleton<IPrLifecycleWriter>(sp =>
+        {
+            var config = sp.GetRequiredService<IConfigStore>();
+            var tokens = sp.GetRequiredService<ITokenStore>();
+            var factory = sp.GetRequiredService<IHttpClientFactory>();
+            return new GitHubPrLifecycleWriter(
+                factory,
+                () => tokens.ReadAsync(CancellationToken.None),
+                config.Current.Github.Host,
+                sp.GetRequiredService<ILogger<GitHubPrLifecycleWriter>>());
+        });
+
         services.AddSingleton<ISectionQueryRunner>(sp =>
         {
             var tokens = sp.GetRequiredService<ITokenStore>();
