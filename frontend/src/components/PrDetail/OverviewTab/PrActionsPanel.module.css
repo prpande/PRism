@@ -1,13 +1,26 @@
 .panel {
   position: sticky;
   bottom: 0;
-  display: flex;
-  align-items: center;
-  gap: var(--s-3);
-  padding: var(--s-3) var(--s-4);
+  /* Full-bleed bar: the border-top + surface fill span the whole pane so content
+     scrolling beneath the sticky footer is occluded across the side gutters too.
+     The ROW inside (.inner) is what gets constrained to the card column. */
   border-top: 1px solid var(--border-1);
   background: var(--surface-0);
 }
+
+/* Constrain the row to the same column as the Overview cards: .overviewGrid uses the
+   identical width token + s-6 inline padding, so "PR actions" lands on the cards' left
+   edge and the action cluster lands on their right edge. */
+.inner {
+  width: min(80%, var(--pr-detail-content-max));
+  margin: 0 auto;
+  padding: var(--s-3) var(--s-6);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-4);
+}
+
 .regionTag {
   font-size: 11px;
   font-weight: 700;
@@ -15,38 +28,56 @@
   letter-spacing: 0.05em;
   color: var(--text-muted);
 }
-.btn,
-.btnReady,
-.btnReopen,
-.btnClose,
-.btnConfirm {
-  font-size: 13px;
-  padding: var(--s-2) var(--s-3);
-  border-radius: 6px;
-  cursor: pointer;
-  border: 1px solid var(--border-1);
-  background: var(--surface-1);
-}
-.btnClose {
-  color: var(--danger-fg);
-}
-.btnConfirm {
-  background: var(--danger-fg);
-  color: var(--surface-0);
-  border-color: var(--danger-fg);
-}
+
+/* Right-aligned action cluster; the inline Close-confirm morph replaces the Close
+   button in place and reuses the same flex row. */
+.actions,
 .confirm {
   display: flex;
   align-items: center;
   gap: var(--s-2);
-  margin-left: auto;
 }
+
 .confirmQ {
-  font-size: 13px;
-  color: var(--danger-fg);
+  font-size: var(--text-sm);
   font-weight: 600;
+  color: var(--danger-fg);
 }
-.panel button:disabled {
-  opacity: 0.5;
-  cursor: default;
+
+/* Action buttons mirror EgressConsentModal's .declineBtn mechanic, one hue each: a neutral
+   surface with coloured text + glyph at rest (so the button "shows its colour"), filling
+   with the matching soft tint + a full-hue border on hover. The hue is the state the button
+   moves the PR TO (open=green, draft=blue, closed=red). Token-only, theme-aware — no
+   color-mix. Compose with the global .btn base. The Close TRIGGER fills soft-red; the
+   Confirm-close commit stays solid .btn-danger so the destructive step reads as the
+   escalation, not a repeat of the trigger. */
+.ready,
+.reopen,
+.convert,
+.close {
+  background: var(--surface-1);
+  border-color: var(--border-2);
+}
+.ready,
+.reopen {
+  color: var(--success-fg);
+}
+.convert {
+  color: var(--info-fg);
+}
+.close {
+  color: var(--danger-fg);
+}
+.ready:hover:not(:disabled),
+.reopen:hover:not(:disabled) {
+  background: var(--success-soft);
+  border-color: var(--success);
+}
+.convert:hover:not(:disabled) {
+  background: var(--info-soft);
+  border-color: var(--info);
+}
+.close:hover:not(:disabled) {
+  background: var(--danger-soft);
+  border-color: var(--danger);
 }

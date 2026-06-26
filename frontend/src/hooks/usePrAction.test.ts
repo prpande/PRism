@@ -32,7 +32,7 @@ describe('usePrAction', () => {
     vi.useRealTimers();
   });
 
-  it('sets pending then clears it on POST 200', async () => {
+  it('clears pending on POST 200 when the target state is already observed', async () => {
     let resolve!: (v: { ok: true }) => void;
     closePr.mockReturnValueOnce(
       new Promise((r) => {
@@ -40,7 +40,8 @@ describe('usePrAction', () => {
       }),
     );
     const reload = vi.fn();
-    const { result } = renderHook(() => usePrAction({ prRef, reload, prState: OPEN }));
+    // prState=CLOSED → reachedTarget('close') is already true, so the .then releases at once.
+    const { result } = renderHook(() => usePrAction({ prRef, reload, prState: CLOSED }));
 
     act(() => result.current.invoke('close'));
     expect(result.current.pending).toBe('close');
@@ -49,6 +50,57 @@ describe('usePrAction', () => {
       resolve({ ok: true });
     });
     await waitFor(() => expect(result.current.pending).toBeNull());
+  });
+
+  it('HOLDS pending through the reconcile window, then clears it when the target is observed', async () => {
+    // The double-click guard (#566): after a 200, the PR isn't reconciled yet (still OPEN), so
+    // `pending` must STAY set — the button stays disabled — until the observed state reaches the
+    // target. Releasing on the bare 200 would briefly re-enable the (stale) action for re-click.
+    closePr.mockResolvedValueOnce({ ok: true });
+    const reload = vi.fn();
+    let prState = OPEN;
+    const { result, rerender } = renderHook(() => usePrAction({ prRef, reload, prState }));
+
+    await act(async () => {
+      result.current.invoke('close');
+    });
+    // 200 resolved but the UI hasn't reconciled (prState still OPEN) → still busy.
+    expect(result.current.pending).toBe('close');
+
+    // The reconcile reload flips the PR to closed → pending releases.
+    prState = CLOSED;
+    rerender();
+    await waitFor(() => expect(result.current.pending).toBeNull());
+  });
+
+  it('a second invoke is ignored while pending is held through the reconcile window', async () => {
+    // Even though the 200 has resolved, inFlight stays held until reconcile — so a re-click does
+    // NOT fire a second POST (the heart of the "clicked twice, thought it didn't work" bug).
+    closePr.mockResolvedValueOnce({ ok: true });
+    const { result } = renderHook(() => usePrAction({ prRef, reload: vi.fn(), prState: OPEN }));
+    await act(async () => {
+      result.current.invoke('close');
+    });
+    expect(result.current.pending).toBe('close'); // held (OPEN not reconciled to CLOSED yet)
+    act(() => result.current.invoke('close')); // re-click during the reconcile window
+    expect(closePr).toHaveBeenCalledTimes(1); // blocked — no second POST
+  });
+
+  it('releases pending when the SSE-drop fallback fires', async () => {
+    vi.useFakeTimers();
+    closePr.mockResolvedValueOnce({ ok: true });
+    const reload = vi.fn();
+    // prState stays OPEN — the target is never observed, so the fallback bounds the held state.
+    const { result } = renderHook(() => usePrAction({ prRef, reload, prState: OPEN }));
+    await act(async () => {
+      result.current.invoke('close');
+    });
+    expect(result.current.pending).toBe('close'); // held while awaiting reconcile
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5000);
+    });
+    expect(reload).toHaveBeenCalledTimes(1);
+    expect(result.current.pending).toBeNull(); // released at the fallback boundary
   });
 
   it('re-entrancy guard ignores a second invoke while one is in flight (same kind)', async () => {

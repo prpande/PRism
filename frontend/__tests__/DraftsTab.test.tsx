@@ -95,6 +95,7 @@ function makeValue(onSelectSubTab: PrDetailContextValue['onSelectSubTab']): PrDe
     viewedPaths: new Set(),
     toggleViewed: vi.fn(),
     reload: vi.fn(),
+    isLoading: false,
   };
 }
 

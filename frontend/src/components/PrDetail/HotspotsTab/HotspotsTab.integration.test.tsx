@@ -43,6 +43,7 @@ function Harness({
     viewedPaths: new Set(),
     toggleViewed: () => {},
     reload: () => {},
+    isLoading: false,
   };
   return (
     <PrDetailContextProvider value={value}>

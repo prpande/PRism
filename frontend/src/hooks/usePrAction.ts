@@ -108,6 +108,11 @@ export function usePrAction({ prRef, reload, prState }: UsePrActionArgs): UsePrA
     if (kind && prState && reachedTarget(kind, prState)) {
       pendingKindRef.current = null;
       clearTimer();
+      // Reconcile landed: release the busy state we held through the reconcile window (see
+      // invoke). `pending` clearing re-enables the (now refreshed) action set, and inFlight
+      // re-opens invoke for the next action.
+      setPending(null);
+      inFlight.current = false;
     }
     // Intentional: depend on the booleans, not the prState object reference, so an unrelated
     // reload that creates a new prState object without changing the lifecycle booleans does NOT
@@ -126,21 +131,33 @@ export function usePrAction({ prRef, reload, prState }: UsePrActionArgs): UsePrA
       setPending(kind);
       void ACTIONS[kind](prRef)
         .then((r) => {
-          setPending(null);
-          inFlight.current = false;
           if (!r.ok) {
+            // Failure: release immediately so the user can retry.
+            setPending(null);
+            inFlight.current = false;
             show({ kind: 'error', message: copyFor(r.code) });
             return;
           }
-          // Success: if the reconcile reload already brought the PR to the target state (a fast SSE
-          // landed before the POST resolved), no fallback is needed.
-          if (latestState.current && reachedTarget(kind, latestState.current)) return;
-          // Otherwise arm the SSE-drop fallback; the prState effect cancels it once the target is observed.
+          // Success and the reconcile reload already brought the PR to the target state (a fast
+          // SSE landed before the POST resolved): release now — done, no fallback needed.
+          if (latestState.current && reachedTarget(kind, latestState.current)) {
+            setPending(null);
+            inFlight.current = false;
+            return;
+          }
+          // Success but the UI hasn't reconciled yet. STAY busy: hold `pending` (so the button
+          // remains disabled, showing its in-flight label) and `inFlight` (so invoke is blocked)
+          // through the reconcile window. This is the fix for re-clicking an action that already
+          // took effect server-side but isn't reflected yet — the user must not be able to fire
+          // it again. The prState effect releases when the target is observed; the SSE-drop
+          // fallback below bounds the wait to FALLBACK_MS, then reloads AND releases.
           pendingKindRef.current = kind;
           clearTimer();
           timerRef.current = setTimeout(() => {
             timerRef.current = null;
             pendingKindRef.current = null;
+            setPending(null);
+            inFlight.current = false;
             reload();
           }, FALLBACK_MS);
         })

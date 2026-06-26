@@ -194,6 +194,7 @@ function providerValue(
     viewedPaths,
     toggleViewed: vi.fn(),
     reload: vi.fn(),
+    isLoading: false,
   };
 }
 

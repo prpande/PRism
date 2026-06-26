@@ -206,6 +206,7 @@ function Wrapper({ prDetail }: { prDetail: PrDetailDto }) {
         viewedPaths: new Set(),
         toggleViewed: () => {},
         reload: () => {},
+        isLoading: false,
       }}
     >
       <Outlet />

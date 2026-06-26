@@ -78,6 +78,19 @@ describe('PrActionsPanel', () => {
     expect(screen.queryByRole('button', { name: /^close$/i })).not.toBeInTheDocument();
   });
 
+  it('disables every action while the PR detail is loading/updating', () => {
+    // #566 — a mid-update click must not fire a second action against a state that hasn't
+    // reconciled yet. isLoading (usePrDetail re-fetch in flight) disables the whole action set.
+    renderPanel({}, { isLoading: true });
+    expect(screen.getByRole('button', { name: /convert to draft/i })).toBeDisabled();
+    expect(screen.getByRole('button', { name: /^close$/i })).toBeDisabled();
+  });
+
+  it('disables Reopen on a closed PR while loading/updating', () => {
+    renderPanel({ state: 'closed', isClosed: true }, { isLoading: true });
+    expect(screen.getByRole('button', { name: /reopen/i })).toBeDisabled();
+  });
+
   it('renders nothing for a merged PR', () => {
     const { container } = renderPanel({ state: 'merged', isMerged: true });
     expect(container).toBeEmptyDOMElement();

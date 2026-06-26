@@ -445,6 +445,7 @@ export function PrDetailView({
       viewedPaths,
       toggleViewed,
       reload,
+      isLoading,
     }),
     [
       prRef,
@@ -462,6 +463,7 @@ export function PrDetailView({
       viewedPaths,
       toggleViewed,
       reload,
+      isLoading,
     ],
   );
 
