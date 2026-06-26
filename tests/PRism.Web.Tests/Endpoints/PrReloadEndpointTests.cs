@@ -8,6 +8,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using PRism.Core.Contracts;
 using PRism.Core.Events;
+using PRism.Core.Inbox;
 using PRism.Core.Json;
 using PRism.Core.PrDetail;
 using PRism.Core.State;
@@ -42,6 +43,24 @@ public class PrReloadEndpointTests : IClassFixture<PRismWebApplicationFactory>
             s.RemoveAll<IActivePrCache>();
             s.AddSingleton<IActivePrCache>(
                 new FakeCacheWithSnapshot(prRef, new ActivePrSnapshot(headSha, null, DateTimeOffset.UtcNow)));
+        }));
+
+    // Builds a per-test factory whose IActivePrCache returns a stale snapshot (head `cachedHead`)
+    // AND whose IActivePrBatchReader serves the authoritative GitHub head (#634). The diverged
+    // branch now consults the batch reader for the authoritative head rather than trusting the
+    // cache; every test that reaches that branch MUST register a fake batch reader, since the
+    // default factory wires the REAL GitHubActivePrBatchReader (a live network call to the
+    // nonexistent acme/api/NNNN repo would otherwise turn the asserted 409/200 into a transport
+    // failure). Caller owns disposal via `await using`.
+    private WebApplicationFactory<Program> WithCacheAndBatch(
+        PrReference prRef, string cachedHead, IActivePrBatchReader batch) =>
+        _factory.WithWebHostBuilder(b => b.ConfigureServices(s =>
+        {
+            s.RemoveAll<IActivePrCache>();
+            s.AddSingleton<IActivePrCache>(
+                new FakeCacheWithSnapshot(prRef, new ActivePrSnapshot(cachedHead, null, DateTimeOffset.UtcNow)));
+            s.RemoveAll<IActivePrBatchReader>();
+            s.AddSingleton(batch);
         }));
 
     private static async Task<T?> ReadApiJsonAsync<T>(HttpResponseMessage resp)
@@ -186,17 +205,14 @@ public class PrReloadEndpointTests : IClassFixture<PRismWebApplicationFactory>
     [Fact]
     public async Task Reload_with_diverged_cached_head_returns_409_reload_stale_head()
     {
-        // Cache reports HeadSha = cached, but the request sends a different sha.
-        // Phase 2's head-shift check returns 409 with the cached head.
+        // Cache reports HeadSha = cached, the request sends a different sha, and GitHub's
+        // authoritative head (served by the batch reader) is a THIRD distinct sha. #634: the
+        // diverged branch must return GitHub's head — NOT the cached head — as the retry target.
         var cachedSha = new string('e', 40);
         var staleSha = new string('d', 40);
-        var fake = new FakeCacheWithSnapshot(new PrReference("acme", "api", 1005),
-            new ActivePrSnapshot(cachedSha, null, DateTimeOffset.UtcNow));
-        await using var factory = _factory.WithWebHostBuilder(b => b.ConfigureServices(s =>
-        {
-            s.RemoveAll<IActivePrCache>();
-            s.AddSingleton<IActivePrCache>(fake);
-        }));
+        var githubSha = new string('f', 40); // authoritative; distinct from cached + request
+        var prRef = new PrReference("acme", "api", 1005);
+        await using var factory = WithCacheAndBatch(prRef, cachedSha, new FakeBatchReader(prRef, githubSha));
         var client = AuthedClient(factory, "tab-1");
         await SeedSessionAsync(client, "acme/api/1005");
 
@@ -205,7 +221,7 @@ public class PrReloadEndpointTests : IClassFixture<PRismWebApplicationFactory>
         resp.StatusCode.Should().Be(HttpStatusCode.Conflict);
         var body = await ReadApiJsonAsync<PrReloadEndpoints.ReloadStaleHeadResponse>(resp);
         body.Should().NotBeNull();
-        body!.CurrentHeadSha.Should().Be(cachedSha);
+        body!.CurrentHeadSha.Should().Be(githubSha); // authoritative head, not the cached sha
 
         // Wire-shape pin: the `error` discriminator is what the frontend's
         // parseReloadConflictKind switches on. Without it, useReconcile's
@@ -213,7 +229,91 @@ public class PrReloadEndpointTests : IClassFixture<PRismWebApplicationFactory>
         // 'conflict' and never retries with currentHeadSha.
         var raw = await resp.Content.ReadAsStringAsync();
         raw.Should().Contain("\"error\":\"reload-stale-head\"");
-        raw.Should().Contain($"\"currentHeadSha\":\"{cachedSha}\"");
+        raw.Should().Contain($"\"currentHeadSha\":\"{githubSha}\"");
+        raw.Should().NotContain(cachedSha); // the stale cached head is never the retry target
+    }
+
+    [Fact]
+    public async Task Reload_diverged_but_client_head_is_authoritative_returns_200()
+    {
+        // #634 AC1+AC3: the cache lags (head C), but GitHub's authoritative head equals the
+        // client's request head — so the client head is current and the cache was merely stale.
+        // Reconcile must PROCEED (200), not return a 409 against the staler cached head.
+        // Red on main: main's diverged branch returns 409 with the cached head regardless of GitHub.
+        var cachedSha = new string('c', 40); // stale cache
+        var clientSha = new string('a', 40); // client head == GitHub's actual head
+        var prRef = new PrReference("acme", "api", 1300);
+        await using var factory = WithCacheAndBatch(prRef, cachedSha, new FakeBatchReader(prRef, clientSha));
+        var client = AuthedClient(factory, "tab-1");
+        await SeedSessionAsync(client, "acme/api/1300");
+
+        var resp = await client.PostAsJsonAsync("/api/pr/acme/api/1300/reload", new { headSha = clientSha });
+
+        resp.StatusCode.Should().Be(HttpStatusCode.OK);
+        var dto = await ReadApiJsonAsync<ReviewSessionDto>(resp);
+        dto.Should().NotBeNull();
+    }
+
+    [Fact]
+    public async Task Reload_diverged_returns_409_with_github_head_not_cached_head()
+    {
+        // #634 AC2: cache (C), client (R), and GitHub's authoritative head (G) are all distinct.
+        // The retry target must be G (GitHub), never C (the cache). Red on main: main returns C.
+        var cachedSha = new string('c', 40);
+        var clientSha = new string('d', 40);
+        var githubSha = new string('e', 40); // authoritative, differs from both
+        var prRef = new PrReference("acme", "api", 1301);
+        await using var factory = WithCacheAndBatch(prRef, cachedSha, new FakeBatchReader(prRef, githubSha));
+        var client = AuthedClient(factory, "tab-1");
+        await SeedSessionAsync(client, "acme/api/1301");
+
+        var resp = await client.PostAsJsonAsync("/api/pr/acme/api/1301/reload", new { headSha = clientSha });
+
+        resp.StatusCode.Should().Be(HttpStatusCode.Conflict);
+        var raw = await resp.Content.ReadAsStringAsync();
+        raw.Should().Contain("\"error\":\"reload-stale-head\"");
+        raw.Should().Contain($"\"currentHeadSha\":\"{githubSha}\"");
+        raw.Should().NotContain(cachedSha);
+    }
+
+    [Fact]
+    public async Task Reload_diverged_authoritative_read_unavailable_falls_back_to_cached_head_no_side_effects()
+    {
+        // #634 AC4: when the authoritative read is unavailable (rate-limited / per-alias drop) the
+        // diverged branch degrades to today's behavior — return the CACHED head — rather than a new
+        // 500. And like every refusal branch it writes no tab stamp and publishes no StateChanged
+        // (the guard returns before store.UpdateAsync's apply transform). On main this passes too
+        // (main never calls the batch reader), so it is a regression guard for the fallback path +
+        // the no-side-effects contract on the restructured endpoint, not a red-on-main test.
+        var cachedSha = new string('c', 40);
+        var clientSha = new string('d', 40);
+        var prRef = new PrReference("acme", "api", 1302);
+        var fakeBus = new FakeReviewEventBus();
+        await using var factory = _factory.WithWebHostBuilder(b => b.ConfigureServices(s =>
+        {
+            s.RemoveAll<IActivePrCache>();
+            s.AddSingleton<IActivePrCache>(
+                new FakeCacheWithSnapshot(prRef, new ActivePrSnapshot(cachedSha, null, DateTimeOffset.UtcNow)));
+            s.RemoveAll<IActivePrBatchReader>();
+            s.AddSingleton<IActivePrBatchReader>(new FakeBatchReader(prRef, head: null, rateLimited: true));
+            s.RemoveAll<IReviewEventBus>();
+            s.AddSingleton<IReviewEventBus>(fakeBus);
+        }));
+        var client = AuthedClient(factory, "tab-fb");
+        await SeedSessionAsync(client, "acme/api/1302");
+        fakeBus.Clear(); // drop events emitted by the seed PUT
+
+        var resp = await client.PostAsJsonAsync("/api/pr/acme/api/1302/reload", new { headSha = clientSha });
+
+        resp.StatusCode.Should().Be(HttpStatusCode.Conflict);
+        var raw = await resp.Content.ReadAsStringAsync();
+        raw.Should().Contain("\"error\":\"reload-stale-head\"");
+        raw.Should().Contain($"\"currentHeadSha\":\"{cachedSha}\""); // fell back to the cached head
+
+        var stateStore = factory.Services.GetRequiredService<IAppStateStore>();
+        var state = await stateStore.LoadAsync(CancellationToken.None);
+        state.Reviews.Sessions["acme/api/1302"].TabStamps.Should().NotContainKey("tab-fb");
+        fakeBus.Published.OfType<StateChanged>().Should().BeEmpty();
     }
 
     [Fact]
@@ -308,5 +408,32 @@ public class PrReloadEndpointTests : IClassFixture<PRismWebApplicationFactory>
         public ActivePrSnapshot? GetCurrent(PrReference prRef) => _expectedPr == prRef ? _snapshot : null;
         public void Update(PrReference prRef, ActivePrSnapshot snapshot) { /* test fake — no-op */ }
         public void Clear() { /* test fake — no-op */ }
+    }
+
+    // Test-only IActivePrBatchReader (#634). Models GitHub's authoritative head for the diverged
+    // branch's read. `head == null` models a per-alias drop (the PR is absent from the batch
+    // result — the poller's "keep last-known" contract); `rateLimited` throws to model a
+    // rate-limited read. Both unavailable cases drive the endpoint's fall-back-to-cached-head path.
+    private sealed class FakeBatchReader : IActivePrBatchReader
+    {
+        private readonly PrReference _pr;
+        private readonly string? _head;
+        private readonly bool _rateLimited;
+        public FakeBatchReader(PrReference pr, string? head, bool rateLimited = false)
+        {
+            _pr = pr;
+            _head = head;
+            _rateLimited = rateLimited;
+        }
+        public Task<IReadOnlyDictionary<PrReference, ActivePrPollSnapshot>> PollBatchAsync(
+            IReadOnlyList<PrReference> refs, CancellationToken ct)
+        {
+            if (_rateLimited)
+                throw new RateLimitExceededException("rate limited (test)", null);
+            var dict = new Dictionary<PrReference, ActivePrPollSnapshot>();
+            if (_head is not null)
+                dict[_pr] = new ActivePrPollSnapshot(_head, "", "MERGEABLE", PrState.Open, 0, 0);
+            return Task.FromResult<IReadOnlyDictionary<PrReference, ActivePrPollSnapshot>>(dict);
+        }
     }
 }
