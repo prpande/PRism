@@ -10,10 +10,10 @@ vi.mock('./client', () => ({
     status: number;
     requestId: string | null;
     body: unknown;
-    constructor(status: number, body?: unknown) {
+    constructor(status: number, requestId: string | null, body: unknown) {
       super(String(status));
       this.status = status;
-      this.requestId = null;
+      this.requestId = requestId;
       this.body = body;
     }
   },
@@ -35,25 +35,25 @@ describe('prLifecycle client', () => {
   });
 
   it('maps a 403 token-cannot-write (code in body) to a typed code', async () => {
-    post.mockRejectedValueOnce(new ApiError(403, { code: 'token-cannot-write' }));
+    post.mockRejectedValueOnce(new ApiError(403, null, { code: 'token-cannot-write' }));
     const r = await closePr(prRef);
     expect(r).toEqual({ ok: false, code: 'token-cannot-write' });
   });
 
   it('maps a 422 reopen-not-possible from reopen', async () => {
-    post.mockRejectedValueOnce(new ApiError(422, { code: 'reopen-not-possible' }));
+    post.mockRejectedValueOnce(new ApiError(422, null, { code: 'reopen-not-possible' }));
     const r = await reopenPr(prRef);
     expect(r).toEqual({ ok: false, code: 'reopen-not-possible' });
   });
 
   it('falls back to generic for an unknown code', async () => {
-    post.mockRejectedValueOnce(new ApiError(502, { code: 'something-weird' }));
+    post.mockRejectedValueOnce(new ApiError(502, null, { code: 'something-weird' }));
     const r = await markReady(prRef);
     expect(r).toEqual({ ok: false, code: 'generic' });
   });
 
   it('maps a 403 "unauthorized" (RequireSubscribed reject) to subscribe-rejected', async () => {
-    post.mockRejectedValueOnce(new ApiError(403, { code: 'unauthorized' }));
+    post.mockRejectedValueOnce(new ApiError(403, null, { code: 'unauthorized' }));
     const r = await convertToDraft(prRef);
     expect(r).toEqual({ ok: false, code: 'subscribe-rejected' });
   });
