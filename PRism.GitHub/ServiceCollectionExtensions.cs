@@ -150,6 +150,17 @@ public static class ServiceCollectionExtensions
                 () => tokens.ReadAsync(CancellationToken.None));
         });
 
+        // Write path for the Checks-tab Re-run action (#636). Same token-closure shape as the
+        // reader above; owns its status→RerunOutcome map (do NOT reuse the reader's DegradedFor).
+        services.AddSingleton<IPrChecksRerunner>(sp =>
+        {
+            var tokens = sp.GetRequiredService<ITokenStore>();
+            var factory = sp.GetRequiredService<IHttpClientFactory>();
+            return new GitHubPrChecksRerunner(
+                factory,
+                () => tokens.ReadAsync(CancellationToken.None));
+        });
+
         services.AddSingleton<PRism.Core.Activity.IReceivedEventsReader>(sp =>
         {
             var tokens = sp.GetRequiredService<ITokenStore>();
