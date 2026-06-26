@@ -217,6 +217,16 @@ describe('PrRootBodyEditor — readOnly + banner (#302 updated)', () => {
     expect(textarea).toHaveAttribute('readOnly');
   });
 
+  // #630: when this editor surfaces its badge (e.g. the SubmitDialog editor) and
+  // the tab is taken over, the status slot shows the read-only indicator instead
+  // of the (possibly stuck) save badge — via the shared ComposerStatusBadge.
+  it('shows the read-only indicator in its badge slot when taken over', () => {
+    render(<Harness readOnly />);
+    const badge = screen.getByTestId('composer-badge');
+    expect(badge).toHaveTextContent('Read-only');
+    expect(badge).toHaveClass('composer-badge--readonly');
+  });
+
   // #302: "text not saved" banner removed — drafts now stage on closed/merged PRs.
   it('does NOT render a "text not saved" banner when prState !== "open"', () => {
     render(<Harness prState="closed" />);

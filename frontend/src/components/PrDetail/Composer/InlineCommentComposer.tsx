@@ -102,8 +102,10 @@ export function InlineCommentComposer({
           onKeyDown={editor.handleKeyDown}
           aria-label="Comment body"
           rows={4}
-          readOnly={editor.readOnly}
-          aria-readonly={editor.readOnly || undefined}
+          // #644: lock input during a post (DOM attribute only — `posting` stays
+          // off the autosave hook's `disabled` so #601 Fix A's 404 path is live).
+          readOnly={editor.readOnly || actions.posting}
+          aria-readonly={editor.readOnly || actions.posting || undefined}
         />
       )}
       <ComposerActionsBar {...actions} />
