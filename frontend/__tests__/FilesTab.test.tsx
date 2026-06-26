@@ -205,6 +205,8 @@ function Wrapper({ prDetail }: { prDetail: PrDetailDto }) {
         clearPendingFilePath: () => {},
         viewedPaths: new Set(),
         toggleViewed: () => {},
+        reload: () => {},
+        isLoading: false,
       }}
     >
       <Outlet />

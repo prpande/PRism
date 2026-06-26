@@ -53,6 +53,8 @@ internal sealed class SseChannel : IDisposable
     // #450 — single-comment-posted: a single inline comment/reply was posted directly.
     // Fans out per-PR so every subscriber for the PR reloads and the new thread surfaces.
     private readonly IDisposable _busSingleCommentPosted;
+    // #566 — pr-lifecycle-changed: fans out per-PR so the acting tab + peers reload PR detail.
+    private readonly IDisposable _busPrLifecycleChanged;
 
     public SseChannel(
         IReviewEventBus bus,
@@ -78,6 +80,7 @@ internal sealed class SseChannel : IDisposable
         _busRootCommentPosted = bus.Subscribe<RootCommentPostedBusEvent>(OnRootCommentPosted);
         _busDraftSubmitted = bus.Subscribe<DraftSubmitted>(OnDraftSubmitted);
         _busSingleCommentPosted = bus.Subscribe<SingleCommentPostedBusEvent>(OnSingleCommentPosted);
+        _busPrLifecycleChanged = bus.Subscribe<PrLifecycleChanged>(OnPrLifecycleChanged);
         _busIdentityChanged = bus.Subscribe<IdentityChanged>(OnIdentityChanged);
     }
 
@@ -308,6 +311,7 @@ internal sealed class SseChannel : IDisposable
     private void OnRootCommentPosted(RootCommentPostedBusEvent evt) => FanoutProjected(evt, evt.PrRef);
     private void OnDraftSubmitted(DraftSubmitted evt) => FanoutProjected(evt, evt.PrRef);
     private void OnSingleCommentPosted(SingleCommentPostedBusEvent evt) => FanoutProjected(evt, evt.PrRef);
+    private void OnPrLifecycleChanged(PrLifecycleChanged evt) => FanoutProjected(evt, evt.PrRef);
 
     // Per-PR fanout for events that carry a PrReference and use the projection wire shape
     // (prRef as "owner/repo/number" string per spec § 4.5). Mirrors OnActivePrUpdated's
@@ -388,6 +392,7 @@ internal sealed class SseChannel : IDisposable
         _busRootCommentPosted.Dispose();
         _busDraftSubmitted.Dispose();
         _busSingleCommentPosted.Dispose();
+        _busPrLifecycleChanged.Dispose();
         _busIdentityChanged.Dispose();
     }
 

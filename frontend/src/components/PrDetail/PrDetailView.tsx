@@ -28,6 +28,7 @@ import { useFileFocusResult } from '../../hooks/useFileFocusResult';
 import { useStateChangedSubscriber } from '../../hooks/useStateChangedSubscriber';
 import { useRootCommentPostedSubscriber } from '../../hooks/useRootCommentPostedSubscriber';
 import { useSingleCommentPostedSubscriber } from '../../hooks/useSingleCommentPostedSubscriber';
+import { useLifecycleChangedSubscriber } from '../../hooks/useLifecycleChangedSubscriber';
 import { useDraftSubmittedSubscriber } from '../../hooks/useDraftSubmittedSubscriber';
 import { useCrossTabPrPresence } from '../../hooks/useCrossTabPrPresence';
 import { useReconcile } from '../../hooks/useReconcile';
@@ -135,6 +136,15 @@ export function PrDetailView({
   // subscriber above; the loader's matching SingleCommentPostedBusEvent → Invalidate guarantees
   // the reload re-fetches fresh detail, not the stale head-SHA-keyed snapshot.
   useSingleCommentPostedSubscriber({ prRef, onPosted: reload });
+  // #566: reload PR detail when a lifecycle action (close/reopen/draft toggle) succeeds, and
+  // clear the transition latch first so the acting tab does NOT flash the "PR was closed —
+  // Reload" banner for its own action (mirrors handleReload's updates.clear() + reload()).
+  const handleLifecycleChanged = useCallback(() => {
+    updates.clear();
+    reload();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- updates.clear is functionally stable (always resets to initial) but not referentially stable; reload is a stable useCallback from usePrDetail (#331)
+  }, [reload]);
+  useLifecycleChangedSubscriber({ prRef, onChanged: handleLifecycleChanged });
   // #392: when a review is submitted, reload PR detail (so the just-posted inline
   // threads + Overview comment surface) AND refetch the draft session (so the
   // submitted drafts clear from their composers) — without a manual reload. The
@@ -434,6 +444,8 @@ export function PrDetailView({
       clearPendingFilePath,
       viewedPaths,
       toggleViewed,
+      reload,
+      isLoading,
     }),
     [
       prRef,
@@ -450,6 +462,8 @@ export function PrDetailView({
       clearPendingFilePath,
       viewedPaths,
       toggleViewed,
+      reload,
+      isLoading,
     ],
   );
 

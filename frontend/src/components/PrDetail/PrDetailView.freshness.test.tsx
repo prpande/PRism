@@ -389,6 +389,8 @@ describe('FilesTab — stale selected file resets to first after refetch (OQ5)',
       clearPendingFilePath: vi.fn(),
       viewedPaths: new Set(),
       toggleViewed: vi.fn(),
+      reload: vi.fn(),
+      isLoading: false,
     };
   }
 

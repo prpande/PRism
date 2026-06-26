@@ -10,6 +10,7 @@ import { PrDescription } from './PrDescription';
 import { StatsTiles } from './StatsTiles';
 import { PrRootConversation, type PrRootConversationReplyContext } from './PrRootConversation';
 import { ReviewFilesCta } from './ReviewFilesCta';
+import { PrActionsPanel } from './PrActionsPanel';
 import { prRootDraft } from '../draftKinds';
 import { countViewedFiles } from '../../../hooks/useFileViewState';
 import styles from './OverviewTab.module.css';
@@ -104,26 +105,29 @@ export function OverviewTab() {
   );
 
   return (
-    <div className={`${styles.overviewTab} ${styles.overviewGrid}`} data-testid="overview-tab">
-      <AiSummaryCard
-        summary={aiSummary}
-        loading={aiLoading}
-        error={aiError}
-        isStale={aiStale}
-        regenerating={aiRegenerating}
-        regenerateError={aiRegenerateError}
-        onRegenerate={aiRegenerate}
-        live={live}
-      />
-      <PrDescription title={prDetail.pr.title} body={prDetail.pr.body} aiPreview={aiOn} />
-      <StatsTiles
-        filesCount={filesCount}
-        draftsCount={draftsCount}
-        threadsCount={threadsCount}
-        viewedCount={viewedCount}
-      />
-      <PrRootConversation comments={prDetail.rootComments} replyContext={replyContext} />
-      <ReviewFilesCta hasFiles={hasFiles} onReviewFiles={handleReviewFiles} />
+    <div className={styles.overviewTab} data-testid="overview-tab">
+      <div className={styles.overviewGrid}>
+        <AiSummaryCard
+          summary={aiSummary}
+          loading={aiLoading}
+          error={aiError}
+          isStale={aiStale}
+          regenerating={aiRegenerating}
+          regenerateError={aiRegenerateError}
+          onRegenerate={aiRegenerate}
+          live={live}
+        />
+        <PrDescription title={prDetail.pr.title} body={prDetail.pr.body} aiPreview={aiOn} />
+        <StatsTiles
+          filesCount={filesCount}
+          draftsCount={draftsCount}
+          threadsCount={threadsCount}
+          viewedCount={viewedCount}
+        />
+        <PrRootConversation comments={prDetail.rootComments} replyContext={replyContext} />
+        <ReviewFilesCta hasFiles={hasFiles} onReviewFiles={handleReviewFiles} />
+      </div>
+      <PrActionsPanel />
     </div>
   );
 }

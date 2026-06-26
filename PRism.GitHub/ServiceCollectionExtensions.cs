@@ -91,6 +91,20 @@ public static class ServiceCollectionExtensions
                 sp.GetRequiredService<ILogger<GitHubReviewSubmitter>>());
         });
 
+        // #566 — IPrLifecycleWriter (close/reopen/draft toggles). Host captured eagerly at registration
+        // (matches GitHubReviewSubmitter precedent); token is late-bound via the () => tokens.ReadAsync(...) closure.
+        services.AddSingleton<IPrLifecycleWriter>(sp =>
+        {
+            var config = sp.GetRequiredService<IConfigStore>();
+            var tokens = sp.GetRequiredService<ITokenStore>();
+            var factory = sp.GetRequiredService<IHttpClientFactory>();
+            return new GitHubPrLifecycleWriter(
+                factory,
+                () => tokens.ReadAsync(CancellationToken.None),
+                config.Current.Github.Host,
+                sp.GetRequiredService<ILogger<GitHubPrLifecycleWriter>>());
+        });
+
         services.AddSingleton<ISectionQueryRunner>(sp =>
         {
             var tokens = sp.GetRequiredService<ITokenStore>();

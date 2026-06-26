@@ -53,3 +53,10 @@ public sealed record RootCommentPostedBusEvent(
 
 // #302 — published when a single inline comment or reply is posted directly (not via a review).
 public sealed record SingleCommentPostedBusEvent(PrReference PrRef, long ReviewCommentId) : IReviewEvent;
+
+// #566 — published after a successful PR lifecycle write (close / reopen / mark-ready /
+// convert-to-draft). Like a comment post, a lifecycle change moves no head SHA, so the
+// (prRef, headSha, generation) snapshot key would re-serve stale detail; the matching
+// PrDetailLoader subscription evicts on this event. Fans out per-PR over SSE so the acting
+// tab (and any peer tab on the PR) reloads. prRef only — the FE just needs the reload signal.
+public sealed record PrLifecycleChanged(PrReference PrRef) : IReviewEvent;

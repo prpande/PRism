@@ -43,6 +43,13 @@ export interface PrDetailContextValue {
   // useFileViewState — no consumer keeps its own copy.
   viewedPaths: Set<string>;
   toggleViewed: (path: string) => void;
+  // #566 — lets the Overview PrActionsPanel trigger a PR-detail reload (SSE-drop fallback).
+  reload: () => void;
+  // True while the PR detail is loading or re-fetching (usePrDetail.isLoading — set on every
+  // reload, not just the first load, while keeping the stale data visible). #566 — the Overview
+  // PrActionsPanel disables its lifecycle actions while this is true so a mid-update click can't
+  // fire an action against a PR whose state is still settling.
+  isLoading: boolean;
 }
 
 const PrDetailContext = createContext<PrDetailContextValue | null>(null);

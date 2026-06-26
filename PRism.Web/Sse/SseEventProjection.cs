@@ -62,6 +62,10 @@ internal static class SseEventProjection
     // directly (not via a review). Carries the REST reviewCommentId for frontend de-dup.
     internal sealed record SingleCommentPostedWire(string PrRef, long ReviewCommentId);
 
+    // #566 — pr-lifecycle-changed: a PR lifecycle write succeeded (close/reopen/draft toggle).
+    // prRef only — the FE reloads PR detail off the signal (mirrors DraftSubmittedWire).
+    internal sealed record PrLifecycleChangedWire(string PrRef);
+
     // #392 — draft-submitted: prRef only. The submit already posted every thread/reply + the
     // PR-root comment server-side, so the frontend just needs the signal to reload PR detail —
     // no review/comment id is carried (threat-model minimal-payload posture).
@@ -102,6 +106,8 @@ internal static class SseEventProjection
             e.PrRef.ToString(), e.ReviewCommentId)),
 
         DraftSubmitted e => ("draft-submitted", new DraftSubmittedWire(e.PrRef.ToString())),
+
+        PrLifecycleChanged e => ("pr-lifecycle-changed", new PrLifecycleChangedWire(e.PrRef.ToString())),
 
         IdentityChanged _ => ("identity-changed", new IdentityChangedWire("identity-change")),
 

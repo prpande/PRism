@@ -29,6 +29,8 @@ export function makePrDetailContextValue(
     clearPendingFilePath: vi.fn(),
     viewedPaths: new Set(),
     toggleViewed: vi.fn(),
+    reload: vi.fn(),
+    isLoading: false,
     ...overrides,
   };
 }

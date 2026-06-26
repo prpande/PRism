@@ -1,6 +1,12 @@
 .overviewTab {
-  flex: 1;
-  overflow: auto;
+  /* Plain content wrapper — NOT its own scroll container. Post-#640/#643 the
+     visible [data-subtab] slot is the bounded internal scroller (header-pin
+     model), and #643's useSlotScrollMemory saves/restores scrollTop on THAT
+     slot. An `overflow:auto` here would (a) establish a sticky containing block
+     so PrActionsPanel's `sticky; bottom:0` pinned to the content bottom instead
+     of the viewport, and (b) risk a nested scroller the slot-scroll-memory can't
+     see. Leaving overflow visible lets the sticky footer resolve against the
+     slot (pins to the viewport bottom) and keeps the slot the single scroller. */
   background: var(--surface-0);
 }
 
@@ -12,6 +18,10 @@
   width: min(80%, var(--pr-detail-content-max));
   margin: 0 auto;
   padding: var(--s-6);
+  /* Bottom clearance so the sticky <PrActionsPanel /> (Task 12) cannot permanently
+     occlude the last content row when the user has scrolled to the bottom. Tuned at
+     the B1 gate once the panel's real height is known. */
+  padding-bottom: var(--s-12);
   display: flex;
   flex-direction: column;
   gap: var(--s-4);
