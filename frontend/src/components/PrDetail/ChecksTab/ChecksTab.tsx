@@ -1,9 +1,10 @@
 // frontend/src/components/PrDetail/ChecksTab/ChecksTab.tsx
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { usePrDetailContext } from '../prDetailContext';
 import { FAILING_CONCLUSIONS } from '../checksGlyphState';
 import { MarkdownRenderer } from '../../Markdown/MarkdownRenderer';
-import type { CheckRun } from '../../../api/types';
+import { rerunCheck } from '../../../api/checks';
+import type { CheckRun, RerunOutcome } from '../../../api/types';
 import type { CheckRunsResult } from '../../../hooks/useCheckRuns';
 import styles from './ChecksTab.module.css';
 
@@ -213,18 +214,80 @@ function ChecksBody({ state, now }: { state: CheckRunsResult; now: number }) {
   );
 }
 
+// Why the Re-run button is disabled, or null when it is eligible. The reason strings are
+// user-facing captions; headSha == null is an internal invariant (prod always has it) handled
+// separately on the disabled gate, not here.
+function rerunDisabledReason(c: CheckRun): string | null {
+  if (c.source !== 'check-run') return "Legacy status checks can't be re-run from PRism";
+  if (c.status !== 'completed') return 'Check is still running';
+  if (c.checkRunId == null) return 'Not re-runnable';
+  return null; // eligible
+}
+
 function CheckDetail({ check: c, now }: { check: CheckRun; now: number }) {
+  // Read everything from the shared PrDetail context — ChecksTab does NOT own useCheckRuns,
+  // so there is no prop to thread. headSha is null-safe (sub-tab tests stub prDetail as {}).
+  const { prRef, prDetail, checks: state } = usePrDetailContext();
+  const headSha = prDetail.pr?.headSha ?? null;
+  const rerunPendingFor = state.rerunPendingFor ?? null; // optional on the interface
+
   const duration = formatDuration(c, now);
   const sourceLabel = c.source === 'check-run' ? 'GitHub check' : 'Status';
-
   const metaParts: string[] = [];
   if (c.appName != null) metaParts.push(c.appName);
   metaParts.push(sourceLabel);
   if (duration != null) metaParts.push(duration);
 
+  const disabledReason = rerunDisabledReason(c);
+  const [phase, setPhase] = useState<'idle' | 'posting' | 'error'>('idle');
+  const [errorOutcome, setErrorOutcome] = useState<RerunOutcome | null>(null);
+  const [note, setNote] = useState<string | null>(null);
+
+  // Per-check isolation: reset the rerun UI when the selected check changes.
+  const identity = c.checkRunId ?? c.name;
+  useEffect(() => {
+    setPhase('idle');
+    setErrorOutcome(null);
+    setNote(null);
+  }, [identity]);
+
+  const watching = rerunPendingFor != null && rerunPendingFor === c.checkRunId;
+  const running = phase === 'posting' || watching;
+
+  const handleRerun = async () => {
+    if (c.checkRunId == null || headSha == null) return; // also narrows headSha to string
+    setPhase('posting');
+    setErrorOutcome(null);
+    setNote(null);
+    const ctrl = new AbortController();
+    try {
+      const { outcome } = await rerunCheck(prRef, c.checkRunId, headSha, ctrl.signal);
+      if (outcome === 'accepted') {
+        state.armRerunWatch?.(c.checkRunId); // hook drives "Re-running…" via rerunPendingFor
+        setPhase('idle');
+      } else if (outcome === 'superseded') {
+        setPhase('idle');
+        setNote('The PR was updated — re-run from the latest checks.');
+      } else {
+        setErrorOutcome(outcome); // auth | not-rerunnable | transient
+        setPhase('error');
+      }
+    } catch {
+      setErrorOutcome('transient');
+      setPhase('error');
+    }
+  };
+
+  const errorText =
+    errorOutcome === 'auth'
+      ? "Couldn't re-run — PRism couldn't authenticate to GitHub. Reconnect your token."
+      : errorOutcome === 'not-rerunnable'
+        ? "Couldn't re-run this check — it may not be re-runnable, or your token may lack write access to checks."
+        : "Couldn't re-run — try again.";
+
   return (
     <div className={styles.detail}>
-      {/* Header */}
+      {/* Header (read-only) */}
       <div className={styles.detailHeader}>
         <RowGlyphIcon glyph={glyphFor(c)} />
         <span className={styles.detailName}>{c.name}</span>
@@ -255,6 +318,50 @@ function CheckDetail({ check: c, now }: { check: CheckRun; now: number }) {
           View on GitHub ↗
         </a>
       )}
+
+      {/* Re-run action row (footer; header stays read-only) */}
+      <div className={styles.rerunRow}>
+        <button
+          type="button"
+          className={`btn btn-secondary ${styles.rerunButton}`}
+          disabled={disabledReason != null || running || headSha == null}
+          onClick={handleRerun}
+        >
+          {running ? (
+            <>
+              <RowGlyphIcon glyph="spinner" /> Re-running…
+            </>
+          ) : (
+            'Re-run'
+          )}
+        </button>
+        {disabledReason != null && <span className={styles.rerunCaption}>{disabledReason}</span>}
+      </div>
+
+      {/* Live regions: alert for failures, status for the neutral superseded note */}
+      {phase === 'error' && (
+        <p role="alert" className={styles.rerunError}>
+          {errorText}
+          {errorOutcome === 'transient' && (
+            <button
+              type="button"
+              className={`btn btn-secondary ${styles.rerunRetry}`}
+              onClick={handleRerun}
+            >
+              Retry
+            </button>
+          )}
+        </p>
+      )}
+      {note != null && (
+        <p role="status" className={styles.rerunNote}>
+          {note}
+        </p>
+      )}
+      {/* SR-only running announcement */}
+      <span role="status" className="sr-only">
+        {running ? `Re-running ${c.name}` : ''}
+      </span>
     </div>
   );
 }

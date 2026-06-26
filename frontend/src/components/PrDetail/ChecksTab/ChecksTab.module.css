@@ -254,3 +254,48 @@
     min-width: unset;
   }
 }
+
+/* Re-run action row (#636). Footer separated from the read-only detail above. */
+.rerunRow {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  margin-top: var(--s-3);
+  padding-top: var(--s-3);
+  border-top: 1px solid var(--border-1);
+}
+
+/* The spinner glyph sits inline before "Re-running…"; keep it 14px to match the rows. */
+.rerunButton {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+}
+
+.rerunCaption {
+  color: var(--text-3);
+  font-size: var(--text-sm);
+}
+
+/* Failure alert — uses the same body-text token the error card uses for parity. */
+.rerunError {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  margin: var(--s-2) 0 0 0;
+  max-width: 48ch;
+  color: var(--text-2);
+  font-size: var(--text-sm);
+}
+
+.rerunRetry {
+  flex: none;
+}
+
+/* Neutral superseded note — muted, not an alert. */
+.rerunNote {
+  margin: var(--s-2) 0 0 0;
+  max-width: 48ch;
+  color: var(--text-3);
+  font-size: var(--text-sm);
+}
