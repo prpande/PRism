@@ -313,11 +313,23 @@ export function PrDetailView({
     if (!active) return;
     const slot = document.querySelector('[data-app-scroll]');
     if (!slot) return;
+    // #640 — the same viewport-binding shell sandwich that pins the Files header
+    // (data-files-active) is reused for the other scrollable sub-tabs via a
+    // parallel data-detail-active marker, so their header + sub-tab strip stay
+    // pinned and only the tab content scrolls. Gated to an explicit allow-list
+    // (NOT `subTab !== 'files'`): Drafts and any sub-tab added later keep today's
+    // document-scroll behavior until deliberately added here, because a slot-level
+    // overflow scroller vs a tab's own internal scroll regions is per-tab unanalyzed.
+    const pinned = subTab === 'overview' || subTab === 'hotspots' || subTab === 'checks';
     slot.toggleAttribute('data-files-active', subTab === 'files');
+    slot.toggleAttribute('data-detail-active', pinned);
     // Cleanup runs on deactivation / sub-tab change; the next active view's
     // setup (which runs after all cleanups in the commit) re-stamps correctly.
+    // BOTH markers are removed — a leaked data-detail-active would bind the
+    // inbox/other views' shell to 100dvh/overflow:hidden and break their scroll.
     return () => {
       slot.removeAttribute('data-files-active');
+      slot.removeAttribute('data-detail-active');
     };
   }, [active, subTab]);
 
