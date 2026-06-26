@@ -43,14 +43,14 @@ public class SseChannelPrLifecycleTests
         using var cts = new CancellationTokenSource();
         var subscriberTask = channel.RunSubscriberAsync(ctx.Response, cookieSessionId: "c1", cts.Token);
 
-        await WaitFor(() => subs.Current == 1, TimeSpan.FromSeconds(5));
+        await TestPoll.UntilAsync(() => subs.Current == 1, TimeSpan.FromSeconds(5));
         var subscriberId = channel.LatestSubscriberIdForCookieSession("c1")!;
         var prRef = new PrReference("o", "r", 1);
         registry.Add(subscriberId, prRef);
 
         bus.Publish(new PrLifecycleChanged(prRef));
 
-        await WaitFor(() => !logger.Messages.IsEmpty, TimeSpan.FromSeconds(5));
+        await TestPoll.UntilAsync(() => !logger.Messages.IsEmpty, TimeSpan.FromSeconds(5));
         var line = logger.Messages.Single();
         line.Should().Contain("PrLifecycleChanged");
         line.Should().Contain("success=True");
@@ -71,7 +71,7 @@ public class SseChannelPrLifecycleTests
         var ctx = new DefaultHttpContext { Response = { Body = new MemoryStream() } };
         using var cts = new CancellationTokenSource();
         var subscriberTask = channel.RunSubscriberAsync(ctx.Response, cookieSessionId: "c1", cts.Token);
-        await WaitFor(() => subs.Current == 1, TimeSpan.FromSeconds(5));
+        await TestPoll.UntilAsync(() => subs.Current == 1, TimeSpan.FromSeconds(5));
         var subscriberId = channel.LatestSubscriberIdForCookieSession("c1")!;
         var prRef = new PrReference("o", "r", 1);
         registry.Add(subscriberId, prRef);
@@ -84,16 +84,5 @@ public class SseChannelPrLifecycleTests
 
         await cts.CancelAsync();
         try { await subscriberTask; } catch (OperationCanceledException) { } catch (IOException) { }
-    }
-
-    private static async Task WaitFor(Func<bool> predicate, TimeSpan timeout)
-    {
-        var sw = System.Diagnostics.Stopwatch.StartNew();
-        while (sw.Elapsed < timeout)
-        {
-            if (predicate()) return;
-            await Task.Delay(20);
-        }
-        throw new TimeoutException($"WaitFor predicate did not become true within {timeout.TotalSeconds:F1}s");
     }
 }

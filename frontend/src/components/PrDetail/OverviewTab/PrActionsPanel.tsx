@@ -79,8 +79,8 @@ export function PrActionsPanel() {
   const busy = pending !== null;
   const siblingsDisabled = busy || confirmingClose;
 
-  // Nothing to show (defensive — merged already returned null).
-  if (!showReopen && !showClose && !showReady && !showConvertDraft) return null;
+  // Past the suppression guard, `pr` is non-null, so exactly one of showReopen (isClosed) /
+  // showClose (!isClosed) is always true — the action set is never empty here.
 
   // Park focus on the container BEFORE invoking, so when the triggered button is removed by the
   // resulting set-swap (or the Confirm span unmounts) focus is already inside the panel and the

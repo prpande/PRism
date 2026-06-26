@@ -20,29 +20,16 @@ internal sealed class TestPrLifecycleWriter : IPrLifecycleWriter
     public PrLifecycleResult NextResult { get; set; } = PrLifecycleResult.Ok;
     public List<string> Calls { get; } = new();
 
-    public Task<PrLifecycleResult> CloseAsync(PrReference r, CancellationToken ct)
+    private Task<PrLifecycleResult> Record(string verb)
     {
-        Calls.Add("close");
+        Calls.Add(verb);
         return Task.FromResult(NextResult);
     }
 
-    public Task<PrLifecycleResult> ReopenAsync(PrReference r, CancellationToken ct)
-    {
-        Calls.Add("reopen");
-        return Task.FromResult(NextResult);
-    }
-
-    public Task<PrLifecycleResult> MarkReadyForReviewAsync(PrReference r, CancellationToken ct)
-    {
-        Calls.Add("ready");
-        return Task.FromResult(NextResult);
-    }
-
-    public Task<PrLifecycleResult> ConvertToDraftAsync(PrReference r, CancellationToken ct)
-    {
-        Calls.Add("draft");
-        return Task.FromResult(NextResult);
-    }
+    public Task<PrLifecycleResult> CloseAsync(PrReference r, CancellationToken ct) => Record("close");
+    public Task<PrLifecycleResult> ReopenAsync(PrReference r, CancellationToken ct) => Record("reopen");
+    public Task<PrLifecycleResult> MarkReadyForReviewAsync(PrReference r, CancellationToken ct) => Record("ready");
+    public Task<PrLifecycleResult> ConvertToDraftAsync(PrReference r, CancellationToken ct) => Record("draft");
 }
 
 // ── Mutable cache ─────────────────────────────────────────────────────────────────────────────
