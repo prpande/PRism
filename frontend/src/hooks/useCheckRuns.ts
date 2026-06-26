@@ -140,12 +140,23 @@ export function useCheckRuns(
       try {
         const res = await getCheckRuns(prRef, headSha!, ctrl.signal);
         if (cancelled || res.headSha !== headSha) return; // cross-series backstop
-        setChecks(res.checks);
-        checksRef.current = res.checks;
         hadSuccessRef.current = true;
         setDegraded(res.degraded);
-        setStatus(res.checks.length === 0 ? 'empty' : 'ok');
+        // updateRerunWatch first — it may clear the watch (a transition or the wall-clock
+        // expiry), which gates the hold-cached decision immediately below.
         updateRerunWatch(res.checks);
+        // Stale-while-revalidate across a re-run: right after a rerequest/rerun GitHub briefly
+        // reports ZERO check-runs for the commit while it resets the suite. While the watch is
+        // still live, keep the cached list on screen instead of flashing "No checks for this
+        // commit" — the re-run's checks replace it on a later tick. Once the watch ends, an
+        // empty result is accepted normally (it then genuinely means no checks).
+        const holdCached =
+          res.checks.length === 0 && watchedIdRef.current != null && checksRef.current.length > 0;
+        if (!holdCached) {
+          setChecks(res.checks);
+          checksRef.current = res.checks;
+          setStatus(res.checks.length === 0 ? 'empty' : 'ok');
+        }
         if (shouldKeepPolling(res.checks)) {
           timer = setTimeout(tick, POLL_MS);
         }

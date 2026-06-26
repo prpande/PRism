@@ -414,6 +414,70 @@ describe('useCheckRuns', () => {
     expect(result.current.rerunPendingFor).toBeNull();
   });
 
+  it('holds the cached list when a poll returns empty during a rerun-watch (no "No checks" flash)', async () => {
+    const terminal = [
+      {
+        name: 'build',
+        status: 'completed',
+        conclusion: 'failure',
+        source: 'check-run',
+        startedAt: null,
+        completedAt: null,
+        detailsUrl: null,
+        summary: null,
+        appName: null,
+        body: null,
+        checkRunId: 42,
+      },
+    ];
+    // First poll: a real list. Every poll after: GitHub briefly reports ZERO check-runs while
+    // it resets the suite for the rerun. The hook must keep the cached list on screen.
+    const spy = vi
+      .spyOn(api, 'getCheckRuns')
+      .mockResolvedValueOnce(resp({ checks: terminal as never }))
+      .mockResolvedValue(resp({ checks: [] }));
+    const { result } = renderHook(() => useCheckRuns(PR, SHA, true));
+    await waitFor(() => expect(result.current.status).toBe('ok'));
+
+    act(() => result.current.armRerunWatch!(42)); // kicks an immediate poll → empty
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(15_000);
+    });
+    expect(spy.mock.calls.length).toBeGreaterThan(1); // the empty poll(s) ran
+    expect(result.current.status).toBe('ok'); // cached state held — NOT 'empty'
+    expect(result.current.checks).toHaveLength(1); // still the cached check
+  });
+
+  it('accepts an empty list once the rerun-watch window has elapsed', async () => {
+    const terminal = [
+      {
+        name: 'build',
+        status: 'completed',
+        conclusion: 'failure',
+        source: 'check-run',
+        startedAt: null,
+        completedAt: null,
+        detailsUrl: null,
+        summary: null,
+        appName: null,
+        body: null,
+        checkRunId: 42,
+      },
+    ];
+    vi.spyOn(api, 'getCheckRuns')
+      .mockResolvedValueOnce(resp({ checks: terminal as never }))
+      .mockResolvedValue(resp({ checks: [] }));
+    const { result } = renderHook(() => useCheckRuns(PR, SHA, true));
+    await waitFor(() => expect(result.current.status).toBe('ok'));
+
+    act(() => result.current.armRerunWatch!(42));
+    // Past the 90s watch: the suite never repopulated → empty is now the truth, surface it.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(95_000);
+    });
+    expect(result.current.status).toBe('empty');
+  });
+
   it('clears a stuck rerun-watch even when polls FAIL across the window (AC#3, failure path)', async () => {
     const terminal = [
       {

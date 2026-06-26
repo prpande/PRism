@@ -58,7 +58,7 @@ describe('ChecksTab', () => {
 
   it('renders empty state', () => {
     renderTab({ ...base, status: 'empty', checks: [] });
-    expect(screen.getByText(/no checks for this commit/i)).toBeInTheDocument();
+    expect(screen.getByText(/no checks have been reported for this commit/i)).toBeInTheDocument();
   });
 
   it('renders auth error copy', () => {
@@ -236,8 +236,82 @@ describe('ChecksTab — Re-run action', () => {
     expect(screen.getByRole('button', { name: /re-running/i })).toBeDisabled();
   });
 
-  it('does NOT show "Re-running…" when the pending watch is for a DIFFERENT check', () => {
+  it('disables a sibling (with a caption) while another check re-runs — no spinner on the sibling', () => {
     renderRerun({ name: 'build', checkRunId: 77 }, { rerunPendingFor: 999 });
+    // Label stays "Re-run" (not "Re-running…") — the spinner is per-check…
+    const btn = screen.getByRole('button', { name: /^re-run$/i });
+    // …but the sibling is blocked: GitHub would refuse a job re-run mid-run.
+    expect(btn).toBeDisabled();
+    expect(screen.getByText(/a re-run is in progress for this commit/i)).toBeInTheDocument();
+  });
+
+  it('disables a completed check whose workflow run is still in progress (same-run sibling non-terminal)', () => {
+    const checks: CheckRunsResult = {
+      ...base,
+      status: 'ok',
+      checks: [
+        // 'build' is completed+failing (re-runnable on its own) but shares run 55 with…
+        run({
+          name: 'build',
+          conclusion: 'failure',
+          checkRunId: 1,
+          detailsUrl: 'https://github.com/o/r/actions/runs/55/job/1',
+        }),
+        // …an in-progress 'e2e' → the run is busy, so 'build' can't be re-run yet.
+        run({
+          name: 'e2e',
+          status: 'in-progress',
+          conclusion: null,
+          checkRunId: 2,
+          detailsUrl: 'https://github.com/o/r/actions/runs/55/job/2',
+        }),
+      ],
+      refetch: vi.fn(),
+      armRerunWatch: vi.fn(),
+      rerunPendingFor: null,
+    };
+    render(
+      <PrDetailContextProvider
+        value={makePrDetailContextValue({ checks, prDetail: prDetailWithSha })}
+      >
+        <ChecksTab />
+      </PrDetailContextProvider>,
+    );
+    // 'build' (failing tier) auto-selects ahead of the in-progress 'e2e'
+    expect(screen.getByRole('button', { name: /^re-run$/i })).toBeDisabled();
+    expect(screen.getByText(/a re-run is in progress for this commit/i)).toBeInTheDocument();
+  });
+
+  it('keeps a completed check re-runnable when the in-progress sibling is in a DIFFERENT run', () => {
+    const checks: CheckRunsResult = {
+      ...base,
+      status: 'ok',
+      checks: [
+        run({
+          name: 'build',
+          conclusion: 'failure',
+          checkRunId: 1,
+          detailsUrl: 'https://github.com/o/r/actions/runs/55/job/1',
+        }),
+        run({
+          name: 'e2e',
+          status: 'in-progress',
+          conclusion: null,
+          checkRunId: 2,
+          detailsUrl: 'https://github.com/o/r/actions/runs/66/job/2', // different run → not busy
+        }),
+      ],
+      refetch: vi.fn(),
+      armRerunWatch: vi.fn(),
+      rerunPendingFor: null,
+    };
+    render(
+      <PrDetailContextProvider
+        value={makePrDetailContextValue({ checks, prDetail: prDetailWithSha })}
+      >
+        <ChecksTab />
+      </PrDetailContextProvider>,
+    );
     expect(screen.getByRole('button', { name: /^re-run$/i })).toBeEnabled();
   });
 
@@ -252,7 +326,7 @@ describe('ChecksTab — Re-run action', () => {
     vi.spyOn(checksApi, 'rerunCheck').mockResolvedValue({ outcome: 'not-rerunnable' });
     const b = renderRerun({ name: 'build', checkRunId: 5 });
     await userEvent.click(screen.getByRole('button', { name: /^re-run$/i }));
-    expect(await screen.findByRole('alert')).toHaveTextContent(/write access/i);
+    expect(await screen.findByRole('alert')).toHaveTextContent(/GitHub didn't allow it/i);
     b.unmount();
     vi.restoreAllMocks();
 

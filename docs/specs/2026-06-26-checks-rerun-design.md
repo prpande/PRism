@@ -32,6 +32,33 @@ API** from the **legacy commit-status API**. Two facts follow that shape the des
 - **Legacy `status`-source checks have no rerun API.** Only `"check-run"` rows are
   ever re-runnable; `"status"` rows are inherently disabled.
 
+## ⚠️ Post-validation correction (2026-06-26) — `rerequest` 404s for GitHub Actions checks
+
+**Live validation against a real PR (#651) invalidated the load-bearing premise of the
+section below.** Tested with a classic `gh` token holding the maximal `repo` + `workflow`
+scopes:
+
+- `POST /repos/{o}/{r}/check-runs/{id}/rerequest` on a **GitHub Actions** check-run returns
+  **`404 Not Found`** — not `403`/`422`. `rerequest` is for check-runs created by
+  **third-party GitHub Apps** (it forwards a `check_run rerequested` webhook to that App);
+  GitHub Actions check-runs do not support it. Token scope is **not** the cause.
+- The correct mechanism for an Actions check is the **Actions jobs API**:
+  `POST /repos/{o}/{r}/actions/jobs/{job_id}/rerun` → **`201`** (verified working). The
+  `job_id` is recoverable from the check-run's `details_url`
+  (`…/actions/runs/{run}/job/{job}`), and for Actions check-runs equals the check-run id.
+
+**Implemented mechanism (Option A, owner-approved):** after the SHA-guard `GET` of the
+check-run (which also yields `app.slug` + `details_url`), dispatch by the creating app —
+`app.slug == "github-actions"` → parse `job_id` from `details_url` (fall back to the
+check-run id) and `POST …/actions/jobs/{job_id}/rerun`; any other App → keep
+`POST …/check-runs/{checkRunId}/rerequest`. Legacy `status` rows remain disabled (no
+re-run API). Outcome mapping is unchanged: `401 → auth`; `403 | 404 | 422 →
+not-rerunnable` (now also covers an Actions run too old to re-run); head-sha mismatch →
+`superseded`; `5xx`/network/timeout → `transient`. Token scope: classic `repo` + `workflow`
+covers it; fine-grained needs **Actions: write**. The sections below describe the original
+`rerequest`-only design and are retained for history — read this correction as authoritative
+where they conflict.
+
 ## GitHub `rerequest` semantics (verified against the REST docs)
 
 The write path calls `POST /repos/{o}/{r}/check-runs/{check_run_id}/rerequest`.

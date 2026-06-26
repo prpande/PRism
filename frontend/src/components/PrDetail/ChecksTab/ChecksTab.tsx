@@ -140,14 +140,33 @@ function ChecksBody({ state, now }: { state: CheckRunsResult; now: number }) {
     return <SkeletonRows />;
   }
   if (status === 'empty') {
-    return <p className={styles.message}>No checks for this commit.</p>;
+    // Centred neutral card (mirrors the error card's surface/border/radius, but a muted dash
+    // glyph rather than the amber warning) so the empty state reads as a design-language
+    // element, not bare text. role="status" — the persistent announcer carries the SR signal.
+    return (
+      <div className={styles.stateWrap}>
+        <div className={styles.emptyCard} role="status">
+          <svg
+            className={styles.emptyIcon}
+            aria-hidden="true"
+            viewBox="0 0 16 16"
+            width="28"
+            height="28"
+            fill="currentColor"
+          >
+            <path d={GLYPH_PATH.dash} />
+          </svg>
+          <p className={styles.emptyText}>No checks have been reported for this commit.</p>
+        </div>
+      </div>
+    );
   }
   if (status === 'error') {
     // Centred card with a warning glyph + a standard app button — purpose-built for
     // this tab but matching the app's surface/border/btn design language. role="alert"
     // so the async error transition is announced (design R2).
     return (
-      <div className={styles.errorWrap}>
+      <div className={styles.stateWrap}>
         <div className={styles.errorCard} role="alert">
           <AlertTriangleIcon />
           <p className={styles.errorText}>
@@ -216,13 +235,35 @@ function ChecksBody({ state, now }: { state: CheckRunsResult; now: number }) {
   );
 }
 
+const isInProgress = (c: CheckRun) => c.status === 'queued' || c.status === 'in-progress';
+
+// The Actions workflow-run id, parsed from a check-run's details_url
+// (…/actions/runs/{run_id}/job/{job_id}). null for non-Actions checks (third-party App or
+// legacy status), whose details_url has no run id — those aren't subject to the run-busy rule.
+function runIdOf(c: CheckRun): string | null {
+  if (c.detailsUrl == null) return null;
+  const m = /\/actions\/runs\/(\d+)/.exec(c.detailsUrl);
+  return m ? m[1] : null;
+}
+
+// A job can't be re-run while its workflow RUN is in progress — even if this job's own check
+// shows `completed`, GitHub 403s ("The workflow run containing this job is already running").
+// The run is busy when any check sharing this check's run id is non-terminal. Scoped by run id
+// so checks in a different, idle run stay re-runnable.
+function runIsBusy(c: CheckRun, all: CheckRun[]): boolean {
+  const runId = runIdOf(c);
+  if (runId == null) return false;
+  return all.some((o) => o !== c && isInProgress(o) && runIdOf(o) === runId);
+}
+
 // Why the Re-run button is disabled, or null when it is eligible. The reason strings are
 // user-facing captions; headSha == null is an internal invariant (prod always has it) handled
 // separately on the disabled gate, not here.
-function rerunDisabledReason(c: CheckRun): string | null {
+function rerunDisabledReason(c: CheckRun, all: CheckRun[]): string | null {
   if (c.source !== 'check-run') return "Legacy status checks can't be re-run from PRism";
   if (c.status !== 'completed') return 'Check is still running';
   if (c.checkRunId == null) return 'Not re-runnable';
+  if (runIsBusy(c, all)) return 'A re-run is in progress for this commit';
   return null; // eligible
 }
 
@@ -240,7 +281,7 @@ function CheckDetail({ check: c, now }: { check: CheckRun; now: number }) {
   metaParts.push(sourceLabel);
   if (duration != null) metaParts.push(duration);
 
-  const disabledReason = rerunDisabledReason(c);
+  const disabledReason = rerunDisabledReason(c, state.checks);
   const [phase, setPhase] = useState<'idle' | 'posting' | 'error'>('idle');
   const [errorOutcome, setErrorOutcome] = useState<RerunOutcome | null>(null);
   const [note, setNote] = useState<string | null>(null);
@@ -255,6 +296,15 @@ function CheckDetail({ check: c, now }: { check: CheckRun; now: number }) {
 
   const watching = rerunPendingFor != null && rerunPendingFor === c.checkRunId;
   const running = phase === 'posting' || watching;
+
+  // `runIsBusy` (in disabledReason) catches a sibling whose run is in progress once polling
+  // reflects it. This covers the gap BEFORE that: right after we trigger a re-run, the watched
+  // check's run is already in progress on GitHub but our list still shows it `completed`, so a
+  // sibling re-run would 403. While our watch is pending for ANOTHER check, block siblings up
+  // front. (The watched check itself shows "Re-running…" via `running`.)
+  const anotherRerunPending = rerunPendingFor != null && rerunPendingFor !== c.checkRunId;
+  const blockedReason =
+    disabledReason ?? (anotherRerunPending ? 'A re-run is in progress for this commit' : null);
 
   const handleRerun = async () => {
     if (c.checkRunId == null || headSha == null) return; // also narrows headSha to string
@@ -284,7 +334,7 @@ function CheckDetail({ check: c, now }: { check: CheckRun; now: number }) {
     errorOutcome === 'auth'
       ? "Couldn't re-run — PRism couldn't authenticate to GitHub. Reconnect your token."
       : errorOutcome === 'not-rerunnable'
-        ? "Couldn't re-run this check — it may not be re-runnable, or your token may lack write access to checks."
+        ? "Couldn't re-run this check — GitHub didn't allow it. A re-run may already be in progress for this commit, or the check may be too old to re-run."
         : "Couldn't re-run — try again.";
 
   return (
@@ -326,7 +376,7 @@ function CheckDetail({ check: c, now }: { check: CheckRun; now: number }) {
         <button
           type="button"
           className={`btn btn-secondary ${styles.rerunButton}`}
-          disabled={disabledReason != null || running || headSha == null}
+          disabled={blockedReason != null || running || headSha == null}
           onClick={handleRerun}
         >
           {running ? (
@@ -337,13 +387,18 @@ function CheckDetail({ check: c, now }: { check: CheckRun; now: number }) {
             'Re-run'
           )}
         </button>
-        {disabledReason != null && <span className={styles.rerunCaption}>{disabledReason}</span>}
+        {!running && blockedReason != null && (
+          <span className={styles.rerunCaption}>{blockedReason}</span>
+        )}
       </div>
 
-      {/* Live regions: alert for failures, status for the neutral superseded note */}
+      {/* Live regions: a token-styled callout — alert (amber-keyed) for failures, a
+          neutral status callout for the superseded note — so the feedback reads as a
+          design-language element, not bare text under the button. */}
       {phase === 'error' && (
-        <p role="alert" className={styles.rerunError}>
-          {errorText}
+        <div role="alert" className={`${styles.rerunCallout} ${styles.rerunCalloutError}`}>
+          <RowGlyphIcon glyph="alert" />
+          <span className={styles.rerunCalloutText}>{errorText}</span>
           {errorOutcome === 'transient' && (
             <button
               type="button"
@@ -353,12 +408,12 @@ function CheckDetail({ check: c, now }: { check: CheckRun; now: number }) {
               Retry
             </button>
           )}
-        </p>
+        </div>
       )}
       {note != null && (
-        <p role="status" className={styles.rerunNote}>
-          {note}
-        </p>
+        <div role="status" className={`${styles.rerunCallout} ${styles.rerunCalloutNote}`}>
+          <span className={styles.rerunCalloutText}>{note}</span>
+        </div>
       )}
       {/* SR-only running announcement */}
       <span role="status" className="sr-only">
