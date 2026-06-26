@@ -230,3 +230,53 @@ describe('ReplyComposer — post-now (Task 10)', () => {
     expect(endPosting).toHaveBeenCalledOnce();
   });
 });
+
+describe('ReplyComposer — textarea locked during in-flight post (#644)', () => {
+  // Mirror of the InlineCommentComposer #644 lock: ReplyComposer renders its OWN
+  // textarea, so the `readOnly={editor.readOnly || actions.posting}` fix must
+  // land here too. See InlineCommentComposer.postNow.test.tsx for the rationale
+  // behind asserting the attribute rather than synthesizing a keystroke.
+  it('marks the textarea read-only while a post is in flight', async () => {
+    let resolvePost: (v: { ok: true; postedCommentId: number }) => void = () => undefined;
+    vi.spyOn(draftApi, 'sendPatch').mockResolvedValue({
+      ok: true,
+      assignedId: 'draft-reply-uuid-1',
+    });
+    vi.mocked(commentApi.postComment).mockImplementation(
+      () => new Promise((res) => (resolvePost = res)),
+    );
+    render(<Harness prState="open" initialDraftId="draft-reply-uuid-1" />);
+
+    const textarea = screen.getByLabelText('Reply body');
+    expect(textarea).not.toHaveAttribute('readonly');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Comment' }));
+    await settle(0); // flush() resolves; postComment dispatched and now pending
+
+    expect(textarea).toHaveAttribute('readonly');
+
+    await act(async () => {
+      resolvePost({ ok: true, postedCommentId: 5 });
+      await Promise.resolve();
+    });
+  });
+
+  it('re-enables the textarea after a failed post', async () => {
+    vi.spyOn(draftApi, 'sendPatch').mockResolvedValue({
+      ok: true,
+      assignedId: 'draft-reply-uuid-1',
+    });
+    vi.mocked(commentApi.postComment).mockResolvedValue({
+      ok: false,
+      status: 422,
+      code: 'post_failed',
+      message: 'Could not post the comment right now.',
+    });
+    render(<Harness prState="open" initialDraftId="draft-reply-uuid-1" />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Comment' }));
+    await settle(0); // post fails → posting back to false
+
+    expect(screen.getByLabelText('Reply body')).not.toHaveAttribute('readonly');
+  });
+});

@@ -67,4 +67,35 @@ describe('ComposerActionsBar', () => {
     const save = screen.getByRole('button', { name: 'Add to review' });
     expect(save).toBeDisabled();
   });
+  it('Save aria-disabled mirrors the disabled state incl. cross-tab read-only (PR #650 review)', () => {
+    // aria-disabled is always-present true/false (not omitted) and folds in the
+    // cross-tab readOnly lock — guards the `saveDisabled || actionsLocked`
+    // expression against the A3 explicit-false contract on one side and the
+    // readOnly=true / posting=false case on the other.
+    const { rerender } = render(<ComposerActionsBar {...baseProps} />);
+    const save = () => screen.getByRole('button', { name: 'Add to review' });
+    expect(save()).toHaveAttribute('aria-disabled', 'false'); // enabled
+    rerender(<ComposerActionsBar {...baseProps} readOnly />);
+    expect(save()).toHaveAttribute('aria-disabled', 'true'); // cross-tab read-only
+    expect(save()).toBeDisabled();
+  });
+  it('supersedes the save badge with a read-only indicator when taken over (#630)', () => {
+    // A cross-tab take-over mid-PUT can leave the autosave badge stuck on
+    // 'Saving…'. When read-only, the status slot shows a neutral read-only
+    // indicator instead of the (possibly stuck) save-state badge.
+    render(<ComposerActionsBar {...baseProps} readOnly badge="saving" />);
+    const badge = screen.getByTestId('composer-badge');
+    expect(badge).toHaveTextContent('Read-only');
+    expect(badge).not.toHaveTextContent(/Saving/);
+    expect(badge).toHaveClass('composer-badge--readonly');
+    expect(badge).toHaveAttribute('title', 'Another tab is editing this PR.');
+    // Still a polite live region (role=status), intentionally not assertive.
+    expect(badge).toHaveAttribute('role', 'status');
+  });
+  it('renders the normal save badge when not read-only', () => {
+    render(<ComposerActionsBar {...baseProps} badge="saving" />);
+    const badge = screen.getByTestId('composer-badge');
+    expect(badge).toHaveTextContent('Saving…');
+    expect(badge).not.toHaveClass('composer-badge--readonly');
+  });
 });

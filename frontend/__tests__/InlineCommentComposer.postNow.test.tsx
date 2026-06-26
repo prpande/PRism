@@ -292,3 +292,64 @@ describe('InlineCommentComposer — post-now (Task 9)', () => {
     expect(endPosting).toHaveBeenCalledOnce();
   });
 });
+
+describe('InlineCommentComposer — textarea locked during in-flight post (#644)', () => {
+  // #644: the inline textarea reflected only the cross-tab readOnly flag, not
+  // `posting`. A keystroke during a post mutated `body` → scheduled a debounced
+  // updateDraftComment PUT that raced the in-flight post. The lock is the DOM
+  // `readOnly` attribute ONLY — the autosave hook's `disabled` stays cross-tab
+  // only, so #601 Fix A's mid-flush 404 detection (driven by the post-now flush)
+  // stays live.
+  function startInFlightPost() {
+    let resolvePost: (v: { ok: true; postedCommentId: number }) => void = () => undefined;
+    const sendPatch = vi
+      .spyOn(draftApi, 'sendPatch')
+      .mockResolvedValue({ ok: true, assignedId: 'draft-uuid-1' });
+    vi.mocked(commentApi.postComment).mockImplementation(
+      () => new Promise((res) => (resolvePost = res)),
+    );
+    return { sendPatch, resolvePost: () => resolvePost({ ok: true, postedCommentId: 5 }) };
+  }
+
+  // The DOM `readOnly` attribute IS the lock: a read-only textarea cannot fire a
+  // user-input onChange, so `body` can't change → the body-keyed debounce never
+  // re-arms → no update PUT races the post (AC: "typing fires no PUT"). jsdom's
+  // fireEvent bypasses readOnly and userEvent deadlocks against fake timers, so
+  // the attribute assertion is the deterministic proof of the mechanism.
+  it('marks the textarea read-only while a post is in flight', async () => {
+    const { resolvePost } = startInFlightPost();
+    render(<Harness prState="open" initialDraftId="draft-uuid-1" />);
+
+    const textarea = screen.getByLabelText('Comment body');
+    // Editable before the post starts.
+    expect(textarea).not.toHaveAttribute('readonly');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Comment' }));
+    await settle(0); // flush() resolves; postComment dispatched and now pending
+
+    expect(textarea).toHaveAttribute('readonly');
+
+    await act(async () => {
+      resolvePost();
+      await Promise.resolve();
+    });
+  });
+
+  // Complements the lock test: the lock is scoped to the post window, so a failed
+  // post (which leaves the composer open) restores an editable textarea.
+  it('re-enables the textarea after a failed post', async () => {
+    vi.spyOn(draftApi, 'sendPatch').mockResolvedValue({ ok: true, assignedId: 'draft-uuid-1' });
+    vi.mocked(commentApi.postComment).mockResolvedValue({
+      ok: false,
+      status: 422,
+      code: 'post_failed',
+      message: 'Could not post the comment right now.',
+    });
+    render(<Harness prState="open" initialDraftId="draft-uuid-1" />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Comment' }));
+    await settle(0); // post fails → posting back to false
+
+    expect(screen.getByLabelText('Comment body')).not.toHaveAttribute('readonly');
+  });
+});
