@@ -20,8 +20,8 @@ public class GraphQlByteIdentityTests
         "author{login avatarUrl} createdAt closedAt mergedAt changedFiles " +
         "comments(first:100){pageInfo{hasNextPage endCursor} nodes{databaseId author{login avatarUrl} createdAt body}}" +
         "reviewThreads(first:100){pageInfo{hasNextPage endCursor} nodes{id path line isResolved " +
-        "comments(first:100){nodes{id databaseId author{login avatarUrl} createdAt body lastEditedAt}}}}" +
-        "reviews(last:100){nodes{author{login} state submittedAt commit{oid}}}" +
+        "comments(first:100){pageInfo{hasNextPage} nodes{id databaseId author{login avatarUrl} createdAt body lastEditedAt}}}}" +
+        "reviews(last:100){pageInfo{hasPreviousPage} nodes{author{login} state submittedAt commit{oid}}}" +
         // #593 — avatarUrl on latestReviews + the reviewRequests connection feed the readiness popover.
         "latestReviews(first:100){nodes{author{login avatarUrl} state}}" +
         "reviewRequests(first:20){nodes{requestedReviewer{... on User{login avatarUrl} ... on Team{name}}}}" +
