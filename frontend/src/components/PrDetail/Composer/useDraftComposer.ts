@@ -184,6 +184,14 @@ export function useDraftComposer(params: UseDraftComposerParams): UseDraftCompos
   };
 
   const handleDiscardConfirm = async () => {
+    // #601: defense-in-depth. handleDiscardClick already blocks the modal from
+    // opening while posting, and the Modal focus-trap keeps a post from starting
+    // while it's open — so this is unreachable today. The guard makes the
+    // delete-must-not-race-the-post invariant explicit for any future caller.
+    if (posting) {
+      setDiscardModalOpen(false);
+      return;
+    }
     if (draftId !== null) {
       const result = await sendPatch(prRef, { kind: deletePatchKind, payload: { id: draftId } });
       if (!result.ok) return; // network/4xx → stay in modal (sendPatch never throws)
@@ -314,7 +322,16 @@ export function useDraftComposer(params: UseDraftComposerParams): UseDraftCompos
       onDiscardCancel: () => setDiscardModalOpen(false),
       onDiscardConfirm: handleDiscardConfirm,
       recoveryModalOpen,
-      onRecoveryCancel: () => setRecoveryModalOpen(false),
+      onRecoveryCancel: () => {
+        // #601: reset the ref alongside the state, matching recreate/discard.
+        // handlePostNow + handleKeyDown's submit short-circuit on this ref, so a
+        // stale-true value after dismissal would silently break Post/Cmd+Enter
+        // for the rest of the session. (Today the inline recovery Modal sets
+        // disableEscDismiss with no cancel affordance, so this path is
+        // unreachable — but the invariant must hold for all three exits.)
+        recoveryModalOpenRef.current = false;
+        setRecoveryModalOpen(false);
+      },
       onRecoveryRecreate: handleRecoveryRecreate,
       onRecoveryDiscard: handleRecoveryDiscard,
     },
