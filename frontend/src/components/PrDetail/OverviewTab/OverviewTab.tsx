@@ -10,6 +10,7 @@ import { PrDescription } from './PrDescription';
 import { StatsTiles } from './StatsTiles';
 import { PrRootConversation, type PrRootConversationReplyContext } from './PrRootConversation';
 import { ReviewFilesCta } from './ReviewFilesCta';
+import { PrActionsPanel } from './PrActionsPanel';
 import { prRootDraft } from '../draftKinds';
 import { countViewedFiles } from '../../../hooks/useFileViewState';
 import styles from './OverviewTab.module.css';
@@ -126,7 +127,7 @@ export function OverviewTab() {
         <PrRootConversation comments={prDetail.rootComments} replyContext={replyContext} />
         <ReviewFilesCta hasFiles={hasFiles} onReviewFiles={handleReviewFiles} />
       </div>
-      {/* Task 12 mounts <PrActionsPanel /> here, as a sibling of the grid */}
+      <PrActionsPanel />
     </div>
   );
 }
