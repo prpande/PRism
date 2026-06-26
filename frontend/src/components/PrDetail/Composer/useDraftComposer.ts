@@ -263,6 +263,11 @@ export function useDraftComposer(params: UseDraftComposerParams): UseDraftCompos
     if (shortcut === 'toggle-preview') {
       setPreviewMode((p) => !p);
     } else if (shortcut === 'submit') {
+      // #601 Defect C: Cmd/Ctrl+Enter is the keyboard sibling of Save — flush()
+      // + onClose(). Inert during a post so it can't fire an update PUT racing
+      // the post or unmount the composer mid-post. (Escape's path is guarded
+      // inside handleDiscardClick.)
+      if (posting) return;
       void (async () => {
         await flush();
         if (recoveryModalOpenRef.current) return; // 404-recovery opened mid-flush → keep modal

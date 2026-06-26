@@ -226,4 +226,48 @@ describe('useDraftComposer', () => {
       await Promise.resolve();
     });
   });
+
+  it('Cmd+Enter (submit) is inert while a post-now is in flight (#601 Defect C — keyboard sibling)', async () => {
+    // The submit shortcut does flush()+onClose() — the keyboard sibling of Save.
+    // During a post it must fire no update PUT and must not unmount mid-post.
+    const sendSpy = vi.spyOn(draftApi, 'sendPatch').mockResolvedValue({
+      ok: true,
+      assignedId: null,
+    });
+    let resolvePost: (v: unknown) => void = () => {};
+    vi.spyOn(commentApi, 'postComment').mockReturnValue(
+      new Promise((res) => {
+        resolvePost = res;
+      }) as never,
+    );
+    const p = params({ draftId: 'd1' });
+    const { result } = renderHook(() => useDraftComposer(p));
+    act(() => {
+      result.current.editor.setBody('body to post');
+    });
+    await act(async () => {
+      void result.current.actions.onPostNow();
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(result.current.actions.posting).toBe(true);
+    const callsAfterPostFlush = sendSpy.mock.calls.length;
+    act(() => {
+      result.current.editor.handleKeyDown({
+        metaKey: true,
+        key: 'Enter',
+        preventDefault: () => {},
+      } as unknown as KeyboardEvent<HTMLTextAreaElement>);
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(sendSpy.mock.calls.length).toBe(callsAfterPostFlush);
+    expect(p.onClose).not.toHaveBeenCalled();
+    await act(async () => {
+      resolvePost({ ok: true, postedCommentId: 1 });
+      await Promise.resolve();
+    });
+  });
 });

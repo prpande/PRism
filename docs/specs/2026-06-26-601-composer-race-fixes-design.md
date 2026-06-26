@@ -98,6 +98,10 @@ if (!id) {
   Escape keyboard path (`handleKeyDown → handleDiscardClick`), which a button `disabled` attribute
   alone cannot — belt-and-suspenders, each covering a distinct entry point.
 - `useDraftComposer.handleSaveClick`: `if (saveDisabled || posting) return;`.
+- `useDraftComposer.handleKeyDown` `submit` branch (Cmd/Ctrl+Enter): prepend `if (posting) return;`.
+  This is the keyboard sibling of Save — it does `flush() + onClose()`, so during a post it would
+  fire an update PUT racing the post **and** unmount the composer mid-post. The button `disabled`
+  attribute cannot intercept this keyboard route (found in preflight review).
 - Move the `posting` / `postError` `useState` up beside the other state so the Discard/Save handlers
   (declared above the post-now block) reference `posting` without a use-before-define.
 - `ComposerActionsBar`: Discard `disabled={readOnly || posting}` /
@@ -118,12 +122,18 @@ lands on **both** the inline-comment and reply composers (same hook + `ComposerA
 - [x] Save inert during an in-flight post: hook fires no extra update PUT
   (`useDraftComposer.test.tsx` "save is inert …") and the button is disabled
   (`ComposerActionsBar.test.tsx` "disables Save while a post is in flight").
+- [x] Cmd/Ctrl+Enter (submit) inert during an in-flight post: no update PUT, no mid-post unmount
+  (`useDraftComposer.test.tsx` "Cmd+Enter (submit) is inert …").
 
-All red-on-main, green-on-fix (5 tests). ~~Defect B short-circuit~~ — descoped (does not reproduce).
+All red-on-main, green-on-fix (6 tests). ~~Defect B short-circuit~~ — descoped (does not reproduce).
 
 ## Out of scope
 
 - **Defect B** (root-composer double-surface) — does not reproduce; see above.
+- **Inline textarea editable during post** (preflight finding) → filed as **#644**. A keystroke
+  during the post window schedules a debounced autosave update PUT that races the post. The naive
+  fix (gate the inline autosave `disabled` on `posting`) would re-suppress Fix A's 404 detection (the
+  same mechanism that makes Defect B not reproduce), so it needs separate design care.
 - The cross-tab-take-over-mid-post-now race (Fix A path 3): the fix already does the safe thing
   (errors instead of posting from a read-only tab); a dedicated regression test for that narrow
   timing window is deferred. A future symmetry refactor that gates the inline autosave on `posting`
