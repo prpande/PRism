@@ -56,8 +56,8 @@ Confirmed behavior, because it drives the convergence and error designs below:
   A check-run id is immutable and survives a head advance; a *completed* run is
   generally still rerequestable, so re-running a 15 s-stale id after the user pushed a
   new commit probably **re-runs the old commit's check** (burns CI on a dead SHA)
-  rather than erroring. The REST docs do not promise a 4xx here. This is the
-  stale-`checkRunId` safety question resolved at the spec gate (see Error handling).
+  rather than erroring. The REST docs do not promise a 4xx here. This is closed by the
+  server-side **SHA guard** (see Error handling).
 - The docs **do not state** the exact fine-grained-PAT permission. A classic `repo`
   PAT (what PRism uses) is write-capable and works; we do not assert a precise
   fine-grained permission name in code or copy (see Token-scope documentation).
@@ -79,8 +79,11 @@ Confirmed behavior, because it drives the convergence and error designs below:
    `status === "completed"` intentionally includes `skipped`/`cancelled` conclusions —
    a non-rerequestable one is gated by GitHub (`403`/`422`) and surfaced via the
    error model below, not pre-filtered.
-2. Activating Re-run issues `POST /api/pr/{o}/{r}/{n}/checks/{checkRunId}/rerun`,
-   which calls GitHub `POST /repos/{o}/{r}/check-runs/{checkRunId}/rerequest`.
+2. Activating Re-run issues `POST /api/pr/{o}/{r}/{n}/checks/{checkRunId}/rerun?sha=<headSha>`
+   (the SHA the check was read under). The backend **SHA-guards** the call (GETs the
+   check-run, compares `head_sha`) and, on a match, calls GitHub
+   `POST /repos/{o}/{r}/check-runs/{checkRunId}/rerequest`; on a mismatch it returns
+   `superseded` without rerequesting.
 3. On a `2xx`, the control enters a transient **"Re-running…"** state and the hook's
    **rerun-watch** keeps the poll alive (see Convergence). The control leaves that
    state when **either** the watched check is next observed non-terminal (queued /
@@ -97,6 +100,9 @@ Confirmed behavior, because it drives the convergence and error designs below:
      may lack write access to checks." (`403` is overloaded; this copy avoids sending
      a user with a valid token to needlessly regenerate it, while still naming the
      scope possibility.)
+   - **`superseded`** (the SHA guard saw the head advance since the poll) → inline,
+     **non-error** note (not the red alert): "The PR was updated — re-run from the
+     latest checks." No GitHub rerequest was sent; nothing was wrongly re-run.
    - **`transient`** (`5xx` / network / timeout) → inline message: "Couldn't re-run —
      try again," with a **Retry** affordance.
    No optimistic state is left stranded on any failure; the read poll is unaffected
@@ -134,22 +140,32 @@ read-only contract.
   ```csharp
   public interface IPrChecksRerunner
   {
-      Task<RerunResultDto> RerunAsync(PrReference pr, long checkRunId, CancellationToken ct);
+      // expectedHeadSha = the SHA the check-run was read under; the impl rejects a
+      // mismatch (head advanced since the poll) as `superseded` before rerequesting.
+      Task<RerunResultDto> RerunAsync(
+          PrReference pr, long checkRunId, string expectedHeadSha, CancellationToken ct);
   }
   ```
 - **`RerunOutcome`** (`PRism.Core.Contracts`, kebab-case on the wire per the repo's
-  enum convention): `accepted | auth | not-rerunnable | transient`.
+  enum convention): `accepted | auth | not-rerunnable | superseded | transient`.
   **`RerunResultDto`** = `record RerunResultDto(RerunOutcome Outcome)`. (Single-field
   wrapper kept deliberately: it gives the endpoint a JSON body to return on the
   200-for-all-outcomes path and room to grow; it does **not** reuse `DegradedReason`,
   whose `Auth/Transient` vocabulary mislabels the write path's overloaded `403`/`422`.)
 - **`GitHubPrChecksRerunner`** (`PRism.GitHub`): mirrors `GitHubPrChecksReader`'s
-  construction — `IHttpClientFactory` + `Func<Task<string?>>` token closure; builds
-  `POST /repos/{owner}/{repo}/check-runs/{checkRunId}/rerequest` (owner/repo escaped
-  via `Uri.EscapeDataString`, parity with the #604 audit), **no request body** (some
-  GHES versions want `Content-Type: application/json` even on a bodyless mutation —
-  set it explicitly to be safe). Its **own** status→outcome map (do NOT call
-  `DegradedFor`): `2xx → accepted`; `401 → auth`; `403 | 404 | 422 → not-rerunnable`;
+  construction — `IHttpClientFactory` + `Func<Task<string?>>` token closure. Two
+  GitHub calls per rerun:
+  1. **SHA guard (GET).** `GET /repos/{owner}/{repo}/check-runs/{checkRunId}`, read the
+     returned `head_sha`, compare to `expectedHeadSha`. On **mismatch → `superseded`**
+     and **do not** rerequest (rerequesting would re-run the dead commit's check). A
+     `401`/`403`/`404` on this GET maps like the POST below (`auth`/`not-rerunnable`).
+     This is the option-A guard from Error handling.
+  2. **Rerequest (POST).** `POST /repos/{owner}/{repo}/check-runs/{checkRunId}/rerequest`
+     (owner/repo escaped via `Uri.EscapeDataString`, parity with the #604 audit), **no
+     request body** (some GHES versions want `Content-Type: application/json` even on a
+     bodyless mutation — set it explicitly to be safe).
+  Its **own** status→outcome map (do NOT call `DegradedFor`): `2xx → accepted`;
+  `401 → auth`; `403 | 404 | 422 → not-rerunnable`; head-sha mismatch → `superseded`;
   else `→ transient`; thrown `HttpRequestException`/`OperationCanceledException` →
   `transient`, logged at Warning.
 - **DI** (`PRism.GitHub/ServiceCollectionExtensions.cs`): register `IPrChecksRerunner`
@@ -157,17 +173,20 @@ read-only contract.
 
 ### 3. Endpoint
 
-`POST /api/pr/{owner}/{repo}/{number:int}/checks/{checkRunId:long}/rerun`
+`POST /api/pr/{owner}/{repo}/{number:int}/checks/{checkRunId:long}/rerun?sha=<headSha>`
 in `PRism.Web/Endpoints/PrDetailEndpoints.cs`:
 
 - Validate `owner`/`repo` against `SharedRegexes.OwnerRepo` → `422` on bad input
   (parity with the GET checks endpoint). `checkRunId` is route-constrained `:long`,
-  so a non-numeric id 404s at routing.
+  so a non-numeric id 404s at routing. **`sha`** (the SHA the check was read under) is
+  required and validated with `IsValidGitOid` (same as the GET checks route) → `422`
+  on absent/malformed; it is passed to `RerunAsync` as `expectedHeadSha` for the guard.
 - Inject `IPrChecksRerunner`; call `RerunAsync`; return **`200 OK`** with the
   `RerunResultDto` body (`{ outcome }`) for every outcome the service models — the FE
   branches on `outcome`, mirroring how the read path surfaces a degraded state rather
   than throwing. (`{number}` is path-shape parity with the GET route / routing
-  context; the GitHub call needs only `owner`, `repo`, `checkRunId`.) The body MUST
+  context; the GitHub calls need `owner`, `repo`, `checkRunId`, and `sha` for the
+  guard.) The body MUST
   serialize through the **shared API `JsonSerializerOptions`** (kebab-case enum
   policy, `JsonSerializerOptionsFactory`) — the same seam as the GET checks route —
   so `RerunOutcome` emits `not-rerunnable`, not a default-camelCase `notRerunnable`
@@ -176,8 +195,10 @@ in `PRism.Web/Endpoints/PrDetailEndpoints.cs`:
 
 ### 4. Frontend
 
-- **API fn** `rerunCheck(prRef, checkRunId, signal): Promise<RerunResponse>` in
-  `frontend/src/api/checks.ts`, `RerunResponse = { outcome: RerunOutcome }`. A
+- **API fn** `rerunCheck(prRef, checkRunId, headSha, signal): Promise<RerunResponse>`
+  in `frontend/src/api/checks.ts` (posts `?sha=${encodeURIComponent(headSha)}` — the
+  series SHA the check was read under, from `useCheckRuns`),
+  `RerunResponse = { outcome: RerunOutcome }`. A
   non-`2xx` from **PRism's own** endpoint (e.g. a `401` from `SessionTokenMiddleware`
   on an expired cookie) throws `ApiError` like every other call; the caller maps that
   thrown error to the `transient`/`auth` inline message rather than a modeled outcome.
@@ -221,7 +242,9 @@ in `PRism.Web/Endpoints/PrDetailEndpoints.cs`:
   - **Click:** set `running`; the button shows label "Re-running…", disabled, with the
     existing row-level **spinner glyph** (`GLYPH_PATH.spinner`, 14×14) prepended — same
     visual vocabulary as an in-progress check row. Call `rerunCheck`; on `2xx`
-    `accepted`, call `armRerunWatch()`. On a modeled failure outcome (or a thrown
+    `accepted`, call `armRerunWatch()`. On `superseded`, render the neutral note
+    (`role="status"`, not the alert) and do **not** arm the watch (nothing was
+    re-run). On a modeled failure outcome (or a thrown
     `ApiError`) set `error` + `errorOutcome` and render the inline message **below**
     the button (the summary/body/GitHub link stay visible — it's a status annotation,
     not a blocking error card); `transient` shows a **Retry** affordance (label
@@ -255,25 +278,21 @@ in `PRism.Web/Endpoints/PrDetailEndpoints.cs`:
 | `2xx` (`201`) | `accepted` | "Re-running…" then watch/converge |
 | `401` | `auth` | "…couldn't authenticate to GitHub. Reconnect your token." |
 | `403` / `404` / `422` | `not-rerunnable` | "…may not be re-runnable, or your token may lack write access to checks." |
+| guard: check-run `head_sha` ≠ read `sha` | `superseded` | "The PR was updated — re-run from the latest checks." (no rerequest sent) |
 | `5xx` / network / timeout / thrown | `transient` | "…try again." + Retry |
 | PRism-side non-2xx (e.g. expired cookie `401`) | (thrown `ApiError`) | mapped to `auth`/`transient` inline |
 
-The **stale-`checkRunId`** race (head advances between the 15 s poll and the click)
-is an **open safety decision for the spec gate** (B2). Contrary to an earlier draft,
-this is NOT safely auto-messaged: a stale-but-completed id likely returns `2xx` and
-re-runs the *superseded commit's* check (see GitHub semantics above), a silent
-wrong-action — CI burned on a dead SHA while PRism, polling the new head, shows only
-"hasn't reported yet." `useCheckRuns` aborting the in-flight series on a SHA change
-narrows but does not close the window. Two candidate resolutions, to be chosen at the
-gate:
-
-- **(A) Guard it.** Pass the read `headSha` to the rerun endpoint; the backend
-  `GET`s the check-run, compares its `head_sha`, and on mismatch returns a new
-  `superseded` outcome ("PR was updated — re-run from the latest checks"). Cost: one
-  extra GitHub `GET` per user-initiated rerun; closes the wrong-action.
-- **(B) Accept + document.** Ship without the guard, add a best-effort client check
-  (refuse the click when the check's series SHA ≠ the live `headSha`) and a documented
-  residual risk. Cheaper; leaves a narrow wrong-commit window on a fast push-then-click.
+The **stale-`checkRunId`** race (head advances between the 15 s poll and the click) is
+closed by a **server-side SHA guard** (option A, chosen at the spec gate). Without it,
+a stale-but-completed id likely returns `2xx` and re-runs the *superseded commit's*
+check — a silent wrong-action (CI burned on a dead SHA while PRism, polling the new
+head, shows only "hasn't reported yet"). The guard: the FE passes the SHA the check
+was read under; the backend `GET`s the check-run and compares its `head_sha`; on
+mismatch it returns `superseded` and **does not rerequest**. Cost is one extra GitHub
+`GET` per user-initiated rerun — negligible for an explicit action, and worth keeping a
+write surface from acting on the wrong commit. (`useCheckRuns` already aborts the
+in-flight series on a SHA change and pulls fresh ids, so the guard mainly catches the
+sub-poll-interval window.)
 
 The **eventual-consistency** reality: the immediate `refetch()` after a `2xx` will
 very likely still read `completed` (GitHub hasn't processed the rerequest yet, and
@@ -289,10 +308,14 @@ burn it down).
   + FakeHttpMessageHandler): exact URL + `POST` verb + (no body / explicit
   content-type); `201 → accepted`; `401 → auth`; `403 → not-rerunnable`;
   `404 → not-rerunnable`; `422 → not-rerunnable`; `500 → transient`; thrown
-  `HttpRequestException → transient`; owner/repo escaping.
+  `HttpRequestException → transient`; owner/repo escaping. **SHA guard:** GET returns a
+  **mismatched `head_sha` → `superseded` and the rerequest POST is NEVER fired**
+  (assert the POST didn't happen); **matched `head_sha` → proceeds to rerequest**;
+  a GET `404`/`403` maps to `not-rerunnable`/`auth`.
 - **`ChecksRerunEndpointTests`** (`tests/PRism.Web.Tests`, via a `FakePrChecksRerunner`
   double): `200` + `{outcome:"accepted"}` happy path; `outcome` passthrough for each
-  failure; `422` on bad owner/repo.
+  failure (incl. `superseded`); `422` on bad owner/repo **and on absent/malformed
+  `sha`**.
 - **`GitHubPrChecksReaderTests`**: extend the existing parse test to assert
   `CheckRunId` is set from the check-run `id` and `null` for a legacy status row.
 - **FE `ChecksTab.test.tsx`**: button enabled only for a completed check-run row;
@@ -370,10 +393,12 @@ users who never re-run. The write requirement is surfaced at point-of-use (the
 - **Pre-disable from detected scope:** unreliable for fine-grained PATs (their
   permission set isn't exposed the way classic scopes are in `X-OAuth-Scopes`);
   attempt-and-surface is honest and far less plumbing.
-- **SHA guard on the rerun endpoint:** closing the stale-`checkRunId` race entirely.
-  NOT a settled rejection — it is the open gate decision (option A in Error handling).
-  An earlier draft deferred it on the false premise that the stale id self-messages as
-  `not-rerunnable`; round-2 review established it likely `2xx`-reruns the wrong commit.
+- **No SHA guard (REJECTED at the gate):** an earlier draft deferred the guard on the
+  false premise that a stale id self-messages as `not-rerunnable`; round-2 review
+  established it likely `2xx`-reruns the wrong commit, so the **guard is adopted**
+  (option A, Error handling). The no-guard / client-only-check variant (option B) was
+  rejected: it leaves a real wrong-commit window on a write surface, which the one
+  extra `GET` cheaply eliminates.
 
 ## Open question to resolve in copy (not a blocker)
 
