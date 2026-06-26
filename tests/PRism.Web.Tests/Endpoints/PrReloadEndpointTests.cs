@@ -286,15 +286,26 @@ public class PrReloadEndpointTests : IClassFixture<PRismWebApplicationFactory>
     // to a 500), pinning the broadened catch.
     [Fact]
     public Task Reload_diverged_rate_limited_read_falls_back_to_cached_head_no_side_effects() =>
-        AssertReadFailureFallsBackToCachedHead(
-            new RateLimitExceededException("rate limited (test)", null), prNumber: 1302, tabId: "tab-fb");
+        AssertReadUnavailableFallsBackToCachedHead(prNumber: 1302, tabId: "tab-fb",
+            makeBatch: pr => new FakeBatchReader(pr, head: null,
+                throwOnPoll: new RateLimitExceededException("rate limited (test)", null)));
 
     [Fact]
     public Task Reload_diverged_transport_error_read_falls_back_to_cached_head_no_side_effects() =>
-        AssertReadFailureFallsBackToCachedHead(
-            new HttpRequestException("transport failure (test)"), prNumber: 1303, tabId: "tab-fb2");
+        AssertReadUnavailableFallsBackToCachedHead(prNumber: 1303, tabId: "tab-fb2",
+            makeBatch: pr => new FakeBatchReader(pr, head: null,
+                throwOnPoll: new HttpRequestException("transport failure (test)")));
 
-    private async Task AssertReadFailureFallsBackToCachedHead(Exception readFailure, int prNumber, string tabId)
+    [Fact]
+    public Task Reload_diverged_per_alias_drop_falls_back_to_cached_head_no_side_effects() =>
+        // GitHub dropped this PR from the batch result (empty dict, no throw — the poller's per-alias
+        // "keep last-known" contract). authoritative is null → fall back to the cached head, the third
+        // unavailability mode the spec enumerates alongside rate-limit + transport.
+        AssertReadUnavailableFallsBackToCachedHead(prNumber: 1304, tabId: "tab-fb3",
+            makeBatch: pr => new FakeBatchReader(pr, head: null));
+
+    private async Task AssertReadUnavailableFallsBackToCachedHead(
+        int prNumber, string tabId, Func<PrReference, FakeBatchReader> makeBatch)
     {
         var cachedSha = new string('c', 40);
         var clientSha = new string('d', 40);
@@ -304,7 +315,7 @@ public class PrReloadEndpointTests : IClassFixture<PRismWebApplicationFactory>
         // Reuse WithCacheAndBatch for the cache+batch wiring (WithWebHostBuilder stacks); add only
         // the bus override this no-side-effects assertion needs.
         await using var factory =
-            WithCacheAndBatch(prRef, cachedSha, new FakeBatchReader(prRef, head: null, throwOnPoll: readFailure))
+            WithCacheAndBatch(prRef, cachedSha, makeBatch(prRef))
                 .WithWebHostBuilder(b => b.ConfigureServices(s =>
                 {
                     s.RemoveAll<IReviewEventBus>();
