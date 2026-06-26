@@ -1,4 +1,5 @@
 using System.Net;
+using System.Net.Http;
 using System.Net.Http.Json;
 using System.Text;
 using FluentAssertions;
@@ -276,33 +277,44 @@ public class PrReloadEndpointTests : IClassFixture<PRismWebApplicationFactory>
         raw.Should().NotContain(cachedSha);
     }
 
+    // #634 AC4: when the authoritative read is unavailable the diverged branch degrades to today's
+    // behavior — return the CACHED head — rather than a new 500, for ANY read failure (rate-limit OR
+    // transport/poison), not just rate-limit. And like every refusal branch it writes no tab stamp and
+    // publishes no StateChanged (the guard returns before store.UpdateAsync's apply transform). The
+    // rate-limit case passes on main too (main never calls the batch reader); the transport case is
+    // RED against a catch that only handles RateLimitExceededException (the exception would propagate
+    // to a 500), pinning the broadened catch.
     [Fact]
-    public async Task Reload_diverged_authoritative_read_unavailable_falls_back_to_cached_head_no_side_effects()
+    public Task Reload_diverged_rate_limited_read_falls_back_to_cached_head_no_side_effects() =>
+        AssertReadFailureFallsBackToCachedHead(
+            new RateLimitExceededException("rate limited (test)", null), prNumber: 1302, tabId: "tab-fb");
+
+    [Fact]
+    public Task Reload_diverged_transport_error_read_falls_back_to_cached_head_no_side_effects() =>
+        AssertReadFailureFallsBackToCachedHead(
+            new HttpRequestException("transport failure (test)"), prNumber: 1303, tabId: "tab-fb2");
+
+    private async Task AssertReadFailureFallsBackToCachedHead(Exception readFailure, int prNumber, string tabId)
     {
-        // #634 AC4: when the authoritative read is unavailable (rate-limited / per-alias drop) the
-        // diverged branch degrades to today's behavior — return the CACHED head — rather than a new
-        // 500. And like every refusal branch it writes no tab stamp and publishes no StateChanged
-        // (the guard returns before store.UpdateAsync's apply transform). On main this passes too
-        // (main never calls the batch reader), so it is a regression guard for the fallback path +
-        // the no-side-effects contract on the restructured endpoint, not a red-on-main test.
         var cachedSha = new string('c', 40);
         var clientSha = new string('d', 40);
-        var prRef = new PrReference("acme", "api", 1302);
+        var prRef = new PrReference("acme", "api", prNumber);
+        var refKey = $"acme/api/{prNumber}";
         var fakeBus = new FakeReviewEventBus();
         // Reuse WithCacheAndBatch for the cache+batch wiring (WithWebHostBuilder stacks); add only
         // the bus override this no-side-effects assertion needs.
         await using var factory =
-            WithCacheAndBatch(prRef, cachedSha, new FakeBatchReader(prRef, head: null, rateLimited: true))
+            WithCacheAndBatch(prRef, cachedSha, new FakeBatchReader(prRef, head: null, throwOnPoll: readFailure))
                 .WithWebHostBuilder(b => b.ConfigureServices(s =>
                 {
                     s.RemoveAll<IReviewEventBus>();
                     s.AddSingleton<IReviewEventBus>(fakeBus);
                 }));
-        var client = AuthedClient(factory, "tab-fb");
-        await SeedSessionAsync(client, "acme/api/1302");
+        var client = AuthedClient(factory, tabId);
+        await SeedSessionAsync(client, refKey);
         fakeBus.Clear(); // drop events emitted by the seed PUT
 
-        var resp = await client.PostAsJsonAsync("/api/pr/acme/api/1302/reload", new { headSha = clientSha });
+        var resp = await client.PostAsJsonAsync($"/api/pr/{refKey}/reload", new { headSha = clientSha });
 
         resp.StatusCode.Should().Be(HttpStatusCode.Conflict);
         var raw = await resp.Content.ReadAsStringAsync();
@@ -311,7 +323,7 @@ public class PrReloadEndpointTests : IClassFixture<PRismWebApplicationFactory>
 
         var stateStore = factory.Services.GetRequiredService<IAppStateStore>();
         var state = await stateStore.LoadAsync(CancellationToken.None);
-        state.Reviews.Sessions["acme/api/1302"].TabStamps.Should().NotContainKey("tab-fb");
+        state.Reviews.Sessions[refKey].TabStamps.Should().NotContainKey(tabId);
         fakeBus.Published.OfType<StateChanged>().Should().BeEmpty();
     }
 
@@ -411,24 +423,25 @@ public class PrReloadEndpointTests : IClassFixture<PRismWebApplicationFactory>
 
     // Test-only IActivePrBatchReader (#634). Models GitHub's authoritative head for the diverged
     // branch's read. `head == null` models a per-alias drop (the PR is absent from the batch
-    // result — the poller's "keep last-known" contract); `rateLimited` throws to model a
-    // rate-limited read. Both unavailable cases drive the endpoint's fall-back-to-cached-head path.
+    // result — the poller's "keep last-known" contract); `throwOnPoll` throws the given exception
+    // to model a failed read (rate-limit, transport, poison). All unavailable cases drive the
+    // endpoint's fall-back-to-cached-head path.
     private sealed class FakeBatchReader : IActivePrBatchReader
     {
         private readonly PrReference _pr;
         private readonly string? _head;
-        private readonly bool _rateLimited;
-        public FakeBatchReader(PrReference pr, string? head, bool rateLimited = false)
+        private readonly Exception? _throwOnPoll;
+        public FakeBatchReader(PrReference pr, string? head, Exception? throwOnPoll = null)
         {
             _pr = pr;
             _head = head;
-            _rateLimited = rateLimited;
+            _throwOnPoll = throwOnPoll;
         }
         public Task<IReadOnlyDictionary<PrReference, ActivePrPollSnapshot>> PollBatchAsync(
             IReadOnlyList<PrReference> refs, CancellationToken ct)
         {
-            if (_rateLimited)
-                throw new RateLimitExceededException("rate limited (test)", null);
+            if (_throwOnPoll is not null)
+                throw _throwOnPoll;
             var dict = new Dictionary<PrReference, ActivePrPollSnapshot>();
             if (_head is not null)
                 dict[_pr] = new ActivePrPollSnapshot(_head, "", "MERGEABLE", PrState.Open, 0, 0);

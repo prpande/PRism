@@ -256,11 +256,22 @@ internal static class PrReloadEndpoints
             var batch = await batchReader.PollBatchAsync(new[] { prRef }, ct).ConfigureAwait(false);
             batch.TryGetValue(prRef, out authoritative);
         }
-        catch (RateLimitExceededException)
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
-            // Rate-limited read → authoritative stays null → fall back to the cached head below.
-            // (Transport / poison-payload failures propagate as Phase 1's GitHub calls do.)
+            throw; // genuine request cancellation — surface it, don't mask it as a fallback
         }
+#pragma warning disable CA1031 // any read failure degrades to the cached head — see comment
+        catch (Exception)
+        {
+            // ANY authoritative-read failure — rate-limit, transport (HttpRequestException), or poison
+            // payload (JsonException) — leaves `authoritative` null → fall back to the cached head below.
+            // Mirrors ActivePrPoller's whole-tick-abort handling of this exact PollBatchAsync call
+            // (retain last-known, never throw). Catching ONLY RateLimitExceededException here would
+            // introduce a NEW 500 on the common force-push reload: for a zero-draft session Phase 1's
+            // reconcile makes no GitHub call, so this is the ONLY external read and a transport blip
+            // would 500 what was previously a 409 (#634 preflight finding).
+        }
+#pragma warning restore CA1031
 
         // The retry target is GitHub's authoritative head when we got one; otherwise we degrade to the
         // cached head (the prior behavior — no worse than the status quo, self-heals on the next poll,

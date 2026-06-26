@@ -84,18 +84,18 @@ try
 {
     authoritative = await batchReader.PollBatchAsync(new[] { prRef }, ct).ConfigureAwait(false);
 }
-catch (RateLimitExceededException) { /* authoritative stays null → fall back to cache */ }
-// (transport / poison-payload failures propagate as today's Phase-1 GitHub calls do)
+catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }  // genuine cancellation
+catch (Exception) { /* ANY read failure (rate-limit, transport, poison) → fall back to cache */ }
 
 if (authoritative is null
     || !authoritative.TryGetValue(prRef, out var snap)
     || string.IsNullOrEmpty(snap.HeadSha))
 {
-    // Could not read an authoritative head (rate-limited, or GitHub dropped this PR from the
-    // batch — the poller's per-alias "keep last-known" contract). Degrade to today's behavior:
-    // return the cached head. No worse than the status quo, and the inversion (if any) self-heals
-    // on the next poll. Crucially this avoids a NEW 500 path that would invite frantic re-clicks
-    // during a rate-limit window.
+    // Could not read an authoritative head (read threw — rate-limit / transport / poison — or GitHub
+    // dropped this PR from the batch, the poller's per-alias "keep last-known" contract). Degrade to
+    // today's behavior: return the cached head. No worse than the status quo, and the inversion (if
+    // any) self-heals on the next poll. Crucially this avoids a NEW 500 path — important because for a
+    // zero-draft session Phase 1's reconcile makes no GitHub call, so this is the ONLY external read.
     currentHeadShaForRetry = cached.HeadSha;
 }
 else if (snap.HeadSha != request.HeadSha)
@@ -160,10 +160,14 @@ the diverged branch and makes **no** extra read.
 - **Don't blindly trust the client head (vs. reconcile against `request.HeadSha` on diverge).**
   That is exactly the "reconcile against an unverified client head" that #611's guard exists to
   prevent (rejected option C from intake).
-- **Fall back to the cached head on read failure / per-alias drop (vs. erroring).** A failed
-  authoritative read degrades to today's behavior (return the cached head), never to a new 500.
-  This avoids a worse failure mode than the one we are fixing — and avoids an error banner that
-  would invite repeated re-clicks during a GitHub rate-limit window.
+- **Fall back to the cached head on ANY read failure / per-alias drop (vs. erroring).** A failed
+  authoritative read — rate-limit, transport (`HttpRequestException`), or poison payload
+  (`JsonException`) — degrades to today's behavior (return the cached head), never to a new 500
+  (only genuine `ct` cancellation propagates). This mirrors `ActivePrPoller`'s own whole-tick-abort
+  handling of this exact `PollBatchAsync` call (retain last-known). A narrower catch (rate-limit
+  only) would introduce a new 500 on the common force-push reload of a **zero-draft** session,
+  where Phase 1's reconcile makes no GitHub call and this is the only external read — that read was
+  a no-network 409 before this change.
 - **No FE change.** `reload-stale-head` keeps its exact wire shape (`error` discriminator +
   `currentHeadSha`); only the *value* of `currentHeadSha` changes (GitHub's head when the read
   succeeds, else the cached head). `useReconcile`'s single auto-retry is unchanged and was
@@ -243,8 +247,9 @@ via the existing `FakeCacheWithSnapshot`) and GitHub's authoritative head
 3. Diverged + GitHub's head equals the client head (cache merely lagging) ⇒ reconcile proceeds,
    `200`, no regression.
 4. The refused-reload no-side-effects contract holds (no tab stamp, no `StateChanged`) on every
-   refusal branch, including the new authoritative-read-unavailable fallback. A read failure
-   (`RateLimitExceededException` / per-alias drop) degrades to returning the cached head, not a 500.
+   refusal branch, including the new authoritative-read-unavailable fallback. **Any** read failure
+   (rate-limit, transport, poison payload, or per-alias drop) degrades to returning the cached head,
+   not a 500 — only a genuine request cancellation propagates.
 
 ## ce-doc-review dispositions (1× pass — hands-off T2 gate substitution)
 
@@ -268,5 +273,15 @@ via the existing `FakeCacheWithSnapshot`) and GitHub's authoritative head
 - **Product-lens P3 (FYI) — is this worth fixing at all:** **Acknowledged.** The premise (fix vs.
   document-as-known-bounded) was put to the owner at intake; the owner chose to fix (Approach A).
   The sub-concern it raised — a new 500 failure mode — is eliminated by the fall-back-to-cache branch.
+
+## Preflight adversarial-review disposition (pr-autopilot step 02)
+
+- **Important — catch covered only `RateLimitExceededException`, leaving a new 500 on transport/poison
+  failures of the only external read for a zero-draft force-push reload:** **Applied.** Broadened the
+  catch to fall back to the cached head on any read failure (with an `OperationCanceledException`
+  rethrow guard for genuine cancellation), mirroring `ActivePrPoller`'s handling of the same
+  `PollBatchAsync` call. Added a regression test (`...transport_error...`) that is red against the
+  narrow catch. The retry-target collapse, unverified-head guard, semaphore interaction, and test
+  correctness were reviewed and found solid.
 
 Full backend pre-push checklist (`.ai/docs/development-process.md`) before PR.
