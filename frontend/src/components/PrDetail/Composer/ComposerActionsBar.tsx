@@ -78,8 +78,8 @@ export function ComposerActionsBar({
         type="button"
         className="composer-discard"
         onClick={onDiscardClick}
-        disabled={readOnly}
-        aria-disabled={readOnly || undefined}
+        disabled={readOnly || posting}
+        aria-disabled={readOnly || posting || undefined}
       >
         Discard
       </button>
@@ -88,10 +88,10 @@ export function ComposerActionsBar({
         <button
           type="button"
           className="composer-save btn btn-primary btn-sm"
-          aria-disabled={saveDisabled}
+          aria-disabled={saveDisabled || posting}
           title={saveTooltip}
           onClick={onSaveClick}
-          disabled={readOnly}
+          disabled={readOnly || posting}
         >
           {addLabel}
         </button>
