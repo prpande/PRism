@@ -91,6 +91,11 @@ export function useDraftComposer(params: UseDraftComposerParams): UseDraftCompos
   const [previewMode, setPreviewMode] = useState(false);
   const [discardModalOpen, setDiscardModalOpen] = useState(false);
   const [recoveryModalOpen, setRecoveryModalOpen] = useState(false);
+  // Declared here (not lower beside handlePostNow) so the Discard/Save handlers
+  // below can read `posting` for their #601 in-flight guards without a
+  // use-before-define.
+  const [postError, setPostError] = useState<string | null>(null);
+  const [posting, setPosting] = useState(false);
 
   // Mirrors recoveryModalOpen synchronously so Cmd+Enter's flush()→onClose()
   // sequence can detect a 404-recovery transition that opened mid-flush
@@ -165,6 +170,12 @@ export function useDraftComposer(params: UseDraftComposerParams): UseDraftCompos
         : undefined;
 
   const handleDiscardClick = () => {
+    // #601 Defect C: an in-flight post owns this draft. Opening the discard modal
+    // mid-post would let the user confirm a delete that races the post (orphaned
+    // post, or delete-of-already-posted). This guard also covers the Escape
+    // keyboard path (handleKeyDown → handleDiscardClick), which the button's
+    // disabled attribute alone cannot.
+    if (posting) return;
     if (draftId === null) {
       onClose();
       return;
@@ -173,6 +184,14 @@ export function useDraftComposer(params: UseDraftComposerParams): UseDraftCompos
   };
 
   const handleDiscardConfirm = async () => {
+    // #601: defense-in-depth. handleDiscardClick already blocks the modal from
+    // opening while posting, and the Modal focus-trap keeps a post from starting
+    // while it's open — so this is unreachable today. The guard makes the
+    // delete-must-not-race-the-post invariant explicit for any future caller.
+    if (posting) {
+      setDiscardModalOpen(false);
+      return;
+    }
     if (draftId !== null) {
       const result = await sendPatch(prRef, { kind: deletePatchKind, payload: { id: draftId } });
       if (!result.ok) return; // network/4xx → stay in modal (sendPatch never throws)
@@ -183,12 +202,11 @@ export function useDraftComposer(params: UseDraftComposerParams): UseDraftCompos
   };
 
   const handleSaveClick = async () => {
-    if (saveDisabled) return;
+    // #601 Defect C (Save sibling): saving mid-post fires an update PUT against
+    // the same draft the post is shipping. Inert during a post, matching Discard.
+    if (saveDisabled || posting) return;
     await flush();
   };
-
-  const [postError, setPostError] = useState<string | null>(null);
-  const [posting, setPosting] = useState(false);
 
   // Post-now derived values — computed before handlePostNow so the handler
   // can close over them without a temporal dead zone issue.
@@ -203,7 +221,15 @@ export function useDraftComposer(params: UseDraftComposerParams): UseDraftCompos
     setPosting(true);
     beginPosting?.(); // synchronous, BEFORE flush (no flicker)
     try {
-      const id = (await flush()) ?? draftId; // id assigned during flush; prop is stale
+      // #601 Defect A: flush()'s return is authoritative — do NOT fall back to the
+      // stale `draftId` prop. On a 404 mid-flush, useComposerAutoSave clears its
+      // draftId, fires onDraftDeletedByServer (which sets recoveryModalOpenRef and
+      // opens the recovery modal), and flush() returns null. The old `?? draftId`
+      // fallback used the not-yet-recleared prop and posted against the deleted
+      // draft → a doomed POST plus an inline error stacked behind the recovery
+      // modal. Short-circuit on that transition, exactly as handleKeyDown does.
+      const id = await flush();
+      if (recoveryModalOpenRef.current) return;
       if (!id) {
         setPostError('Could not save the draft. Try again.');
         return;
@@ -245,6 +271,11 @@ export function useDraftComposer(params: UseDraftComposerParams): UseDraftCompos
     if (shortcut === 'toggle-preview') {
       setPreviewMode((p) => !p);
     } else if (shortcut === 'submit') {
+      // #601 Defect C: Cmd/Ctrl+Enter is the keyboard sibling of Save — flush()
+      // + onClose(). Inert during a post so it can't fire an update PUT racing
+      // the post or unmount the composer mid-post. (Escape's path is guarded
+      // inside handleDiscardClick.)
+      if (posting) return;
       void (async () => {
         await flush();
         if (recoveryModalOpenRef.current) return; // 404-recovery opened mid-flush → keep modal
@@ -291,7 +322,16 @@ export function useDraftComposer(params: UseDraftComposerParams): UseDraftCompos
       onDiscardCancel: () => setDiscardModalOpen(false),
       onDiscardConfirm: handleDiscardConfirm,
       recoveryModalOpen,
-      onRecoveryCancel: () => setRecoveryModalOpen(false),
+      onRecoveryCancel: () => {
+        // #601: reset the ref alongside the state, matching recreate/discard.
+        // handlePostNow + handleKeyDown's submit short-circuit on this ref, so a
+        // stale-true value after dismissal would silently break Post/Cmd+Enter
+        // for the rest of the session. (Today the inline recovery Modal sets
+        // disableEscDismiss with no cancel affordance, so this path is
+        // unreachable — but the invariant must hold for all three exits.)
+        recoveryModalOpenRef.current = false;
+        setRecoveryModalOpen(false);
+      },
       onRecoveryRecreate: handleRecoveryRecreate,
       onRecoveryDiscard: handleRecoveryDiscard,
     },
