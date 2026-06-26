@@ -85,6 +85,7 @@ describe('usePrAction', () => {
     ['reopen-not-possible', /source branch was deleted/i],
     ['plan-unsupported-drafts', /draft pull requests/i],
     ['subscribe-rejected', /lost access/i],
+    ['rate-limited', /rate-limiting|try again shortly/i],
     ['something-unknown', /could not be completed/i], // generic fallthrough
   ])('maps the %s error code to its copy', async (code, re) => {
     closePr.mockResolvedValueOnce({ ok: false, code });
@@ -137,6 +138,25 @@ describe('usePrAction', () => {
       await vi.advanceTimersByTimeAsync(5000);
     });
     expect(reload).toHaveBeenCalledTimes(1); // unrelated reload did NOT disarm it (round-2 finding A1)
+  });
+
+  it('keeps the fallback armed when an effect-triggering reload still does not reach the target', async () => {
+    vi.useFakeTimers();
+    closePr.mockResolvedValueOnce({ ok: true });
+    const reload = vi.fn();
+    let prState = OPEN;
+    const { result, rerender } = renderHook(() => usePrAction({ prRef, reload, prState }));
+    await act(async () => {
+      result.current.invoke('close');
+    });
+    // A draft-status reload changes isDraft (so the effect fires), but isClosed is still false —
+    // reachedTarget('close', {isClosed:false,isDraft:true}) is false → timer stays armed.
+    prState = { isClosed: false, isDraft: true };
+    rerender();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5000);
+    });
+    expect(reload).toHaveBeenCalledTimes(1); // fallback fired because target was not reached
   });
 
   it('cancels the fallback when the target state is observed after the timer armed', async () => {

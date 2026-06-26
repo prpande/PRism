@@ -133,11 +133,7 @@ export function PrActionsPanel() {
       )}
 
       {showReopen && (
-        <button
-          className={styles.btnReopen}
-          disabled={busy || pending === 'reopen'}
-          onClick={() => onInvoke('reopen')}
-        >
+        <button className={styles.btnReopen} disabled={busy} onClick={() => onInvoke('reopen')}>
           {pending === 'reopen' ? 'Reopening…' : 'Reopen'}
         </button>
       )}

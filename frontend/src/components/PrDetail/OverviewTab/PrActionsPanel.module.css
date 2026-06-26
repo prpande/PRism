@@ -46,7 +46,7 @@
   color: var(--danger-fg);
   font-weight: 600;
 }
-button:disabled {
+.panel button:disabled {
   opacity: 0.5;
   cursor: default;
 }

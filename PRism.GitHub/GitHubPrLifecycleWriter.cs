@@ -73,8 +73,7 @@ internal sealed partial class GitHubPrLifecycleWriter : IPrLifecycleWriter
             if (body.Contains("rate limit", StringComparison.OrdinalIgnoreCase)
                 || body.Contains("abuse", StringComparison.OrdinalIgnoreCase))
                 return PrLifecycleErrorCode.RateLimited;
-            if (body.Contains("Protected branch", StringComparison.OrdinalIgnoreCase)
-                || body.Contains("Validation Failed", StringComparison.OrdinalIgnoreCase))
+            if (body.Contains("Protected branch", StringComparison.OrdinalIgnoreCase))
                 return PrLifecycleErrorCode.RepoRuleBlocked;
             // Default 403: scope/permission denial OR non-collaborator (same body) — the FE copy covers both.
             return PrLifecycleErrorCode.TokenCannotWrite;
