@@ -3,6 +3,7 @@ using Microsoft.Extensions.Logging;
 using PRism.Core;
 using PRism.Core.Contracts;
 using PRism.Core.Events;
+using PRism.Core.Inbox;
 using PRism.Core.PrDetail;
 using PRism.Core.Reconciliation;
 using PRism.Core.Reconciliation.Pipeline;
@@ -60,6 +61,7 @@ internal static class PrReloadEndpoints
         IAppStateStore store,
         IPrReader reviewService,
         IActivePrCache activePrCache,
+        IActivePrBatchReader batchReader,
         IReviewEventBus bus,
         ILoggerFactory loggerFactory,
         CancellationToken ct)
@@ -112,42 +114,24 @@ internal static class PrReloadEndpoints
                 // head-shift checks use the caller's own stamp (spec § 5.4 branch 1).
                 callerTabId: sourceTabId).ConfigureAwait(false);
 
-            // Phase 2: apply (gate held briefly). Head-shift detection compares the
-            // request's headSha against the active-PR cache's current head (populated by
-            // ActivePrPoller). If they diverge, the poller has observed a newer head
-            // between Phase 1's read and this Phase 2 apply — return 409 with the current
-            // sha so the frontend can auto-retry (S4 Task 46).
-            string? currentHeadShaForRetry = null;
-            bool headUnverified = false;
+            // Phase 1.5: head-shift guard — runs OUTSIDE store.UpdateAsync (it may make a GitHub
+            // call, which must never run inside the brief apply gate) and AFTER Phase 1 reconcile
+            // (verify the head as late as possible before the apply, keeping the window the guard
+            // protects tight — #611). Every refusal returns here, BEFORE UpdateAsync, so no refusal
+            // writes a tab stamp or reaches bus.Publish (the apply transform is the only writer of
+            // either). See ResolveHeadShiftRefusalAsync + docs/specs/2026-06-26-634-...-design.md.
+            if (await ResolveHeadShiftRefusalAsync(activePrCache, batchReader, prRef, request.HeadSha, ct)
+                    .ConfigureAwait(false) is { } refusal)
+                return refusal;
+
+            // Phase 2: apply (gate held briefly). The head was verified above; UpdateAsync now does
+            // the apply only. The in-transform TryGetValue re-checks session existence in case a
+            // concurrent delete landed between Phase 1 and here (→ updatedSession null → 404).
             ReviewSessionState? updatedSession = null;
             await store.UpdateAsync(state =>
             {
                 if (!state.Reviews.Sessions.TryGetValue(refKey, out var current))
                     return state;
-
-                // Head-shift guard. The active-PR cache snapshot (populated by ActivePrPoller) is the
-                // only VERIFIED view of the PR's current head; request.HeadSha is client-supplied.
-                var cached = activePrCache.GetCurrent(prRef);
-                if (cached is null)
-                {
-                    // Cold cache: the poller hasn't populated a snapshot for this PR yet (subscribe→poll
-                    // race) or it was cleared by POST /api/auth/replace. We cannot verify request.HeadSha
-                    // against a known-good head, so we must NOT fall through and reconcile against an
-                    // unverified head (#611) — a stale client head would silently corrupt draft state.
-                    // Signal a retryable conflict instead; the frontend retries once the next poll lands.
-                    // GetCurrent != null is the true "first poll completed" signal — a STRONGER precondition
-                    // than IsSubscribed, which is true after subscribe but before the first poll. Returns
-                    // BEFORE the tab-stamp write below (no stamp written), and the post-transform
-                    // headUnverified check short-circuits to a 409 before bus.Publish is reached, so the
-                    // cold path emits no StateChanged.
-                    headUnverified = true;
-                    return state;
-                }
-                if (cached.HeadSha != request.HeadSha)
-                {
-                    currentHeadShaForRetry = cached.HeadSha;
-                    return state;
-                }
 
                 // Left-join the reconciled outcomes onto the live current.DraftComments —
                 // not a Select over result.Drafts. Two reasons (preflight Critical findings
@@ -207,16 +191,6 @@ internal static class PrReloadEndpoints
                 return state.WithSession(refKey, updated);
             }, ct).ConfigureAwait(false);
 
-            if (headUnverified)
-                return Results.Json(
-                    new ReloadHeadUnverifiedResponse(),
-                    statusCode: StatusCodes.Status409Conflict);
-
-            if (currentHeadShaForRetry is not null)
-                return Results.Json(
-                    new ReloadStaleHeadResponse(currentHeadShaForRetry),
-                    statusCode: StatusCodes.Status409Conflict);
-
             // Save the frontend a round-trip by returning the updated DTO directly. We
             // captured `updatedSession` out of the transform — avoids a second LoadAsync
             // (saves an fs round-trip + a `_gate` acquisition) and removes the latent
@@ -224,9 +198,10 @@ internal static class PrReloadEndpoints
             // would have thrown if a future code path ever deletes a session between the
             // transform's commit and a re-LoadAsync. Today no such path exists; the
             // captured-session form is defensive against that future and simpler.
-            // updatedSession is null only if the transform's TryGetValue at line 89-90
-            // missed (session vanished between Phase 1 and Phase 2 — also currently
-            // unreachable but defended against).
+            // updatedSession is null only if the apply transform's TryGetValue missed — the session
+            // was deleted between Phase 1's LoadAsync and the Phase 2 apply. That window now spans the
+            // head-shift guard's GitHub read (#634), so a concurrent delete is rare-but-reachable
+            // rather than purely theoretical; either way it degrades cleanly to a 404.
             if (updatedSession is null)
                 return Results.NotFound(new { error = "session-not-found" });
 
@@ -243,5 +218,70 @@ internal static class PrReloadEndpoints
         {
             sem.Release();
         }
+    }
+
+    // Head-shift guard (#611 cold cache + #634 diverged). Returns a 409 IResult to refuse the
+    // reload, or null to proceed to the apply. Extracted from PostReload so the happy path reads
+    // reconcile → guard → apply → publish; MUST run outside store.UpdateAsync (it may make a
+    // GitHub call) and after Phase 1 reconcile (verify the head as late as possible).
+    private static async Task<IResult?> ResolveHeadShiftRefusalAsync(
+        IActivePrCache activePrCache,
+        IActivePrBatchReader batchReader,
+        PrReference prRef,
+        string requestHeadSha,
+        CancellationToken ct)
+    {
+        // Cold cache: the poller hasn't populated a snapshot for this PR yet (subscribe→poll race) or
+        // it was cleared by POST /api/auth/replace. We cannot verify requestHeadSha against a known-good
+        // head, so we must NOT reconcile against an unverified head (#611) — a stale client head would
+        // silently corrupt draft state. GetCurrent != null is the true "first poll completed" signal —
+        // a STRONGER precondition than IsSubscribed (true after subscribe but before the first poll).
+        var cached = activePrCache.GetCurrent(prRef);
+        if (cached is null)
+            return Results.Json(new ReloadHeadUnverifiedResponse(), statusCode: StatusCodes.Status409Conflict);
+
+        // Matching head: the cache agrees with the client → proceed to the apply (the happy path; no
+        // GitHub call). This is also the only diverged-path exit that does NOT consult GitHub.
+        if (cached.HeadSha == requestHeadSha)
+            return null;
+
+        // Diverged: the cache disagrees with the client head. The cache is NOT authoritative — it can
+        // LAG the client (both are independent GitHub reads), so trusting it blindly would tell the
+        // frontend to retry against a STALER head (#634). Consult GitHub for the actual current head via
+        // the SAME GraphQL seam the poller uses to populate the cache (IActivePrBatchReader) — a different
+        // transport (REST PollActivePrAsync) would expose us to GitHub's REST-vs-GraphQL replication skew.
+        ActivePrPollSnapshot? authoritative = null;
+        try
+        {
+            var batch = await batchReader.PollBatchAsync(new[] { prRef }, ct).ConfigureAwait(false);
+            batch.TryGetValue(prRef, out authoritative);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw; // genuine request cancellation — surface it, don't mask it as a fallback
+        }
+#pragma warning disable CA1031 // any read failure degrades to the cached head — see comment
+        catch (Exception)
+        {
+            // ANY authoritative-read failure — rate-limit, transport (HttpRequestException), or poison
+            // payload (JsonException) — leaves `authoritative` null → fall back to the cached head below.
+            // Mirrors ActivePrPoller's whole-tick-abort handling of this exact PollBatchAsync call
+            // (retain last-known, never throw). Catching ONLY RateLimitExceededException here would
+            // introduce a NEW 500 on the common force-push reload: for a zero-draft session Phase 1's
+            // reconcile makes no GitHub call, so this is the ONLY external read and a transport blip
+            // would 500 what was previously a 409 (#634 preflight finding).
+        }
+#pragma warning restore CA1031
+
+        // The retry target is GitHub's authoritative head when we got one; otherwise we degrade to the
+        // cached head (the prior behavior — no worse than the status quo, self-heals on the next poll,
+        // and avoids a new 500 that would invite frantic re-clicks under rate-limit). When the chosen
+        // target equals the client head, the client was current and the cache merely lagged → proceed.
+        var retryHead = authoritative is null || string.IsNullOrEmpty(authoritative.HeadSha)
+            ? cached.HeadSha
+            : authoritative.HeadSha;
+        return retryHead == requestHeadSha
+            ? null
+            : Results.Json(new ReloadStaleHeadResponse(retryHead), statusCode: StatusCodes.Status409Conflict);
     }
 }
