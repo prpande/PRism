@@ -4,7 +4,7 @@
 
 **Goal:** Add the reusable GitHub PR write-path foundation plus Close / Reopen / Mark-ready-for-review / Convert-to-draft, surfaced in an adaptive bottom-sticky panel in the Overview tab.
 
-**Architecture:** A new `IPrLifecycleWriter` (impl `GitHubPrLifecycleWriter`) performs the GitHub writes (REST `PATCH …/pulls/{n}` for close/reopen; GraphQL `markPullRequestReadyForReview`/`convertPullRequestToDraft` for draft toggles, keyed by a GraphQL-resolved node id). Four `POST` endpoints gate on `RequireSubscribed` + the `X-PRism-Tab-Id` custom header, call the writer, classify failures into typed codes, and on success publish a new `PrLifecycleChanged` bus event. That event evicts the head-SHA-keyed snapshot (`PrDetailLoader.Invalidate`) and fans out over SSE; a new `useLifecycleChangedSubscriber` (mounted in `PrDetailView`) reloads PR detail. The frontend uses a `usePrAction` hook (pending-state-then-reconcile, synchronous re-entrancy guard, `prDetail`-identity-gated ~5s fallback) and a state-aware `PrActionsPanel` mounted as a full-width footer of a newly-split Overview DOM.
+**Architecture:** A new `IPrLifecycleWriter` (impl `GitHubPrLifecycleWriter`) performs the GitHub writes (REST `PATCH …/pulls/{n}` for close/reopen; GraphQL `markPullRequestReadyForReview`/`convertPullRequestToDraft` for draft toggles, keyed by a GraphQL-resolved node id). Four `POST` endpoints gate on `RequireSubscribed` + the `X-PRism-Tab-Id` custom header, call the writer, classify failures into typed codes, and on success publish a new `PrLifecycleChanged` bus event. That event evicts the head-SHA-keyed snapshot (`PrDetailLoader.Invalidate`) and fans out over SSE; a new `useLifecycleChangedSubscriber` (mounted in `PrDetailView`) reloads PR detail. The frontend uses a `usePrAction` hook (pending-state-then-reconcile, synchronous re-entrancy guard, observed-target-state-gated ~5s fallback) and a state-aware `PrActionsPanel` mounted as a full-width footer of a newly-split Overview DOM.
 
 **Tech Stack:** .NET 10 (PRism.Core / PRism.Core.Contracts / PRism.GitHub / PRism.Web), React 18 + Vite + TypeScript, vitest + Testing Library, xUnit + FluentAssertions.
 
@@ -21,9 +21,11 @@
 - **Pre-push checklist** (`.ai/docs/development-process.md`): `dotnet build` + `dotnet test`; `npm run lint`; `npm test`; `tsc -b` (not `--noEmit`); prettier `--write` new FE files before staging.
 - **Tests:** backend co-located under `tests/PRism.*.Tests/`; FE hook tests co-located `frontend/src/hooks/*.test.ts`; FE component tests under `frontend/__tests__/`.
 
-## Freshness-signal deviation (recorded per "document plan deviations durably")
+## Reconcile / fallback signal (recorded per "document plan deviations durably")
 
-The spec said pass `usePrDetail`'s "reload counter" into `usePrAction`. `usePrDetail` does **not** expose a counter — but `data` (→ `prDetail` in context) is replaced with a fresh object on every reload (`setData(result)`), including same-PR reloads. So this plan uses **`prDetail` object identity** as the freshness signal (cancel the fallback timer when the identity the panel holds changes after the POST). Same guarantee, no new field. Rationale logged here; mirror it in the implementing commit message.
+The spec said pass `usePrDetail`'s "reload counter" into `usePrAction`. `usePrDetail` exposes no counter. Round 1 of this plan used **`prDetail` object identity** as the signal; round 2 of the plan ce-doc-review (adversarial) showed that is **wrong under concurrency**: `prDetail` identity is advanced by *six* unrelated reload triggers in `PrDetailView` (root/single comment posted, draft submitted, activation transition, auto-transition). An unrelated reload landing in the post-window would silently disarm the SSE-drop fallback — exactly in the dropped-SSE case the fallback exists for — leaving the panel on the stale button set.
+
+So this plan uses the **observed PR lifecycle state reaching the action's target** as the reconcile signal instead: after `close` the fallback is satisfied only when `isClosed` is observed true; after `reopen` when `isClosed` is false; after `ready` when the PR is open and non-draft; after `convert-to-draft` when it is open and draft. An unrelated reload that does *not* reach the target leaves the fallback armed (correct); the action's own reconcile reload (SSE-driven or fallback) flips the state and cancels it. This is strictly more robust than identity, distinguishes the action's own reload from any other, and drops the dependence on `setData` always minting a fresh object. **Residual (round-2 adversarial finding A3):** `usePrDetail` only `setData`s on GET *success*, so a reconcile GET that errors leaves the observed state stale — the fallback fires once more, and a *persistent* GET failure surfaces through the existing detail-error path rather than a silently stale panel. Rationale logged here; mirror it in the implementing commit message.
 
 ## File Structure
 
@@ -56,7 +58,7 @@ The spec said pass `usePrDetail`'s "reload counter" into `usePrAction`. `usePrDe
 **Frontend — modify:**
 - `frontend/src/api/types.ts` — add the `PrLifecycleChangedEvent` payload type.
 - `frontend/src/api/events.ts` — register `'pr-lifecycle-changed'` in `EventPayloadByType` **and** the `EVENT_TYPES` runtime array.
-- `frontend/src/hooks/usePrDetail.ts` — (no change needed; `reload` already exported; freshness via `data` identity).
+- `frontend/src/hooks/usePrDetail.ts` — (no change needed; `reload` already exported; the reconcile signal is the observed `prState`, not a usePrDetail field).
 - `frontend/src/components/PrDetail/prDetailContext.tsx` — add `reload` to context value + types.
 - `frontend/src/components/PrDetail/PrDetailView.tsx` — wire `useLifecycleChangedSubscriber`; pass `reload` into context.
 - `frontend/src/components/PrDetail/OverviewTab/OverviewTab.tsx` + `.module.css` — DOM split + mount panel.
@@ -195,6 +197,7 @@ git commit -m "feat(#566): add IPrLifecycleWriter interface + result types"
 // tests/PRism.GitHub.Tests/GitHubPrLifecycleWriterTests.cs
 using System.Net;
 using FluentAssertions;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using PRism.Core;
 using PRism.Core.Contracts;
@@ -306,6 +309,11 @@ public class GitHubPrLifecycleWriterTests
             Resp(HttpStatusCode.OK, "{\"errors\":[{\"message\":\"Pull request is already a draft\"}]}"));
         var result = await MakeWriter(handler).ConvertToDraftAsync(Pr, CancellationToken.None);
         result.Should().Be(PrLifecycleResult.Ok);
+        // Plan ce-doc-review round 2 (scope): pin the mutation body too — the spec requires
+        // "each of the four actions issues the correct GraphQL call", not just the Ok outcome.
+        handler.Requests.Should().HaveCount(2); // resolve + mutate
+        handler.Requests[1].Body.Should().Contain("convertPullRequestToDraft");
+        handler.Requests[1].Body.Should().Contain("PR_node1");
     }
 
     [Fact]
@@ -357,6 +365,35 @@ public class GitHubPrLifecycleWriterTests
         var result = await MakeWriter(handler).ConvertToDraftAsync(Pr, CancellationToken.None);
         result.ErrorCode.Should().Be(PrLifecycleErrorCode.RateLimited);
     }
+
+    // Plan ce-doc-review round 2 (scope): the spec requires asserting the classified failure is
+    // LOGGED server-side (truncated body) BEFORE the sanitized DTO returns — the other tests wire
+    // NullLogger and never check this half. This is the only test that captures the log.
+    [Fact]
+    public async Task A_classified_failure_logs_the_github_body_server_side()
+    {
+        var handler = new StubHandler(Resp(HttpStatusCode.Forbidden,
+            "{\"message\":\"Resource not accessible by personal access token\"}"));
+        var log = new CapturingLogger<GitHubPrLifecycleWriter>();
+        var writer = new GitHubPrLifecycleWriter(
+            FactoryFor(handler), () => Task.FromResult<string?>("ghp_token"), "https://api.github.com", log);
+
+        var result = await writer.CloseAsync(Pr, CancellationToken.None);
+
+        result.ErrorCode.Should().Be(PrLifecycleErrorCode.TokenCannotWrite);
+        log.Entries.Should().ContainSingle()
+            .Which.Should().Contain("Resource not accessible"); // the raw GitHub body reaches the LOG, not the DTO
+    }
+
+    // Minimal ILogger<T> that records formatted entries (no external test-logging package needed).
+    private sealed class CapturingLogger<T> : ILogger<T>
+    {
+        public List<string> Entries { get; } = new();
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(LogLevel logLevel) => true;
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception,
+            Func<TState, Exception?, string> formatter) => Entries.Add(formatter(state, exception));
+    }
 }
 ```
 
@@ -385,7 +422,7 @@ namespace PRism.GitHub;
 // shared statics via the thin wrappers below (verbatim twins of GitHubReviewSubmitter's), and
 // failures are classified into PrLifecycleErrorCode on the response body (NOT the bare status),
 // per the spec's error-handling section. internal sealed; constructed via DI + the test factory.
-internal sealed class GitHubPrLifecycleWriter : IPrLifecycleWriter
+internal sealed partial class GitHubPrLifecycleWriter : IPrLifecycleWriter
 {
     private readonly IHttpClientFactory _httpFactory;
     private readonly Func<Task<string?>> _readToken;
@@ -576,12 +613,12 @@ internal sealed class GitHubPrLifecycleWriter : IPrLifecycleWriter
 }
 ```
 
-> If `GitHubPrLifecycleWriter` must be non-partial for the `Log` source-gen, mark the class `internal sealed partial class GitHubPrLifecycleWriter`. (Match the `GitHubReviewSubmitter` precedent — it is `partial`.)
+> The class is declared `partial` above (plan ce-doc-review round 2 — feasibility): the nested `[LoggerMessage]` `Log` class requires **every enclosing type** to be `partial` for the source generator, so the literal block must compile as-is. Matches the `GitHubReviewSubmitter` precedent (`internal sealed partial class`).
 
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `& 'C:\Program Files\dotnet\dotnet.exe' test tests/PRism.GitHub.Tests --filter GitHubPrLifecycleWriterTests`
-Expected: PASS (all 9). If `Moq` is unavailable in `PRism.GitHub.Tests`, replace the factory mock with a tiny hand-rolled `IHttpClientFactory` stub class.
+Expected: PASS (all 13). If `Moq` is unavailable in `PRism.GitHub.Tests`, replace the factory mock with a tiny hand-rolled `IHttpClientFactory` stub class.
 
 - [ ] **Step 5: Commit**
 
@@ -766,14 +803,14 @@ public class SseChannelPrLifecycleTests
         using var cts = new CancellationTokenSource();
         var subscriberTask = channel.RunSubscriberAsync(ctx.Response, cookieSessionId: "c1", cts.Token);
 
-        await SseTestUtil.WaitFor(() => subs.Current == 1, TimeSpan.FromSeconds(5));
+        await WaitFor(() => subs.Current == 1, TimeSpan.FromSeconds(5));
         var subscriberId = channel.LatestSubscriberIdForCookieSession("c1")!;
         var prRef = new PrReference("o", "r", 1);
         registry.Add(subscriberId, prRef);
 
         bus.Publish(new PrLifecycleChanged(prRef));
 
-        await SseTestUtil.WaitFor(() => !logger.Messages.IsEmpty, TimeSpan.FromSeconds(5));
+        await WaitFor(() => !logger.Messages.IsEmpty, TimeSpan.FromSeconds(5));
         var line = logger.Messages.Single();
         line.Should().Contain("PrLifecycleChanged");
         line.Should().Contain("success=True");
@@ -794,7 +831,7 @@ public class SseChannelPrLifecycleTests
         var ctx = new DefaultHttpContext { Response = { Body = new System.IO.MemoryStream() } };
         using var cts = new CancellationTokenSource();
         var subscriberTask = channel.RunSubscriberAsync(ctx.Response, cookieSessionId: "c1", cts.Token);
-        await SseTestUtil.WaitFor(() => subs.Current == 1, TimeSpan.FromSeconds(5));
+        await WaitFor(() => subs.Current == 1, TimeSpan.FromSeconds(5));
         var subscriberId = channel.LatestSubscriberIdForCookieSession("c1")!;
         var prRef = new PrReference("o", "r", 1);
         registry.Add(subscriberId, prRef);
@@ -811,7 +848,7 @@ public class SseChannelPrLifecycleTests
 }
 ```
 
-> Reuse the existing `CapturingLogger` and `WaitFor` helpers from `SseChannelDraftSubmittedTests.cs`. If `WaitFor` is a private method there, copy it into a small `SseTestUtil` static or inline it (match whatever the existing SSE tests do — don't invent a helper that doesn't exist).
+> `CapturingLogger` and `WaitFor` are both helpers that live **private** inside `SseChannelDraftSubmittedTests.cs` (plan ce-doc-review round 2 — feasibility: there is no shared `SseTestUtil` type, and `WaitFor` is a private static there). Add a private `static async Task WaitFor(Func<bool> condition, TimeSpan timeout)` to **this** test file (copy the body verbatim from `SseChannelDraftSubmittedTests.WaitFor`) and reuse `CapturingLogger` the same way the existing SSE suites do (it is constructed `new CapturingLogger(5)` in those tests). The call sites above are written unqualified to match.
 
 - [ ] **Step 2: Run to verify they fail**
 
@@ -887,7 +924,7 @@ git commit -m "feat(#566): SSE fan-out + projection for PrLifecycleChanged"
 
 **Interfaces:**
 - Consumes: `IPrLifecycleWriter` + `PrLifecycleResult`/`PrLifecycleErrorCode` (Tasks 2–3); `IReviewEventBus`; `RequireSubscribed`; `TabStamps.TabIdHeader` + `PrDetailEndpoints.TabIdAllowlistRegex()`; `PrLifecycleChanged` (Task 1).
-- Produces: `POST /api/pr/{owner}/{repo}/{number:int}/{close|reopen|ready-for-review|convert-to-draft}` returning 200 / `{code}` + status.
+- Produces: `POST /api/pr/{owner}/{repo}/{number:int:min(1)}/{close|reopen|ready-for-review|convert-to-draft}` returning 200 / `{code}` + status.
 
 - [ ] **Step 0: Read the real submit-endpoint guard + DI seam FIRST (plan ce-doc-review — scope + security)**
 
@@ -915,7 +952,9 @@ internal sealed class TestPrLifecycleWriter : IPrLifecycleWriter
 }
 ```
 
-> Build the context by **copying `SubmitEndpointsTestContext`** and swapping `RemoveAll<IReviewSubmitter>()/AddSingleton(Submitter)` for `RemoveAll<IPrLifecycleWriter>()/AddSingleton(Writer)` (keep the `IReviewEventBus` + `IActivePrCache` + session-seed helpers; the lifecycle endpoint publishes a bus event and the test asserts on `Bus.Published`). Reuse `SeedSessionAsync`, `ValidSession`, `CreateClient`.
+> Build the context by **copying `SubmitEndpointsTestContext`** and swapping `RemoveAll<IReviewSubmitter>()/AddSingleton(Submitter)` for `RemoveAll<IPrLifecycleWriter>()/AddSingleton(Writer)` (keep the `IReviewEventBus` + session-seed helpers; the lifecycle endpoint publishes a bus event and the test asserts on `Bus.Published`). Reuse `SeedSessionAsync`, `ValidSession`, `CreateClient`.
+>
+> **CRITICAL — do NOT inherit `AllSubscribedActivePrCache`** (plan ce-doc-review round 2 — feasibility, verified `tests/PRism.Web.Tests/TestHelpers/SubmitEndpointFakes.cs`): `SubmitEndpointsTestContext` registers `AllSubscribedActivePrCache`, whose `IsSubscribed(prRef) => true` is hardwired. With that fake the subscribe gate **never rejects**, so the `Unsubscribed_session_returns_403_unauthorized` test below can never go green AND the security gate the round-1 review added is left untested. Instead register a **configurable** cache — the repo already has `ConfigurableActivePrCache` (`tests/PRism.Web.Tests/Endpoints/PrRootCommentEndpointTests.cs`) and `FakeCache(bool isSubscribed, …)` (`PrDraftEndpointTests.cs`). Expose a per-test toggle `SetSubscribed(bool)` on `PrLifecycleEndpointsTestContext` (default subscribed; the unsubscribed test calls `SetSubscribed(false)`). `SeedSessionAsync` leaves it subscribed for the happy/error-mapping tests.
 
 Then the tests:
 
@@ -990,9 +1029,13 @@ public class PrLifecycleEndpointsTests
     {
         using var ctx = PrLifecycleEndpointsTestContext.Create();
         await ctx.SeedSessionAsync("o", "r", 1, PrLifecycleEndpointsTestContext.ValidSession());
-        using var client = ctx.CreateClient();
+        // Plan ce-doc-review round 2 (feasibility): CreateClient() DEFAULTS X-PRism-Tab-Id to
+        // "tab-test" (TestClientExtensions adds it as a default header), so a plain client does
+        // NOT exercise the missing-tab-id path — it sends a valid id and gets a 200. Pass
+        // tabId: null to actually omit the header (the SubmitEndpointsTestContext pattern).
+        using var client = ctx.CreateClient(tabId: null);
 
-        var resp = await client.PostAsync("/api/pr/o/r/1/close", content: null); // no X-PRism-Tab-Id
+        var resp = await client.PostAsync("/api/pr/o/r/1/close", content: null); // genuinely no X-PRism-Tab-Id
         resp.StatusCode.Should().Be(HttpStatusCode.UnprocessableEntity); // tab-id-missing (match submit's status)
         ctx.Writer.Calls.Should().BeEmpty();
     }
@@ -1003,7 +1046,7 @@ public class PrLifecycleEndpointsTests
     public async Task Unsubscribed_session_returns_403_unauthorized()
     {
         using var ctx = PrLifecycleEndpointsTestContext.Create();
-        // no SeedSessionAsync → not subscribed
+        ctx.SetSubscribed(false); // configurable cache → RequireSubscribed.Check rejects (NOT the all-subscribed fake)
         using var client = ctx.CreateClient();
         var resp = await client.SendAsync(Post("close"));
         resp.StatusCode.Should().Be(HttpStatusCode.Forbidden);
@@ -1034,19 +1077,19 @@ internal static class PrLifecycleEndpoints
 {
     public static void MapPrLifecycleEndpoints(this IEndpointRouteBuilder app)
     {
-        app.MapPost("/api/pr/{owner}/{repo}/{number:int}/close",
+        app.MapPost("/api/pr/{owner}/{repo}/{number:int:min(1)}/close",
             (string owner, string repo, int number, HttpContext http, IPrLifecycleWriter writer, IReviewEventBus bus, IActivePrCache activePrCache, CancellationToken ct)
                 => HandleAsync(owner, repo, number, http, bus, activePrCache, ct, (w, r, c) => w.CloseAsync(r, c), writer));
 
-        app.MapPost("/api/pr/{owner}/{repo}/{number:int}/reopen",
+        app.MapPost("/api/pr/{owner}/{repo}/{number:int:min(1)}/reopen",
             (string owner, string repo, int number, HttpContext http, IPrLifecycleWriter writer, IReviewEventBus bus, IActivePrCache activePrCache, CancellationToken ct)
                 => HandleAsync(owner, repo, number, http, bus, activePrCache, ct, (w, r, c) => w.ReopenAsync(r, c), writer));
 
-        app.MapPost("/api/pr/{owner}/{repo}/{number:int}/ready-for-review",
+        app.MapPost("/api/pr/{owner}/{repo}/{number:int:min(1)}/ready-for-review",
             (string owner, string repo, int number, HttpContext http, IPrLifecycleWriter writer, IReviewEventBus bus, IActivePrCache activePrCache, CancellationToken ct)
                 => HandleAsync(owner, repo, number, http, bus, activePrCache, ct, (w, r, c) => w.MarkReadyForReviewAsync(r, c), writer));
 
-        app.MapPost("/api/pr/{owner}/{repo}/{number:int}/convert-to-draft",
+        app.MapPost("/api/pr/{owner}/{repo}/{number:int:min(1)}/convert-to-draft",
             (string owner, string repo, int number, HttpContext http, IPrLifecycleWriter writer, IReviewEventBus bus, IActivePrCache activePrCache, CancellationToken ct)
                 => HandleAsync(owner, repo, number, http, bus, activePrCache, ct, (w, r, c) => w.ConvertToDraftAsync(r, c), writer));
     }
@@ -1096,6 +1139,8 @@ internal static class PrLifecycleEndpoints
 ```
 
 > The guard + DI types above are the real ones confirmed in Step 0 (`TabStamps.TabIdHeader`, `PrDetailEndpoints.TabIdAllowlistRegex()`, `RequireSubscribed.Check(activePrCache, …)`, `IActivePrCache`). If the source signatures differ, substitute precisely — do not reimplement the regex or the subscribe check.
+
+> **Route constraint `{number:int:min(1)}`** (plan ce-doc-review round 2 — adversarial): the bare `int` constraint accepts `0` and negatives (`/api/pr/o/r/-1/close` would route and build `PrReference("o","r",-1)`). The subscribe gate already rejects an unsubscribed bogus PR, so this is defense-in-depth, not a live hole — but `:min(1)` fails fast with a 404 before the writer and self-documents the domain. No new test is required (the subscribe gate test already covers rejection); the constraint is the belt to that suspenders.
 
 - [ ] **Step 3b: Map the endpoints**
 
@@ -1417,7 +1462,8 @@ git commit -m "feat(#566): useLifecycleChangedSubscriber SSE hook"
 - Consumes: `closePr/reopenPr/markReady/convertToDraft` + `PrActionResult`/`PrLifecycleErrorCode` (Task 8); `useToast` (`show({kind:'error', message})`).
 - Produces:
   - `type PrActionKind = 'close' | 'reopen' | 'ready' | 'convert-to-draft'`
-  - `interface UsePrActionArgs { prRef: PrReference; reload: () => void; freshness: unknown }` (`freshness` = the `prDetail` object identity the panel currently holds; changes when a reload lands).
+  - `interface PrLifecycleState { isClosed: boolean; isDraft: boolean }`
+  - `interface UsePrActionArgs { prRef: PrReference; reload: () => void; prState: PrLifecycleState | undefined }` (`prState` = the PR's currently-observed lifecycle state; the fallback is cancelled when it reaches the action's target — see the reconcile-signal note).
   - `interface UsePrActionResult { pending: PrActionKind | null; invoke: (kind: PrActionKind) => void }`
 
 - [ ] **Step 1: Write the failing tests**
@@ -1428,10 +1474,12 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook, act, waitFor } from '@testing-library/react';
 
 const closePr = vi.fn();
+const reopenPr = vi.fn();
 const markReady = vi.fn();
 vi.mock('../api/prLifecycle', () => ({
+  // The arrow wrappers defer the var reference to CALL time, so vi.mock hoisting is fine.
   closePr: (...a: unknown[]) => closePr(...a),
-  reopenPr: vi.fn(),
+  reopenPr: (...a: unknown[]) => reopenPr(...a),
   markReady: (...a: unknown[]) => markReady(...a),
   convertToDraft: vi.fn(),
 }));
@@ -1441,15 +1489,17 @@ vi.mock('../components/Toast/useToast', () => ({ useToast: () => ({ show, dismis
 import { usePrAction } from './usePrAction';
 
 const prRef = { owner: 'o', repo: 'r', number: 1 };
+const OPEN = { isClosed: false, isDraft: false };      // close target NOT yet reached
+const CLOSED = { isClosed: true, isDraft: false };     // close target reached
 
 describe('usePrAction', () => {
-  beforeEach(() => { closePr.mockReset(); markReady.mockReset(); show.mockReset(); vi.useRealTimers(); });
+  beforeEach(() => { closePr.mockReset(); reopenPr.mockReset(); markReady.mockReset(); show.mockReset(); vi.useRealTimers(); });
 
   it('sets pending then clears it on POST 200', async () => {
     let resolve!: (v: { ok: true }) => void;
     closePr.mockReturnValueOnce(new Promise((r) => { resolve = r; }));
     const reload = vi.fn();
-    const { result } = renderHook(() => usePrAction({ prRef, reload, freshness: {} }));
+    const { result } = renderHook(() => usePrAction({ prRef, reload, prState: OPEN }));
 
     act(() => result.current.invoke('close'));
     expect(result.current.pending).toBe('close');
@@ -1458,67 +1508,106 @@ describe('usePrAction', () => {
     await waitFor(() => expect(result.current.pending).toBeNull());
   });
 
-  it('re-entrancy guard ignores a second invoke while one is in flight', async () => {
+  it('re-entrancy guard ignores a second invoke while one is in flight (same kind)', async () => {
     closePr.mockReturnValue(new Promise(() => {})); // never resolves
-    const { result } = renderHook(() => usePrAction({ prRef, reload: vi.fn(), freshness: {} }));
+    const { result } = renderHook(() => usePrAction({ prRef, reload: vi.fn(), prState: OPEN }));
     act(() => result.current.invoke('close'));
     act(() => result.current.invoke('close'));
     expect(closePr).toHaveBeenCalledTimes(1);
   });
 
+  it('re-entrancy guard blocks a DIFFERENT kind while one is in flight (adversarial: single inFlight ref)', async () => {
+    closePr.mockReturnValue(new Promise(() => {})); // never resolves
+    const { result } = renderHook(() => usePrAction({ prRef, reload: vi.fn(), prState: OPEN }));
+    act(() => result.current.invoke('close'));
+    act(() => result.current.invoke('reopen'));
+    expect(closePr).toHaveBeenCalledTimes(1);
+    expect(reopenPr).not.toHaveBeenCalled(); // the single inFlight ref blocks a different kind too
+  });
+
   it('on failure clears pending and shows an error toast with mapped copy', async () => {
     closePr.mockResolvedValueOnce({ ok: false, code: 'token-cannot-write' });
-    const { result } = renderHook(() => usePrAction({ prRef, reload: vi.fn(), freshness: {} }));
+    const { result } = renderHook(() => usePrAction({ prRef, reload: vi.fn(), prState: OPEN }));
     await act(async () => { result.current.invoke('close'); });
     await waitFor(() => expect(result.current.pending).toBeNull());
     expect(show).toHaveBeenCalledWith(expect.objectContaining({ kind: 'error' }));
     expect(show.mock.calls[0][0].message).toMatch(/Pull requests: Read and write/);
   });
 
+  // Plan ce-doc-review round 2 (scope): the spec lists ALL SIX codes as required copy mappings.
+  it.each([
+    ['repo-rule-blocked', /repository rule/i],
+    ['reopen-not-possible', /source branch was deleted/i],
+    ['plan-unsupported-drafts', /draft pull requests/i],
+    ['subscribe-rejected', /lost access/i],
+    ['something-unknown', /could not be completed/i], // generic fallthrough
+  ])('maps the %s error code to its copy', async (code, re) => {
+    closePr.mockResolvedValueOnce({ ok: false, code });
+    const { result } = renderHook(() => usePrAction({ prRef, reload: vi.fn(), prState: OPEN }));
+    await act(async () => { result.current.invoke('close'); });
+    await waitFor(() => expect(result.current.pending).toBeNull());
+    expect(show.mock.calls[0][0].message).toMatch(re);
+  });
+
   it('does NOT show an error toast on a benign success', async () => {
     markReady.mockResolvedValueOnce({ ok: true });
-    const { result } = renderHook(() => usePrAction({ prRef, reload: vi.fn(), freshness: {} }));
+    const { result } = renderHook(() => usePrAction({ prRef, reload: vi.fn(), prState: OPEN }));
     await act(async () => { result.current.invoke('ready'); });
     await waitFor(() => expect(result.current.pending).toBeNull());
     expect(show).not.toHaveBeenCalled();
   });
 
-  it('fires the fallback reload if freshness has not advanced within the timeout', async () => {
+  it('fires the fallback reload if the target state is NOT observed within the timeout', async () => {
     vi.useFakeTimers();
     closePr.mockResolvedValueOnce({ ok: true });
     const reload = vi.fn();
-    const { result } = renderHook(() => usePrAction({ prRef, reload, freshness: {} }));
+    // prState stays OPEN — the close target (isClosed) is never observed.
+    const { result } = renderHook(() => usePrAction({ prRef, reload, prState: OPEN }));
     await act(async () => { result.current.invoke('close'); });
     await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
     expect(reload).toHaveBeenCalledTimes(1);
   });
 
-  it('cancels the fallback when freshness changes (SSE reload landed after the timer armed)', async () => {
+  it('does NOT fire the fallback when an unrelated reload changes prState but NOT to the target', async () => {
     vi.useFakeTimers();
     closePr.mockResolvedValueOnce({ ok: true });
     const reload = vi.fn();
-    let freshness: object = { v: 1 };
-    const { result, rerender } = renderHook(() => usePrAction({ prRef, reload, freshness }));
+    let prState = OPEN;
+    const { result, rerender } = renderHook(() => usePrAction({ prRef, reload, prState }));
     await act(async () => { result.current.invoke('close'); });
-    // Simulate the SSE-driven reload swapping prDetail identity:
-    freshness = { v: 2 };
+    // A comment-post reload swaps prState to a NEW open object (still not closed): fallback must STAY armed.
+    prState = { isClosed: false, isDraft: false };
+    rerender();
+    await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
+    expect(reload).toHaveBeenCalledTimes(1); // unrelated reload did NOT disarm it (round-2 finding A1)
+  });
+
+  it('cancels the fallback when the target state is observed after the timer armed', async () => {
+    vi.useFakeTimers();
+    closePr.mockResolvedValueOnce({ ok: true });
+    const reload = vi.fn();
+    let prState = OPEN;
+    const { result, rerender } = renderHook(() => usePrAction({ prRef, reload, prState }));
+    await act(async () => { result.current.invoke('close'); });
+    // The action's own reconcile reload flips the PR to closed:
+    prState = CLOSED;
     rerender();
     await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
     expect(reload).not.toHaveBeenCalled();
   });
 
-  it('does NOT arm the fallback when the reload lands BEFORE the POST resolves (arm-after-reload race)', async () => {
+  it('does NOT arm the fallback when the target state is reached BEFORE the POST resolves (arm-after-reload race)', async () => {
     vi.useFakeTimers();
     let resolve!: (v: { ok: true }) => void;
     closePr.mockReturnValueOnce(new Promise((r) => { resolve = r; }));
     const reload = vi.fn();
-    let freshness: object = { v: 1 };
-    const { result, rerender } = renderHook(() => usePrAction({ prRef, reload, freshness }));
+    let prState = OPEN;
+    const { result, rerender } = renderHook(() => usePrAction({ prRef, reload, prState }));
     act(() => result.current.invoke('close'));
-    // Fast SSE reload swaps freshness BEFORE the POST 200 resolves:
-    freshness = { v: 2 };
+    // Fast SSE reload flips to closed BEFORE the POST 200 resolves:
+    prState = CLOSED;
     rerender();
-    await act(async () => { resolve({ ok: true }); }); // .then runs now — must NOT arm a timer
+    await act(async () => { resolve({ ok: true }); }); // .then sees target already reached — must NOT arm
     await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
     expect(reload).not.toHaveBeenCalled();
   });
@@ -1541,14 +1630,20 @@ import { useToast } from '../components/Toast/useToast';
 
 export type PrActionKind = 'close' | 'reopen' | 'ready' | 'convert-to-draft';
 
+export interface PrLifecycleState {
+  isClosed: boolean;
+  isDraft: boolean;
+}
+
 export interface UsePrActionArgs {
   prRef: PrReference;
   reload: () => void;
-  // The prDetail object identity the panel currently holds. A reload (SSE-driven or fallback)
-  // replaces prDetail with a fresh object, changing this identity — that is the freshness signal
-  // that cancels the fallback timer. (Deviation from the spec's "reload counter": same guarantee,
-  // no new usePrDetail field — see the plan's freshness-signal deviation note.)
-  freshness: unknown;
+  // The PR's currently-observed lifecycle state. The reconcile fallback is cancelled when this
+  // reaches the action's target (close→isClosed, reopen→!isClosed, ready→open+non-draft,
+  // convert-to-draft→open+draft) — NOT on a bare object-identity change, which any of the six
+  // unrelated reload triggers in PrDetailView would spuriously satisfy. See the plan's
+  // reconcile-signal note (round-2 adversarial finding A1).
+  prState: PrLifecycleState | undefined;
 }
 
 export interface UsePrActionResult {
@@ -1564,6 +1659,21 @@ const ACTIONS: Record<PrActionKind, (prRef: PrReference) => Promise<{ ok: boolea
   ready: markReady,
   'convert-to-draft': convertToDraft,
 };
+
+// Has the observed PR state reached the target for this action? Used to cancel the SSE-drop
+// fallback ONLY on the action's own reconcile (not on any unrelated reload). (Round-2 finding A1.)
+function reachedTarget(kind: PrActionKind, s: PrLifecycleState): boolean {
+  switch (kind) {
+    case 'close':
+      return s.isClosed;
+    case 'reopen':
+      return !s.isClosed;
+    case 'ready':
+      return !s.isClosed && !s.isDraft;
+    case 'convert-to-draft':
+      return !s.isClosed && s.isDraft;
+  }
+}
 
 function copyFor(code: PrLifecycleErrorCode | undefined): string {
   switch (code) {
@@ -1584,37 +1694,46 @@ function copyFor(code: PrLifecycleErrorCode | undefined): string {
   }
 }
 
-export function usePrAction({ prRef, reload, freshness }: UsePrActionArgs): UsePrActionResult {
+export function usePrAction({ prRef, reload, prState }: UsePrActionArgs): UsePrActionResult {
   const [pending, setPending] = useState<PrActionKind | null>(null);
-  const inFlight = useRef(false);                 // synchronous re-entrancy guard
+  const inFlight = useRef(false);                 // synchronous re-entrancy guard (across ALL kinds)
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const freshnessAtPost = useRef<unknown>(undefined);
-  // latestFreshness mirrors the freshness prop on EVERY render so the POST's .then closure
-  // (which captured a stale `freshness`) can compare against the current value. This closes the
-  // arm-after-reload race (plan ce-doc-review — adversarial): the bus publishes synchronously
-  // before the POST's 200 resolves, so the SSE reload can land BEFORE .then runs — the
-  // freshness-effect would then no-op (timer still null) and .then would arm a doomed timer.
-  const latestFreshness = useRef<unknown>(freshness);
-  latestFreshness.current = freshness;
+  const pendingKindRef = useRef<PrActionKind | null>(null); // the action whose target we await
+  // latestState mirrors prState on EVERY render so the POST's .then closure compares against the
+  // CURRENT observed state, not the value when invoke ran. This closes the arm-after-reload race:
+  // the bus publishes synchronously before the POST's 200 resolves, so a fast SSE reload can flip
+  // the state BEFORE .then runs — .then must then NOT arm a doomed timer.
+  const latestState = useRef<PrLifecycleState | undefined>(prState);
+  latestState.current = prState;
   const { show } = useToast();
 
-  // Cancel the fallback timer when freshness advances (a reload landed) AFTER the timer is armed.
-  useEffect(() => {
-    if (timerRef.current !== null && freshness !== freshnessAtPost.current) {
+  const clearTimer = useCallback(() => {
+    if (timerRef.current !== null) {
       clearTimeout(timerRef.current);
       timerRef.current = null;
     }
-  }, [freshness]);
+  }, []);
+
+  // Cancel the fallback once the observed PR state reaches the pending action's target. An
+  // unrelated reload that changes prState WITHOUT reaching the target leaves the timer armed —
+  // which is the whole point: the fallback must survive a concurrent comment/draft/re-activation
+  // reload and only stand down when THIS action's reconcile actually lands (round-2 finding A1).
+  useEffect(() => {
+    const kind = pendingKindRef.current;
+    if (kind && prState && reachedTarget(kind, prState)) {
+      pendingKindRef.current = null;
+      clearTimer();
+    }
+  }, [prState?.isClosed, prState?.isDraft, clearTimer]);
 
   // Tidy the timer on unmount.
-  useEffect(() => () => { if (timerRef.current !== null) clearTimeout(timerRef.current); }, []);
+  useEffect(() => clearTimer, [clearTimer]);
 
   const invoke = useCallback(
     (kind: PrActionKind) => {
-      if (inFlight.current) return;               // ignore double-clicks before pending commits
+      if (inFlight.current) return;               // ignore double-clicks / a second kind mid-flight
       inFlight.current = true;
       setPending(kind);
-      freshnessAtPost.current = freshness;
       void ACTIONS[kind](prRef)
         .then((r) => {
           setPending(null);
@@ -1623,14 +1742,15 @@ export function usePrAction({ prRef, reload, freshness }: UsePrActionArgs): UseP
             show({ kind: 'error', message: copyFor(r.code) });
             return;
           }
-          // Success: arm the SSE-drop fallback — UNLESS the reload already landed between the
-          // POST firing and now (latestFreshness advanced past the value captured at POST time).
-          // Without this guard a fast SSE reload would still leave a doomed timer that fires a
-          // redundant reload at FALLBACK_MS.
-          if (latestFreshness.current !== freshnessAtPost.current) return;
-          if (timerRef.current !== null) clearTimeout(timerRef.current);
+          // Success: if the reconcile reload already brought the PR to the target state (a fast SSE
+          // landed before the POST resolved), no fallback is needed.
+          if (latestState.current && reachedTarget(kind, latestState.current)) return;
+          // Otherwise arm the SSE-drop fallback; the prState effect cancels it once the target is observed.
+          pendingKindRef.current = kind;
+          clearTimer();
           timerRef.current = setTimeout(() => {
             timerRef.current = null;
+            pendingKindRef.current = null;
             reload();
           }, FALLBACK_MS);
         })
@@ -1640,7 +1760,7 @@ export function usePrAction({ prRef, reload, freshness }: UsePrActionArgs): UseP
           show({ kind: 'error', message: copyFor('generic') });
         });
     },
-    [prRef, reload, freshness, show],
+    [prRef, reload, show, clearTimer],
   );
 
   return { pending, invoke };
@@ -1652,7 +1772,7 @@ export function usePrAction({ prRef, reload, freshness }: UsePrActionArgs): UseP
 - [ ] **Step 4: Run to verify they pass**
 
 Run: `cd frontend && node_modules/.bin/vitest run src/hooks/usePrAction.test.ts`
-Expected: PASS (all 7).
+Expected: PASS (all 14, counting the 5 parameterized copy cases).
 
 - [ ] **Step 5: Prettier + commit**
 
@@ -1705,7 +1825,18 @@ return (
 
 - [ ] **Step 3: Split the CSS**
 
-In `OverviewTab.module.css`, keep `.overviewTab` as the scroller and `.overviewGrid` as the centered content column (they already carry the right rules — this split just stops applying both to one node). No rule changes needed; verify `.overviewTab` keeps `flex:1; overflow:auto` and `.overviewGrid` keeps `width: min(80%, …); margin:0 auto; padding; display:flex; flex-direction:column; gap`.
+In `OverviewTab.module.css`, keep `.overviewTab` as the scroller and `.overviewGrid` as the centered content column (they already carry the right rules — this split just stops applying both to one node). Verify `.overviewTab` keeps `flex:1; overflow:auto` and `.overviewGrid` keeps `width: min(80%, …); margin:0 auto; padding; display:flex; flex-direction:column; gap`.
+
+**One required rule change (plan ce-doc-review round 2 — design D1):** the Task-12 panel is `position: sticky; bottom: 0` *inside* this scroller, so mid-scroll it overlays the last ~1 button-row of grid content (`ReviewFilesCta` / the last card are most at risk). Add bottom clearance so the last content can always clear the pinned panel:
+
+```css
+.overviewGrid {
+  /* …existing rules… */
+  padding-bottom: var(--s-9, 56px); /* ≈ panel height (button + padding + border); owner tunes at the B1 gate */
+}
+```
+
+Use the project's real spacing token (check the existing `--s-*` scale); the point is reserved clearance, not an exact pixel. (The earlier "no rule changes needed" was wrong for the sticky-overlay case.)
 
 - [ ] **Step 4: Run the Overview test + the broader PrDetail suite**
 
@@ -1730,7 +1861,7 @@ git commit -m "refactor(#566): split Overview DOM into scroller + content column
 - Test: `frontend/__tests__/PrActionsPanel.test.tsx`
 
 **Interfaces:**
-- Consumes: `usePrDetailContext()` data — `prDetail.pr` (`isDraft/isClosed/isMerged/state`), `readOnly`, `prRef`, `reload`, and `prDetail` (as `usePrAction`'s `freshness`). Uses `usePrAction` (Task 10). `reload` is added to the context in Step 0 below (ordering fix — plan ce-doc-review: this task reads `reload`, so it must exist before this task's tests compile).
+- Consumes: `usePrDetailContext()` data — `prDetail.pr` (`isDraft/isClosed/isMerged/state`), `readOnly`, `prRef`, `reload`, and `prDetail.pr`'s `{ isClosed, isDraft }` (as `usePrAction`'s `prState`). Uses `usePrAction` (Task 10). `reload` is added to the context in Step 0 below (ordering fix — plan ce-doc-review: this task reads `reload`, so it must exist before this task's tests compile).
 - Produces: `export function PrActionsPanel(): JSX.Element | null`.
 
 **Render rules (spec):** returns `null` when cold-load (no `prDetail`), `readOnly`, or merged. Otherwise renders the state-aware button set with the inline Close confirm.
@@ -1758,11 +1889,14 @@ Build to confirm: `cd frontend && node_modules/.bin/tsc -b` (existing `renderWit
 
 ```tsx
 // frontend/__tests__/PrActionsPanel.test.tsx
-import { render, screen, waitFor } from '@testing-library/react';
+import { useState } from 'react';
+import { render, screen, waitFor, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { PrActionsPanel } from '../src/components/PrDetail/OverviewTab/PrActionsPanel';
 import { renderWithPrDetailContext } from '../src/components/PrDetail/testUtils';
+import { makePrDetailContextValue } from '../src/components/PrDetail/testUtils';
+import { PrDetailContextProvider, type PrDetailContextValue } from '../src/components/PrDetail/prDetailContext';
 import { makePr, makePrDetailDto } from './helpers/prDetail';
 
 const invoke = vi.fn();
@@ -1770,6 +1904,24 @@ let pending: string | null = null;
 vi.mock('../src/hooks/usePrAction', () => ({
   usePrAction: () => ({ pending, invoke }),
 }));
+
+// Local harness (plan ce-doc-review round 2 — coherence C1/C2): renderWithPrDetailContext returns a
+// plain RTL result whose `.rerender` CANNOT swap the provider value, so the click-outside,
+// external-state, and focus-on-swap tests use this harness — it holds the context overrides in
+// state (a test calls `ctl.current!.set({...})` to swap them at runtime) and mounts an outside
+// button beside the panel. Confirm the provider export name against prDetailContext.tsx
+// (`PrDetailContextProvider` per the file's own provider) and makePrDetailContextValue's arg shape.
+type Ctl = { set: (o: Partial<PrDetailContextValue>) => void };
+function Harness({ initial, ctl }: { initial: Partial<PrDetailContextValue>; ctl: { current: Ctl | null } }) {
+  const [overrides, setOverrides] = useState<Partial<PrDetailContextValue>>(initial);
+  ctl.current = { set: (o) => setOverrides((p) => ({ ...p, ...o })) };
+  return (
+    <PrDetailContextProvider value={makePrDetailContextValue(overrides)}>
+      <button>outside</button>
+      <PrActionsPanel />
+    </PrDetailContextProvider>
+  );
+}
 
 describe('PrActionsPanel', () => {
   beforeEach(() => { invoke.mockReset(); pending = null; });
@@ -1835,18 +1987,23 @@ describe('PrActionsPanel', () => {
 
   it('an external state change to closed clears an open Close confirm', async () => {
     const user = userEvent.setup();
-    const open = makePrDetailDto({ pr: makePr({ state: 'open', isClosed: false }) });
-    const { rerender } = renderWithPrDetailContext(<PrActionsPanel />, { prDetail: open });
+    const ctl: { current: Ctl | null } = { current: null };
+    const open = makePrDetailDto({ pr: makePr({ state: 'open', isClosed: false, isDraft: false, isMerged: false }) });
+    render(<Harness initial={{ prDetail: open }} ctl={ctl} />);
     await user.click(screen.getByRole('button', { name: /^close$/i }));
     expect(screen.getByText(/close this pr\?/i)).toBeInTheDocument();
     // peer closes the PR → context prDetail flips to closed
-    const closed = makePrDetailDto({ pr: makePr({ state: 'closed', isClosed: true }) });
-    rerender(/* re-render with closed context — see note */);
+    const closed = makePrDetailDto({ pr: makePr({ state: 'closed', isClosed: true, isDraft: false, isMerged: false }) });
+    act(() => ctl.current!.set({ prDetail: closed }));
     await waitFor(() => expect(screen.queryByText(/close this pr\?/i)).not.toBeInTheDocument());
   });
 
-  it('renders nothing during cold load (prDetail null)', () => {
-    const { container } = renderWithPrDetailContext(<PrActionsPanel />, { prDetail: null });
+  it('renders nothing during cold load (no prDetail)', () => {
+    // Plan ce-doc-review round 2 (feasibility): PrDetailContextValue.prDetail is typed non-null
+    // (PrDetailDto), so `{ prDetail: null }` is a TS2322 under `tsc -b`. The Partial override makes
+    // it `PrDetailDto | undefined`; use undefined. (The panel's `prDetail?.pr` guard is defensive —
+    // the real provider always supplies prDetail since OverviewTab mounts only under loaded data.)
+    const { container } = renderWithPrDetailContext(<PrActionsPanel />, { prDetail: undefined });
     expect(container).toBeEmptyDOMElement();
   });
 
@@ -1862,13 +2019,9 @@ describe('PrActionsPanel', () => {
 
   it('a click outside the panel dismisses the Close confirm', async () => {
     const user = userEvent.setup();
-    render(
-      <div>
-        <button>outside</button>
-        {renderInPanel({})}
-      </div>,
-    );
-    // NOTE: mount the panel + an outside element together — see the harness note below.
+    const ctl: { current: Ctl | null } = { current: null };
+    const open = makePrDetailDto({ pr: makePr({ state: 'open', isClosed: false, isDraft: false, isMerged: false }) });
+    render(<Harness initial={{ prDetail: open }} ctl={ctl} />); // Harness mounts an "outside" button beside the panel
     await user.click(screen.getByRole('button', { name: /^close$/i }));
     expect(screen.getByText(/close this pr\?/i)).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: /outside/i }));
@@ -1893,21 +2046,26 @@ describe('PrActionsPanel', () => {
     expect(screen.getByRole('button', { name: /^close$/i })).toBeInTheDocument();
   });
 
-  it('focus moves into the panel when the action set swaps under it', async () => {
+  it('keeps focus inside the panel when the action set swaps after an action (no fall to body)', async () => {
     const user = userEvent.setup();
-    // Mount a harness that swaps prDetail (non-draft → draft) on demand so the action set
-    // changes (Convert-to-draft → Mark-ready) while a panel button holds focus.
-    // Tab to the Convert-to-draft button, swap, assert focus didn't fall to <body>.
-    // (Implement via the same context-swap harness as the external-state test.)
-    // Pseudocode shape — wire to the real harness:
-    //   tab to convert button → swap context to draft → expect(panel or first button).toHaveFocus()
+    const ctl: { current: Ctl | null } = { current: null };
+    const openNonDraft = makePrDetailDto({ pr: makePr({ state: 'open', isClosed: false, isDraft: false, isMerged: false }) });
+    render(<Harness initial={{ prDetail: openNonDraft }} ctl={ctl} />);
+    // Click Convert-to-draft → onInvoke parks focus on the panel container (invoke is mocked, no POST).
+    await user.click(screen.getByRole('button', { name: /convert to draft/i }));
+    // The action's reconcile reload swaps the PR to draft → the set changes (Convert → Mark-ready),
+    // removing the button that was clicked. Round-2 findings A2/D2: focus must NOT fall to <body>.
+    const openDraft = makePrDetailDto({ pr: makePr({ state: 'open', isClosed: false, isDraft: true, isMerged: false }) });
+    act(() => ctl.current!.set({ prDetail: openDraft }));
+    expect(document.body).not.toHaveFocus();
+    expect(screen.getByRole('group', { name: /pr actions/i })).toContainElement(document.activeElement as HTMLElement);
   });
 });
 ```
 
-> Test-harness notes: (1) the click-outside and focus-on-swap tests need the panel mounted alongside sibling DOM and a way to swap the context value — add a tiny local harness component that holds the context value in `useState` and renders `<PrDetailContextProvider value={v}><PrActionsPanel/></PrDetailContextProvider>` plus an outside button; `renderInPanel` above is a placeholder for that harness. Reuse it for the external-state test too (replacing its `rerender(/* … */)` placeholder). (2) `toHaveFocus` requires `@testing-library/jest-dom`. (3) For the pending-label test, the `usePrAction` mock already exposes the module-level `pending` var — set it before render.
+> Test-harness notes: (1) the click-outside, external-state, and focus-on-swap tests use the `Harness` component defined at the top of the file (it swaps the context value via `useState` and mounts an "outside" button) — the simple `renderPanel` helper is fine for the static-render tests. (2) `toHaveFocus` / `toContainElement` require `@testing-library/jest-dom`. (3) For the pending-label test, the `usePrAction` mock exposes the module-level `pending` var — set it before render.
 
-> `renderWithPrDetailContext` returns a plain RTL result; to re-render with a new context value, either expose a small wrapper that takes the value as state, or re-`render` into the same container. If `rerender` with a new provider value is awkward, restructure the last test to mount a tiny harness component that swaps the context value via `useState`. Adjust to whatever `testUtils.tsx` supports — do not invent an API. Confirm `makePr`/`makePrDetailDto` accept the `state/isDraft/isClosed/isMerged` fields (check `__tests__/helpers/prDetail.ts`).
+> Verify against the real codebase before coding: the provider export name in `prDetailContext.tsx` (the Harness assumes `PrDetailContextProvider`), `makePrDetailContextValue`'s arg shape in `testUtils.tsx` (assumed `Partial<PrDetailContextValue>`), and that `makePr`/`makePrDetailDto` accept `state/isDraft/isClosed/isMerged` (check `__tests__/helpers/prDetail.ts`). Adjust to whatever the source supports — do not invent an API.
 
 - [ ] **Step 2: Run to verify they fail**
 
@@ -1923,14 +2081,37 @@ import { usePrDetailContext } from '../prDetailContext';
 import { usePrAction, type PrActionKind } from '../../../hooks/usePrAction';
 import styles from './PrActionsPanel.module.css';
 
+// In-flight announcements for the visually-hidden live region (round-2 finding D3 — AT was silent
+// during the write). Success-message copy (e.g. "Pull request closed") is a B1 a11y follow-up:
+// the wording + the reopen-vs-ready ambiguity is an owner copy decision, not a mechanical fix.
+const PENDING_ANNOUNCE: Record<PrActionKind, string> = {
+  close: 'Closing pull request…',
+  reopen: 'Reopening pull request…',
+  ready: 'Marking ready for review…',
+  'convert-to-draft': 'Converting to draft…',
+};
+
 export function PrActionsPanel() {
   const { prRef, prDetail, readOnly, reload } = usePrDetailContext();
-  const { pending, invoke } = usePrAction({ prRef, reload, freshness: prDetail });
+  const pr = prDetail?.pr;
+  // Pass the OBSERVED lifecycle state (not prDetail identity) so the fallback reconciles on THIS
+  // action's target, immune to unrelated reloads (round-2 finding A1).
+  const { pending, invoke } = usePrAction({
+    prRef,
+    reload,
+    prState: pr ? { isClosed: pr.isClosed, isDraft: pr.isDraft } : undefined,
+  });
   const [confirmingClose, setConfirmingClose] = useState(false);
   const cancelRef = useRef<HTMLButtonElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
 
-  const pr = prDetail?.pr;
+  // Action-set visibility — computed BEFORE the suppression early-return so the focus-swap effect
+  // (a hook) is unconditional (rules-of-hooks). `!!pr &&` guards the cold-load window.
+  const showReopen = !!pr && pr.isClosed;
+  const showClose = !!pr && !pr.isClosed;
+  const showReady = !!pr && !pr.isClosed && pr.isDraft;
+  const showConvertDraft = !!pr && !pr.isClosed && !pr.isDraft;
+  const signature = `${showReady}|${showConvertDraft}|${showReopen}|${showClose}`;
 
   // Round-2 finding E: an external state change that alters the action set clears an open confirm.
   useEffect(() => {
@@ -1941,6 +2122,21 @@ export function PrActionsPanel() {
   useEffect(() => {
     if (confirmingClose) cancelRef.current?.focus();
   }, [confirmingClose]);
+
+  // Focus-on-swap (round-2 findings A2/D2, folded inline per scope S4): when the visible action set
+  // changes while focus is parked inside the panel, keep focus on the container instead of letting
+  // it fall to <body>. This is RELIABLE here because every invoke/Confirm parks focus on the
+  // container FIRST (onInvoke below) — so when the focused button is removed by the swap, focus is
+  // already on the container, and `el.contains(activeElement)` is true. (The naive version read
+  // activeElement AFTER removal, by which point it is already <body> and the guard fails.)
+  const sigRef = useRef(signature);
+  useEffect(() => {
+    if (sigRef.current !== signature) {
+      const el = containerRef.current;
+      if (el && el.contains(document.activeElement)) el.focus();
+      sigRef.current = signature;
+    }
+  }, [signature]);
 
   // Dismiss-on-click-outside (spec decision 2) — mirror ReviewActionMenu.tsx's mousedown pattern.
   useEffect(() => {
@@ -1960,32 +2156,31 @@ export function PrActionsPanel() {
   const busy = pending !== null;
   const siblingsDisabled = busy || confirmingClose;
 
-  // Derive the visible action set.
-  const showReopen = pr.isClosed;
-  const showClose = !pr.isClosed;
-  const showReady = !pr.isClosed && pr.isDraft;
-  const showConvertDraft = !pr.isClosed && !pr.isDraft;
-
   // Nothing to show (defensive — merged already returned null).
   if (!showReopen && !showClose && !showReady && !showConvertDraft) return null;
 
-  const onInvoke = (kind: PrActionKind) => invoke(kind);
+  // Park focus on the container BEFORE invoking, so when the triggered button is removed by the
+  // resulting set-swap (or the Confirm span unmounts) focus is already inside the panel and the
+  // focus-swap effect can keep it there rather than the browser dropping it to <body>.
+  const onInvoke = (kind: PrActionKind) => {
+    containerRef.current?.focus();
+    invoke(kind);
+  };
 
   return (
-    // tabIndex={-1} so focus-on-swap (FocusOnActionSetSwap below) can land focus on the panel
-    // when the button set changes out from under the focused control.
+    // tabIndex={-1} so the focus-swap effect can land focus on the panel when the button set changes.
     <div ref={containerRef} className={styles.panel} role="group" aria-label="PR actions" tabIndex={-1}>
-      <FocusOnActionSetSwap
-        signature={`${showReady}|${showConvertDraft}|${showReopen}|${showClose}`}
-        containerRef={containerRef}
-      />
       <span className={styles.regionTag}>PR actions</span>
 
-      {/* Visually-hidden live region (NOT role="alertdialog" — that implies a modal w/ focus
-          trap, which this inline morph is not; codebase uses Modal for alertdialog). Announces
-          the confirm prompt. Pattern: AiFailureContainer / GitHubAuthBanner. */}
+      {/* Visually-hidden live region (NOT role="alertdialog" — that implies a modal w/ focus trap,
+          which this inline morph is not; codebase uses Modal for alertdialog). Announces the
+          confirm prompt AND the in-flight state. Pattern: AiFailureContainer / GitHubAuthBanner. */}
       <span className="sr-only" role="status" aria-live="polite" aria-atomic="true">
-        {confirmingClose ? 'Close this PR? Use Cancel or Confirm close.' : ''}
+        {confirmingClose
+          ? 'Close this PR? Use Cancel or Confirm close.'
+          : pending
+            ? PENDING_ANNOUNCE[pending]
+            : ''}
       </span>
 
       {showReady && (
@@ -2024,7 +2219,9 @@ export function PrActionsPanel() {
           <button ref={cancelRef} className={styles.btn} onClick={() => setConfirmingClose(false)}>Cancel</button>
           <button
             className={styles.btnConfirm}
-            onClick={() => { setConfirmingClose(false); onInvoke('close'); }}
+            // onInvoke parks focus on the container before the confirm span (and this button) unmount,
+            // so the keyboard user is not dropped to <body> through the in-flight period.
+            onClick={() => { onInvoke('close'); setConfirmingClose(false); }}
           >
             Confirm close
           </button>
@@ -2032,27 +2229,6 @@ export function PrActionsPanel() {
       )}
     </div>
   );
-}
-
-// Moves focus to the panel container when the visible action set changes (e.g. a successful
-// Convert-to-draft swaps to Mark-ready) AND focus was inside the panel — so keyboard users
-// aren't dumped to <body> when the focused button is removed. (Plan ce-doc-review finding M.)
-function FocusOnActionSetSwap({
-  signature,
-  containerRef,
-}: {
-  signature: string;
-  containerRef: React.RefObject<HTMLDivElement | null>;
-}) {
-  const prev = useRef(signature);
-  useEffect(() => {
-    if (prev.current !== signature) {
-      const el = containerRef.current;
-      if (el && el.contains(document.activeElement)) el.focus();
-      prev.current = signature;
-    }
-  }, [signature, containerRef]);
-  return null;
 }
 ```
 
@@ -2170,6 +2346,8 @@ it('a self lifecycle action clears the update latch and does not flash the trans
 
 > If the existing `PrDetailView.test.tsx` harness can't easily fire SSE + spy `reload`, assert the observable instead: after firing `pr-updated{isClosed:true}` then `pr-lifecycle-changed`, `queryByText(/was closed.*reload/i)` is null. Match the real `BannerTransition` copy.
 
+> **Residual race (round-2 adversarial A4 — deferred, documented).** `handleLifecycleChanged` does `updates.clear(); reload();`, but `updates` is an independent poller: if its next tick re-latches `isClosed` in the sub-second window *after* `clear()` but *before* the reload's `setData` flips `data.pr.isClosed` (which forces `transitionState` to null), the self-action banner can still flash briefly. The window is small and self-heals on the reload; a full fix (a short-lived "self-action in flight" flag gating the banner in `PrDetailView`) touches shared transition logic and is **not** in slice 1. Flag it for the owner at the B2 gate — if a flash is observed on a real self-Close, escalate to the flag fix.
+
 - [ ] **Step 4: Run the FE gate**
 
 Run: `cd frontend && node_modules/.bin/vitest run` (full suite)
@@ -2215,6 +2393,12 @@ Document in the PR `## Proof` section: CI cannot assert a real GitHub write. At 
 - **Already-in-state (confirms the guessed GraphQL strings — plan ce-doc-review):** click **Mark-ready on an already-ready PR** and **Convert-to-draft on an already-draft PR** — assert **no error toast** (the benign-no-op detection matched GitHub's real message). If an error toast appears, capture the real response body and fix the match strings in `GitHubPrLifecycleWriter.FirstGraphQLErrorCode` before merge.
 - **(If reachable) a branch-protected repo:** confirm the `repo-rule-blocked` copy doesn't advise changing the PAT.
 
+- [ ] **Step 5b: Owner decisions to surface at the B1/B2 gate (round-2 ce-doc-review deferrals)**
+
+Two findings were deferred to the owner rather than changed in the plan, because they are copy/UX judgment calls the spec already took a position on:
+- **`token-cannot-write` toast persistence (design D4).** The spec committed all errors to `useToast` (transient). The `token-cannot-write` copy is ~180 chars naming two PAT grant paths + a collaborator caveat, and its remediation requires leaving PRism — a transient toast may dismiss before the user acts. At the B1 gate, decide whether *this one code* warrants a persistent/non-dismissing surface (the others are fine as toasts). No code change unless the owner asks.
+- **Success announcement for AT (design D3).** The live region now announces the confirm prompt and the in-flight state; it does **not** announce success ("Pull request closed"). The wording — and the reopen-vs-mark-ready ambiguity when the post-state is "open" — is an owner copy decision. Flag at B1; add the success line only if the owner wants it.
+
 - [ ] **Step 6: Final commit / ready for PR**
 
 ```bash
@@ -2236,7 +2420,7 @@ Then hand off to `pr-autopilot` (or `gh pr create` fallback) targeting `main`.
 - Toast error surface (`useToast`) → Task 10. ✓
 - No GET wire change → confirmed; only POST routes + one SSE event. ✓
 - Dedicated `PrLifecycleChanged` event + subscriber (NOT StateChanged) → Tasks 1, 5, 6, 9, 13. ✓
-- Reconcile: pending clears on 200, freshness-gated ~5s fallback → Task 10. ✓
+- Reconcile: pending clears on 200, observed-target-state-gated ~5s fallback → Task 10. ✓
 - Self-Close banner suppression via `updates.clear()` → Task 13. ✓
 - Re-entrancy guard + benign already-in-state no-op → Tasks 3, 10. ✓
 - 403 classification (token/repo-rule/rate-limit) + reopen-422 + plan-unsupported → Task 3, mapped in Task 7. ✓
@@ -2251,6 +2435,8 @@ Then hand off to `pr-autopilot` (or `gh pr create` fallback) targeting `main`.
 
 **Placeholder scan:** No "TBD"/"implement later". Where the real codebase shape must be confirmed (ApiError fields, submit's exact tab-id helper + status, makePr fields, token CSS names, click-outside pattern), the step says so explicitly and points at the file to read — these are "match the real pattern" instructions, not deferred work.
 
-**Type consistency:** `PrLifecycleErrorCode` (BE enum) ↔ kebab JSON `code` (in the response **body**) ↔ FE `PrLifecycleErrorCode` union align (token-cannot-write / repo-rule-blocked / reopen-not-possible / plan-unsupported-drafts / rate-limited / generic; FE adds `subscribe-rejected`, mapped from the **403 body code `"unauthorized"`** that `RequireSubscribed` emits — NOT from a status code). The FE reads the code from `e.body.code`, not `e.code`. `PrActionKind` ('close'|'reopen'|'ready'|'convert-to-draft') is consistent across Task 10 and Task 12. `freshness: unknown` = `prDetail` identity, used consistently in Tasks 10 + 12. Event name `'pr-lifecycle-changed'` consistent across Tasks 6 + 9, registered in both `EventPayloadByType` and `EVENT_TYPES` (Task 9 Step 0).
+**Type consistency:** `PrLifecycleErrorCode` (BE enum) ↔ kebab JSON `code` (in the response **body**) ↔ FE `PrLifecycleErrorCode` union align (token-cannot-write / repo-rule-blocked / reopen-not-possible / plan-unsupported-drafts / rate-limited / generic; FE adds `subscribe-rejected`, mapped from the **403 body code `"unauthorized"`** that `RequireSubscribed` emits — NOT from a status code). The FE reads the code from `e.body.code`, not `e.code`. `PrActionKind` ('close'|'reopen'|'ready'|'convert-to-draft') is consistent across Task 10 and Task 12. The reconcile signal is `prState: { isClosed, isDraft }` (observed PR state, NOT object identity), passed from Task 12's panel into Task 10's hook and reconciled via `reachedTarget(kind, prState)` — consistent across both. Event name `'pr-lifecycle-changed'` consistent across Tasks 6 + 9, registered in both `EventPayloadByType` and `EVENT_TYPES` (Task 9 Step 0).
 
 **Round-1 plan ce-doc-review applied (6 personas):** FE error mapping `e.body.code` + 403 `"unauthorized"` (quadruple-corroborated); SSE `EVENT_TYPES` runtime registration; GraphQL mutation HTTP-error catch; a11y/interaction promoted into the skeleton (group+sr-only status, Close pending label, click-outside, focus-on-swap, Escape preventDefault); Task-ordering fix (context `reload` → Task 12 Step 0); primary-rate-limit 403; fallback arm-after-reload race note; provisional-error-string + B2 already-in-state step; endpoint `repo-rule-blocked` + 403-code tests; vacuous record test removed; bare-relative REST URL.
+
+**Round-2 plan ce-doc-review applied (6 personas; security found nothing new):** **two verified false-tests fixed** — the unsubscribed endpoint test inherited `AllSubscribedActivePrCache` (gate could never reject → now a configurable cache + `SetSubscribed(false)`), and the missing-tab-id test got a valid tab-id from the client default (→ `CreateClient(tabId: null)`); cold-load test `prDetail: null` → `undefined` (TS2322 under `tsc -b`); **reconcile signal redesigned** from `prDetail` object-identity to observed-target-state (`reachedTarget`) so unrelated reloads can't disarm the SSE-drop fallback (adversarial A1); **focus marooning fixed at the source** by parking focus on the panel container at invoke/Confirm time (so the focus-swap effect's guard is valid — A2/D2), folded the focus helper inline (S4); live region now announces the in-flight state (D3); sticky-footer bottom clearance (D1); server-side log-entry assertion added (S1); all six `usePrAction` copy mappings tested (S2); `ConvertToDraft` mutation body pinned (S3); concrete state-swapping test `Harness` (C1/C2); writer block marked `partial` (F4); local `WaitFor` helper (F5); `{number:int:min(1)}` route constraint (A5). **Deferred (documented):** `updates.clear()` poll re-latch residual (A4) and the `token-cannot-write` toast-persistence / AT success-announcement copy decisions (D4/D3) — flagged for the owner at the B1/B2 gate.
