@@ -86,7 +86,11 @@ export function ComposerActionsBar({
         <button
           type="button"
           className="composer-save btn btn-primary btn-sm"
-          aria-disabled={saveDisabled || posting}
+          // Mirror the native `disabled` (actionsLocked = readOnly || posting) so
+          // aria-disabled reflects the cross-tab read-only lock too, matching
+          // Discard / post-now. (Today's caller's saveDisabled already subsumes
+          // readOnly; this keeps the component self-consistent regardless.)
+          aria-disabled={saveDisabled || actionsLocked || undefined}
           title={saveTooltip}
           onClick={onSaveClick}
           disabled={actionsLocked}

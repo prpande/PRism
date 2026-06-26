@@ -177,6 +177,14 @@ export function PrRootReplyComposer({
           onDraftIdChange={onDraftIdChange}
           registerOpenComposer={registerOpenComposer}
           ownerKey="reply-composer"
+          // Folds `postInFlight` into the editor's readOnly, so the root
+          // composer's autosave IS disabled during a post — the opposite of the
+          // inline/reply composers (#644), which keep `posting` off the hook's
+          // `disabled` to preserve #601 Fix A's mid-flush 404 detection. The
+          // asymmetry is intentional: the root post path does NOT rely on that
+          // flush-404 (it's why #601 Defect B was descoped — the root composer
+          // posts once with no double-surface), so suppressing autosave here is
+          // safe, not a fragile timing reliance.
           readOnly={readOnly || postInFlight}
           showBadge={false}
           onBodyChange={handleBodyChange}
