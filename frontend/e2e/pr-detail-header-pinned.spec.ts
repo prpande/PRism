@@ -89,9 +89,16 @@ for (const tab of [
     const slotScrolls = await slot.evaluate((el) => el.scrollHeight > el.clientHeight + 1);
     expect(slotScrolls).toBe(true);
 
-    // 3) A scroll attempt must leave the header at the top of the viewport. With
-    //    the bug, scrolling the document drags the header off-screen (top < 0).
+    // 3) A scroll attempt must leave the header pinned and fully on-screen. With
+    //    the bug, scrolling the document drags the header ABOVE the viewport, where
+    //    getBoundingClientRect().top goes negative — so the LOWER bound (>= 0), not
+    //    an upper bound, is what discriminates pinned from scrolled-off (a deeply
+    //    negative top would still satisfy any `<= N`). The upper bound additionally
+    //    keeps it honest that the pinned header sits near the top (just under the app
+    //    navbar + tab strip), not pushed somewhere unexpected.
     await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
-    expect(await headerTop(page)).toBeLessThanOrEqual(120);
+    const top = await headerTop(page);
+    expect(top).toBeGreaterThanOrEqual(0);
+    expect(top).toBeLessThanOrEqual(120);
   });
 }
