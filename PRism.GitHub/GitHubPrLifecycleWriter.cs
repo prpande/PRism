@@ -47,7 +47,10 @@ internal sealed partial class GitHubPrLifecycleWriter : IPrLifecycleWriter
     private async Task<PrLifecycleResult> PatchStateAsync(PrReference reference, string state, CancellationToken ct)
     {
         var url = $"repos/{reference.Owner}/{reference.Repo}/pulls/{reference.Number}";
-        using var content = new StringContent($"{{\"state\":\"{state}\"}}", Encoding.UTF8, "application/json");
+        // Structured serialization over manual brace-building (claude[bot] review #649): `state` is
+        // a hardcoded "closed"/"open" today so there is no injection risk, but JsonSerializer keeps
+        // the body well-formed if the input source ever changes. Emits {"state":"closed"}.
+        using var content = new StringContent(JsonSerializer.Serialize(new { state }), Encoding.UTF8, "application/json");
         using var http = _httpFactory.CreateClient("github");
         var token = await _readToken().ConfigureAwait(false);
         using var resp = await GitHubHttp.SendAsync(http, HttpMethod.Patch, url, token, ct, content).ConfigureAwait(false);

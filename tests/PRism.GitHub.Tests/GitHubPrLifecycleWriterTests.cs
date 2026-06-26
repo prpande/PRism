@@ -117,6 +117,22 @@ public class GitHubPrLifecycleWriterTests
         handler.Requests[1].Body.Should().Contain("PR_node1");
     }
 
+    // Symmetric to ConvertToDraftAsync_already_draft_is_benign_noop_Ok (claude[bot] review #649):
+    // "not a draft" / "already ready" is a benign no-op for mark-ready → FirstGraphQLErrorCode
+    // returns the None sentinel → Ok. Pins the mutation body too, like its convert-to-draft twin.
+    [Fact]
+    public async Task MarkReadyForReviewAsync_already_ready_is_benign_noop_Ok()
+    {
+        var handler = new StubHandler(
+            Resp(HttpStatusCode.OK, "{\"data\":{\"repository\":{\"pullRequest\":{\"id\":\"PR_node1\"}}}}"),
+            Resp(HttpStatusCode.OK, "{\"errors\":[{\"message\":\"Pull request is not a draft\"}]}"));
+        var result = await MakeWriter(handler).MarkReadyForReviewAsync(Pr, CancellationToken.None);
+        result.Should().Be(PrLifecycleResult.Ok);
+        handler.Requests.Should().HaveCount(2); // resolve + mutate
+        handler.Requests[1].Body.Should().Contain("markPullRequestReadyForReview");
+        handler.Requests[1].Body.Should().Contain("PR_node1");
+    }
+
     [Fact]
     public async Task ConvertToDraftAsync_plan_unsupported_maps_to_PlanUnsupportedDrafts()
     {
