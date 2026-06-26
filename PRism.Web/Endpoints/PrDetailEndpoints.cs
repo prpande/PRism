@@ -288,6 +288,26 @@ internal static partial class PrDetailEndpoints
                 return Results.Ok(result);
             });
 
+        // Re-run a single check (#636). Write path; inherits OriginCheckMiddleware +
+        // SessionTokenMiddleware from the pipeline like every other mutation. Same
+        // outermost-first validation order as the GET above (owner/repo before sha).
+        app.MapPost("/api/pr/{owner}/{repo}/{number:int}/checks/{checkRunId:long}/rerun",
+            async (string owner, string repo, int number, long checkRunId,
+                   [FromQuery] string? sha,
+                   IPrChecksRerunner rerunner, CancellationToken ct) =>
+            {
+                if (!SharedRegexes.OwnerRepo().IsMatch(owner) || !SharedRegexes.OwnerRepo().IsMatch(repo))
+                    return Results.Problem(type: "/owner-repo/invalid", statusCode: 422);
+                if (string.IsNullOrEmpty(sha))
+                    return Results.Problem(type: "/checks/missing-sha", statusCode: 422);
+                if (!IsValidGitOid(sha))
+                    return Results.Problem(type: "/sha/invalid", statusCode: 422);
+
+                var prRef = new PrReference(owner, repo, number);
+                var result = await rerunner.RerunAsync(prRef, checkRunId, sha, ct).ConfigureAwait(false);
+                return Results.Ok(result); // ambient API JsonSerializerOptions → kebab enum
+            });
+
         return app;
     }
 

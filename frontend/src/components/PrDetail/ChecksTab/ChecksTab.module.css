@@ -84,22 +84,42 @@
   flex: none;
 }
 
-.message {
-  width: min(80%, var(--pr-detail-content-max));
-  margin: var(--s-4) auto;
-  color: var(--text-3);
-}
-
-/* Error state: a centred card (matches .detail's surface/border/radius) holding a
-   warning glyph, the message, and a standard .btn Retry — purpose-built for this tab
-   but styled to the app's design language. */
-.errorWrap {
+/* Shared centring wrapper for the full-pane state cards (empty / error). */
+.stateWrap {
   width: min(80%, var(--pr-detail-content-max));
   margin: var(--s-6) auto;
   display: flex;
   justify-content: center;
 }
 
+/* Empty state: the same centred card shape as the error card, but neutral — a muted dash
+   glyph instead of the amber warning, so "no checks" reads as a calm informational state. */
+.emptyCard {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: var(--s-3);
+  max-width: 32rem;
+  padding: var(--s-6);
+  background: var(--surface-2);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-3);
+}
+
+.emptyIcon {
+  color: var(--text-3); /* muted neutral — not a warning */
+}
+
+.emptyText {
+  margin: 0;
+  max-width: 42ch;
+  color: var(--text-2);
+}
+
+/* Error state: a centred card (matches .detail's surface/border/radius) holding a
+   warning glyph, the message, and a standard .btn Retry — purpose-built for this tab
+   but styled to the app's design language. */
 .errorCard {
   display: flex;
   flex-direction: column;
@@ -253,4 +273,62 @@
     width: 100%;
     min-width: unset;
   }
+}
+
+/* Re-run action row (#636). Footer separated from the read-only detail above. */
+.rerunRow {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  margin-top: var(--s-3);
+  padding-top: var(--s-3);
+  border-top: 1px solid var(--border-1);
+}
+
+/* The spinner glyph sits inline before "Re-running…"; keep it 14px to match the rows. */
+.rerunButton {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+}
+
+.rerunCaption {
+  color: var(--text-3);
+  font-size: var(--text-sm);
+}
+
+/* Re-run feedback callout — a bordered, surfaced inline element (matches the tab's
+   .degradedBanner / .detail design language) rather than naked text under the button.
+   A left accent rule carries the semantic colour: amber for an error, brand accent for
+   the neutral superseded note. */
+.rerunCallout {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  margin-top: var(--s-3);
+  padding: var(--s-2) var(--s-3);
+  max-width: 48ch;
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-2);
+  background: var(--surface-2);
+  color: var(--text-2);
+  font-size: var(--text-sm);
+}
+
+.rerunCalloutError {
+  border-left: 3px solid var(--warning); /* base amber — see the glyph block */
+}
+
+.rerunCalloutNote {
+  border-left: 3px solid var(--accent);
+  color: var(--text-3); /* neutral, not an alert */
+}
+
+.rerunCalloutText {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.rerunRetry {
+  flex: none;
 }

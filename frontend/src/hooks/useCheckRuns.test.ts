@@ -49,6 +49,7 @@ describe('useCheckRuns', () => {
             summary: null,
             appName: null,
             body: null,
+            checkRunId: null,
           },
         ],
       }),
@@ -81,6 +82,7 @@ describe('useCheckRuns', () => {
               summary: null,
               appName: null,
               body: null,
+              checkRunId: null,
             },
           ],
         }),
@@ -99,6 +101,7 @@ describe('useCheckRuns', () => {
               summary: null,
               appName: null,
               body: null,
+              checkRunId: null,
             },
           ],
         }),
@@ -147,6 +150,7 @@ describe('useCheckRuns', () => {
               summary: null,
               appName: null,
               body: null,
+              checkRunId: null,
             },
           ],
         }),
@@ -180,6 +184,7 @@ describe('useCheckRuns', () => {
             summary: null,
             appName: null,
             body: null,
+            checkRunId: null,
           },
         ],
       }),
@@ -209,6 +214,7 @@ describe('useCheckRuns', () => {
             summary: null,
             appName: null,
             body: null,
+            checkRunId: null,
           },
         ],
       }),
@@ -243,6 +249,7 @@ describe('useCheckRuns', () => {
             summary: null,
             appName: null,
             body: null,
+            checkRunId: null,
           },
         ],
       }),
@@ -296,6 +303,7 @@ describe('useCheckRuns', () => {
               summary: null,
               appName: null,
               body: null,
+              checkRunId: null,
             },
           ],
         }),
@@ -325,6 +333,7 @@ describe('useCheckRuns', () => {
                   summary: null,
                   appName: null,
                   body: null,
+                  checkRunId: null,
                 },
               ],
             })
@@ -338,5 +347,210 @@ describe('useCheckRuns', () => {
     rerender({ sha: 'new' });
     // the old head's check list must NOT survive the SHA change
     await waitFor(() => expect(result.current.checks).toHaveLength(0));
+  });
+
+  it('refetch() fetches off-timer WITHOUT flipping status to loading (stale-while-revalidate)', async () => {
+    const list = [
+      {
+        name: 'build',
+        status: 'completed',
+        conclusion: 'success',
+        source: 'check-run',
+        startedAt: null,
+        completedAt: null,
+        detailsUrl: null,
+        summary: null,
+        appName: null,
+        body: null,
+        checkRunId: 1,
+      },
+    ] as const;
+    vi.spyOn(api, 'getCheckRuns').mockResolvedValue(resp({ checks: list as never }));
+    const { result } = renderHook(() => useCheckRuns(PR, SHA, true));
+    await waitFor(() => expect(result.current.status).toBe('ok'));
+
+    act(() => result.current.refetch!()); // `!`: the hook always returns it (optional on the type)
+    // status stays 'ok' (never transitions through 'loading')
+    expect(result.current.status).toBe('ok');
+    expect(result.current.checks).toHaveLength(1);
+  });
+
+  it('armRerunWatch keeps polling across the window even when all checks are terminal', async () => {
+    const terminal = [
+      {
+        name: 'build',
+        status: 'completed',
+        conclusion: 'failure',
+        source: 'check-run',
+        startedAt: null,
+        completedAt: null,
+        detailsUrl: null,
+        summary: null,
+        appName: null,
+        body: null,
+        checkRunId: 42,
+      },
+    ];
+    const spy = vi
+      .spyOn(api, 'getCheckRuns')
+      .mockResolvedValue(resp({ checks: terminal as never }));
+    const { result } = renderHook(() => useCheckRuns(PR, SHA, true));
+    await waitFor(() => expect(result.current.status).toBe('ok'));
+    const callsAfterFirst = spy.mock.calls.length;
+
+    act(() => result.current.armRerunWatch!(42)); // `!`: always returned (optional on the type)
+    expect(result.current.rerunPendingFor).toBe(42);
+
+    // advance one poll interval — without the watch, an all-terminal list stops polling
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(15_000);
+    });
+    expect(spy.mock.calls.length).toBeGreaterThan(callsAfterFirst + 1);
+
+    // advance past the watch window — the watch clears and polling stops
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(95_000);
+    });
+    expect(result.current.rerunPendingFor).toBeNull();
+  });
+
+  it('holds the cached list when a poll returns empty during a rerun-watch (no "No checks" flash)', async () => {
+    const terminal = [
+      {
+        name: 'build',
+        status: 'completed',
+        conclusion: 'failure',
+        source: 'check-run',
+        startedAt: null,
+        completedAt: null,
+        detailsUrl: null,
+        summary: null,
+        appName: null,
+        body: null,
+        checkRunId: 42,
+      },
+    ];
+    // First poll: a real list. Every poll after: GitHub briefly reports ZERO check-runs while
+    // it resets the suite for the rerun. The hook must keep the cached list on screen.
+    const spy = vi
+      .spyOn(api, 'getCheckRuns')
+      .mockResolvedValueOnce(resp({ checks: terminal as never }))
+      .mockResolvedValue(resp({ checks: [] }));
+    const { result } = renderHook(() => useCheckRuns(PR, SHA, true));
+    await waitFor(() => expect(result.current.status).toBe('ok'));
+
+    act(() => result.current.armRerunWatch!(42)); // kicks an immediate poll → empty
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(15_000);
+    });
+    expect(spy.mock.calls.length).toBeGreaterThan(1); // the empty poll(s) ran
+    expect(result.current.status).toBe('ok'); // cached state held — NOT 'empty'
+    expect(result.current.checks).toHaveLength(1); // still the cached check
+  });
+
+  it('accepts an empty list once the rerun-watch window has elapsed', async () => {
+    const terminal = [
+      {
+        name: 'build',
+        status: 'completed',
+        conclusion: 'failure',
+        source: 'check-run',
+        startedAt: null,
+        completedAt: null,
+        detailsUrl: null,
+        summary: null,
+        appName: null,
+        body: null,
+        checkRunId: 42,
+      },
+    ];
+    vi.spyOn(api, 'getCheckRuns')
+      .mockResolvedValueOnce(resp({ checks: terminal as never }))
+      .mockResolvedValue(resp({ checks: [] }));
+    const { result } = renderHook(() => useCheckRuns(PR, SHA, true));
+    await waitFor(() => expect(result.current.status).toBe('ok'));
+
+    act(() => result.current.armRerunWatch!(42));
+    // Past the 90s watch: the suite never repopulated → empty is now the truth, surface it.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(95_000);
+    });
+    expect(result.current.status).toBe('empty');
+  });
+
+  it('clears a stuck rerun-watch even when polls FAIL across the window (AC#3, failure path)', async () => {
+    const terminal = [
+      {
+        name: 'build',
+        status: 'completed',
+        conclusion: 'failure',
+        source: 'check-run',
+        startedAt: null,
+        completedAt: null,
+        detailsUrl: null,
+        summary: null,
+        appName: null,
+        body: null,
+        checkRunId: 42,
+      },
+    ];
+    // First poll succeeds (warm series), every poll thereafter throws.
+    vi.spyOn(api, 'getCheckRuns')
+      .mockResolvedValueOnce(resp({ checks: terminal as never }))
+      .mockRejectedValue(new Error('boom'));
+    const { result } = renderHook(() => useCheckRuns(PR, SHA, true));
+    await waitFor(() => expect(result.current.status).toBe('ok'));
+
+    act(() => result.current.armRerunWatch!(42));
+    expect(result.current.rerunPendingFor).toBe(42);
+
+    // Every poll from here throws; advance past the 90s window. The expiry must fire on a
+    // FAILING tick (the catch-branch updateRerunWatch), not only on a succeeding one.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(95_000);
+    });
+    expect(result.current.rerunPendingFor).toBeNull(); // would stay 42 without the catch fix
+    expect(result.current.status).toBe('ok'); // warm series → stale list retained, NOT 'error'
+  });
+
+  it('does NOT extend the rerun-watch on focus-toggling — terminates at the fixed deadline (AC#3)', async () => {
+    const terminal = [
+      {
+        name: 'build',
+        status: 'completed',
+        conclusion: 'failure',
+        source: 'check-run',
+        startedAt: null,
+        completedAt: null,
+        detailsUrl: null,
+        summary: null,
+        appName: null,
+        body: null,
+        checkRunId: 42,
+      },
+    ];
+    vi.spyOn(api, 'getCheckRuns').mockResolvedValue(resp({ checks: terminal as never }));
+    const { result } = renderHook(() => useCheckRuns(PR, SHA, true));
+    await waitFor(() => expect(result.current.status).toBe('ok'));
+
+    act(() => result.current.armRerunWatch!(42));
+    expect(result.current.rerunPendingFor).toBe(42);
+
+    // Three hide→show cycles, each 40s (< the 90s window) but spanning ~123s of wall-clock.
+    // A (buggy) re-arm-on-show would reset the deadline each return → it would NEVER expire and
+    // rerunPendingFor would stay 42. With the fixed deadline it clears on a visible tick past 90s.
+    for (let i = 0; i < 3; i++) {
+      Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true });
+      await act(async () => {
+        document.dispatchEvent(new Event('visibilitychange'));
+        await vi.advanceTimersByTimeAsync(40_000);
+      });
+      Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true });
+      await act(async () => {
+        document.dispatchEvent(new Event('visibilitychange'));
+        await vi.advanceTimersByTimeAsync(1_000);
+      });
+    }
+    expect(result.current.rerunPendingFor).toBeNull();
   });
 });
