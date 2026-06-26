@@ -388,6 +388,7 @@ app.MapPrDraftEndpoints();
 app.MapPrReloadEndpoints();
 app.MapPrRefreshEndpoints();
 app.MapPrSubmitEndpoints();
+app.MapPrLifecycleEndpoints();
 app.MapPrRootCommentEndpoints();
 app.MapPrCommentEndpoints();
 app.MapSubmitInFlight();
