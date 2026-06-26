@@ -360,6 +360,7 @@ describe('PrDetailView — Checks tab wiring (Task 11 / #138)', () => {
         summary: null,
         appName: null,
         body: null,
+        checkRunId: null,
       },
     ],
     retry: vi.fn(),

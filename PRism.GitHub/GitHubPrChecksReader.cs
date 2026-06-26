@@ -81,7 +81,12 @@ public sealed class GitHubPrChecksReader : IPrChecksReader
                     DetailsUrl: SanitizeUrl(StringProp(r, "details_url") ?? StringProp(r, "html_url")),
                     Summary: NestedStringProp(r, "output", "title"),
                     Body: NestedStringProp(r, "output", "summary") ?? NestedStringProp(r, "output", "text"),
-                    AppName: NestedStringProp(r, "app", "name")));
+                    AppName: NestedStringProp(r, "app", "name"),
+                    CheckRunId: r.TryGetProperty("id", out var idEl)
+                        && idEl.ValueKind == JsonValueKind.Number
+                        && idEl.TryGetInt64(out var id)
+                        ? id
+                        : null));
             }
 
             nextUrl = GitHubLinkHeader.TryGetRel(resp, "next", out var n) ? n : null;
@@ -132,7 +137,8 @@ public sealed class GitHubPrChecksReader : IPrChecksReader
                         DetailsUrl: SanitizeUrl(StringProp(s, "target_url")),
                         Summary: StringProp(s, "description"),
                         Body: null, // legacy status has no output body
-                        AppName: null)); // legacy status has no app object; the context name is the source
+                        AppName: null, // legacy status has no app object; the context name is the source
+                        CheckRunId: null)); // legacy status has no check-run id / rerun API
                 }
             }
 

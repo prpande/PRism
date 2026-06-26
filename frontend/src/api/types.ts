@@ -135,6 +135,12 @@ export type CheckConclusion =
   | 'startup-failure';
 export type DegradedReason = 'none' | 'auth' | 'transient';
 
+export type RerunOutcome = 'accepted' | 'auth' | 'not-rerunnable' | 'superseded' | 'transient';
+
+export interface RerunResponse {
+  outcome: RerunOutcome;
+}
+
 export interface CheckRun {
   name: string;
   status: CheckRunStatus;
@@ -146,6 +152,7 @@ export interface CheckRun {
   summary: string | null;
   appName: string | null;
   body: string | null;
+  checkRunId: number | null; // check-run id for re-run; null for legacy status
 }
 
 export interface ChecksResponse {

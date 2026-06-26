@@ -69,6 +69,7 @@ PRism authenticates with a GitHub Personal Access Token you paste into the Setup
   - Scopes: **`repo`** and **`read:org`**
   - ⚠️ `repo` grants read **and write** to all repositories you can reach. PRism never pushes code, but it does post your review (comments and approvals) on submit. Classic PATs offer no narrower option — if your organization restricts broad tokens, use the fine-grained option below.
 - **Fine-grained PAT** — also works, but it's scoped per-organization and can't read Actions checks, so the CI section goes blind to Actions pipelines. Grant **Pull requests: Read and write**, **Contents: Read**, and **Commit statuses: Read**.
+- **Re-running a check** — the Checks tab's **Re-run** button is a *write* action. Most checks are **GitHub Actions** jobs, which PRism re-runs via the Actions API; the classic **`repo` + `workflow`** scopes cover this. With a fine-grained PAT, grant **Actions: Read and write** (for Actions-backed checks) and **Checks: Read and write** (for checks posted by third-party GitHub Apps). A read-only token still shows every check; only **Re-run** is gated, and it reports *"GitHub didn't allow it — it may be too old to re-run, or your token may lack permission"* when GitHub refuses the re-run.
 - **GitHub Enterprise Server?** Set your GHES host (e.g. `https://github.acmecorp.com`) on the Setup screen before pasting your token.
 
 ---
