@@ -362,6 +362,16 @@ public sealed class GitHubPrBatchReaderTests
         calls().Should().Be(2);
     }
 
+    [Fact] // Test 7e — a case-only viewerLogin change is the SAME viewer → cache retained, no re-fetch
+    public async Task Same_viewer_different_casing_keeps_cache()
+    {
+        var (reader, calls) = MakeReader(HttpStatusCode.OK, OneAliasOk());
+        var items = new[] { Raw(7, updated: T0) };
+        await reader.ReadAsync(items, "alice", CancellationToken.None);  // calls=1, caches under alice
+        await reader.ReadAsync(items, "Alice", CancellationToken.None);  // same viewer (OrdinalIgnoreCase) → no clear
+        calls().Should().Be(1);
+    }
+
     [Fact] // Test 8a — HTTP 429 → RateLimitExceededException
     public async Task Http_429_throws_rate_limit()
     {
