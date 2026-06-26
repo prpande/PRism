@@ -651,6 +651,12 @@ export interface DraftSubmittedEvent {
   prRef: string;
 }
 
+// #566 — pr-lifecycle-changed: a PR's lifecycle state changed (merged, closed, reopened).
+// Frontend clears the transition latch then reloads PR detail so the panel swaps button sets.
+export interface PrLifecycleChangedEvent {
+  prRef: string;
+}
+
 // S5 PR4 — submit-pipeline frontend types.
 
 // IPreSubmitValidator result (spec § 14.1). PoC's NoopPreSubmitValidator
