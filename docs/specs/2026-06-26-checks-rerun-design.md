@@ -160,10 +160,13 @@ read-only contract.
      and **do not** rerequest (rerequesting would re-run the dead commit's check). A
      `401`/`403`/`404` on this GET maps like the POST below (`auth`/`not-rerunnable`).
      This is the option-A guard from Error handling.
-  2. **Rerequest (POST).** `POST /repos/{owner}/{repo}/check-runs/{checkRunId}/rerequest`
-     (owner/repo escaped via `Uri.EscapeDataString`, parity with the #604 audit), **no
-     request body** (some GHES versions want `Content-Type: application/json` even on a
-     bodyless mutation — set it explicitly to be safe).
+  2. **Rerequest (POST).** `POST /repos/{owner}/{repo}/check-runs/{checkRunId}/rerequest`,
+     **no request body** (some GHES versions want `Content-Type: application/json` even on a
+     bodyless mutation — set it explicitly to be safe). No `Uri.EscapeDataString` is needed
+     on these URLs: the only interpolated segments are `owner`/`repo` (already constrained by
+     `SharedRegexes.OwnerRepo()` to `^[A-Za-z0-9_.-]{1,100}$`, none of which require
+     path-segment encoding) and `checkRunId` (a `long`). #604's audit escaped the **SHA**,
+     which does not appear in either of these paths — mirror the reader's call style exactly.
   Its **own** status→outcome map (do NOT call `DegradedFor`): `2xx → accepted`;
   `401 → auth`; `403 | 404 | 422 → not-rerunnable`; head-sha mismatch → `superseded`;
   else `→ transient`; thrown `HttpRequestException`/`OperationCanceledException` →

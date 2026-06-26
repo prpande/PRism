@@ -30,6 +30,17 @@
 - Modify: `PRism.Web/TestHooks/FakePrChecksReader.cs` (add ids to the 3 rows)
 - Modify: `frontend/src/api/types.ts` (add to `CheckRun`)
 - Test: `tests/PRism.GitHub.Tests/GitHubPrChecksReaderTests.cs` (add assertions)
+- Modify (FE — existing `CheckRun` literals break once the field is required; Step 6b):
+  - `frontend/src/hooks/useCheckRuns.test.ts` (~10 inline `CheckRun` literals)
+  - `frontend/src/components/PrDetail/checksGlyphState.test.ts` (`run` factory, line ~5)
+  - `frontend/src/components/PrDetail/ChecksTab/ChecksTab.test.tsx` (`run` factory, line ~11)
+  - `frontend/src/components/PrDetail/PrDetailView.test.tsx` (the `inProgress` `CheckRun` literal, line ~352)
+
+> **Why `checkRunId` is required (not `checkRunId?:`):** `CheckRun` is the FE mirror of the
+> `CheckDto` wire record; modeling a wire field optional understates the contract and lets
+> a Playwright `route.fulfill` JSON / `as any` fixture omit it silently (typed FE mocks would
+> stop catching the gap). The 4 files above are exactly the `CheckRun`-constructing test
+> files, so the churn is confined and the `tsc -b` gate (Step 7) names any miss.
 
 **Interfaces:**
 - Produces: `CheckDto(..., long? CheckRunId)` (last positional param); FE `CheckRun.checkRunId: number | null`.
@@ -145,6 +156,13 @@ export interface CheckRun {
 }
 ```
 
+- [ ] **Step 6b: Update existing `CheckRun` test literals** — making the field required breaks every existing `CheckRun` object that omits it (TS2741). Add `checkRunId` to each:
+
+  - `frontend/src/components/PrDetail/checksGlyphState.test.ts` — in the `run` factory default (after `body: null,`), add `checkRunId: null,`. (Glyph derivation never reads it; `null` keeps these literals honest as "value not under test".)
+  - `frontend/src/components/PrDetail/ChecksTab/ChecksTab.test.tsx` — in the `run` factory default (after `body: null,`), add `checkRunId: 1,`. A numeric id makes the factory's default row **rerun-eligible** so Task 6's enabled-button test can use it without extra setup; the status-source and non-completed rows in Task 6 override it explicitly.
+  - `frontend/src/hooks/useCheckRuns.test.ts` — these tests build ~10 inline `CheckRun` literals (no shared factory). Add `checkRunId: null,` after the `body: null,` line of **each** one. None of these tests arm a rerun-watch, so the value is irrelevant — `null` is fine and type-valid. (Run `tsc -b` to enumerate any missed literal by line number.)
+  - `frontend/src/components/PrDetail/PrDetailView.test.tsx` — in the `inProgress` constant's single `CheckRun` literal (the object inside `checks: [ … ]`, line ~352), add `checkRunId: null,` after `body: null,`. (Do **not** touch the surrounding `CheckRunsResult` literals here — those gain their new members in Task 5, which keeps them optional.)
+
 - [ ] **Step 7: Run tests to verify green**
 
 Run: `& 'C:\Program Files\dotnet\dotnet.exe' test tests/PRism.GitHub.Tests --filter "FullyQualifiedName~Populates_CheckRunId"`
@@ -155,7 +173,7 @@ Run (FE typecheck): `cd frontend; ./node_modules/.bin/tsc -b` — Expected: no e
 - [ ] **Step 8: Commit**
 
 ```bash
-git add PRism.Core.Contracts/CheckDto.cs PRism.GitHub/GitHubPrChecksReader.cs PRism.Web/TestHooks/FakePrChecksReader.cs frontend/src/api/types.ts tests/PRism.GitHub.Tests/GitHubPrChecksReaderTests.cs
+git add PRism.Core.Contracts/CheckDto.cs PRism.GitHub/GitHubPrChecksReader.cs PRism.Web/TestHooks/FakePrChecksReader.cs frontend/src/api/types.ts tests/PRism.GitHub.Tests/GitHubPrChecksReaderTests.cs frontend/src/hooks/useCheckRuns.test.ts frontend/src/components/PrDetail/checksGlyphState.test.ts frontend/src/components/PrDetail/ChecksTab/ChecksTab.test.tsx frontend/src/components/PrDetail/PrDetailView.test.tsx
 git commit -m "feat(#636): add CheckDto.CheckRunId (wire-shape for re-run)"
 ```
 
@@ -700,6 +718,14 @@ git commit -m "feat(#636): rerunCheck API client fn + RerunOutcome types"
 - Modify: `frontend/src/hooks/useCheckRuns.ts`
 - Test: `frontend/src/hooks/useCheckRuns.test.ts`
 
+> **No other files change in this task.** Because the three new `CheckRunsResult` members are
+> declared **optional** (see the interface comment in Step 3), the ~10 unrelated test files
+> that build `PrDetailContextValue` inline with an idle `checks` stub (`testUtils.tsx`,
+> `PrDetailView.test.tsx`'s hoisted mock + `inProgress`/`empty`/`beforeEach`, `FilesTab*`,
+> `OverviewTab`, `DraftsTab` ×2, `PrDetailView.freshness`) stay type-valid untouched. Had the
+> members been required, every one would need a mechanical 3-line edit — the reason the
+> optional modelling was chosen.
+
 **Interfaces:**
 - Produces (added to `CheckRunsResult`): `refetch: () => void`; `armRerunWatch: (checkRunId: number) => void`; `rerunPendingFor: number | null` (the checkRunId currently watched, or null).
 - Consumes: nothing new.
@@ -721,7 +747,7 @@ git commit -m "feat(#636): rerunCheck API client fn + RerunOutcome types"
     const { result } = renderHook(() => useCheckRuns(PR, SHA, true));
     await waitFor(() => expect(result.current.status).toBe('ok'));
 
-    act(() => result.current.refetch());
+    act(() => result.current.refetch!()); // `!`: the hook always returns it (optional on the type)
     // status stays 'ok' (never transitions through 'loading')
     expect(result.current.status).toBe('ok');
     expect(result.current.checks).toHaveLength(1);
@@ -740,7 +766,7 @@ git commit -m "feat(#636): rerunCheck API client fn + RerunOutcome types"
     await waitFor(() => expect(result.current.status).toBe('ok'));
     const callsAfterFirst = spy.mock.calls.length;
 
-    act(() => result.current.armRerunWatch(42));
+    act(() => result.current.armRerunWatch!(42)); // `!`: always returned (optional on the type)
     expect(result.current.rerunPendingFor).toBe(42);
 
     // advance one poll interval — without the watch, an all-terminal list stops polling
@@ -755,7 +781,38 @@ git commit -m "feat(#636): rerunCheck API client fn + RerunOutcome types"
     });
     expect(result.current.rerunPendingFor).toBeNull();
   });
+
+  it('clears a stuck rerun-watch even when polls FAIL across the window (AC#3, failure path)', async () => {
+    const terminal = [
+      {
+        name: 'build', status: 'completed', conclusion: 'failure', source: 'check-run',
+        startedAt: null, completedAt: null, detailsUrl: null, summary: null, appName: null,
+        body: null, checkRunId: 42,
+      },
+    ];
+    // First poll succeeds (warm series), every poll thereafter throws.
+    vi.spyOn(api, 'getCheckRuns')
+      .mockResolvedValueOnce(resp({ checks: terminal as never }))
+      .mockRejectedValue(new Error('boom'));
+    const { result } = renderHook(() => useCheckRuns(PR, SHA, true));
+    await waitFor(() => expect(result.current.status).toBe('ok'));
+
+    act(() => result.current.armRerunWatch!(42)); // `!`: always returned (optional on the type)
+    expect(result.current.rerunPendingFor).toBe(42);
+
+    // Every poll from here throws; advance past the 90s window. The expiry must fire on a
+    // FAILING tick (the catch-branch updateRerunWatch), not only on a succeeding one.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(95_000);
+    });
+    expect(result.current.rerunPendingFor).toBeNull(); // would stay 42 without the catch fix
+    expect(result.current.status).toBe('ok'); // warm series → stale list retained, NOT 'error'
+  });
 ```
+
+> The failure-path test is the regression guard for the catch-branch expiry: run it RED
+> against an implementation whose `catch` omits `updateRerunWatch(checksRef.current)` to
+> confirm it actually catches the hang (it should leave `rerunPendingFor === 42`).
 
 - [ ] **Step 2: Run to verify it fails**
 
@@ -779,9 +836,18 @@ export interface CheckRunsResult {
   degraded: DegradedReason;
   checks: CheckRun[];
   retry: () => void;
-  refetch: () => void;                       // off-timer poll, no loading flash
-  armRerunWatch: (checkRunId: number) => void; // keep polling for a rerequested check
-  rerunPendingFor: number | null;            // which checkRunId is being watched (reactive)
+  // The three rerun members are OPTIONAL on the interface even though the hook ALWAYS
+  // returns them. Rationale: `CheckRunsResult` is carried by `PrDetailContextValue`, and
+  // ~10 unrelated test files build that context inline with an idle `checks` stub
+  // (`{ status: 'idle', degraded: 'none', checks: [], retry }`) for tabs that never touch
+  // rerun. Required members would force a mechanical 3-line edit in every one of them for
+  // zero behavioural reason. Optional confines the change to the hook (which populates them)
+  // and the single consumer (CheckDetail, which null-guards). These are internal result
+  // members, NOT a wire field — so the wire-honesty argument that keeps `CheckRun.checkRunId`
+  // required (Task 1) does not apply here.
+  refetch?: () => void;                        // off-timer poll, no loading flash
+  armRerunWatch?: (checkRunId: number) => void; // keep polling for a rerequested check
+  rerunPendingFor?: number | null;             // which checkRunId is being watched (reactive)
 }
 
 const isNonTerminal = (c: CheckRun) => c.status === 'queued' || c.status === 'in-progress';
@@ -895,6 +961,14 @@ export function useCheckRuns(
             ? 'auth'
             : 'transient',
         );
+        // Expire the rerun-watch on a FAILING tick too. Without this, a poll that throws
+        // while crossing the watch-window boundary never runs the window-expiry clear; the
+        // watch then stays armed, shouldKeepPolling can return false (window elapsed + list
+        // terminal), the loop stops, and rerunPendingFor is stuck non-null → the button hangs
+        // "Re-running…" forever. updateRerunWatch over the stale list won't clear early (a
+        // still-terminal watched check hasn't transitioned) but DOES clear once the window has
+        // elapsed — exactly the expiry semantics the success path gets. (AC#3: never hangs.)
+        updateRerunWatch(checksRef.current);
         if (!hadSuccessRef.current) {
           setStatus('error');
         } else {
@@ -959,70 +1033,178 @@ git commit -m "feat(#636): useCheckRuns refetch + per-check rerun-watch"
 **Eligibility:** `source === 'check-run' && status === 'completed' && checkRunId != null`.
 **Button "Re-running…":** `phase === 'posting' || rerunPendingFor === check.checkRunId`.
 
-- [ ] **Step 1: Write the failing tests** — add to `ChecksTab.test.tsx` (mirror the existing render harness; mock `rerunCheck`):
+- [ ] **Step 1: Write the failing tests** — extend `ChecksTab.test.tsx`. First widen the imports and add a rerun-aware render helper (the existing `run` factory now defaults `checkRunId: 1` from Task 1 Step 6b; the existing `renderTab` only sets `checks`, but rerun reads `prDetail.pr.headSha`, so these tests render with a `prDetail` override too):
 
 ```typescript
+// widen the existing imports:
+import { describe, expect, it, vi } from 'vitest';
+import { render, screen, waitFor, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import * as checksApi from '../../../api/checks';
-// ...
-  it('enables Re-run only for a completed check-run row', () => {
-    // render the tab with the selected check = a completed check-run row (checkRunId set)
-    // then assert the Re-run button is enabled; re-render with a status-source row and a
-    // non-completed row and assert it is disabled with the matching caption.
-    // (Use the existing test harness/sample data builders in this file.)
+import type { PrDetailContextValue } from '../prDetailContext';
+import type { CheckRunsResult } from '../../../hooks/useCheckRuns';
+
+const HEAD_SHA = '0123456789abcdef0123456789abcdef01234567';
+const DEFAULT_PR_REF = { owner: 'acme', repo: 'api', number: 123 }; // from makePrDetailContextValue
+const prDetailWithSha = { pr: { headSha: HEAD_SHA } } as PrDetailContextValue['prDetail'];
+
+// Render the tab with one selected check + a rerun-aware checks result and a real headSha.
+function renderRerun(checkOver: Partial<CheckRun>, resultOver: Partial<CheckRunsResult> = {}) {
+  const checks: CheckRunsResult = {
+    ...base,
+    status: 'ok',
+    checks: [run(checkOver)],
+    refetch: vi.fn(),
+    armRerunWatch: vi.fn(),
+    rerunPendingFor: null,
+    ...resultOver,
+  };
+  return render(
+    <PrDetailContextProvider
+      value={makePrDetailContextValue({ checks, prDetail: prDetailWithSha })}
+    >
+      <ChecksTab />
+    </PrDetailContextProvider>,
+  );
+}
+
+describe('ChecksTab — Re-run action', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it('enables Re-run for an eligible completed check-run, disables it for ineligible rows', () => {
+    // eligible: check-run + completed + checkRunId (run() defaults checkRunId: 1)
+    const eligible = renderRerun({ name: 'build' });
+    expect(screen.getByRole('button', { name: /^re-run$/i })).toBeEnabled();
+    eligible.unmount();
+
+    // legacy status source → disabled with caption (this is the path that lets
+    // FakePrChecksReader keep 3 check-run rows — see the deviation note)
+    const legacy = renderRerun({ name: 'legacy', source: 'status', checkRunId: null });
+    expect(screen.getByRole('button', { name: /^re-run$/i })).toBeDisabled();
+    expect(screen.getByText(/legacy status checks can't be re-run/i)).toBeInTheDocument();
+    legacy.unmount();
+
+    // still-running check-run → disabled with "still running"
+    renderRerun({ name: 'running', status: 'in-progress', conclusion: null });
+    expect(screen.getByRole('button', { name: /^re-run$/i })).toBeDisabled();
+    expect(screen.getByText(/still running/i)).toBeInTheDocument();
   });
 
-  it('clicking Re-run posts with the series sha and arms the watch on accepted', async () => {
+  it('clicking Re-run posts with the head sha + checkRunId and arms the watch on accepted', async () => {
     const rerun = vi.spyOn(checksApi, 'rerunCheck').mockResolvedValue({ outcome: 'accepted' });
-    // render with a completed check-run row selected; click the Re-run button
-    // expect(rerun).toHaveBeenCalledWith(prRef, <checkRunId>, <headSha>, expect.any(AbortSignal));
-    // expect the button to show "Re-running…" (rerunPendingFor === checkRunId)
+    const armRerunWatch = vi.fn();
+    renderRerun({ name: 'build', checkRunId: 77 }, { armRerunWatch });
+    await userEvent.click(screen.getByRole('button', { name: /^re-run$/i }));
+    expect(rerun).toHaveBeenCalledWith(DEFAULT_PR_REF, 77, HEAD_SHA, expect.any(AbortSignal));
+    await waitFor(() => expect(armRerunWatch).toHaveBeenCalledWith(77));
   });
 
-  it('surfaces an inline message per failure outcome', async () => {
+  it('shows "Re-running…" and disables the button while the watch is pending for this check', () => {
+    renderRerun({ name: 'build', checkRunId: 77 }, { rerunPendingFor: 77 });
+    expect(screen.getByRole('button', { name: /re-running/i })).toBeDisabled();
+  });
+
+  it('does NOT show "Re-running…" when the pending watch is for a DIFFERENT check', () => {
+    renderRerun({ name: 'build', checkRunId: 77 }, { rerunPendingFor: 999 });
+    expect(screen.getByRole('button', { name: /^re-run$/i })).toBeEnabled();
+  });
+
+  it('surfaces an inline alert per failure outcome (auth / not-rerunnable / transient+Retry)', async () => {
     vi.spyOn(checksApi, 'rerunCheck').mockResolvedValue({ outcome: 'auth' });
-    // click → expect role="alert" with "...authenticate" copy
-    // repeat for 'not-rerunnable' (write-access copy) and 'transient' (+ Retry button)
-    // 'superseded' → role="status" neutral "PR was updated" (NOT role="alert")
+    const a = renderRerun({ name: 'build', checkRunId: 5 });
+    await userEvent.click(screen.getByRole('button', { name: /^re-run$/i }));
+    expect(await screen.findByRole('alert')).toHaveTextContent(/authenticate/i);
+    a.unmount();
+    vi.restoreAllMocks();
+
+    vi.spyOn(checksApi, 'rerunCheck').mockResolvedValue({ outcome: 'not-rerunnable' });
+    const b = renderRerun({ name: 'build', checkRunId: 5 });
+    await userEvent.click(screen.getByRole('button', { name: /^re-run$/i }));
+    expect(await screen.findByRole('alert')).toHaveTextContent(/write access/i);
+    b.unmount();
+    vi.restoreAllMocks();
+
+    vi.spyOn(checksApi, 'rerunCheck').mockResolvedValue({ outcome: 'transient' });
+    renderRerun({ name: 'build', checkRunId: 5 });
+    await userEvent.click(screen.getByRole('button', { name: /^re-run$/i }));
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent(/try again/i);
+    expect(within(alert).getByRole('button', { name: /retry/i })).toBeInTheDocument();
   });
 
-  it('clears a prior error when a different check is selected', async () => {
-    // select A, force an error, select B, reselect A → A shows no stale error
+  it('superseded shows a neutral status note, not an alert', async () => {
+    vi.spyOn(checksApi, 'rerunCheck').mockResolvedValue({ outcome: 'superseded' });
+    renderRerun({ name: 'build', checkRunId: 5 });
+    await userEvent.click(screen.getByRole('button', { name: /^re-run$/i }));
+    expect(await screen.findByText(/PR was updated/i)).toBeInTheDocument();
+    expect(screen.queryByRole('alert')).toBeNull();
   });
+
+  it('clears the rerun error when a different check is selected (per-check isolation)', async () => {
+    vi.spyOn(checksApi, 'rerunCheck').mockResolvedValue({ outcome: 'transient' });
+    const checks: CheckRunsResult = {
+      ...base,
+      status: 'ok',
+      checks: [run({ name: 'aaa', checkRunId: 1 }), run({ name: 'bbb', checkRunId: 2 })],
+      refetch: vi.fn(),
+      armRerunWatch: vi.fn(),
+      rerunPendingFor: null,
+    };
+    render(
+      <PrDetailContextProvider
+        value={makePrDetailContextValue({ checks, prDetail: prDetailWithSha })}
+      >
+        <ChecksTab />
+      </PrDetailContextProvider>,
+    );
+    // aaa auto-selects (same tier, alphabetical) → trigger an error on it
+    await userEvent.click(screen.getByRole('button', { name: /^re-run$/i }));
+    expect(await screen.findByRole('alert')).toBeInTheDocument();
+    // select bbb → identity change resets phase/error; no stale alert
+    const bbbRow = screen.getAllByRole('option').find((o) => o.textContent?.includes('bbb'));
+    await userEvent.click(bbbRow!);
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+});
 ```
 
-> Fill these in concretely against the file's existing render helpers (the suite already
-> renders `ChecksTab` and selects rows — reuse that setup; do not invent a new harness).
-> Each test must assert real DOM: button `disabled` state, caption text, `role` of the
-> message, and the `rerunCheck` call args.
+> These are concrete because the disabled-status assertion (test 1) is the coverage the
+> spec's Testing AC wanted from a status-source row in the fake — proving it at the unit level
+> is what lets `FakePrChecksReader` keep its 3 check-run rows (no e2e baseline churn). The
+> `name: /^re-run$/i` anchor avoids matching the "Re-running…" label; `role="alert"` is unique
+> here (the tab's error card only renders in `status:'error'`, not `'ok'`). Note `afterEach`
+> already exists at the file's top-level `describe` only if added — this new `describe` adds its
+> own `afterEach(vi.restoreAllMocks)`.
 
 - [ ] **Step 2: Run to verify it fails**
 
 Run: `cd frontend; ./node_modules/.bin/vitest run src/components/PrDetail/ChecksTab/ChecksTab.test.tsx`
 Expected: FAIL — no Re-run button.
 
-- [ ] **Step 3: Thread props + implement the action row.** In `ChecksTab.tsx`:
+- [ ] **Step 3: Implement the action row.** In `ChecksTab.tsx`:
 
-(a) At the `ChecksTab` level, pull the new hook values and pass them with `prRef`/`headSha` into the rendered `<CheckDetail>`:
-
-```typescript
-  const { status, degraded, checks, retry, refetch, armRerunWatch, rerunPendingFor } =
-    useCheckRuns(prRef, headSha, active);
-  // ...where <CheckDetail check={selected} now={now} /> is rendered:
-  <CheckDetail
-    check={selected}
-    now={now}
-    prRef={prRef}
-    headSha={headSha}
-    rerunPendingFor={rerunPendingFor}
-    onArmRerunWatch={armRerunWatch}
-  />
-```
+(a) **Do NOT call `useCheckRuns` here.** `ChecksTab` does not own the hook — it reads the
+shared result from context (`const { checks: state } = usePrDetailContext();`, line 103), and
+`PrDetailView` is the sole owner that calls `useCheckRuns(prRef, data?.pr.headSha, …)` and
+publishes the result. `ChecksBody`/`CheckDetail` keep their existing `{ check, now }` call
+signatures — **no prop-threading**. Instead, `CheckDetail` reads what it needs directly from
+`usePrDetailContext()` (it already renders inside the provider in both prod and the tests).
+The values it needs:
+- `prRef` — `usePrDetailContext().prRef`.
+- `headSha` — `usePrDetailContext().prDetail.pr?.headSha ?? null`. (`?.` + `?? null` because
+  the sub-tab tests stub `prDetail` as `{}`; in prod `prDetail.pr.headSha` is always present.
+  This is the SAME SHA `PrDetailView` fed to `useCheckRuns`, so the SHA guard compares
+  apples to apples.)
+- `armRerunWatch` / `rerunPendingFor` — off the context's `checks` result
+  (`usePrDetailContext().checks`), null-guarded since they are optional on the interface.
 
 (b) Replace the `CheckDetail` component with the action-row version:
 
 ```typescript
+import { useEffect, useState } from 'react'; // add to the file's existing React import
 import { rerunCheck } from '../../../api/checks';
-import type { PrReference, RerunOutcome } from '../../../api/types';
+import { usePrDetailContext } from '../prDetailContext'; // already imported by ChecksTab
+import type { RerunOutcome } from '../../../api/types';
 
 function rerunDisabledReason(c: CheckRun): string | null {
   if (c.source !== 'check-run') return "Legacy status checks can't be re-run from PRism";
@@ -1031,21 +1213,12 @@ function rerunDisabledReason(c: CheckRun): string | null {
   return null; // eligible
 }
 
-function CheckDetail({
-  check: c,
-  now,
-  prRef,
-  headSha,
-  rerunPendingFor,
-  onArmRerunWatch,
-}: {
-  check: CheckRun;
-  now: number;
-  prRef: PrReference;
-  headSha: string;
-  rerunPendingFor: number | null;
-  onArmRerunWatch: (checkRunId: number) => void;
-}) {
+function CheckDetail({ check: c, now }: { check: CheckRun; now: number }) {
+  // Read everything from the shared PrDetail context — ChecksTab does NOT own useCheckRuns,
+  // so there is no prop to thread. headSha is null-safe (sub-tab tests stub prDetail as {}).
+  const { prRef, prDetail, checks: state } = usePrDetailContext();
+  const headSha = prDetail.pr?.headSha ?? null;
+  const rerunPendingFor = state.rerunPendingFor ?? null; // optional on the interface
   const duration = formatDuration(c, now);
   const sourceLabel = c.source === 'check-run' ? 'GitHub check' : 'Status';
   const metaParts: string[] = [];
@@ -1070,7 +1243,7 @@ function CheckDetail({
   const running = phase === 'posting' || watching;
 
   const handleRerun = async () => {
-    if (c.checkRunId == null) return;
+    if (c.checkRunId == null || headSha == null) return; // also narrows headSha to string
     setPhase('posting');
     setErrorOutcome(null);
     setNote(null);
@@ -1078,7 +1251,7 @@ function CheckDetail({
     try {
       const { outcome } = await rerunCheck(prRef, c.checkRunId, headSha, ctrl.signal);
       if (outcome === 'accepted') {
-        onArmRerunWatch(c.checkRunId); // hook now drives "Re-running…" via rerunPendingFor
+        state.armRerunWatch?.(c.checkRunId); // hook drives "Re-running…" via rerunPendingFor
         setPhase('idle');
       } else if (outcome === 'superseded') {
         setPhase('idle');
@@ -1126,7 +1299,7 @@ function CheckDetail({
         <button
           type="button"
           className={styles.rerunButton}
-          disabled={disabledReason != null || running}
+          disabled={disabledReason != null || running || headSha == null}
           onClick={handleRerun}
         >
           {running ? (
@@ -1262,11 +1435,20 @@ git commit -m "test(#636): add checkRunId to e2e checks route mocks"
 - B2 access-control (existing middleware, no new gate) → no code change required; the endpoint inherits the stack (recorded in spec) ✅
 
 **Deliberate deviations from the spec (documented):**
-1. **FakePrChecksReader keeps 3 check-run rows** (no added status-source row) to avoid churning e2e visual baselines; the disabled-for-status path is covered by the Task-6 unit test instead. (Spec § Testing suggested a status row in the fake.)
+1. **FakePrChecksReader keeps 3 check-run rows** (no added status-source row) to avoid churning e2e visual baselines; the disabled-for-status path is covered concretely by Task 6 Step 1's first test (`enables Re-run … disables it for ineligible rows`, which renders a `source:'status'` row and asserts the disabled button + caption). (Spec § Testing suggested a status row in the fake.)
 2. **Rerequest POST sends no body** (matches the reader's call style; github.com accepts a bodyless rerequest). The spec's "set `Content-Type` explicitly for some GHES versions" is deferred as YAGNI for the github.com target; revisit if GHES support is added.
+3. **`CheckRunsResult.refetch`/`armRerunWatch`/`rerunPendingFor` are typed OPTIONAL** even though the hook always returns them (Task 5 Step 3 interface comment). Keeps the ~10 unrelated inline `PrDetailContextValue` test stubs valid untouched; the single consumer null-guards. **This is a typing judgment, not a spec requirement — flag it at the plan gate.** Alternative (required members) is honest-but-churns-10-files; recommendation is optional. `CheckRun.checkRunId` stays **required** (it is a wire field, not an internal result member).
 
-**Placeholder scan:** Task 6's test bodies are described against the file's existing harness rather than fully written, because the suite's render/selection helpers must be reused (inventing a parallel harness would be wrong). Every other step has complete code. The Task-6 implementer MUST write concrete DOM assertions per the bullet list in Step 1.
+**Placeholder scan:** **No placeholders remain.** Task 6 Step 1 is now fully concrete (real DOM assertions, `rerunCheck` call-arg checks, role checks) against the existing `ChecksTab.test.tsx` harness (`run` factory + `makePrDetailContextValue`). Every code step has complete code.
 
-**Type consistency:** `RerunOutcome` (C# `Accepted|Auth|NotRerunnable|Superseded|Transient`) ↔ wire (`accepted|auth|not-rerunnable|superseded|transient`) ↔ FE union — consistent. `armRerunWatch(checkRunId: number)`, `rerunPendingFor: number | null`, `refetch(): void` match between Task 5 (producer) and Task 6 (consumer). `rerunCheck(prRef, checkRunId, headSha, signal)` matches between Task 4 and Task 6.
+**Type consistency:** `RerunOutcome` (C# `Accepted|Auth|NotRerunnable|Superseded|Transient`) ↔ wire (`accepted|auth|not-rerunnable|superseded|transient`) ↔ FE union — consistent. `armRerunWatch(checkRunId: number)`, `rerunPendingFor: number | null`, `refetch(): void` match between Task 5 (producer) and Task 6 (consumer); the consumer reads them off `usePrDetailContext().checks` (NOT props — `ChecksTab` does not own the hook) and null-guards the optional members. `rerunCheck(prRef, checkRunId, headSha, signal)` matches between Task 4 and Task 6. `headSha` is sourced as `prDetail.pr?.headSha ?? null` (null-safe for stubbed `prDetail`).
+
+**Round-1 `ce-doc-review` dispositions (4 reviewers):**
+- **Adversarial P2** (rerun-watch never expires on a failing tick → button hangs "Re-running…") → **Applied**: Task 5 `catch` now calls `updateRerunWatch(checksRef.current)`; added the failure-path regression test.
+- **Feasibility P2a** (required `checkRunId` breaks 4 existing FE `CheckRun` literals) → **Applied**: Task 1 Step 6b enumerates the literal updates + adds the 4 files.
+- **Feasibility P2b** (`CheckRunsResult` widening breaks `PrDetailView.test.tsx` mocks) → **Resolved by design**: the three members are now optional, so those literals (and ~8 more inline stubs feasibility didn't enumerate) stay valid untouched.
+- **Coherence P1** (Task-1 deviation leans on placeholder Task-6 test) → **Applied**: Task-6 tests are now concrete, including the disabled-status path that backs the deviation.
+- **Security** (zero findings; one spec-text nit on owner/repo escaping) → **Applied to the spec** (the `Uri.EscapeDataString` parenthetical was corrected — owner/repo are regex-gated; #604 escaped the SHA).
+- **Self-found wiring bug** (plan had `ChecksTab` calling `useCheckRuns` + prop-drilling; real `ChecksTab` reads the shared result from context) → **Applied**: Task 6 Step 3 corrected to read from `usePrDetailContext()`.
 
 **Open copy question (non-blocking, from spec):** whether a GitHub-Actions check-run rerequest re-runs the whole workflow or one job — resolve during Task 6 implementation when live behavior is observable; affects button/tooltip copy only.
