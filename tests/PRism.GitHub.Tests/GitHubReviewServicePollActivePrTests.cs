@@ -78,6 +78,48 @@ public class GitHubReviewServicePollActivePrTests
         }
     }
 
+    // #604 Part D — FetchPagedCountAsync reads the rel="last" page number AS the item count,
+    // which is correct ONLY at per_page=1 (both production callers). A per_page>1 caller would
+    // get ceil(total/per_page) miscounted as the total, silently corrupting CommentCount/
+    // ReviewCount → pr-updated emission. The boundary must throw on per_page>1 (a real throw,
+    // not Debug.Assert, so it fires in Release).
+    private sealed class LinkLastHandler : HttpMessageHandler
+    {
+        public int LastPage { get; init; }
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage req, CancellationToken ct)
+        {
+            ArgumentNullException.ThrowIfNull(req);
+            var path = req.RequestUri!.AbsolutePath;
+            var resp = new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("[{}]", System.Text.Encoding.UTF8, "application/json"),
+            };
+            resp.Headers.TryAddWithoutValidation("Link",
+                $"<https://api.github.com{path}?page={LastPage}>; rel=\"last\"");
+            return Task.FromResult(resp);
+        }
+    }
+
+    [Fact]
+    public async Task FetchPagedCountAsync_throws_on_per_page_greater_than_one()
+    {
+        var sut = NewService(new LinkLastHandler { LastPage = 3 });
+
+        await Assert.ThrowsAsync<ArgumentException>(() =>
+            sut.FetchPagedCountAsync("repos/o/r/pulls/1/comments?per_page=5", CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task FetchPagedCountAsync_returns_last_page_count_for_per_page_one()
+    {
+        var sut = NewService(new LinkLastHandler { LastPage = 42 });
+
+        var count = await sut.FetchPagedCountAsync(
+            "repos/o/r/pulls/1/comments?per_page=1", CancellationToken.None);
+
+        count.Should().Be(42);
+    }
+
     [Fact]
     public async Task PollActivePrAsync_returns_head_sha_state_and_link_last_counts()
     {
