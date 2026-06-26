@@ -49,8 +49,12 @@ public sealed partial class GitHubReviewService : IPrDiscovery, IPrReader
         "author{login avatarUrl} createdAt closedAt mergedAt changedFiles " +
         "comments(first:100){pageInfo{hasNextPage endCursor} nodes{databaseId author{login avatarUrl} createdAt body}}" +
         "reviewThreads(first:100){pageInfo{hasNextPage endCursor} nodes{id path line isResolved " +
-        "comments(first:100){nodes{id databaseId author{login avatarUrl} createdAt body lastEditedAt}}}}" +
-        "reviews(last:100){nodes{author{login} state submittedAt commit{oid}}}" +
+        // #604 Part A: nested thread comments(first:100) is forward pagination → hasNextPage.
+        "comments(first:100){pageInfo{hasNextPage} nodes{id databaseId author{login avatarUrl} createdAt body lastEditedAt}}}}" +
+        // #604 Part A: reviews(last:100) is BACKWARD pagination — >100 reviews drop off the
+        // FRONT (older), so the cap signal is hasPreviousPage, not hasNextPage. last:100 is kept
+        // because ParseViewerReview needs the NEWEST reviews.
+        "reviews(last:100){pageInfo{hasPreviousPage} nodes{author{login} state submittedAt commit{oid}}}" +
         // #593: avatarUrl on latestReviews + reviewRequests feed the readiness popover people section.
         "latestReviews(first:100){nodes{author{login avatarUrl} state}}" +
         "reviewRequests(first:20){nodes{requestedReviewer{... on User{login avatarUrl} ... on Team{name}}}}" +
@@ -355,8 +359,17 @@ public sealed partial class GitHubReviewService : IPrDiscovery, IPrReader
         return new PollPullMeta(head, baseSha, state, mergeable, merged);
     }
 
-    private async Task<int> FetchPagedCountAsync(string url, CancellationToken ct)
+    // internal (was private) so the #604 Part D per_page guard can be unit-tested directly —
+    // both production callers hardcode per_page=1, so there is no public path to per_page>1.
+    internal async Task<int> FetchPagedCountAsync(string url, CancellationToken ct)
     {
+        // #604 Part D: this counter reads the rel="last" page number AS the item count, which
+        // is correct ONLY at per_page=1 (a future per_page>1 caller would get ceil(total/per_page)
+        // miscounted as the total, silently corrupting CommentCount/ReviewCount → pr-updated).
+        // Fail loud at the boundary. A real throw (not Debug.Assert) so it fires in Release too;
+        // generalized counting belongs with #628's shared pagination layer.
+        RequireSinglePerPage(url);
+
         // GitHub pagination: with per_page=1, the response array is the first item and
         // the Link header carries a rel="last" URL whose &page=N parameter is the total
         // count. When the result fits in one page, no Link header is present and the
@@ -380,6 +393,29 @@ public sealed partial class GitHubReviewService : IPrDiscovery, IPrReader
         catch (JsonException)
         {
             return 0;
+        }
+    }
+
+    // #604 Part D: the rel="last" page number equals the item count ONLY at per_page=1, so this
+    // counter is contractually single-item-per-page. A present per_page != 1 is rejected loudly
+    // (Release-effective, unlike Debug.Assert). Absent per_page is treated as the per_page=1
+    // contract (both production callers pass per_page=1 explicitly). internal for direct testing.
+    internal static void RequireSinglePerPage(string url)
+    {
+        ArgumentNullException.ThrowIfNull(url);
+        var q = url.IndexOf('?', StringComparison.Ordinal);
+        if (q < 0) return;
+        foreach (var kv in url[(q + 1)..].Split('&'))
+        {
+            var eq = kv.IndexOf('=', StringComparison.Ordinal);
+            if (eq <= 0) continue;
+            if (!string.Equals(kv[..eq], "per_page", StringComparison.Ordinal)) continue;
+            if (!string.Equals(kv[(eq + 1)..], "1", StringComparison.Ordinal))
+                throw new ArgumentException(
+                    $"FetchPagedCountAsync requires per_page=1 (the rel=\"last\" page number is only the " +
+                    $"item count at per_page=1); got '{kv}' in '{url}'. Generalized counting belongs with #628.",
+                    nameof(url));
+            return;
         }
     }
 
@@ -415,7 +451,12 @@ public sealed partial class GitHubReviewService : IPrDiscovery, IPrReader
         var body = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
         using var doc = JsonDocument.Parse(body);
         var root = doc.RootElement;
-        var changedFiles = root.TryGetProperty("changed_files", out var cf) ? cf.GetInt32() : 0;
+        // #604 Part B: TryGetProperty returns true for a JSON `null`, and GetInt32() on a
+        // non-number throws InvalidOperationException → 500 on the diff path. Value-kind guard
+        // degrades a null/malformed count to 0 (so `truncated = ChangedFiles > files.Count`
+        // reads false). See the design doc's degradation note: a never-case on a valid PR.
+        var changedFiles = root.TryGetProperty("changed_files", out var cf)
+            && cf.ValueKind == JsonValueKind.Number ? cf.GetInt32() : 0;
         var baseSha = root.GetProperty("base").GetProperty("sha").GetString() ?? "";
         var headSha = root.GetProperty("head").GetProperty("sha").GetString() ?? "";
         return new PullMeta(baseSha, headSha, changedFiles);
@@ -623,24 +664,50 @@ public sealed partial class GitHubReviewService : IPrDiscovery, IPrReader
             errorsJson);
     }
 
-    // The three GraphQL connections inside `pullRequest` that the spec § 6.1 cap-hit
-    // banner cares about. Single source of truth so HasAnyNextPage stays in lock-step
-    // with whatever the GetPrDetailAsync query asks for; if the query renames a
-    // connection, this list updates with it.
+    // The forward-paginated (`hasNextPage`) top-level connections inside `pullRequest` that
+    // the spec § 6.1 cap-hit banner cares about. Single source of truth so HasAnyNextPage
+    // stays in lock-step with whatever the GetPrDetailAsync query asks for. Backward-paginated
+    // `reviews` (hasPreviousPage) and the nested per-thread comments are checked separately in
+    // HasAnyNextPage — they don't fit the hasNextPage shape (#604 Part A).
     private static readonly string[] PagedConnections = ["comments", "reviewThreads", "timelineItems"];
 
     private static bool HasAnyNextPage(JsonElement pull)
     {
         foreach (var name in PagedConnections)
             if (ConnectionHasNext(pull, name)) return true;
+        // #604 Part A: reviews(last:100) is backward pagination — its cap signal is
+        // hasPreviousPage (NOT hasNextPage), so it is checked separately rather than added
+        // to PagedConnections (which inspects hasNextPage).
+        if (ConnectionHasPrevious(pull, "reviews")) return true;
+        // #604 Part A: each review THREAD nests comments(first:100); a thread with >100
+        // replies truncates even when every top-level connection fits one page. Walk them.
+        if (AnyNestedThreadCommentsHasNext(pull)) return true;
         return false;
     }
 
     private static bool ConnectionHasNext(JsonElement pull, string connection)
+        => PageInfoFlag(pull, connection, "hasNextPage");
+
+    private static bool ConnectionHasPrevious(JsonElement pull, string connection)
+        => PageInfoFlag(pull, connection, "hasPreviousPage");
+
+    private static bool PageInfoFlag(JsonElement pull, string connection, string flag)
     {
         if (!pull.TryGetProperty(connection, out var conn)) return false;
         if (!conn.TryGetProperty("pageInfo", out var pi)) return false;
-        return pi.TryGetProperty("hasNextPage", out var hnp) && hnp.ValueKind == JsonValueKind.True;
+        return pi.TryGetProperty(flag, out var v) && v.ValueKind == JsonValueKind.True;
+    }
+
+    // True if ANY reviewThreads node's nested comments connection reports hasNextPage —
+    // i.e. a single thread dropped replies past the first 100.
+    private static bool AnyNestedThreadCommentsHasNext(JsonElement pull)
+    {
+        if (!pull.TryGetProperty("reviewThreads", out var threads)) return false;
+        if (!threads.TryGetProperty("nodes", out var nodes) || nodes.ValueKind != JsonValueKind.Array)
+            return false;
+        foreach (var thread in nodes.EnumerateArray())
+            if (ConnectionHasNext(thread, "comments")) return true;
+        return false;
     }
 
     private async Task<IReadOnlyList<ClusteringCommit>> FetchPerCommitChangedFilesAsync(
@@ -695,7 +762,9 @@ public sealed partial class GitHubReviewService : IPrDiscovery, IPrReader
         ClusteringCommit commit,
         CancellationToken ct)
     {
-        var url = $"repos/{reference.Owner}/{reference.Repo}/commits/{commit.Sha}";
+        // #604 Part C: escape the oid for parity with the audited GetCommitAsync (:290) /
+        // GetFileContentAsync siblings — a malformed/reserved-char oid must not alter the path.
+        var url = $"repos/{reference.Owner}/{reference.Repo}/commits/{Uri.EscapeDataString(commit.Sha)}";
         try
         {
             using var http = _httpFactory.CreateClient("github");

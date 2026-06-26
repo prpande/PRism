@@ -138,7 +138,8 @@ public sealed class GitHubCiFailingDetector : ICiFailingDetector
         // matrix builds routinely cross 100). Follow the rel="next" link until
         // exhausted, aggregating classification across all pages.
         string? nextUrl = null;
-        var initialUrl = $"repos/{pr.Owner}/{pr.Repo}/commits/{sha}/check-runs?per_page=100";
+        // #604 Part C: escape the SHA for parity with the audited GetCommitAsync/GetFileContentAsync siblings.
+        var initialUrl = $"repos/{pr.Owner}/{pr.Repo}/commits/{Uri.EscapeDataString(sha)}/check-runs?per_page=100";
 
         for (var page = 0; page < MaxCheckRunPages; page++)
         {
@@ -222,7 +223,8 @@ public sealed class GitHubCiFailingDetector : ICiFailingDetector
 
     private async Task<(CiStatus Status, bool Degraded)> FetchCombinedStatusAsync(PrReference pr, string sha, string? token, CancellationToken ct)
     {
-        var url = $"repos/{pr.Owner}/{pr.Repo}/commits/{sha}/status";
+        // #604 Part C: escape the SHA for parity with the audited sibling call sites.
+        var url = $"repos/{pr.Owner}/{pr.Repo}/commits/{Uri.EscapeDataString(sha)}/status";
         using var resp = await SendAsync(url, token, ct).ConfigureAwait(false);
         if (resp.StatusCode == System.Net.HttpStatusCode.NotFound) return (CiStatus.None, false);
         GitHubHttp.ThrowIfRateLimited(resp);
