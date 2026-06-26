@@ -143,4 +143,124 @@ describe('useFileViewState', () => {
     expect(result.current.viewedPaths).toEqual(new Set());
     expect(postFileViewedMock).not.toHaveBeenCalled();
   });
+
+  // #600 Bug B — a failed POST must restore the PRIOR value, not a snapshot of
+  // server state captured before an earlier success. mark-ok then unmark-fail:
+  // the server still holds `viewed:true` (the unmark never landed), so the UI
+  // must stay viewed rather than reverting to the stale `serverViewed` ({}).
+  it('restores the last acked value when a later POST fails (mark-ok then unmark-fail)', async () => {
+    // First POST (mark) succeeds; second POST (unmark) fails.
+    postFileViewedMock
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new Error('network down'));
+    const { result } = renderHook(() => useFileViewState(REF, HEAD, {}));
+
+    // Mark a.ts viewed — POST succeeds, so the server now holds viewed:true.
+    act(() => result.current.toggleViewed('a.ts'));
+    expect(result.current.viewedPaths.has('a.ts')).toBe(true);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(result.current.viewedPaths.has('a.ts')).toBe(true);
+
+    // Unmark a.ts — this POST fails. Rolling back must fall back to the acked
+    // value (viewed), NOT the stale serverViewed snapshot ({} → not-viewed).
+    act(() => result.current.toggleViewed('a.ts'));
+    expect(result.current.viewedPaths.has('a.ts')).toBe(false); // optimistic
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(result.current.viewedPaths.has('a.ts')).toBe(true); // restored to server truth
+  });
+
+  // #600 Bug A — once a POST succeeds, the override must not shadow newer server
+  // truth. A refetch that the server has caught up to evicts the override, so a
+  // later refetch dropping the path (un-viewed elsewhere) is honored.
+  it('does not shadow a server refetch that drops the path after a successful POST', async () => {
+    const { result, rerender } = renderHook(
+      ({ persisted }: { persisted: Record<string, string> }) =>
+        useFileViewState(REF, HEAD, persisted),
+      { initialProps: { persisted: {} as Record<string, string> } },
+    );
+
+    // Mark a.ts viewed; POST succeeds.
+    act(() => result.current.toggleViewed('a.ts'));
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(result.current.viewedPaths.has('a.ts')).toBe(true);
+
+    // A refetch reflects the server catching up (a.ts viewed at HEAD).
+    rerender({ persisted: { 'a.ts': HEAD } });
+    expect(result.current.viewedPaths.has('a.ts')).toBe(true);
+
+    // a.ts is un-viewed elsewhere; the next refetch drops it. Server truth must
+    // win — the optimistic override must not pin a.ts viewed indefinitely.
+    rerender({ persisted: {} });
+    expect(result.current.viewedPaths.has('a.ts')).toBe(false);
+  });
+
+  // #600 Bug A (symmetry) — eviction-on-agree is value-agnostic: an un-view
+  // (confirmed:false) is evicted once the server snapshot drops the path, so a
+  // later external re-mark is honored rather than shadowed by the stale un-view.
+  it('evicts an un-view once the server agrees, then honors a later external re-mark', async () => {
+    const { result, rerender } = renderHook(
+      ({ persisted }: { persisted: Record<string, string> }) =>
+        useFileViewState(REF, HEAD, persisted),
+      { initialProps: { persisted: { 'a.ts': HEAD } as Record<string, string> } },
+    );
+    expect(result.current.viewedPaths.has('a.ts')).toBe(true);
+
+    // Un-mark a.ts; POST succeeds → confirmed{a.ts:false} bridges the un-view.
+    act(() => result.current.toggleViewed('a.ts'));
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(result.current.viewedPaths.has('a.ts')).toBe(false);
+
+    // A refetch reflects the server dropping a.ts → the un-view is evicted.
+    rerender({ persisted: {} });
+    expect(result.current.viewedPaths.has('a.ts')).toBe(false);
+
+    // a.ts is re-marked elsewhere; the next refetch must win (no stale shadow).
+    rerender({ persisted: { 'a.ts': HEAD } });
+    expect(result.current.viewedPaths.has('a.ts')).toBe(true);
+  });
+
+  // #600 (head-advance race) — an in-flight POST that ACKs AFTER the head
+  // advances must scope its confirmed write to the toggle-time head, never leak
+  // the mark into the new head (where the server never stamped it).
+  it('does not leak a confirmed mark into a new head when an in-flight POST acks after a head advance', async () => {
+    let resolveFirst!: () => void;
+    const firstPending = new Promise<void>((resolve) => {
+      resolveFirst = resolve;
+    });
+    postFileViewedMock.mockReturnValueOnce(firstPending);
+
+    const { result, rerender } = renderHook(
+      ({ head }: { head: string }) => useFileViewState(REF, head, {}),
+      { initialProps: { head: HEAD } },
+    );
+
+    // Toggle at HEAD; the POST stays in flight.
+    act(() => result.current.toggleViewed('a.ts'));
+    expect(result.current.viewedPaths.has('a.ts')).toBe(true);
+
+    // Head advances before the POST resolves — the overlay is key-scoped to HEAD.
+    rerender({ head: 'newhead' });
+    expect(result.current.viewedPaths.has('a.ts')).toBe(false);
+
+    // The in-flight POST (stamped at HEAD) now succeeds. Its confirmed write is
+    // scoped to HEAD and must not surface a.ts as viewed at the new head.
+    await act(async () => {
+      resolveFirst();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(result.current.viewedPaths.has('a.ts')).toBe(false);
+  });
 });
