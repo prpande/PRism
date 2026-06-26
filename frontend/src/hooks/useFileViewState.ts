@@ -115,14 +115,17 @@ export function useFileViewState(
   const viewedPaths = useMemo(() => {
     if (confirmedMap.size === 0 && pendingMap.size === 0) return serverViewed;
     const s = new Set(serverViewed);
-    for (const [path, viewed] of confirmedMap) {
-      if (viewed) s.add(path);
-      else s.delete(path);
-    }
-    for (const [path, viewed] of pendingMap) {
-      if (viewed) s.add(path);
-      else s.delete(path);
-    }
+    // Apply the overlays in priority order: confirmed over server, then pending
+    // over confirmed (so the in-flight intent wins). An entry's value is the
+    // desired viewed flag — add on true, remove on false.
+    const apply = (overlay: ReadonlyMap<string, boolean>) => {
+      for (const [path, viewed] of overlay) {
+        if (viewed) s.add(path);
+        else s.delete(path);
+      }
+    };
+    apply(confirmedMap);
+    apply(pendingMap);
     return s;
   }, [serverViewed, confirmedMap, pendingMap]);
 
