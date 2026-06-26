@@ -13,6 +13,7 @@ const run = (over: Partial<CheckRun>): CheckRun => ({
   summary: null,
   appName: null,
   body: null,
+  checkRunId: null,
   ...over,
 });
 

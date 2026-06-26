@@ -146,6 +146,7 @@ export interface CheckRun {
   summary: string | null;
   appName: string | null;
   body: string | null;
+  checkRunId: number | null; // check-run id for re-run; null for legacy status
 }
 
 export interface ChecksResponse {

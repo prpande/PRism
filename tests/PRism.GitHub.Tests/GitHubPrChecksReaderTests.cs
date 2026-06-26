@@ -56,6 +56,26 @@ public class GitHubPrChecksReaderTests
     }
 
     [Fact]
+    public async Task Populates_CheckRunId_from_check_run_id_and_null_for_legacy_status()
+    {
+        var reader = ReaderFor(req =>
+        {
+            if (req.RequestUri!.AbsolutePath.EndsWith("/check-runs", StringComparison.Ordinal))
+                return Json(
+                    """{"check_runs":[{"id":987654321,"name":"build","status":"completed","conclusion":"success"}]}""");
+            return Json(
+                """{"state":"failure","total_count":1,"statuses":[{"context":"ci/legacy","state":"failure"}]}""");
+        });
+
+        var resp = await reader.ReadAsync(Pr, Sha, CancellationToken.None);
+
+        var run = Assert.Single(resp.Checks, c => c.Source == "check-run");
+        Assert.Equal(987654321L, run.CheckRunId);
+        var status = Assert.Single(resp.Checks, c => c.Source == "status");
+        Assert.Null(status.CheckRunId);
+    }
+
+    [Fact]
     public async Task Parses_output_title_and_app_name_for_check_runs_and_description_for_statuses()
     {
         var reader = ReaderFor(req =>
