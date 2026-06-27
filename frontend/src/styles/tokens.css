@@ -686,6 +686,12 @@ a:hover { text-decoration: underline; }
    on it, so flip to dark ink — mirroring the warning verdict segment. */
 [data-theme='dark'] .btn-success { color: oklch(0.18 0 0); }
 
+/* Merge CTA: solid merge-purple fill + near-white ink. --merged is kept dark in BOTH themes (unlike
+   the lighter --merged-fg glyph hue), so near-white text clears AA without a dark-ink flip. Used by
+   the Confirm-merge button (#566). */
+.btn-merged { background: var(--merged); color: oklch(0.99 0 0); }
+.btn-merged:hover:not(:disabled) { filter: brightness(0.92); }
+
 .btn-icon {
   width: 30px;
   height: 30px;

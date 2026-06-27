@@ -187,21 +187,14 @@
   cursor: not-allowed;
 }
 
-/* E4 — the Confirm-merge commit uses the merge hue, NOT danger red: merging is not destructive.
-   F1 (revised) — a SOLID purple button with near-white text (the GitHub "Merge" CTA model), so it
-   reads as the unmistakable primary action, distinct from the soft-tinted method-picker options it
-   sits beside. Uses the dedicated --merged FILL token (dark in both themes) rather than --merged-fg
-   (the on-surface glyph hue, which goes light in dark mode and would drop white-text contrast).
-   Mirrors .btn-danger/.btn-success: hue fill + near-white ink + brightness-dim hover.
+/* The solid merge-purple fill + near-white ink + brightness-dim hover come from the global
+   `.btn-merged` variant (see tokens.css, beside .btn-danger/.btn-success) — compose it. This class
+   only adds the morph-specific overrides:
    E3 — min-width fits the longest label ("Confirm squash merge") so swapping method labels, and the
-   in-flight Merging…/Checking… labels, never reflow the morph. */
+   in-flight Merging…/Checking… labels, never reflow the morph. The matching --merged border keeps the
+   button's edge crisp on the panel surface. */
 .confirmMerge {
   min-width: 20ch;
   font-weight: 600;
-  color: oklch(0.99 0 0);
-  background: var(--merged);
   border-color: var(--merged);
-}
-.confirmMerge:hover:not(:disabled) {
-  filter: brightness(0.92);
 }

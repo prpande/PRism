@@ -175,7 +175,10 @@ export function PrActionsPanel() {
   // prevent firing a second action against a state that hasn't reconciled yet — the user must not
   // be able to click again thinking the first click "didn't take effect" (#566).
   const busy = pending !== null || isLoading;
-  const siblingsDisabled = busy || confirmingClose || confirmingMerge;
+  // The lifecycle siblings unmount entirely during the merge flow (the `!confirmingMerge` group guard
+  // below), so confirmingMerge need not feed into their disabled state — only the close-confirm morph
+  // (which stays mounted) does.
+  const siblingsDisabled = busy || confirmingClose;
 
   // Merge gating (Option X) + disabled-reason copy. `none` has empty READINESS_LONG copy, so supply
   // the "still calculating" string (the only state that also offers a Refresh link).
@@ -229,156 +232,158 @@ export function PrActionsPanel() {
             draft=blue. Glyphs are aria-hidden, so the accessible name stays the plain label. */}
         <div className={styles.actions}>
           {/* E1: while the merge flow is open, hide the other lifecycle actions — the morph below is
-              a focused sub-mode (Back ↔ pick method ↔ Confirm), not a row of competing buttons. */}
-          {!confirmingMerge && showReady && (
-            <button
-              className={`btn ${styles.ready}`}
-              disabled={siblingsDisabled || pending === 'ready'}
-              onClick={() => onInvoke('ready')}
-            >
-              <PrStateGlyph state="open" />
-              {pending === 'ready' ? 'Marking ready…' : 'Ready for review'}
-            </button>
-          )}
+              a focused sub-mode (Back ↔ pick method ↔ Confirm), not a row of competing buttons. One
+              group guard (not per-button), so a future lifecycle action can't bleed into the flow. */}
+          {!confirmingMerge && (
+            <>
+              {showReady && (
+                <button
+                  className={`btn ${styles.ready}`}
+                  disabled={siblingsDisabled || pending === 'ready'}
+                  onClick={() => onInvoke('ready')}
+                >
+                  <PrStateGlyph state="open" />
+                  {pending === 'ready' ? 'Marking ready…' : 'Ready for review'}
+                </button>
+              )}
 
-          {!confirmingMerge && showConvertDraft && (
-            <button
-              className={`btn ${styles.convert}`}
-              disabled={siblingsDisabled || pending === 'convert-to-draft'}
-              onClick={() => onInvoke('convert-to-draft')}
-            >
-              <PrStateGlyph state="draft" />
-              {pending === 'convert-to-draft' ? 'Converting…' : 'Convert to draft'}
-            </button>
-          )}
+              {showConvertDraft && (
+                <button
+                  className={`btn ${styles.convert}`}
+                  disabled={siblingsDisabled || pending === 'convert-to-draft'}
+                  onClick={() => onInvoke('convert-to-draft')}
+                >
+                  <PrStateGlyph state="draft" />
+                  {pending === 'convert-to-draft' ? 'Converting…' : 'Convert to draft'}
+                </button>
+              )}
 
-          {!confirmingMerge && showReopen && (
-            <button
-              className={`btn ${styles.reopen}`}
-              disabled={busy}
-              onClick={() => onInvoke('reopen')}
-            >
-              <PrStateGlyph state="open" />
-              {pending === 'reopen' ? 'Reopening…' : 'Reopen'}
-            </button>
-          )}
+              {showReopen && (
+                <button
+                  className={`btn ${styles.reopen}`}
+                  disabled={busy}
+                  onClick={() => onInvoke('reopen')}
+                >
+                  <PrStateGlyph state="open" />
+                  {pending === 'reopen' ? 'Reopening…' : 'Reopen'}
+                </button>
+              )}
 
-          {!confirmingMerge && showClose && !confirmingClose && (
-            // The pending label lives HERE (not on Confirm close): clicking Confirm sets
-            // confirmingClose=false + pending='close' in one batch, so the confirm span unmounts and
-            // the plain Close button is what renders during the in-flight state. (Plan ce-doc-review.)
-            <button
-              className={`btn ${styles.close}`}
-              disabled={siblingsDisabled}
-              onClick={() => setConfirmingClose(true)}
-            >
-              <PrStateGlyph state="closed" />
-              {pending === 'close' ? 'Closing…' : 'Close'}
-            </button>
-          )}
+              {showClose && !confirmingClose && (
+                // The pending label lives HERE (not on Confirm close): clicking Confirm sets
+                // confirmingClose=false + pending='close' in one batch, so the confirm span unmounts and
+                // the plain Close button is what renders during the in-flight state. (Plan ce-doc-review.)
+                <button
+                  className={`btn ${styles.close}`}
+                  disabled={siblingsDisabled}
+                  onClick={() => setConfirmingClose(true)}
+                >
+                  <PrStateGlyph state="closed" />
+                  {pending === 'close' ? 'Closing…' : 'Close'}
+                </button>
+              )}
 
-          {!confirmingMerge && showClose && confirmingClose && (
-            <span
-              className={styles.confirm}
-              onKeyDown={(e) => {
-                if (e.key === 'Escape') {
-                  e.preventDefault();
-                  setConfirmingClose(false);
-                }
-              }}
-            >
-              {/* The visible label says "Confirm close?" to avoid overlapping with the sr-only live
+              {showClose && confirmingClose && (
+                <span
+                  className={styles.confirm}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Escape') {
+                      e.preventDefault();
+                      setConfirmingClose(false);
+                    }
+                  }}
+                >
+                  {/* The visible label says "Confirm close?" to avoid overlapping with the sr-only live
                    region text ("Close this PR? …") — both would otherwise match the test's
                    /close this pr\?/i regex and trip getByText's strict single-match guard. */}
-              <span className={styles.confirmQ}>Confirm close?</span>
-              <button
-                ref={cancelRef}
-                className="btn btn-secondary"
-                onClick={() => setConfirmingClose(false)}
-              >
-                Cancel
-              </button>
-              <button
-                className="btn btn-danger"
-                // Guarded by busy too: if a reload lands while the confirm is open, the commit
-                // can't fire against a state that's still settling (#566).
-                disabled={busy}
-                // onInvoke parks focus on the container before the confirm span (and this button) unmount,
-                // so the keyboard user is not dropped to <body> through the in-flight period.
-                onClick={() => {
-                  onInvoke('close');
-                  setConfirmingClose(false);
-                }}
-              >
-                Confirm close
-              </button>
-            </span>
-          )}
+                  <span className={styles.confirmQ}>Confirm close?</span>
+                  <button
+                    ref={cancelRef}
+                    className="btn btn-secondary"
+                    onClick={() => setConfirmingClose(false)}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    className="btn btn-danger"
+                    // Guarded by busy too: if a reload lands while the confirm is open, the commit
+                    // can't fire against a state that's still settling (#566).
+                    disabled={busy}
+                    // onInvoke parks focus on the container before the confirm span (and this button) unmount,
+                    // so the keyboard user is not dropped to <body> through the in-flight period.
+                    onClick={() => {
+                      onInvoke('close');
+                      setConfirmingClose(false);
+                    }}
+                  >
+                    Confirm close
+                  </button>
+                </span>
+              )}
 
-          {/* Merge trigger + disabled-reason. The button always renders for an open non-draft PR;
+              {/* Merge trigger + disabled-reason. The button always renders for an open non-draft PR;
               gating only toggles `disabled` + the reason node, so the affordance is discoverable
               and the reason explains why it can't fire yet. */}
-          {showMerge && !confirmingMerge && (
-            <div className={styles.mergeWrap}>
-              <button
-                ref={mergeBtnRef}
-                className={`btn ${styles.merge}`}
-                disabled={siblingsDisabled || !mergeEnabled}
-                aria-describedby={!mergeEnabled ? 'merge-reason' : undefined}
-                onClick={() => setConfirmingMerge(true)}
-              >
-                <PrStateGlyph state="merged" />
-                Merge
-              </button>
-              {!mergeEnabled &&
-                (readiness === 'none' ? (
-                  <>
-                    {/* Calculating: a visible label + a Refresh that forces a cache-bypassing backend
-                        re-read (#566 B-fix). The durable auto-resolve is tracked in #655; this is the
-                        manual override. The describedby sentence doubles as the §4a-t3 focus target. */}
-                    <span
-                      id="merge-reason"
-                      ref={mergeReasonRef}
-                      tabIndex={-1}
-                      className={styles.mergeReason}
-                    >
-                      {mergeReason}
-                    </span>
-                    <button
-                      type="button"
-                      className={styles.refreshLink}
-                      disabled={refreshing}
-                      onClick={() => {
-                        refreshArmedRef.current = true;
-                        setRefreshing(true);
-                        // Force-fresh (POST /…/refresh → RefreshAsync), NOT the cache-first reload():
-                        // a snapshot cached as None during GitHub's lazy-mergeability window can only
-                        // change via a cache-bypassing re-read. reload() then pulls the refreshed snapshot.
-                        refreshPrDetail(prRef)
-                          .catch(() => {})
-                          .finally(() => {
-                            setRefreshing(false);
-                            reload();
-                          });
-                      }}
-                    >
-                      {refreshing ? 'Refreshing…' : 'Refresh'}
-                    </button>
-                  </>
-                ) : (
-                  <>
-                    {/* Badge readiness (conflicts / review-required / behind-base / blocked / changes):
-                        the reason is the hover/focus popover on this ReadinessBadge (the same component
-                        the PR-detail header uses) — NOT an inline sentence that displaced the Merge
-                        button out of the row (#566 C-fix). The sr-only span keeps the button's
-                        aria-describedby and the §4a-t3 focus target. */}
-                    <ReadinessBadge readiness={readiness} variant="compact" id={readinessId} />
-                    <span id="merge-reason" ref={mergeReasonRef} tabIndex={-1} className="sr-only">
-                      {mergeReason}
-                    </span>
-                  </>
-                ))}
-            </div>
+              {showMerge && (
+                <div className={styles.mergeWrap}>
+                  <button
+                    ref={mergeBtnRef}
+                    className={`btn ${styles.merge}`}
+                    disabled={siblingsDisabled || !mergeEnabled}
+                    aria-describedby={!mergeEnabled ? 'merge-reason' : undefined}
+                    onClick={() => setConfirmingMerge(true)}
+                  >
+                    <PrStateGlyph state="merged" />
+                    Merge
+                  </button>
+                  {!mergeEnabled && (
+                    <>
+                      {/* Badge readiness (conflicts / review-required / behind-base / blocked / changes):
+                      the reason is the hover/focus popover on this ReadinessBadge — the same component
+                      the PR-detail header uses — NOT an inline sentence that displaced the Merge button
+                      out of the row (#566 C-fix). For `none` (mergeability still calculating) there is
+                      no badge; the reason shows as a visible sentence plus a Refresh that forces a
+                      cache-bypassing backend re-read (#566 B-fix; durable auto-resolve tracked in #655).
+                      The #merge-reason span is always present — it backs the button's aria-describedby
+                      and the §4a-t3 focus target — and only its className differs (visible vs sr-only). */}
+                      {readiness !== 'none' && (
+                        <ReadinessBadge readiness={readiness} variant="compact" id={readinessId} />
+                      )}
+                      <span
+                        id="merge-reason"
+                        ref={mergeReasonRef}
+                        tabIndex={-1}
+                        className={readiness === 'none' ? styles.mergeReason : 'sr-only'}
+                      >
+                        {mergeReason}
+                      </span>
+                      {readiness === 'none' && (
+                        <button
+                          type="button"
+                          className={styles.refreshLink}
+                          disabled={refreshing}
+                          onClick={() => {
+                            refreshArmedRef.current = true;
+                            setRefreshing(true);
+                            // Force-fresh (POST /…/refresh → RefreshAsync), NOT the cache-first reload():
+                            // a snapshot cached as None during GitHub's lazy-mergeability window can only
+                            // change via a cache-bypassing re-read. reload() then pulls the fresh snapshot.
+                            refreshPrDetail(prRef)
+                              .catch(() => {})
+                              .finally(() => {
+                                setRefreshing(false);
+                                reload();
+                              });
+                          }}
+                        >
+                          {refreshing ? 'Refreshing…' : 'Refresh'}
+                        </button>
+                      )}
+                    </>
+                  )}
+                </div>
+              )}
+            </>
           )}
 
           {showMerge && confirmingMerge && (
@@ -429,10 +434,11 @@ export function PrActionsPanel() {
               )}
               <button
                 ref={confirmMergeBtnRef}
-                // E4: the merge hue (--merged-fg), not danger red — merging is not destructive.
-                // E3: fixed min-width so the label swap (commit/squash/rebase, then Merging…/Checking…)
-                // doesn't reflow the morph. Soft-fill (not solid) because --merged-fg is theme-asymmetric.
-                className={`btn ${styles.confirmMerge}`}
+                // Solid merge-purple CTA (the global .btn-merged variant: --merged fill + near-white
+                // ink), not danger red — merging is not destructive. .confirmMerge adds only the fixed
+                // min-width (E3) so the label swap (commit/squash/rebase, then Merging…/Checking…)
+                // never reflows the morph.
+                className={`btn btn-merged ${styles.confirmMerge}`}
                 disabled={busy}
                 aria-describedby={readiness === 'unstable' ? 'merge-unstable-note' : undefined}
                 // Does NOT collapse the morph: it stays mounted through the in-flight + reconcile
