@@ -43,7 +43,9 @@ public sealed partial class GitHubReviewService : IPrDiscovery, IPrReader
 
     internal const string PrDetailGraphQLQuery = "query($owner:String!,$repo:String!,$number:Int!){" +
         "viewer{login} " +
-        "repository(owner:$owner,name:$repo){pullRequest(number:$number){" +
+        "repository(owner:$owner,name:$repo){" +
+        "mergeCommitAllowed squashMergeAllowed rebaseMergeAllowed " +
+        "pullRequest(number:$number){" +
         "title body url state isDraft mergeable mergeStateStatus reviewDecision updatedAt " +
         "headRefName baseRefName headRefOid baseRefOid " +
         "author{login avatarUrl} createdAt closedAt mergedAt changedFiles " +
@@ -144,6 +146,21 @@ public sealed partial class GitHubReviewService : IPrDiscovery, IPrReader
         var viewerLogin = (TryGetPath(doc.RootElement, out var viewerLoginEl, "data", "viewer", "login")
             && viewerLoginEl.ValueKind == JsonValueKind.String) ? viewerLoginEl.GetString() : null;
         var viewerReview = GitHubPrParser.ParseViewerReview(pull, viewerLogin);
+
+        // Repo-allowed merge methods are on data.repository (sibling of pullRequest), not reachable
+        // from `pull`. Resolve from the root like viewer.login; absent fields default all-true
+        // so a parse miss degrades to "offer all, let GitHub 405" rather than suppressing options.
+        static bool Flag(JsonElement root, string field) =>
+            TryGetPath(root, out var el, "data", "repository", field)
+            && el.ValueKind == JsonValueKind.True;
+        var hasAny = TryGetPath(doc.RootElement, out _, "data", "repository", "mergeCommitAllowed");
+        var allowed = hasAny
+            ? new AllowedMergeMethods(
+                Flag(doc.RootElement, "mergeCommitAllowed"),
+                Flag(doc.RootElement, "squashMergeAllowed"),
+                Flag(doc.RootElement, "rebaseMergeAllowed"))
+            : new AllowedMergeMethods(true, true, true);
+        pr = pr with { AllowedMergeMethods = allowed };
 
         // Clustering is performed by PrDetailLoader (Task 4); IPrReader returns the
         // GitHub-side facts only and the loader overwrites these fields. Default to

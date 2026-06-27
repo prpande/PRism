@@ -14,7 +14,9 @@ public class GraphQlByteIdentityTests
     private const string ExpectedPrDetail =
         "query($owner:String!,$repo:String!,$number:Int!){" +
         "viewer{login} " +
-        "repository(owner:$owner,name:$repo){pullRequest(number:$number){" +
+        "repository(owner:$owner,name:$repo){" +
+        "mergeCommitAllowed squashMergeAllowed rebaseMergeAllowed " +
+        "pullRequest(number:$number){" +
         "title body url state isDraft mergeable mergeStateStatus reviewDecision updatedAt " +
         "headRefName baseRefName headRefOid baseRefOid " +
         "author{login avatarUrl} createdAt closedAt mergedAt changedFiles " +

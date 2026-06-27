@@ -640,6 +640,55 @@ public class GitHubReviewServicePrDetailTests
         dto!.Pr.IsDraft.Should().BeFalse();
     }
 
+    // Body where data.repository carries the three allowed-method flags; pullRequest is minimal.
+    private const string PrDetailWithMergeFlagsBody = """
+    {
+      "data": {
+        "repository": {
+          "mergeCommitAllowed": false,
+          "squashMergeAllowed": true,
+          "rebaseMergeAllowed": false,
+          "pullRequest": {
+            "title": "t", "body": "", "url": "https://github.com/o/r/pull/1",
+            "state": "OPEN", "isDraft": false,
+            "mergeable": "MERGEABLE", "mergeStateStatus": "CLEAN",
+            "headRefName": "h", "baseRefName": "main",
+            "headRefOid": "h", "baseRefOid": "b",
+            "author": { "login": "a" },
+            "createdAt": "2026-01-01T00:00:00Z",
+            "closedAt": null, "mergedAt": null, "changedFiles": 0,
+            "comments": { "pageInfo": { "hasNextPage": false, "endCursor": null }, "nodes": [] },
+            "reviewThreads": { "pageInfo": { "hasNextPage": false, "endCursor": null }, "nodes": [] },
+            "timelineItems": { "pageInfo": { "hasNextPage": false, "endCursor": null }, "nodes": [] }
+          }
+        }
+      }
+    }
+    """;
+
+    [Fact]
+    public async Task GetPrDetailAsync_parses_allowed_merge_methods_from_repository()
+    {
+        // mergeCommitAllowed=false, squashMergeAllowed=true, rebaseMergeAllowed=false on repository.
+        var handler = new GraphQLPlusRestHandler { GraphQLBody = PrDetailWithMergeFlagsBody };
+
+        var dto = await NewService(handler).GetPrDetailAsync(new PrReference("o", "r", 1), CancellationToken.None);
+
+        dto!.Pr.AllowedMergeMethods.Should().Be(new AllowedMergeMethods(false, true, false));
+    }
+
+    [Fact]
+    public async Task GetPrDetailAsync_defaults_allowed_methods_to_all_when_absent()
+    {
+        // PrDetailGraphQLBody has no mergeCommitAllowed/squashMergeAllowed/rebaseMergeAllowed fields —
+        // absent repo-level fields must default all-true (offer all, let GitHub 405 if disallowed).
+        var handler = new GraphQLPlusRestHandler { GraphQLBody = PrDetailGraphQLBody };
+
+        var dto = await NewService(handler).GetPrDetailAsync(new PrReference("o", "r", 42), CancellationToken.None);
+
+        dto!.Pr.AllowedMergeMethods.Should().Be(new AllowedMergeMethods(true, true, true));
+    }
+
     [Fact]
     public async Task GetPrDetailAsync_derives_merge_readiness_counts_and_updatedAt()
     {
