@@ -184,8 +184,12 @@ export function usePrAction({ prRef, reload, prState }: UsePrActionArgs): UsePrA
     (payload?: MergePayload) => {
       if (!payload) return;
       // Stale-sha gate: after a 409, refuse to re-merge the same headSha until a reload changed it.
+      // The head hasn't advanced yet (not a failed refresh), so say exactly that.
       if (staleHeadShaRef.current && staleHeadShaRef.current === payload.headSha) {
-        show({ kind: 'error', message: 'Could not refresh the PR — try again.' });
+        show({
+          kind: 'error',
+          message: 'The PR hasn’t updated to a new commit yet — try again in a moment.',
+        });
         return;
       }
       inFlight.current = true;

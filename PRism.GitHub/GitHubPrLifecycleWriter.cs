@@ -65,9 +65,12 @@ internal sealed partial class GitHubPrLifecycleWriter : IPrLifecycleWriter
 
     private static string WireMethod(MergeMethod m) => m switch
     {
+        MergeMethod.Merge => "merge",
         MergeMethod.Squash => "squash",
         MergeMethod.Rebase => "rebase",
-        _ => "merge",
+        // Exhaustive on purpose: a new MergeMethod must declare its wire token rather than silently
+        // defaulting to a merge-commit (which would mis-merge without any signal).
+        _ => throw new ArgumentOutOfRangeException(nameof(m), m, "Unhandled merge method"),
     };
 
     private static PrLifecycleErrorCode ClassifyMergeFailure(HttpStatusCode status, string body)

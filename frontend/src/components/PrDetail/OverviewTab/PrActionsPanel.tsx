@@ -70,6 +70,10 @@ export function PrActionsPanel() {
   // Stable id for the disabled-reason ReadinessBadge popover (same component the PR-detail header
   // uses); scoped to this PR so the tooltip-singleton coordinates with the header badge.
   const readinessId = `merge-readiness-${prRef.owner}-${prRef.repo}-${prRef.number}`;
+  // Scoped per PR ref (like readinessId): under keep-alive multi-tab two PrDetailView instances can
+  // be mounted at once, so a bare id="merge-reason" would collide. Backs the Merge button's
+  // aria-describedby and the §4a-t3 focus target.
+  const mergeReasonId = `merge-reason-${prRef.owner}-${prRef.repo}-${prRef.number}`;
 
   // Action-set visibility — computed BEFORE the suppression early-return so the focus-swap effect
   // (a hook) is unconditional (rules-of-hooks). `!!pr &&` guards the cold-load window.
@@ -330,7 +334,7 @@ export function PrActionsPanel() {
                     ref={mergeBtnRef}
                     className={`btn ${styles.merge}`}
                     disabled={siblingsDisabled || !mergeEnabled}
-                    aria-describedby={!mergeEnabled ? 'merge-reason' : undefined}
+                    aria-describedby={!mergeEnabled ? mergeReasonId : undefined}
                     onClick={() => setConfirmingMerge(true)}
                   >
                     <PrStateGlyph state="merged" />
@@ -350,7 +354,7 @@ export function PrActionsPanel() {
                         <ReadinessBadge readiness={readiness} variant="compact" id={readinessId} />
                       )}
                       <span
-                        id="merge-reason"
+                        id={mergeReasonId}
                         ref={mergeReasonRef}
                         tabIndex={-1}
                         className={readiness === 'none' ? styles.mergeReason : 'sr-only'}

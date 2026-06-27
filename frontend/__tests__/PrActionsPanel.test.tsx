@@ -268,7 +268,7 @@ describe('PrActionsPanel', () => {
     // The readiness badge trigger is present beside the Merge button (its hover popover is the reason).
     expect(screen.getByRole('button', { name: /merge readiness: conflicts/i })).toBeInTheDocument();
     // The describedby sentence is kept for AT but is visually hidden (no layout displacement).
-    expect(document.getElementById('merge-reason')).toHaveClass('sr-only');
+    expect(document.querySelector('[id^="merge-reason"]')).toHaveClass('sr-only');
   });
 
   // B-fix (#566 live-validation): the in-panel Refresh must force a cache-bypassing backend re-read
@@ -521,7 +521,7 @@ describe('PrActionsPanel', () => {
       document.activeElement as HTMLElement,
     );
     // Specifically the #merge-reason span, not the disabled Merge button.
-    expect(document.getElementById('merge-reason')).toHaveFocus();
+    expect(document.querySelector('[id^="merge-reason"]')).toHaveFocus();
   });
 
   // FIX 2: sr-only merge-confirm prompt

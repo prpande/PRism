@@ -200,6 +200,9 @@ public class PrLifecycleEndpointsTests
     [Theory]
     [InlineData(PrLifecycleErrorCode.MergeNotMergeable, HttpStatusCode.UnprocessableEntity, "merge-not-mergeable")]
     [InlineData(PrLifecycleErrorCode.MergeHeadChanged, HttpStatusCode.Conflict, "merge-head-changed")]
+    [InlineData(PrLifecycleErrorCode.RateLimited, HttpStatusCode.TooManyRequests, "rate-limited")]
+    [InlineData(PrLifecycleErrorCode.TokenCannotWrite, HttpStatusCode.Forbidden, "token-cannot-write")]
+    [InlineData(PrLifecycleErrorCode.RepoRuleBlocked, HttpStatusCode.Forbidden, "repo-rule-blocked")]
     public async Task Merge_error_maps_to_status_and_code(PrLifecycleErrorCode err, HttpStatusCode status, string code)
     {
         using var ctx = PrLifecycleEndpointsTestContext.Create();
