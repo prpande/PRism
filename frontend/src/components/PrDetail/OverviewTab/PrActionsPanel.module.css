@@ -112,19 +112,22 @@
   text-align: right;
 }
 
-/* In-line "Refresh" affordance in the calculating-state reason — a text button, not a chrome
-   button, so it reads as a link inside the sentence (codebase links use --accent). */
+/* In-line "Refresh" affordance in the calculating-state reason — a text button, not a chrome button,
+   so it reads as a link inside the sentence. Uses --accent-hover (the darker accent) at REST, not
+   --accent: the panel sits on --surface-0, where --accent is only 4.31:1 — an axe AA failure (the
+   light-theme PR-overview a11y audit). --accent-hover clears AA on --surface-0 in both themes
+   (5.5:1 light / 9.5:1 dark). Hover drops the underline as the affordance cue (no darker token). */
 .refreshLink {
   background: none;
   border: none;
   padding: 0;
   font: inherit;
-  color: var(--accent);
+  color: var(--accent-hover);
   text-decoration: underline;
   cursor: pointer;
 }
 .refreshLink:hover:not(:disabled) {
-  color: var(--accent-hover);
+  text-decoration: none;
 }
 
 /* Merge-method radiogroup: a compact segmented control of method options. */
