@@ -201,4 +201,100 @@ public class GitHubPrLifecycleWriterTests
         log.Entries.Should().ContainSingle()
             .Which.Message.Should().Contain("Resource not accessible"); // the raw GitHub body reaches the LOG, not the DTO
     }
+
+    // ---- MergeAsync tests ----
+
+    [Fact]
+    public async Task MergeAsync_issues_PUT_merge_with_method_and_sha()
+    {
+        var handler = new StubHandler(Resp(HttpStatusCode.OK, "{\"merged\":true}"));
+        var writer = MakeWriter(handler);
+
+        var result = await writer.MergeAsync(Pr, MergeMethod.Squash, "abc123", CancellationToken.None);
+
+        result.Success.Should().BeTrue();
+        handler.Requests.Should().ContainSingle();
+        handler.Requests[0].Method.Should().Be(HttpMethod.Put);
+        handler.Requests[0].Url.Should().EndWith("/repos/o/r/pulls/1/merge");
+        handler.Requests[0].Body.Should().Contain("\"merge_method\":\"squash\"");
+        handler.Requests[0].Body.Should().Contain("\"sha\":\"abc123\"");
+    }
+
+    [Fact]
+    public async Task MergeAsync_omits_sha_when_headSha_null()
+    {
+        var handler = new StubHandler(Resp(HttpStatusCode.OK, "{\"merged\":true}"));
+        await MakeWriter(handler).MergeAsync(Pr, MergeMethod.Merge, null, CancellationToken.None);
+        handler.Requests[0].Body.Should().NotContain("sha");
+        handler.Requests[0].Body.Should().Contain("\"merge_method\":\"merge\"");
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.MethodNotAllowed, "{\"message\":\"Pull Request is not mergeable\"}", PrLifecycleErrorCode.MergeNotMergeable)]
+    [InlineData(HttpStatusCode.Conflict, "{\"message\":\"Head branch was modified. Review and try the merge again.\"}", PrLifecycleErrorCode.MergeHeadChanged)]
+    [InlineData(HttpStatusCode.UnprocessableEntity, "{\"message\":\"Required status check failed\"}", PrLifecycleErrorCode.MergeNotMergeable)]
+    [InlineData(HttpStatusCode.TooManyRequests, "{}", PrLifecycleErrorCode.RateLimited)]
+    public async Task MergeAsync_classifies_failures(HttpStatusCode status, string body, PrLifecycleErrorCode expected)
+    {
+        var handler = new StubHandler(Resp(status, body));
+        var result = await MakeWriter(handler).MergeAsync(Pr, MergeMethod.Merge, "sha", CancellationToken.None);
+        result.ErrorCode.Should().Be(expected);
+    }
+
+    [Fact]
+    public async Task MergeAsync_403_protected_branch_maps_to_RepoRuleBlocked()
+    {
+        var handler = new StubHandler(Resp(HttpStatusCode.Forbidden, "{\"message\":\"Protected branch update failed\"}"));
+        var result = await MakeWriter(handler).MergeAsync(Pr, MergeMethod.Merge, "sha", CancellationToken.None);
+        result.ErrorCode.Should().Be(PrLifecycleErrorCode.RepoRuleBlocked);
+    }
+
+    [Fact]
+    public async Task MergeAsync_403_default_maps_to_TokenCannotWrite()
+    {
+        var handler = new StubHandler(Resp(HttpStatusCode.Forbidden, "{\"message\":\"Resource not accessible by personal access token\"}"));
+        var result = await MakeWriter(handler).MergeAsync(Pr, MergeMethod.Merge, "sha", CancellationToken.None);
+        result.ErrorCode.Should().Be(PrLifecycleErrorCode.TokenCannotWrite);
+    }
+
+    // Mirrors CloseAsync_403_primary_rate_limit_maps_to_RateLimited:
+    // a 403 whose body contains "rate limit" or "abuse" must map to RateLimited, not TokenCannotWrite.
+    [Theory]
+    [InlineData("{\"message\":\"API rate limit exceeded for user ID 1.\"}")]
+    [InlineData("{\"message\":\"You have triggered an abuse detection mechanism.\"}")]
+    public async Task MergeAsync_403_rate_limit_or_abuse_maps_to_RateLimited(string body)
+    {
+        var handler = new StubHandler(Resp(HttpStatusCode.Forbidden, body));
+        var result = await MakeWriter(handler).MergeAsync(Pr, MergeMethod.Merge, "sha", CancellationToken.None);
+        result.ErrorCode.Should().Be(PrLifecycleErrorCode.RateLimited);
+    }
+
+    // Mirrors A_classified_failure_logs_the_github_body_server_side but for MergeAsync:
+    // proves the raw GitHub body is emitted to the server-side log, not exposed via the DTO.
+    [Fact]
+    public async Task MergeAsync_classified_failure_logs_the_github_body_server_side()
+    {
+        var handler = new StubHandler(Resp(HttpStatusCode.Forbidden,
+            "{\"message\":\"Resource not accessible by personal access token\"}"));
+        var log = new CapturingLogger<GitHubPrLifecycleWriter>();
+        var writer = new GitHubPrLifecycleWriter(
+            FactoryFor(handler), () => Task.FromResult<string?>("ghp_token"), "https://api.github.com", log);
+
+        var result = await writer.MergeAsync(Pr, MergeMethod.Merge, "sha", CancellationToken.None);
+
+        result.ErrorCode.Should().Be(PrLifecycleErrorCode.TokenCannotWrite);
+        log.Entries.Should().ContainSingle()
+            .Which.Message.Should().Contain("Resource not accessible"); // raw GitHub body reaches the LOG, not the DTO
+    }
+
+    // Mirrors MergeAsync_omits_sha_when_headSha_null:
+    // implementation uses string.IsNullOrEmpty, so "" is also omitted from the PUT body.
+    [Fact]
+    public async Task MergeAsync_omits_sha_when_headSha_empty()
+    {
+        var handler = new StubHandler(Resp(HttpStatusCode.OK, "{\"merged\":true}"));
+        await MakeWriter(handler).MergeAsync(Pr, MergeMethod.Merge, "", CancellationToken.None);
+        handler.Requests[0].Body.Should().NotContain("sha");
+        handler.Requests[0].Body.Should().Contain("\"merge_method\":\"merge\"");
+    }
 }

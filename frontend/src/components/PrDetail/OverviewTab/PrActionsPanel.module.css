@@ -81,3 +81,123 @@
   background: var(--danger-soft);
   border-color: var(--danger);
 }
+
+/* Merge trigger — same "shows its colour" mechanic as the other action buttons. The target-state
+   hue is the `merged` glyph tone (--merged-fg). There's no --merged-soft token, so the soft hover
+   tint is mixed from --merged-fg into the rest surface (theme-aware: both inputs flip per theme),
+   mirroring how the readiness "soft" tokens are derived. Visual sign-off (both themes) = Task 10 B1. */
+.merge {
+  background: var(--surface-1);
+  border-color: var(--border-2);
+  color: var(--merged-fg);
+}
+.merge:hover:not(:disabled) {
+  background: color-mix(in oklch, var(--merged-fg) 12%, var(--surface-1));
+  border-color: var(--merged-fg);
+}
+
+/* The Merge button sits in a horizontal row with its disabled affordance (a ReadinessBadge popover
+   for badge states, or the calculating label + Refresh for `none`) so the button stays vertically
+   aligned with the other action buttons — the reason no longer stacks below and displaces it (#566). */
+.mergeWrap {
+  display: inline-flex;
+  flex-direction: row;
+  align-items: center;
+  gap: var(--s-2);
+}
+
+.mergeReason {
+  font-size: var(--text-xs);
+  color: var(--text-2);
+  text-align: right;
+}
+
+/* In-line "Refresh" affordance in the calculating-state reason — a text button, not a chrome button,
+   so it reads as a link inside the sentence. Uses --accent-hover (the darker accent) at REST, not
+   --accent: the panel sits on --surface-0, where --accent is only 4.31:1 — an axe AA failure (the
+   light-theme PR-overview a11y audit). --accent-hover clears AA on --surface-0 in both themes
+   (5.5:1 light / 9.5:1 dark). Hover drops the underline as the affordance cue (no darker token). */
+.refreshLink {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  color: var(--accent-hover);
+  text-decoration: underline;
+  cursor: pointer;
+}
+.refreshLink:hover:not(:disabled) {
+  text-decoration: none;
+}
+
+/* Merge-method radiogroup: a compact segmented control of method options. */
+.methodPicker {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-1);
+}
+.methodOption {
+  padding: var(--s-1) var(--s-2);
+  font-size: var(--text-sm);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-1);
+  background: var(--surface-1);
+  color: var(--text-1);
+  cursor: pointer;
+}
+.methodOption:hover:not(:disabled) {
+  border-color: var(--merged-fg);
+}
+.methodOptionSelected {
+  background: color-mix(in oklch, var(--merged-fg) 12%, var(--surface-1));
+  border-color: var(--merged-fg);
+  color: var(--merged-fg);
+  font-weight: 600;
+}
+
+/* The "non-required checks failing" caveat shown beside the Confirm button in the unstable state. */
+.unstableNote {
+  font-size: var(--text-xs);
+  color: var(--warning-fg);
+}
+
+/* E2 — Back control out of the merge flow: a compact icon button, ghost-styled so it reads as
+   navigation, not a competing action. */
+.backBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-2);
+  background: var(--surface-1);
+  color: var(--text-2);
+  cursor: pointer;
+  /* No transition — snap on hover, matching the adjacent method-picker buttons (which have no
+     transition) and the app's .btn-icon convention. An 80ms fade here (the earlier F2 attempt) read
+     as "sluggish/lingering" precisely because the buttons it sits among snap instantly (F2 round-2). */
+}
+.backBtn:hover:not(:disabled) {
+  /* Light icon-button hover (mirrors .btn-icon): surface fill + ink only. The border is held at
+     --border-2 — the earlier jump to --border-strong made the hover sit heavy. */
+  background: var(--surface-3);
+  color: var(--text-1);
+}
+.backBtn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* The solid merge-purple fill + near-white ink + brightness-dim hover come from the global
+   `.btn-merged` variant (see tokens.css, beside .btn-danger/.btn-success) — compose it. This class
+   only adds the morph-specific overrides:
+   E3 — min-width fits the longest label ("Confirm squash merge") so swapping method labels, and the
+   in-flight Merging…/Checking… labels, never reflow the morph. The matching --merged border keeps the
+   button's edge crisp on the panel surface. */
+.confirmMerge {
+  min-width: 20ch;
+  font-weight: 600;
+  border-color: var(--merged);
+}

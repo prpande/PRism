@@ -43,6 +43,54 @@ internal sealed partial class GitHubPrLifecycleWriter : IPrLifecycleWriter
     public Task<PrLifecycleResult> ConvertToDraftAsync(PrReference reference, CancellationToken ct) =>
         RunDraftMutationAsync(reference, "convertPullRequestToDraft", ct);
 
+    public async Task<PrLifecycleResult> MergeAsync(
+        PrReference reference, MergeMethod method, string? expectedHeadSha, CancellationToken ct)
+    {
+        var url = $"repos/{reference.Owner}/{reference.Repo}/pulls/{reference.Number}/merge";
+        // Structured serialization (no commit_title/commit_message → GitHub default). sha omitted when null.
+        object payload = string.IsNullOrEmpty(expectedHeadSha)
+            ? new { merge_method = WireMethod(method) }
+            : new { merge_method = WireMethod(method), sha = expectedHeadSha };
+        using var content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
+        using var http = _httpFactory.CreateClient("github");
+        var token = await _readToken().ConfigureAwait(false);
+        using var resp = await GitHubHttp.SendAsync(http, HttpMethod.Put, url, token, ct, content).ConfigureAwait(false);
+        if (resp.IsSuccessStatusCode) return PrLifecycleResult.Ok;
+
+        var body = await GitHubHttp.ReadErrorBodyBestEffortAsync(resp, ct).ConfigureAwait(false);
+        var code = ClassifyMergeFailure(resp.StatusCode, body);
+        Log.LifecycleFailed(_log, $"{reference.Owner}/{reference.Repo}#{reference.Number}", "merge", (int)resp.StatusCode, GitHubHttp.Truncate(body, 1024));
+        return PrLifecycleResult.Fail(code);
+    }
+
+    private static string WireMethod(MergeMethod m) => m switch
+    {
+        MergeMethod.Merge => "merge",
+        MergeMethod.Squash => "squash",
+        MergeMethod.Rebase => "rebase",
+        // Exhaustive on purpose: a new MergeMethod must declare its wire token rather than silently
+        // defaulting to a merge-commit (which would mis-merge without any signal).
+        _ => throw new ArgumentOutOfRangeException(nameof(m), m, "Unhandled merge method"),
+    };
+
+    private static PrLifecycleErrorCode ClassifyMergeFailure(HttpStatusCode status, string body)
+    {
+        if (status == HttpStatusCode.TooManyRequests) return PrLifecycleErrorCode.RateLimited;
+        if (status == HttpStatusCode.MethodNotAllowed) return PrLifecycleErrorCode.MergeNotMergeable; // 405
+        if (status == HttpStatusCode.Conflict) return PrLifecycleErrorCode.MergeHeadChanged;          // 409
+        if (status == HttpStatusCode.UnprocessableEntity) return PrLifecycleErrorCode.MergeNotMergeable; // 422 required checks/validation
+        if (status == HttpStatusCode.Forbidden)
+        {
+            if (body.Contains("rate limit", StringComparison.OrdinalIgnoreCase)
+                || body.Contains("abuse", StringComparison.OrdinalIgnoreCase))
+                return PrLifecycleErrorCode.RateLimited;
+            if (body.Contains("Protected branch", StringComparison.OrdinalIgnoreCase))
+                return PrLifecycleErrorCode.RepoRuleBlocked;
+            return PrLifecycleErrorCode.TokenCannotWrite;
+        }
+        return PrLifecycleErrorCode.Generic;
+    }
+
     // ---- REST close/reopen ----
     private async Task<PrLifecycleResult> PatchStateAsync(PrReference reference, string state, CancellationToken ct)
     {

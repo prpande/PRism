@@ -5,14 +5,17 @@ import { renderHook, act, waitFor } from '@testing-library/react';
 const closePr = vi.fn();
 const reopenPr = vi.fn();
 const markReady = vi.fn();
+const mergePrMock = vi.fn();
 vi.mock('../api/prLifecycle', () => ({
   // The arrow wrappers defer the var reference to CALL time, so vi.mock hoisting is fine.
   closePr: (...a: unknown[]) => closePr(...a),
   reopenPr: (...a: unknown[]) => reopenPr(...a),
   markReady: (...a: unknown[]) => markReady(...a),
   convertToDraft: vi.fn(),
+  mergePr: (...a: unknown[]) => mergePrMock(...a),
 }));
 const show = vi.fn();
+const toastShow = show; // alias used by the merge tests below
 vi.mock('../components/Toast/useToast', () => ({
   useToast: () => ({ show, dismiss: vi.fn(), toasts: [] }),
 }));
@@ -20,14 +23,15 @@ vi.mock('../components/Toast/useToast', () => ({
 import { usePrAction } from './usePrAction';
 
 const prRef = { owner: 'o', repo: 'r', number: 1 };
-const OPEN = { isClosed: false, isDraft: false }; // close target NOT yet reached
-const CLOSED = { isClosed: true, isDraft: false }; // close target reached
+const OPEN = { isClosed: false, isDraft: false, isMerged: false }; // close target NOT yet reached
+const CLOSED = { isClosed: true, isDraft: false, isMerged: false }; // close target reached
 
 describe('usePrAction', () => {
   beforeEach(() => {
     closePr.mockReset();
     reopenPr.mockReset();
     markReady.mockReset();
+    mergePrMock.mockReset();
     show.mockReset();
     vi.useRealTimers();
   });
@@ -184,7 +188,7 @@ describe('usePrAction', () => {
       result.current.invoke('close');
     });
     // A comment-post reload swaps prState to a NEW open object (still not closed): fallback must STAY armed.
-    prState = { isClosed: false, isDraft: false };
+    prState = { isClosed: false, isDraft: false, isMerged: false };
     rerender();
     await act(async () => {
       await vi.advanceTimersByTimeAsync(5000);
@@ -203,7 +207,7 @@ describe('usePrAction', () => {
     });
     // A draft-status reload changes isDraft (so the effect fires), but isClosed is still false —
     // reachedTarget('close', {isClosed:false,isDraft:true}) is false → timer stays armed.
-    prState = { isClosed: false, isDraft: true };
+    prState = { isClosed: false, isDraft: true, isMerged: false };
     rerender();
     await act(async () => {
       await vi.advanceTimersByTimeAsync(5000);
@@ -251,5 +255,107 @@ describe('usePrAction', () => {
       await vi.advanceTimersByTimeAsync(5000);
     });
     expect(reload).not.toHaveBeenCalled();
+  });
+
+  it('merge: holds pending through reconcile, releases when isMerged flips', async () => {
+    vi.useFakeTimers();
+    mergePrMock.mockResolvedValue({ ok: true });
+    let state = { isClosed: false, isDraft: false, isMerged: false };
+    const reload = vi.fn();
+    const { result, rerender } = renderHook((s) => usePrAction({ prRef, reload, prState: s }), {
+      initialProps: state,
+    });
+
+    act(() => result.current.invoke('merge', { method: 'squash', headSha: 'abc' }));
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(result.current.pending).toBe('merge'); // held through reconcile
+
+    state = { ...state, isMerged: true };
+    rerender(state); // SSE reload observed isMerged
+    expect(result.current.pending).toBeNull(); // released on target
+  });
+
+  it('merge-head-changed: reloads, releases, and blocks re-merge on the same headSha', async () => {
+    mergePrMock.mockResolvedValue({ ok: false, code: 'merge-head-changed' });
+    const reload = vi.fn();
+    const { result } = renderHook(() =>
+      usePrAction({ prRef, reload, prState: { isClosed: false, isDraft: false, isMerged: false } }),
+    );
+    await act(async () => {
+      result.current.invoke('merge', { method: 'merge', headSha: 'old' });
+      await Promise.resolve();
+    });
+    expect(reload).toHaveBeenCalled();
+    expect(result.current.pending).toBeNull();
+    // re-merge with the SAME headSha is blocked (stale-sha gate)
+    await act(async () => {
+      result.current.invoke('merge', { method: 'merge', headSha: 'old' });
+      await Promise.resolve();
+    });
+    expect(mergePrMock).toHaveBeenCalledTimes(1); // second invoke short-circuited
+  });
+
+  it('merge-not-mergeable: reconciles to success when isMerged flips during checking', async () => {
+    vi.useFakeTimers();
+    mergePrMock.mockResolvedValue({ ok: false, code: 'merge-not-mergeable' });
+    let state = { isClosed: false, isDraft: false, isMerged: false };
+    const { result, rerender } = renderHook(
+      (s) => usePrAction({ prRef, reload: vi.fn(), prState: s }),
+      { initialProps: state },
+    );
+    await act(async () => {
+      result.current.invoke('merge', { method: 'merge', headSha: 'abc' });
+      await Promise.resolve();
+    });
+    expect(result.current.mergePhase).toBe('checking');
+    state = { ...state, isMerged: true };
+    rerender(state); // reload observed the merge actually landed
+    expect(result.current.pending).toBeNull(); // reconciled to success, no error toast
+    expect(toastShow).not.toHaveBeenCalledWith(expect.objectContaining({ kind: 'error' }));
+  });
+
+  it('merge: reload-silent fallback fires info snackbar after 10s when isMerged never arrives', async () => {
+    vi.useFakeTimers();
+    mergePrMock.mockResolvedValue({ ok: true });
+    const reload = vi.fn();
+    const prState = { isClosed: false, isDraft: false, isMerged: false };
+    const { result } = renderHook(() => usePrAction({ prRef, reload, prState }));
+
+    act(() => result.current.invoke('merge', { method: 'merge', headSha: 'abc' }));
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(result.current.pending).toBe('merge'); // held through reconcile (isMerged never observed)
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(10_000);
+    });
+    expect(reload).toHaveBeenCalledTimes(1);
+    expect(show).toHaveBeenCalledWith(expect.objectContaining({ kind: 'info' }));
+    expect(result.current.pending).toBeNull();
+    expect(result.current.mergePhase).toBe('idle');
+  });
+
+  it('merge: not-mergeable timeout fires error toast after 10s when the reconcile never lands', async () => {
+    vi.useFakeTimers();
+    mergePrMock.mockResolvedValue({ ok: false, code: 'merge-not-mergeable' });
+    const reload = vi.fn();
+    const prState = { isClosed: false, isDraft: false, isMerged: false };
+    const { result } = renderHook(() => usePrAction({ prRef, reload, prState }));
+
+    await act(async () => {
+      result.current.invoke('merge', { method: 'merge', headSha: 'abc' });
+      await Promise.resolve();
+    });
+    expect(result.current.mergePhase).toBe('checking'); // merge-not-mergeable sets checking phase
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(10_000);
+    });
+    expect(show).toHaveBeenCalledWith(expect.objectContaining({ kind: 'error' }));
+    expect(result.current.pending).toBeNull();
+    expect(result.current.mergePhase).toBe('idle');
   });
 });
