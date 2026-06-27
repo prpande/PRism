@@ -46,6 +46,7 @@ import { useAiFailure } from '../Ai/aiFailure';
 import { fileFocusStatusToMarkerState } from '../Ai/fileFocusMarkerState';
 import { ErrorModal } from '../ErrorModal';
 import bannerReconcileStyles from './BannerReconcile.module.css';
+import { MergedAnnouncer } from './MergedAnnouncer';
 
 // Keep-alive PR-detail view. Owns the active sub-tab as component STATE (not
 // URL routing) and renders sub-tabs DIRECTLY (not via React Router <Outlet>),
@@ -503,6 +504,14 @@ export function PrDetailView({
       <div className="sr-only" role="status" aria-live="polite" data-testid="pr-refresh-status">
         {prRefresh.announce}
       </div>
+      {/* #566 §4a — SR announcement + focus contract on merge. Lives here (not in
+          PrActionsPanel) because PrActionsPanel unmounts when isMerged becomes true.
+          On a live false→true transition: announces "Pull request merged" first
+          (polite queue), then moves focus to pageRef on the next animation frame. */}
+      <MergedAnnouncer
+        isMerged={data?.pr.isMerged ?? false}
+        onMerged={() => pageRef.current?.focus()}
+      />
       <PrHeader
         reference={prRef}
         loading={!data && isLoading}
