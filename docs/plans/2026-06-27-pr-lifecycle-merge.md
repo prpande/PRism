@@ -119,7 +119,7 @@ In the `Pr` primary constructor, append after `AwaitingReviewers`:
 
 - [ ] **Step 4: Implement `MergeAsync` on `TestPrLifecycleWriter`**
 
-In `PrLifecycleEndpointsTestContext.cs`, extend the fake to record method + sha (later tasks assert these). Replace the `Calls` list usage with a richer record:
+In `PrLifecycleEndpointsTestContext.cs`, extend the fake to record method + sha (later tasks assert these). Keep the existing `NextResult`/`Calls`/`Record` members as-is; only **add** the `LastMerge` property and the `MergeAsync` method:
 
 ```csharp
 internal sealed class TestPrLifecycleWriter : IPrLifecycleWriter
@@ -400,6 +400,13 @@ Add the route inside `MapPrLifecycleEndpoints`:
                 var tabId = http.Request.Headers[TabStamps.TabIdHeader].FirstOrDefault();
                 if (string.IsNullOrEmpty(tabId) || !PrDetailEndpoints.TabIdAllowlistRegex().IsMatch(tabId))
                     return Results.Json(new { code = "tab-id-missing" }, statusCode: StatusCodes.Status422UnprocessableEntity);
+
+                // Content-Type guard FIRST: ReadFromJsonAsync throws InvalidOperationException
+                // (NOT JsonException) on a missing/wrong Content-Type, which the catch below would
+                // miss → unhandled 500. Mirror InboxEndpoints.cs (hardened pattern) and fail closed
+                // as the same 400 "head-sha-required" a bodyless request gets.
+                if (!http.Request.HasJsonContentType())
+                    return Results.Json(new { code = "head-sha-required" }, statusCode: StatusCodes.Status400BadRequest);
 
                 MergeRequest? req;
                 try { req = await http.Request.ReadFromJsonAsync<MergeRequest>(ct).ConfigureAwait(false); }
@@ -846,7 +853,16 @@ function reachedTarget(kind: PrActionKind, s: PrLifecycleState): boolean {
   const mergeTimeoutKindRef = useRef<'reload-silent' | 'toast-not-mergeable' | null>(null);
 ```
 
-(e) in the reconcile effect, when the pending action reaches target, also reset merge state:
+(e) in the reconcile effect, **add `prState?.isMerged` to the dependency array** and, when the pending action reaches target, also reset merge state.
+
+⚠️ **The dep-array change is load-bearing, not cosmetic.** A merge flips `isMerged` false→true while `isClosed`/`isDraft` stay unchanged (verified: `GitHubPrParser.cs:137` — "IsClosed means closed *without* merging — a separate state from merged"). The existing reconcile effect's deps are `[prState?.isClosed, prState?.isDraft, clearTimer]`; if `isMerged` is not added, an `isMerged`-only SSE update does NOT re-run the effect, so `pending='merge'` is never released by it — the only release left is the 10s `MERGE_RECONCILE_MS` timer, which fires the wrong "still processing" snackbar for a merge that actually landed (and, on the `merge-not-mergeable`→`checking` path, a FALSE error toast). It also fails Step 1's and Step 5's own tests (they `rerender` with `isMerged: true` and advance no timer). Make it:
+
+```ts
+  // was: }, [prState?.isClosed, prState?.isDraft, clearTimer]);
+  }, [prState?.isClosed, prState?.isDraft, prState?.isMerged, clearTimer]);
+```
+
+and inside the effect body, on reaching target:
 
 ```ts
       setPending(null);
@@ -869,9 +885,11 @@ function reachedTarget(kind: PrActionKind, s: PrLifecycleState): boolean {
         .then((r) => { /* … existing body verbatim … */ })
         .catch(() => { /* … existing … */ });
     },
-    [prRef, reload, show, clearTimer],
+    [prRef, reload, show, clearTimer, invokeMerge],
   );
 ```
+
+> `invokeMerge` is in the dep array because `invoke` now calls it; define `invokeMerge` (edit (g)) **above** `invoke` so it is in scope. `react-hooks/exhaustive-deps` would otherwise warn and fail `npm run lint`.
 
 (g) add `invokeMerge` (the merge-specific orchestration). Define it as a `useCallback` above `invoke`:
 
@@ -1243,6 +1261,8 @@ Add into the `actions` cluster (after `showClose` block). The Confirm-button lab
 
 > `PrStateGlyph state="merged"` — confirm the glyph supports a `merged` state; if not, use the nearest existing state and note a follow-up. `confirmingMerge` state + `selectedMethod` state are added in Step 4.
 
+> **Refresh-link focus (spec §4a transition 3).** The `none`-state Refresh link calls `reload()`. After the reload resolves: if `readiness` moves off `none` (the reason block unmounts, the Merge button re-evaluates to enabled/disabled), move focus to the now-mounted Merge button; if it stays `none`, the Refresh link stays mounted and focus stays on it. Implement with a ref on the Merge button (`mergeBtnRef`) and an effect that fires when `readiness` transitions away from `none` *while a Refresh-initiated reload was pending* (track with a `refreshArmedRef` set on the Refresh click, cleared after the focus move). Do not move focus on unrelated readiness changes (e.g. an SSE update the user didn't trigger).
+
 - [ ] **Step 4: Add the armed morph (test-first): picker + method-named Confirm**
 
 Failing test:
@@ -1299,7 +1319,7 @@ The armed block (rendered when `showMerge && confirmingMerge`):
                 className="btn btn-danger"
                 disabled={busy}
                 aria-describedby={readiness === 'unstable' ? 'merge-unstable-note' : undefined}
-                onClick={() => { onInvoke('merge', { method, headSha: pr!.headSha }); setConfirmingMerge(false); }}
+                onClick={() => onInvoke('merge', { method, headSha: pr!.headSha })}
               >
                 {mergePhase === 'checking' ? 'Checking…' : pending === 'merge' ? 'Merging…' : CONFIRM_LABEL[method]}
               </button>
@@ -1330,6 +1350,29 @@ Also clear an open merge-confirm when the PR leaves the mergeable set (mirror th
   }, [pr?.isClosed, pr?.isMerged, pr?.isDraft, confirmingMerge]);
 ```
 
+> **Morph lifecycle (why the Confirm `onClick` does NOT call `setConfirmingMerge(false)`):** the armed morph stays mounted through the in-flight + reconcile window so the `Merging…` / `Checking…` labels on the Confirm button actually render. It collapses by one of two paths, never by the click handler:
+> - **Success:** SSE flips `isMerged` → the effect above sets `confirmingMerge=false` (and the panel then unmounts via its `pr.isMerged` suppression guard). Releasing `pending` is handled by the Task-6 reconcile effect.
+> - **Terminal error** (`merge-head-changed`, generic): `usePrAction` releases `pending` and toasts; the morph stays armed showing `CONFIRM_LABEL[method]` again, so the user can retry (a `merge-head-changed` reload changes `headSha`, clearing the stale-sha gate). This is intended retry affordance, not a stuck state.
+>
+> If the click handler collapsed the morph immediately (as an earlier draft did), `setConfirmingMerge(false)` and the `setPending('merge')`/`setMergePhase('merging')` inside `invoke` would batch into one render where `confirmingMerge` is already `false` — the armed block unmounts before any async work and the in-flight labels never paint.
+
+> **`busy` is the existing panel-level flag** `busy = pending !== null || isLoading` (already defined in `PrActionsPanel` for the slice-1 actions). `siblingsDisabled` and the picker/Confirm `disabled={busy}` reuse it — no new variable.
+
+**Focus-on-arm (spec §4a transition 1).** When `setConfirmingMerge(true)` fires, move focus into the morph so keyboard/SR users follow the change: to the default-selected radio when the picker renders (multi-method), or to the Confirm button when it does not (single allowed method — `allowedList(allowed).length <= 1`). Implement via a layout effect keyed on `confirmingMerge`:
+
+```tsx
+  const confirmMergeBtnRef = useRef<HTMLButtonElement>(null); // on the Confirm button
+  const methodPickerRef = useRef<HTMLDivElement>(null);       // forwarded to the radiogroup root
+  useLayoutEffect(() => {
+    if (!confirmingMerge) return;
+    const multi = allowedList(allowed).length > 1;
+    if (multi) methodPickerRef.current?.querySelector<HTMLElement>('[role="radio"][tabindex="0"]')?.focus();
+    else confirmMergeBtnRef.current?.focus();
+  }, [confirmingMerge]); // eslint-disable-line react-hooks/exhaustive-deps -- arm-edge only
+```
+
+> Add `ref={confirmMergeBtnRef}` to the Confirm button and forward a `ref` to `MergeMethodPicker`'s root `div` (extend its `Props` with `ref` via `forwardRef`, or accept a `rootRef` prop). `allowedList` is already exported from `MergeMethodPicker` (Task 7).
+
 - [ ] **Step 5: Run the panel tests — verify the new ones pass**
 
 Run: `frontend/node_modules/.bin/vitest run src/components/PrDetail/OverviewTab/PrActionsPanel.test.tsx`
@@ -1354,8 +1397,9 @@ git commit -m "feat(#566): PrActionsPanel merge affordance — gating, disabled-
 ## Task 9: Merge announcement + focus contract (§4a)
 
 **Files:**
-- Modify: `frontend/src/components/PrDetail/OverviewTab/PrActionsPanel.tsx`
-- Test: `PrActionsPanel.test.tsx`
+- Modify: **the persistent PR-detail shell/container that survives the panel unmount** — the host for both the `polite` live region and the announce-then-focus effect. Identify it in Step 1 (grep `aria-live` / the `usePrDetailContext` provider under `frontend/src/components/PrDetail/`) and record the resolved path here before implementing. It is NOT `PrActionsPanel` (that unmounts on `isMerged`).
+- Modify (only if the announce setter is threaded as a prop/context value): `frontend/src/components/PrDetail/OverviewTab/PrActionsPanel.tsx`
+- Test: the test file that renders the **full PR-detail tree** (panel + persistent shell). `PrActionsPanel.test.tsx` in isolation will NOT contain the live region; either add the test to the shell/container's own test file, or have `renderPanel` wrap `PrActionsPanel` in the shell/context provider that hosts the region. Confirm which before writing Step 2's test.
 
 **Interfaces:**
 - Produces: on any observed transition to `isMerged === true`, a "Pull request merged" announcement in a `polite` live region that survives the panel unmount, followed (next frame) by a focus move to a stable landmark; the `none`-Refresh focus rule.
@@ -1434,5 +1478,7 @@ Expected: all green.
 ## Self-Review (completed during planning)
 
 - **Spec coverage:** every §1–§4a item maps to a task — backend seam (T1–T2), endpoint+validation (T3), allowed-methods data (T4), FE client+types (T5), hook reconcile (T6), picker (T7), panel gating/morph/disabled-reason (T8), announcement/focus (T9), gates (T10). Known-limitations are documentation, not tasks.
+- **§4a focus contract (all three transitions):** arm→picker/Confirm (T8 Step 4 `useLayoutEffect`), `isMerged`→title (T9 Step 3 effect), `none`-Refresh→Merge button (T8 Step 3 note). All three are now task-mapped (an earlier draft mapped only the `isMerged` transition).
+- **Deferred (plan ce-doc-review, adversarial, confidence 50):** the stale-sha gate can theoretically strand if a 409 returns with an *unchanged* head SHA (a base-side conflict reported as 409 rather than 405). Reachability is narrow — GitHub routes pure not-mergeable as 405→`MergeNotMergeable`, and a real head-move 409 changes the SHA, which clears the gate. **Disposition: deferred, not coded.** The mitigation (a manual gate-reset on re-arm, or sha-mismatch-only 409 classification) touches the hook's public surface; not worth the complexity at confidence 50. **B2 live-validation (T10 Step 5) must probe a 409 path**; if a same-SHA 409 strand is observed, file a follow-up to add the reset.
 - **Type consistency:** `MergeMethodWire` ('merge'|'squash'|'rebase') is the FE wire type; backend `MergeMethod` enum maps to the same strings via `WireMethod`/`ParseMethod`. `PrLifecycleState.isMerged`, `mergePhase`, and `invoke(kind, payload?)` are introduced in T6 and consumed in T8 with matching names. `AllowedMergeMethods` shape `{merge,squash,rebase}` is identical across `Pr.cs`, `types.ts`, and `MergeMethodPicker`.
 - **Open implementer-verify points (flagged inline, not placeholders):** `apiClient.post` body-arg signature (T5); `useToast` `info` kind (T6); `PrStateGlyph` `merged` state (T8); persistent live-region host (T9); exact byte-identity pin file + PR-detail parse-test fixture mechanism (T4). Each has a concrete fallback noted at its step.
