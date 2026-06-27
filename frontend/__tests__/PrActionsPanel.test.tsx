@@ -14,8 +14,9 @@ import { makePr, makePrDetailDto } from './helpers/prDetail';
 
 const invoke = vi.fn();
 let pending: string | null = null;
+let mergePhase: string = 'idle';
 vi.mock('../src/hooks/usePrAction', () => ({
-  usePrAction: () => ({ pending, invoke }),
+  usePrAction: () => ({ pending, mergePhase, invoke }),
 }));
 
 // Local harness (plan ce-doc-review round 2 — coherence C1/C2): renderWithPrDetailContext returns a
@@ -46,6 +47,7 @@ describe('PrActionsPanel', () => {
   beforeEach(() => {
     invoke.mockReset();
     pending = null;
+    mergePhase = 'idle';
   });
 
   function renderPanel(prOverrides: Partial<ReturnType<typeof makePr>>, ctxOverrides = {}) {
@@ -55,6 +57,11 @@ describe('PrActionsPanel', () => {
         isDraft: false,
         isClosed: false,
         isMerged: false,
+        // Slice-2 merge defaults: a generic mergeable PR. Each merge test overrides
+        // exactly the readiness / allowed-methods / headSha it asserts on.
+        mergeReadiness: 'ready',
+        allowedMergeMethods: { merge: true, squash: true, rebase: true },
+        headSha: 'headsha',
         ...prOverrides,
       }),
     });
@@ -109,7 +116,8 @@ describe('PrActionsPanel', () => {
     expect(screen.getByText(/close this pr\?/i)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /convert to draft/i })).toBeDisabled();
     await user.click(screen.getByRole('button', { name: /confirm close/i }));
-    expect(invoke).toHaveBeenCalledWith('close');
+    // onInvoke now forwards an optional merge payload; for non-merge kinds it's undefined.
+    expect(invoke).toHaveBeenCalledWith('close', undefined);
   });
 
   it('Escape cancels the Close confirm', async () => {
@@ -125,7 +133,7 @@ describe('PrActionsPanel', () => {
     const user = userEvent.setup();
     renderPanel({});
     await user.click(screen.getByRole('button', { name: /convert to draft/i }));
-    expect(invoke).toHaveBeenCalledWith('convert-to-draft');
+    expect(invoke).toHaveBeenCalledWith('convert-to-draft', undefined);
   });
 
   it('an external state change to closed clears an open Close confirm', async () => {
@@ -190,7 +198,7 @@ describe('PrActionsPanel', () => {
     renderPanel({});
     await user.click(screen.getByRole('button', { name: /^close$/i }));
     await user.click(screen.getByRole('button', { name: /confirm close/i }));
-    expect(invoke).toHaveBeenCalledWith('close');
+    expect(invoke).toHaveBeenCalledWith('close', undefined);
     expect(screen.queryByText(/close this pr\?/i)).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: /^close$/i })).toBeInTheDocument();
   });
@@ -214,5 +222,208 @@ describe('PrActionsPanel', () => {
     expect(screen.getByRole('group', { name: /pr actions/i })).toContainElement(
       document.activeElement as HTMLElement,
     );
+  });
+
+  // ── Slice 2: Merge affordance ───────────────────────────────────────────────────────────────
+
+  it('shows Merge enabled when ready (Step 1)', () => {
+    renderPanel({
+      mergeReadiness: 'ready',
+      allowedMergeMethods: { merge: true, squash: true, rebase: false },
+    });
+    expect(screen.getByRole('button', { name: /^merge$/i })).toBeEnabled();
+  });
+
+  it('disables Merge with a reason on conflicts (Step 1)', () => {
+    renderPanel({ mergeReadiness: 'conflicts' });
+    const btn = screen.getByRole('button', { name: /^merge$/i });
+    expect(btn).toBeDisabled();
+    expect(btn).toHaveAccessibleDescription(/conflict/i);
+  });
+
+  it('shows the calculating reason + Refresh link in the none state', () => {
+    renderPanel({ mergeReadiness: 'none' });
+    const btn = screen.getByRole('button', { name: /^merge$/i });
+    expect(btn).toBeDisabled();
+    expect(btn).toHaveAccessibleDescription(/still being calculated/i);
+    expect(screen.getByRole('button', { name: /refresh/i })).toBeInTheDocument();
+  });
+
+  it('arming reveals the picker and a method-named Confirm; confirm calls invoke(merge) (Step 4)', async () => {
+    const user = userEvent.setup();
+    renderPanel({
+      mergeReadiness: 'ready',
+      headSha: 'abc',
+      allowedMergeMethods: { merge: true, squash: true, rebase: false },
+    });
+    await user.click(screen.getByRole('button', { name: /^merge$/i }));
+    expect(screen.getByRole('radiogroup', { name: /merge method/i })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: /confirm merge commit/i }));
+    expect(invoke).toHaveBeenCalledWith('merge', { method: 'merge', headSha: 'abc' });
+  });
+
+  it('the Confirm click does NOT collapse the morph (in-flight labels can paint)', async () => {
+    const user = userEvent.setup();
+    renderPanel({
+      mergeReadiness: 'ready',
+      allowedMergeMethods: { merge: true, squash: true, rebase: false },
+    });
+    await user.click(screen.getByRole('button', { name: /^merge$/i }));
+    await user.click(screen.getByRole('button', { name: /confirm merge commit/i }));
+    // invoke is mocked (no state change) → the armed morph stays mounted: the picker + a Confirm
+    // button are still present. If the click had set confirmingMerge=false the morph would unmount.
+    expect(screen.getByRole('radiogroup', { name: /merge method/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /confirm merge commit/i })).toBeInTheDocument();
+  });
+
+  it('Confirm shows Merging…/Checking… from pending/mergePhase while the morph stays armed', async () => {
+    const user = userEvent.setup();
+    const ctl: { current: Ctl | null } = { current: null };
+    const ready = makePrDetailDto({
+      pr: makePr({
+        state: 'open',
+        isClosed: false,
+        isDraft: false,
+        isMerged: false,
+        mergeReadiness: 'ready',
+        allowedMergeMethods: { merge: true, squash: true, rebase: false },
+        headSha: 'abc',
+      }),
+    });
+    render(<Harness initial={{ prDetail: ready }} ctl={ctl} />);
+    await user.click(screen.getByRole('button', { name: /^merge$/i }));
+    await user.click(screen.getByRole('button', { name: /confirm merge commit/i }));
+    // The hook enters the in-flight state; the morph is still armed so the Confirm button swaps to
+    // the live label. Force a re-render (the mock reads module-level pending/mergePhase per render).
+    pending = 'merge';
+    mergePhase = 'merging';
+    act(() => ctl.current!.set({}));
+    expect(screen.getByRole('button', { name: /merging…/i })).toBeInTheDocument();
+    // checking phase (post-422 re-check) wins over the merging label.
+    mergePhase = 'checking';
+    act(() => ctl.current!.set({}));
+    expect(screen.getByRole('button', { name: /checking…/i })).toBeInTheDocument();
+  });
+
+  it('Escape cancels the merge confirm morph', async () => {
+    const user = userEvent.setup();
+    renderPanel({
+      mergeReadiness: 'ready',
+      allowedMergeMethods: { merge: true, squash: true, rebase: false },
+    });
+    await user.click(screen.getByRole('button', { name: /^merge$/i }));
+    expect(screen.getByRole('radiogroup', { name: /merge method/i })).toBeInTheDocument();
+    await user.keyboard('{Escape}');
+    expect(screen.queryByRole('radiogroup', { name: /merge method/i })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^merge$/i })).toBeInTheDocument();
+  });
+
+  it('arming a multi-method merge moves focus to the default-selected radio (§4a transition 1)', async () => {
+    const user = userEvent.setup();
+    renderPanel({
+      mergeReadiness: 'ready',
+      allowedMergeMethods: { merge: true, squash: true, rebase: false },
+    });
+    await user.click(screen.getByRole('button', { name: /^merge$/i }));
+    expect(screen.getByRole('radio', { name: /merge commit/i })).toHaveFocus();
+  });
+
+  it('arming a single-method merge moves focus to the Confirm button (§4a transition 1)', async () => {
+    const user = userEvent.setup();
+    renderPanel({
+      mergeReadiness: 'ready',
+      allowedMergeMethods: { merge: true, squash: false, rebase: false },
+    });
+    await user.click(screen.getByRole('button', { name: /^merge$/i }));
+    // single method → picker renders null, no radiogroup
+    expect(screen.queryByRole('radiogroup')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /confirm merge commit/i })).toHaveFocus();
+  });
+
+  it('links the unstable note to the Confirm button via aria-describedby', async () => {
+    const user = userEvent.setup();
+    renderPanel({
+      mergeReadiness: 'unstable',
+      allowedMergeMethods: { merge: true, squash: true, rebase: false },
+    });
+    await user.click(screen.getByRole('button', { name: /^merge$/i }));
+    expect(
+      screen.getByRole('button', { name: /confirm merge commit/i }),
+    ).toHaveAccessibleDescription(/non-required checks/i);
+  });
+
+  it('Refresh focuses the now-enabled Merge button only after a Refresh-triggered readiness change (§4a transition 3)', async () => {
+    const user = userEvent.setup();
+    const ctl: { current: Ctl | null } = { current: null };
+    const calculating = makePrDetailDto({
+      pr: makePr({
+        state: 'open',
+        isClosed: false,
+        isDraft: false,
+        isMerged: false,
+        mergeReadiness: 'none',
+        allowedMergeMethods: { merge: true, squash: true, rebase: false },
+      }),
+    });
+    render(<Harness initial={{ prDetail: calculating }} ctl={ctl} />);
+    await user.click(screen.getByRole('button', { name: /refresh/i }));
+    // reload() resolves → readiness moves off 'none'. The reason block unmounts; focus lands on
+    // the now-enabled Merge button.
+    const ready = makePrDetailDto({
+      pr: makePr({
+        state: 'open',
+        isClosed: false,
+        isDraft: false,
+        isMerged: false,
+        mergeReadiness: 'ready',
+        allowedMergeMethods: { merge: true, squash: true, rebase: false },
+      }),
+    });
+    act(() => ctl.current!.set({ prDetail: ready }));
+    expect(screen.getByRole('button', { name: /^merge$/i })).toHaveFocus();
+  });
+
+  it('does NOT steal focus on an unrelated (non-Refresh) readiness change', () => {
+    const ctl: { current: Ctl | null } = { current: null };
+    const calculating = makePrDetailDto({
+      pr: makePr({
+        state: 'open',
+        isClosed: false,
+        isDraft: false,
+        isMerged: false,
+        mergeReadiness: 'none',
+        allowedMergeMethods: { merge: true, squash: true, rebase: false },
+      }),
+    });
+    render(<Harness initial={{ prDetail: calculating }} ctl={ctl} />);
+    // No Refresh click — an SSE-driven readiness change must not move focus.
+    const ready = makePrDetailDto({
+      pr: makePr({
+        state: 'open',
+        isClosed: false,
+        isDraft: false,
+        isMerged: false,
+        mergeReadiness: 'ready',
+        allowedMergeMethods: { merge: true, squash: true, rebase: false },
+      }),
+    });
+    act(() => ctl.current!.set({ prDetail: ready }));
+    expect(screen.getByRole('button', { name: /^merge$/i })).not.toHaveFocus();
+  });
+
+  it('arming merge disables the sibling actions (siblingsDisabled)', async () => {
+    const user = userEvent.setup();
+    renderPanel({
+      mergeReadiness: 'ready',
+      allowedMergeMethods: { merge: true, squash: true, rebase: false },
+    });
+    await user.click(screen.getByRole('button', { name: /^merge$/i }));
+    expect(screen.getByRole('button', { name: /convert to draft/i })).toBeDisabled();
+    expect(screen.getByRole('button', { name: /^close$/i })).toBeDisabled();
+  });
+
+  it('does not render Merge for a draft PR', () => {
+    renderPanel({ isDraft: true, mergeReadiness: 'ready' });
+    expect(screen.queryByRole('button', { name: /^merge$/i })).not.toBeInTheDocument();
   });
 });

@@ -81,3 +81,77 @@
   background: var(--danger-soft);
   border-color: var(--danger);
 }
+
+/* Merge trigger — same "shows its colour" mechanic as the other action buttons. The target-state
+   hue is the `merged` glyph tone (--merged-fg). There's no --merged-soft token, so the soft hover
+   tint is mixed from --merged-fg into the rest surface (theme-aware: both inputs flip per theme),
+   mirroring how the readiness "soft" tokens are derived. Visual sign-off (both themes) = Task 10 B1. */
+.merge {
+  background: var(--surface-1);
+  border-color: var(--border-2);
+  color: var(--merged-fg);
+}
+.merge:hover:not(:disabled) {
+  background: color-mix(in oklch, var(--merged-fg) 12%, var(--surface-1));
+  border-color: var(--merged-fg);
+}
+
+/* The Merge button stacks above its disabled-reason line; the cluster row keeps them together. */
+.mergeWrap {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--s-1);
+}
+
+.mergeReason {
+  font-size: var(--text-xs);
+  color: var(--text-2);
+  text-align: right;
+}
+
+/* In-line "Refresh" affordance in the calculating-state reason — a text button, not a chrome
+   button, so it reads as a link inside the sentence (codebase links use --accent). */
+.refreshLink {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  color: var(--accent);
+  text-decoration: underline;
+  cursor: pointer;
+}
+.refreshLink:hover:not(:disabled) {
+  color: var(--accent-hover);
+}
+
+/* Merge-method radiogroup: a compact segmented control of method options. */
+.methodPicker {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-1);
+}
+.methodOption {
+  padding: var(--s-1) var(--s-2);
+  font-size: var(--text-sm);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-1);
+  background: var(--surface-1);
+  color: var(--text-1);
+  cursor: pointer;
+}
+.methodOption:hover:not(:disabled) {
+  border-color: var(--merged-fg);
+}
+.methodOptionSelected {
+  background: color-mix(in oklch, var(--merged-fg) 12%, var(--surface-1));
+  border-color: var(--merged-fg);
+  color: var(--merged-fg);
+  font-weight: 600;
+}
+
+/* The "non-required checks failing" caveat shown beside the Confirm button in the unstable state. */
+.unstableNote {
+  font-size: var(--text-xs);
+  color: var(--warning-fg);
+}

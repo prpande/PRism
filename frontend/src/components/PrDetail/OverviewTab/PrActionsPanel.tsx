@@ -1,8 +1,11 @@
 // frontend/src/components/PrDetail/OverviewTab/PrActionsPanel.tsx
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { usePrDetailContext } from '../prDetailContext';
 import { usePrAction, type PrActionKind } from '../../../hooks/usePrAction';
 import { PrStateGlyph } from '../../shared/prStateGlyph';
+import { MergeMethodPicker, firstAllowed, allowedList } from './MergeMethodPicker';
+import type { MergeMethodWire } from '../../../api/prLifecycle';
+import { READINESS_LONG, type MergeReadiness } from '../../shared/mergeReadiness';
 import styles from './PrActionsPanel.module.css';
 
 // In-flight announcements for the visually-hidden live region (round-2 finding D3 — AT was silent
@@ -17,19 +20,48 @@ const PENDING_ANNOUNCE: Record<PrActionKind, string> = {
   merge: 'Merging pull request…',
 };
 
+// Readiness states that permit a merge attempt (Option X). `unstable` is allowed (non-required
+// checks failing) but carries a note; everything else (conflicts, behind-base, review gates,
+// protection, none) disables the button with a reason.
+const MERGE_ENABLED: ReadonlySet<string> = new Set([
+  'ready',
+  'ready-with-changes-requested',
+  'unstable',
+]);
+
+// The Confirm button always NAMES the chosen method (single-method picker renders null, so the
+// label is the only place the method is conveyed).
+const CONFIRM_LABEL: Record<MergeMethodWire, string> = {
+  merge: 'Confirm merge commit',
+  squash: 'Confirm squash merge',
+  rebase: 'Confirm rebase merge',
+};
+
 export function PrActionsPanel() {
   const { prRef, prDetail, readOnly, reload, isLoading } = usePrDetailContext();
   const pr = prDetail?.pr;
   // Pass the OBSERVED lifecycle state (not prDetail identity) so the fallback reconciles on THIS
   // action's target, immune to unrelated reloads (round-2 finding A1).
-  const { pending, invoke } = usePrAction({
+  const { pending, mergePhase, invoke } = usePrAction({
     prRef,
     reload,
     prState: pr ? { isClosed: pr.isClosed, isDraft: pr.isDraft, isMerged: pr.isMerged } : undefined,
   });
   const [confirmingClose, setConfirmingClose] = useState(false);
+  const [confirmingMerge, setConfirmingMerge] = useState(false);
+  const [selectedMethod, setSelectedMethod] = useState<MergeMethodWire | null>(null);
   const cancelRef = useRef<HTMLButtonElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const mergeBtnRef = useRef<HTMLButtonElement | null>(null); // Refresh-link focus target (§4a t3)
+  const confirmMergeBtnRef = useRef<HTMLButtonElement | null>(null); // focus-on-arm single-method
+  const methodPickerRef = useRef<HTMLDivElement | null>(null); // forwarded to the radiogroup root
+  const refreshArmedRef = useRef(false); // set on a Refresh click; consumed by the readiness effect
+
+  // Allowed merge methods (default to all on cold-load; the picker collapses to the Confirm label
+  // when only one is allowed). Computed before the early return so the focus-on-arm effect (a hook)
+  // can read it unconditionally. `readiness` likewise drives the refresh-focus effect.
+  const allowed = pr?.allowedMergeMethods ?? { merge: true, squash: true, rebase: true };
+  const readiness = (pr?.mergeReadiness ?? 'none') as MergeReadiness;
 
   // Action-set visibility — computed BEFORE the suppression early-return so the focus-swap effect
   // (a hook) is unconditional (rules-of-hooks). `!!pr &&` guards the cold-load window.
@@ -37,12 +69,48 @@ export function PrActionsPanel() {
   const showClose = !!pr && !pr.isClosed;
   const showReady = !!pr && !pr.isClosed && pr.isDraft;
   const showConvertDraft = !!pr && !pr.isClosed && !pr.isDraft;
+  // Merge is offered only for an open, non-draft, non-closed PR (mergeability is gated separately).
+  const showMerge = !!pr && !pr.isClosed && !pr.isMerged && !pr.isDraft;
   const signature = `${showReady}|${showConvertDraft}|${showReopen}|${showClose}`;
 
   // Round-2 finding E: an external state change that alters the action set clears an open confirm.
   useEffect(() => {
     if (confirmingClose && (pr?.isClosed || pr?.isMerged)) setConfirmingClose(false);
   }, [pr?.isClosed, pr?.isMerged, confirmingClose]);
+
+  // Mirror the close-clear: collapse an open merge-confirm when the PR leaves the mergeable set
+  // (success flips isMerged → collapse before the panel unmounts; a draft/close also collapses).
+  useEffect(() => {
+    if (confirmingMerge && (pr?.isClosed || pr?.isMerged || pr?.isDraft)) setConfirmingMerge(false);
+  }, [pr?.isClosed, pr?.isMerged, pr?.isDraft, confirmingMerge]);
+
+  // Focus-on-arm (§4a transition 1): when the merge morph opens, move focus into it — to the
+  // default-selected radio when the picker renders (multi-method), or to the Confirm button when
+  // it does not (single allowed method → picker returns null). Keyed on the arm edge only.
+  useLayoutEffect(() => {
+    if (!confirmingMerge) return;
+    const multi = allowedList(allowed).length > 1;
+    if (multi) {
+      methodPickerRef.current
+        ?.querySelector<HTMLElement>('[role="radio"][tabindex="0"]')
+        ?.focus();
+    } else {
+      confirmMergeBtnRef.current?.focus();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- arm-edge only; `allowed` read live
+  }, [confirmingMerge]);
+
+  // Refresh-link focus (§4a transition 3): a `none`-state Refresh click arms refreshArmedRef and
+  // calls reload(). When the resulting readiness moves OFF `none`, the reason block unmounts and we
+  // move focus to the now-mounted Merge button. If readiness stays `none`, the Refresh link stays
+  // mounted and keeps focus. An unrelated (non-Refresh) readiness change leaves refreshArmedRef
+  // false, so it never steals focus.
+  useEffect(() => {
+    if (refreshArmedRef.current && readiness !== 'none') {
+      refreshArmedRef.current = false;
+      mergeBtnRef.current?.focus();
+    }
+  }, [readiness]);
 
   // Focus the Cancel button when the confirm morph opens (a11y).
   useEffect(() => {
@@ -84,7 +152,17 @@ export function PrActionsPanel() {
   // prevent firing a second action against a state that hasn't reconciled yet — the user must not
   // be able to click again thinking the first click "didn't take effect" (#566).
   const busy = pending !== null || isLoading;
-  const siblingsDisabled = busy || confirmingClose;
+  const siblingsDisabled = busy || confirmingClose || confirmingMerge;
+
+  // Merge gating (Option X) + disabled-reason copy. `none` has empty READINESS_LONG copy, so supply
+  // the "still calculating" string (the only state that also offers a Refresh link).
+  const mergeEnabled = showMerge && MERGE_ENABLED.has(readiness);
+  const mergeReason =
+    readiness === 'none'
+      ? 'Mergeability is still being calculated.'
+      : READINESS_LONG[readiness] || '';
+  // Persisted method choice survives an armed collapse; falls back to the first allowed method.
+  const method = selectedMethod ?? firstAllowed(allowed);
 
   // Past the suppression guard, `pr` is non-null, so exactly one of showReopen (isClosed) /
   // showClose (!isClosed) is always true — the action set is never empty here.
@@ -92,9 +170,12 @@ export function PrActionsPanel() {
   // Park focus on the container BEFORE invoking, so when the triggered button is removed by the
   // resulting set-swap (or the Confirm span unmounts) focus is already inside the panel and the
   // focus-swap effect can keep it there rather than the browser dropping it to <body>.
-  const onInvoke = (kind: PrActionKind) => {
+  const onInvoke = (
+    kind: PrActionKind,
+    payload?: { method: MergeMethodWire; headSha: string },
+  ) => {
     containerRef.current?.focus();
-    invoke(kind);
+    invoke(kind, payload);
   };
 
   return (
@@ -206,6 +287,83 @@ export function PrActionsPanel() {
                 }}
               >
                 Confirm close
+              </button>
+            </span>
+          )}
+
+          {/* Merge trigger + disabled-reason. The button always renders for an open non-draft PR;
+              gating only toggles `disabled` + the reason node, so the affordance is discoverable
+              and the reason explains why it can't fire yet. */}
+          {showMerge && !confirmingMerge && (
+            <div className={styles.mergeWrap}>
+              <button
+                ref={mergeBtnRef}
+                className={`btn ${styles.merge}`}
+                disabled={siblingsDisabled || !mergeEnabled}
+                aria-describedby={!mergeEnabled ? 'merge-reason' : undefined}
+                onClick={() => setConfirmingMerge(true)}
+              >
+                <PrStateGlyph state="merged" />
+                Merge
+              </button>
+              {!mergeEnabled && (
+                <span id="merge-reason" className={styles.mergeReason}>
+                  {mergeReason}{' '}
+                  {readiness === 'none' && (
+                    <button
+                      type="button"
+                      className={styles.refreshLink}
+                      onClick={() => {
+                        refreshArmedRef.current = true;
+                        reload();
+                      }}
+                    >
+                      Refresh
+                    </button>
+                  )}
+                </span>
+              )}
+            </div>
+          )}
+
+          {showMerge && confirmingMerge && (
+            <span
+              className={styles.confirm}
+              onKeyDown={(e) => {
+                if (e.key === 'Escape') {
+                  e.preventDefault();
+                  setConfirmingMerge(false);
+                }
+              }}
+            >
+              <MergeMethodPicker
+                allowed={allowed}
+                value={method}
+                onChange={setSelectedMethod}
+                disabled={busy}
+                onEscape={() => setConfirmingMerge(false)}
+                rootRef={methodPickerRef}
+              />
+              {readiness === 'unstable' && (
+                <span id="merge-unstable-note" className={styles.unstableNote}>
+                  Non-required checks are failing
+                </span>
+              )}
+              <button
+                ref={confirmMergeBtnRef}
+                className="btn btn-danger"
+                disabled={busy}
+                aria-describedby={readiness === 'unstable' ? 'merge-unstable-note' : undefined}
+                // Does NOT collapse the morph: it stays mounted through the in-flight + reconcile
+                // window so the Merging…/Checking… labels paint. It collapses via the
+                // leaves-mergeable-set effect (success flips isMerged) — never from this click.
+                onClick={() => onInvoke('merge', { method, headSha: pr.headSha })}
+              >
+                {mergePhase === 'checking'
+                  ? 'Checking…'
+                  : pending === 'merge'
+                    ? 'Merging…'
+                    : CONFIRM_LABEL[method]}
               </button>
             </span>
           )}
