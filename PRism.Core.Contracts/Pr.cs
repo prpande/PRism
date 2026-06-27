@@ -34,4 +34,9 @@ public sealed record Pr(
     // row); the int counts above stay as a count-only fallback when avatars/names are unavailable.
     IReadOnlyList<Reviewer>? Approvers = null,
     IReadOnlyList<Reviewer>? ChangesRequestedBy = null,
-    IReadOnlyList<Reviewer>? AwaitingReviewers = null);
+    IReadOnlyList<Reviewer>? AwaitingReviewers = null,
+    AllowedMergeMethods? AllowedMergeMethods = null);
+
+// Repo-allowed merge methods (Repository.mergeCommitAllowed/squashMergeAllowed/rebaseMergeAllowed).
+// Default all-true so a parse miss degrades to "offer all, let GitHub 405" rather than merge-only.
+public sealed record AllowedMergeMethods(bool Merge, bool Squash, bool Rebase);

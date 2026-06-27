@@ -19,6 +19,7 @@ internal sealed class TestPrLifecycleWriter : IPrLifecycleWriter
 {
     public PrLifecycleResult NextResult { get; set; } = PrLifecycleResult.Ok;
     public List<string> Calls { get; } = new();
+    public (MergeMethod Method, string? Sha)? LastMerge { get; private set; }
 
     private Task<PrLifecycleResult> Record(string verb)
     {
@@ -30,6 +31,12 @@ internal sealed class TestPrLifecycleWriter : IPrLifecycleWriter
     public Task<PrLifecycleResult> ReopenAsync(PrReference r, CancellationToken ct) => Record("reopen");
     public Task<PrLifecycleResult> MarkReadyForReviewAsync(PrReference r, CancellationToken ct) => Record("ready");
     public Task<PrLifecycleResult> ConvertToDraftAsync(PrReference r, CancellationToken ct) => Record("draft");
+
+    public Task<PrLifecycleResult> MergeAsync(PrReference r, MergeMethod method, string? expectedHeadSha, CancellationToken ct)
+    {
+        LastMerge = (method, expectedHeadSha);
+        return Record("merge");
+    }
 }
 
 // ── Mutable cache ─────────────────────────────────────────────────────────────────────────────

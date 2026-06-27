@@ -43,6 +43,9 @@ internal sealed partial class GitHubPrLifecycleWriter : IPrLifecycleWriter
     public Task<PrLifecycleResult> ConvertToDraftAsync(PrReference reference, CancellationToken ct) =>
         RunDraftMutationAsync(reference, "convertPullRequestToDraft", ct);
 
+    public Task<PrLifecycleResult> MergeAsync(PrReference reference, MergeMethod method, string? expectedHeadSha, CancellationToken ct) =>
+        throw new NotImplementedException("Task 2");
+
     // ---- REST close/reopen ----
     private async Task<PrLifecycleResult> PatchStateAsync(PrReference reference, string state, CancellationToken ct)
     {

@@ -2,6 +2,9 @@ using PRism.Core.Contracts;
 
 namespace PRism.Core;
 
+// GitHub PUT /pulls/{n}/merge merge_method values. Mapped to the wire strings at the writer.
+public enum MergeMethod { Merge, Squash, Rebase }
+
 // #566 — the GitHub PR lifecycle write surface (slice 1: the optionless state actions).
 // Kept separate from IReviewSubmitter (lifecycle actions are not reviews) so the review
 // fakes don't grow irrelevant methods. Slice 2 adds merge to this same seam; #571 mirrors
@@ -22,6 +25,12 @@ public interface IPrLifecycleWriter
     // GraphQL convertPullRequestToDraft (node-id keyed). An "already a draft" error is a benign
     // no-op (returns Ok); a plan-without-drafts failure surfaces as PlanUnsupportedDrafts.
     Task<PrLifecycleResult> ConvertToDraftAsync(PrReference reference, CancellationToken ct);
+
+    // REST PUT /repos/{o}/{r}/pulls/{n}/merge { merge_method, sha }. 405 → MergeNotMergeable
+    // (not mergeable / method disallowed), 409 → MergeHeadChanged (head moved / conflict).
+    // expectedHeadSha is the SHA the UI rendered; the endpoint guarantees it non-empty.
+    Task<PrLifecycleResult> MergeAsync(
+        PrReference reference, MergeMethod method, string? expectedHeadSha, CancellationToken ct);
 }
 
 // Why an error code (not an exception or a bare bool): the endpoint maps the cause to the right
@@ -34,6 +43,8 @@ public enum PrLifecycleErrorCode
     ReopenNotPossible,     // reopen 422 (head branch/repo deleted)
     PlanUnsupportedDrafts, // convert-to-draft on a plan without draft PRs
     RateLimited,           // secondary rate-limit / abuse — transient/retry, never token-cannot-write
+    MergeNotMergeable,     // merge 405/422 — checks/protection/method changed; can't merge now
+    MergeHeadChanged,      // merge 409 — head moved since load (stale sha) or merge conflict
     Generic,               // anything else
 }
 
