@@ -426,4 +426,53 @@ describe('PrActionsPanel', () => {
     renderPanel({ isDraft: true, mergeReadiness: 'ready' });
     expect(screen.queryByRole('button', { name: /^merge$/i })).not.toBeInTheDocument();
   });
+
+  // FIX 1: Refresh → disabled readiness must not drop focus to <body>
+  it('Refresh resolves to a disabled readiness → focus lands on reason span, not body (§4a transition 3 disabled)', async () => {
+    const user = userEvent.setup();
+    const ctl: { current: Ctl | null } = { current: null };
+    const calculating = makePrDetailDto({
+      pr: makePr({
+        state: 'open',
+        isClosed: false,
+        isDraft: false,
+        isMerged: false,
+        mergeReadiness: 'none',
+        allowedMergeMethods: { merge: true, squash: true, rebase: false },
+      }),
+    });
+    render(<Harness initial={{ prDetail: calculating }} ctl={ctl} />);
+    await user.click(screen.getByRole('button', { name: /refresh/i }));
+    // reload() resolves → readiness moves to 'conflicts' (a disabled state). Focus must NOT fall to
+    // <body> — it should land on the #merge-reason span which explains why merge is unavailable.
+    const conflicts = makePrDetailDto({
+      pr: makePr({
+        state: 'open',
+        isClosed: false,
+        isDraft: false,
+        isMerged: false,
+        mergeReadiness: 'conflicts',
+        allowedMergeMethods: { merge: true, squash: true, rebase: false },
+      }),
+    });
+    act(() => ctl.current!.set({ prDetail: conflicts }));
+    expect(document.body).not.toHaveFocus();
+    // The panel container must hold the active element (focus-stays-in-panel invariant).
+    expect(screen.getByRole('group', { name: /pr actions/i })).toContainElement(
+      document.activeElement as HTMLElement,
+    );
+    // Specifically the #merge-reason span, not the disabled Merge button.
+    expect(document.getElementById('merge-reason')).toHaveFocus();
+  });
+
+  // FIX 2: sr-only merge-confirm prompt
+  it('arming the merge morph announces a prompt in the sr-only live region', async () => {
+    const user = userEvent.setup();
+    renderPanel({
+      mergeReadiness: 'ready',
+      allowedMergeMethods: { merge: true, squash: true, rebase: false },
+    });
+    await user.click(screen.getByRole('button', { name: /^merge$/i }));
+    expect(screen.getByRole('status')).toHaveTextContent(/confirm merge\?/i);
+  });
 });

@@ -53,6 +53,7 @@ export function PrActionsPanel() {
   const cancelRef = useRef<HTMLButtonElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mergeBtnRef = useRef<HTMLButtonElement | null>(null); // Refresh-link focus target (§4a t3)
+  const mergeReasonRef = useRef<HTMLSpanElement | null>(null); // focus target when Refresh → disabled readiness
   const confirmMergeBtnRef = useRef<HTMLButtonElement | null>(null); // focus-on-arm single-method
   const methodPickerRef = useRef<HTMLDivElement | null>(null); // forwarded to the radiogroup root
   const refreshArmedRef = useRef(false); // set on a Refresh click; consumed by the readiness effect
@@ -91,9 +92,7 @@ export function PrActionsPanel() {
     if (!confirmingMerge) return;
     const multi = allowedList(allowed).length > 1;
     if (multi) {
-      methodPickerRef.current
-        ?.querySelector<HTMLElement>('[role="radio"][tabindex="0"]')
-        ?.focus();
+      methodPickerRef.current?.querySelector<HTMLElement>('[role="radio"][tabindex="0"]')?.focus();
     } else {
       confirmMergeBtnRef.current?.focus();
     }
@@ -101,14 +100,21 @@ export function PrActionsPanel() {
   }, [confirmingMerge]);
 
   // Refresh-link focus (§4a transition 3): a `none`-state Refresh click arms refreshArmedRef and
-  // calls reload(). When the resulting readiness moves OFF `none`, the reason block unmounts and we
-  // move focus to the now-mounted Merge button. If readiness stays `none`, the Refresh link stays
-  // mounted and keeps focus. An unrelated (non-Refresh) readiness change leaves refreshArmedRef
-  // false, so it never steals focus.
+  // calls reload(). When the resulting readiness moves OFF `none`, the reason block changes and we
+  // move focus based on the resolved state:
+  //   - enabled readiness (ready/ready-with-changes-requested/unstable) → Merge button
+  //   - disabled readiness (conflicts, behind-base, etc.) → reason span (#merge-reason)
+  // This preserves focus-stays-in-panel for BOTH outcomes. If readiness stays `none`, the Refresh
+  // link stays mounted and keeps focus. An unrelated (non-Refresh) readiness change leaves
+  // refreshArmedRef false, so it never steals focus.
   useEffect(() => {
     if (refreshArmedRef.current && readiness !== 'none') {
       refreshArmedRef.current = false;
-      mergeBtnRef.current?.focus();
+      if (MERGE_ENABLED.has(readiness)) {
+        mergeBtnRef.current?.focus();
+      } else {
+        mergeReasonRef.current?.focus();
+      }
     }
   }, [readiness]);
 
@@ -170,10 +176,7 @@ export function PrActionsPanel() {
   // Park focus on the container BEFORE invoking, so when the triggered button is removed by the
   // resulting set-swap (or the Confirm span unmounts) focus is already inside the panel and the
   // focus-swap effect can keep it there rather than the browser dropping it to <body>.
-  const onInvoke = (
-    kind: PrActionKind,
-    payload?: { method: MergeMethodWire; headSha: string },
-  ) => {
+  const onInvoke = (kind: PrActionKind, payload?: { method: MergeMethodWire; headSha: string }) => {
     containerRef.current?.focus();
     invoke(kind, payload);
   };
@@ -197,9 +200,11 @@ export function PrActionsPanel() {
         <span className="sr-only" role="status" aria-live="polite" aria-atomic="true">
           {confirmingClose
             ? 'Close this PR? Use Cancel or Confirm close.'
-            : pending
-              ? PENDING_ANNOUNCE[pending]
-              : ''}
+            : confirmingMerge
+              ? 'Confirm merge? Use Escape to cancel or the Confirm button to merge.'
+              : pending
+                ? PENDING_ANNOUNCE[pending]
+                : ''}
         </span>
 
         {/* Each button leads with the shared PrStateGlyph for the state it moves the PR TO (the same
@@ -307,8 +312,19 @@ export function PrActionsPanel() {
                 Merge
               </button>
               {!mergeEnabled && (
-                <span id="merge-reason" className={styles.mergeReason}>
-                  {mergeReason}{' '}
+                <>
+                  {/* Sentence-only span: aria-describedby on the Merge button points here, so the
+                      accessible description reads only the reason (not "…Refresh"). The Refresh
+                      button is a sibling so it can receive focus independently when a Refresh-armed
+                      reload resolves to a disabled state (FIX 1 — focus-stays-in-panel invariant). */}
+                  <span
+                    id="merge-reason"
+                    ref={mergeReasonRef}
+                    tabIndex={-1}
+                    className={styles.mergeReason}
+                  >
+                    {mergeReason}
+                  </span>
                   {readiness === 'none' && (
                     <button
                       type="button"
@@ -321,7 +337,7 @@ export function PrActionsPanel() {
                       Refresh
                     </button>
                   )}
-                </span>
+                </>
               )}
             </div>
           )}
