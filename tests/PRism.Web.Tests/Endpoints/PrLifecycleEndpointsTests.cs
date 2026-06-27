@@ -134,4 +134,81 @@ public class PrLifecycleEndpointsTests
         (await resp.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("code").GetString().Should().Be("unauthorized");
         ctx.Writer.Calls.Should().BeEmpty();
     }
+
+    // ── /merge ────────────────────────────────────────────────────────────────────────────────
+
+    private static HttpRequestMessage PostMerge(object body) =>
+        new(HttpMethod.Post, "/api/pr/o/r/1/merge")
+        {
+            Headers = { { "X-PRism-Tab-Id", "tab-123" } },
+            Content = JsonContent.Create(body),
+        };
+
+    [Fact]
+    public async Task Merge_success_records_method_sha_and_publishes()
+    {
+        using var ctx = PrLifecycleEndpointsTestContext.Create();
+        await ctx.SeedSessionAsync("o", "r", 1, PrLifecycleEndpointsTestContext.ValidSession());
+        ctx.Writer.NextResult = PrLifecycleResult.Ok;
+        using var client = ctx.CreateClient();
+
+        var resp = await client.SendAsync(PostMerge(new { method = "squash", headSha = "abc123" }));
+
+        resp.StatusCode.Should().Be(HttpStatusCode.OK);
+        ctx.Writer.Calls.Should().ContainSingle().Which.Should().Be("merge");
+        ctx.Writer.LastMerge.Should().Be((MergeMethod.Squash, "abc123"));
+        await TestPoll.UntilAsync(
+            () => ctx.Bus.Published.OfType<PrLifecycleChanged>().Any(),
+            TimeSpan.FromSeconds(5), "PrLifecycleChanged should publish");
+    }
+
+    [Theory]
+    [InlineData("{\"method\":\"squash\"}")]                       // headSha missing
+    [InlineData("{\"method\":\"squash\",\"headSha\":\"\"}")]      // headSha empty
+    public async Task Merge_missing_headSha_returns_400(string json)
+    {
+        using var ctx = PrLifecycleEndpointsTestContext.Create();
+        await ctx.SeedSessionAsync("o", "r", 1, PrLifecycleEndpointsTestContext.ValidSession());
+        using var client = ctx.CreateClient();
+        var req = new HttpRequestMessage(HttpMethod.Post, "/api/pr/o/r/1/merge")
+        { Headers = { { "X-PRism-Tab-Id", "tab-123" } }, Content = new StringContent(json, System.Text.Encoding.UTF8, "application/json") };
+
+        var resp = await client.SendAsync(req);
+
+        resp.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        ctx.Writer.Calls.Should().BeEmpty();
+    }
+
+    [Theory]
+    [InlineData("Merge")]   // wrong case — the permissive enum trap
+    [InlineData("1")]        // numeric string
+    [InlineData("rocket")]   // unknown
+    public async Task Merge_invalid_method_returns_400(string method)
+    {
+        using var ctx = PrLifecycleEndpointsTestContext.Create();
+        await ctx.SeedSessionAsync("o", "r", 1, PrLifecycleEndpointsTestContext.ValidSession());
+        using var client = ctx.CreateClient();
+
+        var resp = await client.SendAsync(PostMerge(new { method, headSha = "abc" }));
+
+        resp.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        ctx.Writer.Calls.Should().BeEmpty();
+    }
+
+    [Theory]
+    [InlineData(PrLifecycleErrorCode.MergeNotMergeable, HttpStatusCode.UnprocessableEntity, "merge-not-mergeable")]
+    [InlineData(PrLifecycleErrorCode.MergeHeadChanged, HttpStatusCode.Conflict, "merge-head-changed")]
+    public async Task Merge_error_maps_to_status_and_code(PrLifecycleErrorCode err, HttpStatusCode status, string code)
+    {
+        using var ctx = PrLifecycleEndpointsTestContext.Create();
+        await ctx.SeedSessionAsync("o", "r", 1, PrLifecycleEndpointsTestContext.ValidSession());
+        ctx.Writer.NextResult = PrLifecycleResult.Fail(err);
+        using var client = ctx.CreateClient();
+
+        var resp = await client.SendAsync(PostMerge(new { method = "merge", headSha = "abc" }));
+
+        resp.StatusCode.Should().Be(status);
+        (await resp.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("code").GetString().Should().Be(code);
+        ctx.Bus.Published.OfType<PrLifecycleChanged>().Should().BeEmpty();
+    }
 }
