@@ -316,4 +316,47 @@ describe('usePrAction', () => {
     expect(result.current.pending).toBeNull(); // reconciled to success, no error toast
     expect(toastShow).not.toHaveBeenCalledWith(expect.objectContaining({ kind: 'error' }));
   });
+
+  it('merge: reload-silent fallback fires info snackbar after 10s when isMerged never arrives', async () => {
+    vi.useFakeTimers();
+    mergePrMock.mockResolvedValue({ ok: true });
+    const reload = vi.fn();
+    const prState = { isClosed: false, isDraft: false, isMerged: false };
+    const { result } = renderHook(() => usePrAction({ prRef, reload, prState }));
+
+    act(() => result.current.invoke('merge', { method: 'merge', headSha: 'abc' }));
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(result.current.pending).toBe('merge'); // held through reconcile (isMerged never observed)
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(10_000);
+    });
+    expect(reload).toHaveBeenCalledTimes(1);
+    expect(show).toHaveBeenCalledWith(expect.objectContaining({ kind: 'info' }));
+    expect(result.current.pending).toBeNull();
+    expect(result.current.mergePhase).toBe('idle');
+  });
+
+  it('merge: not-mergeable timeout fires error toast after 10s when the reconcile never lands', async () => {
+    vi.useFakeTimers();
+    mergePrMock.mockResolvedValue({ ok: false, code: 'merge-not-mergeable' });
+    const reload = vi.fn();
+    const prState = { isClosed: false, isDraft: false, isMerged: false };
+    const { result } = renderHook(() => usePrAction({ prRef, reload, prState }));
+
+    await act(async () => {
+      result.current.invoke('merge', { method: 'merge', headSha: 'abc' });
+      await Promise.resolve();
+    });
+    expect(result.current.mergePhase).toBe('checking'); // merge-not-mergeable sets checking phase
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(10_000);
+    });
+    expect(show).toHaveBeenCalledWith(expect.objectContaining({ kind: 'error' }));
+    expect(result.current.pending).toBeNull();
+    expect(result.current.mergePhase).toBe('idle');
+  });
 });
