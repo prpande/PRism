@@ -33,4 +33,31 @@ describe('MergeMethodPicker', () => {
     await userEvent.keyboard('{ArrowRight}');
     expect(onChange).toHaveBeenCalledWith('squash');
   });
+
+  it('ArrowLeft from first method wraps to last', async () => {
+    const onChange = vi.fn();
+    render(<MergeMethodPicker allowed={{ merge: true, squash: true, rebase: true }} value="merge" onChange={onChange} />);
+    const radios = screen.getAllByRole('radio');
+    radios[0].focus();
+    await userEvent.keyboard('{ArrowLeft}');
+    expect(onChange).toHaveBeenCalledWith('rebase');
+  });
+
+  it('Escape key calls onEscape', async () => {
+    const onEscape = vi.fn();
+    render(<MergeMethodPicker allowed={{ merge: true, squash: true, rebase: true }} value="merge" onChange={() => {}} onEscape={onEscape} />);
+    const radios = screen.getAllByRole('radio');
+    radios[0].focus();
+    await userEvent.keyboard('{Escape}');
+    expect(onEscape).toHaveBeenCalled();
+  });
+
+  it('disabled prop makes all radios inert and swallows clicks', async () => {
+    const onChange = vi.fn();
+    render(<MergeMethodPicker allowed={{ merge: true, squash: true, rebase: true }} value="merge" onChange={onChange} disabled={true} />);
+    const radios = screen.getAllByRole('radio');
+    radios.forEach((r) => expect(r).toBeDisabled());
+    await userEvent.click(radios[1]);
+    expect(onChange).not.toHaveBeenCalled();
+  });
 });
