@@ -5,16 +5,25 @@ import {
   reopenPr,
   markReady,
   convertToDraft,
+  mergePr,
   type PrLifecycleErrorCode,
+  type MergeMethodWire,
 } from '../api/prLifecycle';
 import type { PrReference } from '../api/types';
 import { useToast } from '../components/Toast/useToast';
 
-export type PrActionKind = 'close' | 'reopen' | 'ready' | 'convert-to-draft';
+export type PrActionKind = 'close' | 'reopen' | 'ready' | 'convert-to-draft' | 'merge';
+export type MergePhase = 'idle' | 'merging' | 'checking';
 
 export interface PrLifecycleState {
   isClosed: boolean;
   isDraft: boolean;
+  isMerged: boolean;
+}
+
+export interface MergePayload {
+  method: MergeMethodWire;
+  headSha: string;
 }
 
 export interface UsePrActionArgs {
@@ -30,13 +39,17 @@ export interface UsePrActionArgs {
 
 export interface UsePrActionResult {
   pending: PrActionKind | null;
-  invoke: (kind: PrActionKind) => void;
+  mergePhase: MergePhase;
+  invoke: (kind: PrActionKind, payload?: MergePayload) => void;
 }
 
 const FALLBACK_MS = 5000;
+const MERGE_RECONCILE_MS = 10_000; // commit-creation + GraphQL read-after-write; one window for all merge paths
 
+// merge is excluded: it has its own POST signature (method + headSha) and orchestration; the
+// four state flips share the parameterless run() shape.
 const ACTIONS: Record<
-  PrActionKind,
+  Exclude<PrActionKind, 'merge'>,
   (prRef: PrReference) => Promise<{ ok: boolean; code?: PrLifecycleErrorCode }>
 > = {
   close: closePr,
@@ -57,6 +70,8 @@ function reachedTarget(kind: PrActionKind, s: PrLifecycleState): boolean {
       return !s.isClosed && !s.isDraft;
     case 'convert-to-draft':
       return !s.isClosed && s.isDraft;
+    case 'merge':
+      return s.isMerged;
   }
 }
 
@@ -74,6 +89,10 @@ function copyFor(code: PrLifecycleErrorCode | undefined): string {
       return 'GitHub is rate-limiting requests. Try again shortly.';
     case 'subscribe-rejected':
       return 'This session lost access to the PR. Reload the page.';
+    case 'merge-head-changed':
+      return 'The PR changed since you loaded it — re-arm to retry with the latest.';
+    case 'merge-not-mergeable':
+      return "This PR can't be merged right now (checks, protection, or method changed).";
     default:
       return 'The action could not be completed. Try again.';
   }
@@ -91,6 +110,11 @@ export function usePrAction({ prRef, reload, prState }: UsePrActionArgs): UsePrA
   const latestState = useRef<PrLifecycleState | undefined>(prState);
   latestState.current = prState;
   const { show } = useToast();
+
+  // ── merge state (slice 2) ─────────────────────────────────────────────────────────────────
+  const [mergePhase, setMergePhase] = useState<MergePhase>('idle');
+  const staleHeadShaRef = useRef<string | null>(null); // a headSha that 409'd; block re-merge until it changes
+  const mergeTimeoutKindRef = useRef<'reload-silent' | 'toast-not-mergeable' | null>(null);
 
   const clearTimer = useCallback(() => {
     if (timerRef.current !== null) {
@@ -113,23 +137,125 @@ export function usePrAction({ prRef, reload, prState }: UsePrActionArgs): UsePrA
       // re-opens invoke for the next action.
       setPending(null);
       inFlight.current = false;
+      // Merge reconcile landed too: drop the phase and the timeout-outcome latch so a later
+      // MERGE_RECONCILE_MS fire can't surface a stale "still processing"/error toast.
+      setMergePhase('idle');
+      mergeTimeoutKindRef.current = null;
     }
     // Intentional: depend on the booleans, not the prState object reference, so an unrelated
     // reload that creates a new prState object without changing the lifecycle booleans does NOT
     // cancel the fallback timer prematurely (round-2 finding A1). `prState` itself is accessed
-    // only via the reference-stable booleans already in the dep array.
+    // only via the reference-stable booleans already in the dep array. isMerged is load-bearing:
+    // a merge flips ONLY isMerged (isClosed/isDraft unchanged), so without it the effect never
+    // re-runs to release pending='merge' — the 10s timer would (wrongly) be the only release.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [prState?.isClosed, prState?.isDraft, clearTimer]);
+  }, [prState?.isClosed, prState?.isDraft, prState?.isMerged, clearTimer]);
 
   // Tidy the timer on unmount.
   useEffect(() => clearTimer, [clearTimer]);
 
+  // ── merge orchestration (slice 2) ─────────────────────────────────────────────────────────
+  // Arm a reconcile hold for merge: keep pending='merge' until isMerged is observed, bounded by
+  // MERGE_RECONCILE_MS. onTimeout decides what the bound does: 'reload-silent' (happy fallback —
+  // reload + show the still-finishing snackbar) or 'toast-not-mergeable' (405/422 reconcile lost).
+  const armMergeHold = useCallback(
+    (onTimeout: 'reload-silent' | 'toast-not-mergeable') => {
+      pendingKindRef.current = 'merge';
+      mergeTimeoutKindRef.current = onTimeout;
+      clearTimer();
+      timerRef.current = setTimeout(() => {
+        timerRef.current = null;
+        pendingKindRef.current = null;
+        const outcome = mergeTimeoutKindRef.current;
+        mergeTimeoutKindRef.current = null;
+        setPending(null);
+        setMergePhase('idle');
+        inFlight.current = false;
+        if (outcome === 'toast-not-mergeable') {
+          show({ kind: 'error', message: copyFor('merge-not-mergeable') });
+        } else {
+          reload();
+          show({
+            kind: 'info',
+            message: 'The merge may still be processing — refresh if the status doesn’t update.',
+          });
+        }
+      }, MERGE_RECONCILE_MS);
+    },
+    [clearTimer, reload, show],
+  );
+
+  const invokeMerge = useCallback(
+    (payload?: MergePayload) => {
+      if (!payload) return;
+      // Stale-sha gate: after a 409, refuse to re-merge the same headSha until a reload changed it.
+      if (staleHeadShaRef.current && staleHeadShaRef.current === payload.headSha) {
+        show({ kind: 'error', message: 'Could not refresh the PR — try again.' });
+        return;
+      }
+      inFlight.current = true;
+      setPending('merge');
+      setMergePhase('merging');
+      void mergePr(prRef, payload.method, payload.headSha)
+        .then((r) => {
+          if (r.ok) {
+            staleHeadShaRef.current = null;
+            if (latestState.current && reachedTarget('merge', latestState.current)) {
+              setPending(null);
+              setMergePhase('idle');
+              inFlight.current = false;
+              return;
+            }
+            armMergeHold('reload-silent'); // hold; fallback reloads + still-finishing snackbar
+            return;
+          }
+          if (r.code === 'merge-head-changed') {
+            staleHeadShaRef.current = payload.headSha; // block re-merge until headSha changes
+            setPending(null);
+            setMergePhase('idle');
+            inFlight.current = false;
+            reload();
+            show({ kind: 'error', message: copyFor('merge-head-changed') });
+            return;
+          }
+          if (r.code === 'merge-not-mergeable') {
+            setMergePhase('checking'); // neutral "Checking…" while we reload + re-check isMerged
+            reload();
+            if (latestState.current && reachedTarget('merge', latestState.current)) {
+              setPending(null);
+              setMergePhase('idle');
+              inFlight.current = false;
+              return; // already merged
+            }
+            armMergeHold('toast-not-mergeable'); // success if isMerged flips; else toast on timeout
+            return;
+          }
+          // other codes: immediate release + toast
+          setPending(null);
+          setMergePhase('idle');
+          inFlight.current = false;
+          show({ kind: 'error', message: copyFor(r.code) });
+        })
+        .catch(() => {
+          setPending(null);
+          setMergePhase('idle');
+          inFlight.current = false;
+          show({ kind: 'error', message: copyFor(undefined) });
+        });
+    },
+    [prRef, reload, show, armMergeHold],
+  );
+
   const invoke = useCallback(
-    (kind: PrActionKind) => {
+    (kind: PrActionKind, payload?: MergePayload) => {
       if (inFlight.current) return; // ignore double-clicks / a second kind mid-flight
+      if (kind === 'merge') {
+        invokeMerge(payload);
+        return;
+      }
       inFlight.current = true;
       setPending(kind);
-      void ACTIONS[kind](prRef)
+      void ACTIONS[kind as Exclude<PrActionKind, 'merge'>](prRef)
         .then((r) => {
           if (!r.ok) {
             // Failure: release immediately so the user can retry.
@@ -167,8 +293,8 @@ export function usePrAction({ prRef, reload, prState }: UsePrActionArgs): UsePrA
           show({ kind: 'error', message: copyFor(undefined) });
         });
     },
-    [prRef, reload, show, clearTimer],
+    [prRef, reload, show, clearTimer, invokeMerge],
   );
 
-  return { pending, invoke };
+  return { pending, mergePhase, invoke };
 }

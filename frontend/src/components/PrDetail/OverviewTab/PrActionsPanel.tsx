@@ -13,6 +13,8 @@ const PENDING_ANNOUNCE: Record<PrActionKind, string> = {
   reopen: 'Reopening pull request…',
   ready: 'Marking ready for review…',
   'convert-to-draft': 'Converting to draft…',
+  // Placeholder until Task 8 wires the merge affordance (announcement copy is finalized there).
+  merge: 'Merging pull request…',
 };
 
 export function PrActionsPanel() {
@@ -23,7 +25,7 @@ export function PrActionsPanel() {
   const { pending, invoke } = usePrAction({
     prRef,
     reload,
-    prState: pr ? { isClosed: pr.isClosed, isDraft: pr.isDraft } : undefined,
+    prState: pr ? { isClosed: pr.isClosed, isDraft: pr.isDraft, isMerged: pr.isMerged } : undefined,
   });
   const [confirmingClose, setConfirmingClose] = useState(false);
   const cancelRef = useRef<HTMLButtonElement | null>(null);
