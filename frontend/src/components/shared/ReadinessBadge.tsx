@@ -180,7 +180,7 @@ export function ReadinessBadge({
 
   const triggerRef = useRef<HTMLButtonElement>(null);
   const hoverTimer = useRef<number | null>(null);
-  const [coords, setCoords] = useState<{ top: number; left: number } | null>(null);
+  const [coords, setCoords] = useState<{ top: number; left: number; above: boolean } | null>(null);
   const describedById = useId();
 
   const place = useCallback(() => {
@@ -192,7 +192,13 @@ export function ReadinessBadge({
     // on-screen on viewports narrower than the popover itself, where the clamp floors left at 8.
     const POPOVER_W = 268;
     const left = Math.max(8, Math.min(r.left, window.innerWidth - POPOVER_W - 8));
-    setCoords({ top: r.bottom + 6, left });
+    // Flip above when there isn't enough room below (e.g. the #566 merge-panel badge sits at the
+    // bottom of the viewport — placing below would clip off-screen). `above` anchors via
+    // translateY(-100%) in the CSS, so it works regardless of the popover's variable height.
+    const POPOVER_MAX_H = 240;
+    const spaceBelow = window.innerHeight - r.bottom;
+    const above = spaceBelow < POPOVER_MAX_H && r.top > spaceBelow;
+    setCoords({ top: above ? r.top - 6 : r.bottom + 6, left, above });
   }, []);
 
   const openNow = useCallback(() => {
@@ -301,7 +307,12 @@ export function ReadinessBadge({
             id={describedById}
             role="tooltip"
             className={styles.popover}
-            style={{ top: coords.top, left: coords.left }}
+            style={{
+              top: coords.top,
+              left: coords.left,
+              // Above-placement anchors the popover's BOTTOM edge to the trigger top (#566).
+              transform: coords.above ? 'translateY(-100%)' : undefined,
+            }}
           >
             <div className={`${styles.accent} ${toneClass}`} />
             <div className={`${styles.head} ${toneClass}`}>

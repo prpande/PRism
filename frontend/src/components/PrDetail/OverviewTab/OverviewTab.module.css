@@ -8,6 +8,14 @@
      see. Leaving overflow visible lets the sticky footer resolve against the
      slot (pins to the viewport bottom) and keeps the slot the single scroller. */
   background: var(--surface-0);
+  /* Fill the slot so the sticky <PrActionsPanel/> footer pins to the VIEWPORT bottom even when the
+     overview content is short (F3). Without this the wrapper is only as tall as its content, so on a
+     sparse PR the footer floated up mid-screen with empty space beneath it. flex column + a growing
+     grid pushes the footer down; min-height:100% resolves against the bounded slot. No `overflow`
+     here — that would re-establish a sticky containing block (see the note above). */
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
 }
 
 .overviewGrid {
@@ -25,4 +33,7 @@
   display: flex;
   flex-direction: column;
   gap: var(--s-4);
+  /* Grow to absorb the slot's surplus height so the sticky footer is pushed to the bottom (F3).
+     On a content-rich PR this is a no-op (the grid already exceeds the slot and it scrolls). */
+  flex: 1 0 auto;
 }

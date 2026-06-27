@@ -150,6 +150,9 @@
   --danger-soft: oklch(0.95 0.05 25);
   --danger-fg: oklch(0.42 0.16 25);
   --merged-fg: oklch(0.50 0.18 295);
+  /* Solid merge-purple FILL (companion to --merged-fg, the on-surface glyph hue): dark enough that
+     near-white text clears AA in both themes. Used by the Confirm-merge CTA (#566). */
+  --merged: oklch(0.52 0.19 295);
 
   --info: oklch(0.58 0.10 230);
   --info-soft: oklch(0.95 0.04 230);
@@ -253,6 +256,9 @@
   --danger-soft: oklch(0.30 0.07 25);
   --danger-fg: oklch(0.82 0.14 25);
   --merged-fg: oklch(0.80 0.16 295);
+  /* Solid merge-purple FILL — kept dark (NOT the light 0.80 glyph hue) so near-white text clears AA
+     on the Confirm-merge CTA against the dark surface too (#566). */
+  --merged: oklch(0.55 0.19 295);
 
   --info: oklch(0.72 0.10 230);
   --info-soft: oklch(0.30 0.05 230);

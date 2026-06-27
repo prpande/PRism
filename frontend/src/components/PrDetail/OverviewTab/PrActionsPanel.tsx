@@ -4,7 +4,9 @@ import { usePrDetailContext } from '../prDetailContext';
 import { usePrAction, type PrActionKind } from '../../../hooks/usePrAction';
 import { PrStateGlyph } from '../../shared/prStateGlyph';
 import { MergeMethodPicker, firstAllowed, allowedList } from './MergeMethodPicker';
+import { ReadinessBadge } from '../../shared/ReadinessBadge';
 import type { MergeMethodWire } from '../../../api/prLifecycle';
+import { refreshPrDetail } from '../../../api/prDetail';
 import { READINESS_LONG, type MergeReadiness } from '../../shared/mergeReadiness';
 import styles from './PrActionsPanel.module.css';
 
@@ -50,6 +52,7 @@ export function PrActionsPanel() {
   const [confirmingClose, setConfirmingClose] = useState(false);
   const [confirmingMerge, setConfirmingMerge] = useState(false);
   const [selectedMethod, setSelectedMethod] = useState<MergeMethodWire | null>(null);
+  const [refreshing, setRefreshing] = useState(false); // force-fresh re-read in flight (none state)
   const cancelRef = useRef<HTMLButtonElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mergeBtnRef = useRef<HTMLButtonElement | null>(null); // Refresh-link focus target (§4a t3)
@@ -57,12 +60,16 @@ export function PrActionsPanel() {
   const confirmMergeBtnRef = useRef<HTMLButtonElement | null>(null); // focus-on-arm single-method
   const methodPickerRef = useRef<HTMLDivElement | null>(null); // forwarded to the radiogroup root
   const refreshArmedRef = useRef(false); // set on a Refresh click; consumed by the readiness effect
+  const wasConfirmingMergeRef = useRef(false); // tracks the merge-morph edge for focus-return-on-exit
 
   // Allowed merge methods (default to all on cold-load; the picker collapses to the Confirm label
   // when only one is allowed). Computed before the early return so the focus-on-arm effect (a hook)
   // can read it unconditionally. `readiness` likewise drives the refresh-focus effect.
   const allowed = pr?.allowedMergeMethods ?? { merge: true, squash: true, rebase: true };
   const readiness = (pr?.mergeReadiness ?? 'none') as MergeReadiness;
+  // Stable id for the disabled-reason ReadinessBadge popover (same component the PR-detail header
+  // uses); scoped to this PR so the tooltip-singleton coordinates with the header badge.
+  const readinessId = `merge-readiness-${prRef.owner}-${prRef.repo}-${prRef.number}`;
 
   // Action-set visibility — computed BEFORE the suppression early-return so the focus-swap effect
   // (a hook) is unconditional (rules-of-hooks). `!!pr &&` guards the cold-load window.
@@ -98,6 +105,16 @@ export function PrActionsPanel() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- arm-edge only; `allowed` read live
   }, [confirmingMerge]);
+
+  // Focus-return on merge-flow exit (E2 Back / Escape): when the morph closes while the PR is still
+  // mergeable (showMerge), return focus to the Merge trigger so a keyboard user is not dropped to
+  // <body>. A successful merge flips showMerge false (panel unmounts), so this never fires on success.
+  useEffect(() => {
+    if (wasConfirmingMergeRef.current && !confirmingMerge && showMerge) {
+      mergeBtnRef.current?.focus();
+    }
+    wasConfirmingMergeRef.current = confirmingMerge;
+  }, [confirmingMerge, showMerge]);
 
   // Refresh-link focus (§4a transition 3): a `none`-state Refresh click arms refreshArmedRef and
   // calls reload(). When the resulting readiness moves OFF `none`, the reason block changes and we
@@ -203,7 +220,7 @@ export function PrActionsPanel() {
             : pending
               ? PENDING_ANNOUNCE[pending]
               : confirmingMerge
-                ? 'Confirm merge? Use Escape to cancel or the Confirm button to merge.'
+                ? 'Confirm merge? Use the Back button or Escape to cancel, or the Confirm button to merge.'
                 : ''}
         </span>
 
@@ -211,7 +228,9 @@ export function PrActionsPanel() {
             colour-coded octicons the inbox rows show before a PR title): closed=red, open=green,
             draft=blue. Glyphs are aria-hidden, so the accessible name stays the plain label. */}
         <div className={styles.actions}>
-          {showReady && (
+          {/* E1: while the merge flow is open, hide the other lifecycle actions — the morph below is
+              a focused sub-mode (Back ↔ pick method ↔ Confirm), not a row of competing buttons. */}
+          {!confirmingMerge && showReady && (
             <button
               className={`btn ${styles.ready}`}
               disabled={siblingsDisabled || pending === 'ready'}
@@ -222,7 +241,7 @@ export function PrActionsPanel() {
             </button>
           )}
 
-          {showConvertDraft && (
+          {!confirmingMerge && showConvertDraft && (
             <button
               className={`btn ${styles.convert}`}
               disabled={siblingsDisabled || pending === 'convert-to-draft'}
@@ -233,7 +252,7 @@ export function PrActionsPanel() {
             </button>
           )}
 
-          {showReopen && (
+          {!confirmingMerge && showReopen && (
             <button
               className={`btn ${styles.reopen}`}
               disabled={busy}
@@ -244,7 +263,7 @@ export function PrActionsPanel() {
             </button>
           )}
 
-          {showClose && !confirmingClose && (
+          {!confirmingMerge && showClose && !confirmingClose && (
             // The pending label lives HERE (not on Confirm close): clicking Confirm sets
             // confirmingClose=false + pending='close' in one batch, so the confirm span unmounts and
             // the plain Close button is what renders during the in-flight state. (Plan ce-doc-review.)
@@ -258,7 +277,7 @@ export function PrActionsPanel() {
             </button>
           )}
 
-          {showClose && confirmingClose && (
+          {!confirmingMerge && showClose && confirmingClose && (
             <span
               className={styles.confirm}
               onKeyDown={(e) => {
@@ -311,34 +330,54 @@ export function PrActionsPanel() {
                 <PrStateGlyph state="merged" />
                 Merge
               </button>
-              {!mergeEnabled && (
-                <>
-                  {/* Sentence-only span: aria-describedby on the Merge button points here, so the
-                      accessible description reads only the reason (not "…Refresh"). The Refresh
-                      button is a sibling so it can receive focus independently when a Refresh-armed
-                      reload resolves to a disabled state (FIX 1 — focus-stays-in-panel invariant). */}
-                  <span
-                    id="merge-reason"
-                    ref={mergeReasonRef}
-                    tabIndex={-1}
-                    className={styles.mergeReason}
-                  >
-                    {mergeReason}
-                  </span>
-                  {readiness === 'none' && (
+              {!mergeEnabled &&
+                (readiness === 'none' ? (
+                  <>
+                    {/* Calculating: a visible label + a Refresh that forces a cache-bypassing backend
+                        re-read (#566 B-fix). The durable auto-resolve is tracked in #655; this is the
+                        manual override. The describedby sentence doubles as the §4a-t3 focus target. */}
+                    <span
+                      id="merge-reason"
+                      ref={mergeReasonRef}
+                      tabIndex={-1}
+                      className={styles.mergeReason}
+                    >
+                      {mergeReason}
+                    </span>
                     <button
                       type="button"
                       className={styles.refreshLink}
+                      disabled={refreshing}
                       onClick={() => {
                         refreshArmedRef.current = true;
-                        reload();
+                        setRefreshing(true);
+                        // Force-fresh (POST /…/refresh → RefreshAsync), NOT the cache-first reload():
+                        // a snapshot cached as None during GitHub's lazy-mergeability window can only
+                        // change via a cache-bypassing re-read. reload() then pulls the refreshed snapshot.
+                        refreshPrDetail(prRef)
+                          .catch(() => {})
+                          .finally(() => {
+                            setRefreshing(false);
+                            reload();
+                          });
                       }}
                     >
-                      Refresh
+                      {refreshing ? 'Refreshing…' : 'Refresh'}
                     </button>
-                  )}
-                </>
-              )}
+                  </>
+                ) : (
+                  <>
+                    {/* Badge readiness (conflicts / review-required / behind-base / blocked / changes):
+                        the reason is the hover/focus popover on this ReadinessBadge (the same component
+                        the PR-detail header uses) — NOT an inline sentence that displaced the Merge
+                        button out of the row (#566 C-fix). The sr-only span keeps the button's
+                        aria-describedby and the §4a-t3 focus target. */}
+                    <ReadinessBadge readiness={readiness} variant="compact" id={readinessId} />
+                    <span id="merge-reason" ref={mergeReasonRef} tabIndex={-1} className="sr-only">
+                      {mergeReason}
+                    </span>
+                  </>
+                ))}
             </div>
           )}
 
@@ -352,6 +391,29 @@ export function PrActionsPanel() {
                 }
               }}
             >
+              {/* E2: visible Back control out of the merge flow (Escape still works). Disabled while a
+                  merge is settling so the user can't navigate away mid-write. */}
+              <button
+                type="button"
+                className={styles.backBtn}
+                aria-label="Back"
+                disabled={busy}
+                onClick={() => setConfirmingMerge(false)}
+              >
+                <svg
+                  viewBox="0 0 24 24"
+                  width="16"
+                  height="16"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth={2}
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                >
+                  <path d="m15 18-6-6 6-6" />
+                </svg>
+              </button>
               <MergeMethodPicker
                 allowed={allowed}
                 value={method}
@@ -367,7 +429,10 @@ export function PrActionsPanel() {
               )}
               <button
                 ref={confirmMergeBtnRef}
-                className="btn btn-danger"
+                // E4: the merge hue (--merged-fg), not danger red — merging is not destructive.
+                // E3: fixed min-width so the label swap (commit/squash/rebase, then Merging…/Checking…)
+                // doesn't reflow the morph. Soft-fill (not solid) because --merged-fg is theme-asymmetric.
+                className={`btn ${styles.confirmMerge}`}
                 disabled={busy}
                 aria-describedby={readiness === 'unstable' ? 'merge-unstable-note' : undefined}
                 // Does NOT collapse the morph: it stays mounted through the in-flight + reconcile

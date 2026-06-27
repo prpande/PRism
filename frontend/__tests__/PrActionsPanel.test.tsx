@@ -19,6 +19,14 @@ vi.mock('../src/hooks/usePrAction', () => ({
   usePrAction: () => ({ pending, mergePhase, invoke }),
 }));
 
+// #566 B-fix: the in-panel Refresh forces a cache-bypassing backend re-read (POST /…/refresh),
+// not the cache-first reload(). Mock the api module so the click doesn't hit the network.
+import { refreshPrDetail } from '../src/api/prDetail';
+vi.mock('../src/api/prDetail', () => ({
+  refreshPrDetail: vi.fn(() => Promise.resolve()),
+  getPrDetail: vi.fn(),
+}));
+
 // Local harness (plan ce-doc-review round 2 — coherence C1/C2): renderWithPrDetailContext returns a
 // plain RTL result whose `.rerender` CANNOT swap the provider value, so the click-outside,
 // external-state, and focus-on-swap tests use this harness — it holds the context overrides in
@@ -46,6 +54,7 @@ function Harness({
 describe('PrActionsPanel', () => {
   beforeEach(() => {
     invoke.mockReset();
+    vi.mocked(refreshPrDetail).mockClear();
     pending = null;
     mergePhase = 'idle';
   });
@@ -249,6 +258,29 @@ describe('PrActionsPanel', () => {
     expect(screen.getByRole('button', { name: /refresh/i })).toBeInTheDocument();
   });
 
+  // C-fix (#566 live-validation): a disabled badge readiness surfaces its reason through a
+  // hover/focus ReadinessBadge popover (the same component as the PR-detail header) instead of an
+  // inline sentence that pushed the Merge button out of the action row. The button keeps its
+  // accessible description via an sr-only #merge-reason span (so the conflicts test above still
+  // holds), and the visible reason is the badge popover, not displacing text.
+  it('renders a hover readiness badge (not displacing inline text) for a disabled badge state', () => {
+    renderPanel({ mergeReadiness: 'conflicts' });
+    // The readiness badge trigger is present beside the Merge button (its hover popover is the reason).
+    expect(screen.getByRole('button', { name: /merge readiness: conflicts/i })).toBeInTheDocument();
+    // The describedby sentence is kept for AT but is visually hidden (no layout displacement).
+    expect(document.getElementById('merge-reason')).toHaveClass('sr-only');
+  });
+
+  // B-fix (#566 live-validation): the in-panel Refresh must force a cache-bypassing backend re-read
+  // (POST /…/refresh → PrDetailLoader.RefreshAsync), not the cache-first reload() — otherwise a
+  // snapshot cached as `None` during GitHub's lazy-mergeability window can never change (#655).
+  it('Refresh forces a cache-bypassing backend re-read (refreshPrDetail), not just reload', async () => {
+    const user = userEvent.setup();
+    renderPanel({ mergeReadiness: 'none' });
+    await user.click(screen.getByRole('button', { name: /refresh/i }));
+    expect(refreshPrDetail).toHaveBeenCalledTimes(1);
+  });
+
   it('arming reveals the picker and a method-named Confirm; confirm calls invoke(merge) (Step 4)', async () => {
     const user = userEvent.setup();
     renderPanel({
@@ -411,15 +443,42 @@ describe('PrActionsPanel', () => {
     expect(screen.getByRole('button', { name: /^merge$/i })).not.toHaveFocus();
   });
 
-  it('arming merge disables the sibling actions (siblingsDisabled)', async () => {
+  it('arming merge HIDES the sibling actions — the merge flow is a focused sub-mode (E1)', async () => {
     const user = userEvent.setup();
     renderPanel({
       mergeReadiness: 'ready',
       allowedMergeMethods: { merge: true, squash: true, rebase: false },
     });
     await user.click(screen.getByRole('button', { name: /^merge$/i }));
-    expect(screen.getByRole('button', { name: /convert to draft/i })).toBeDisabled();
-    expect(screen.getByRole('button', { name: /^close$/i })).toBeDisabled();
+    expect(screen.queryByRole('button', { name: /convert to draft/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^close$/i })).not.toBeInTheDocument();
+  });
+
+  it('the merge flow has a Back control that exits without merging (E2)', async () => {
+    const user = userEvent.setup();
+    renderPanel({
+      mergeReadiness: 'ready',
+      allowedMergeMethods: { merge: true, squash: true, rebase: false },
+    });
+    await user.click(screen.getByRole('button', { name: /^merge$/i }));
+    await user.click(screen.getByRole('button', { name: /back/i }));
+    // Morph collapses; the normal action set returns; no merge fired.
+    expect(screen.queryByRole('radiogroup', { name: /merge method/i })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^merge$/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /convert to draft/i })).toBeInTheDocument();
+    expect(invoke).not.toHaveBeenCalled();
+  });
+
+  it('the Confirm-merge button uses the merge hue, not danger red (E4)', async () => {
+    const user = userEvent.setup();
+    renderPanel({
+      mergeReadiness: 'ready',
+      allowedMergeMethods: { merge: true, squash: false, rebase: false },
+    });
+    await user.click(screen.getByRole('button', { name: /^merge$/i }));
+    expect(screen.getByRole('button', { name: /confirm merge commit/i })).not.toHaveClass(
+      'btn-danger',
+    );
   });
 
   it('does not render Merge for a draft PR', () => {

@@ -96,12 +96,14 @@
   border-color: var(--merged-fg);
 }
 
-/* The Merge button stacks above its disabled-reason line; the cluster row keeps them together. */
+/* The Merge button sits in a horizontal row with its disabled affordance (a ReadinessBadge popover
+   for badge states, or the calculating label + Refresh for `none`) so the button stays vertically
+   aligned with the other action buttons — the reason no longer stacks below and displaces it (#566). */
 .mergeWrap {
   display: inline-flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: var(--s-1);
+  flex-direction: row;
+  align-items: center;
+  gap: var(--s-2);
 }
 
 .mergeReason {
@@ -154,4 +156,52 @@
 .unstableNote {
   font-size: var(--text-xs);
   color: var(--warning-fg);
+}
+
+/* E2 — Back control out of the merge flow: a compact icon button, ghost-styled so it reads as
+   navigation, not a competing action. */
+.backBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-2);
+  background: var(--surface-1);
+  color: var(--text-2);
+  cursor: pointer;
+  /* No transition — snap on hover, matching the adjacent method-picker buttons (which have no
+     transition) and the app's .btn-icon convention. An 80ms fade here (the earlier F2 attempt) read
+     as "sluggish/lingering" precisely because the buttons it sits among snap instantly (F2 round-2). */
+}
+.backBtn:hover:not(:disabled) {
+  /* Light icon-button hover (mirrors .btn-icon): surface fill + ink only. The border is held at
+     --border-2 — the earlier jump to --border-strong made the hover sit heavy. */
+  background: var(--surface-3);
+  color: var(--text-1);
+}
+.backBtn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* E4 — the Confirm-merge commit uses the merge hue, NOT danger red: merging is not destructive.
+   F1 (revised) — a SOLID purple button with near-white text (the GitHub "Merge" CTA model), so it
+   reads as the unmistakable primary action, distinct from the soft-tinted method-picker options it
+   sits beside. Uses the dedicated --merged FILL token (dark in both themes) rather than --merged-fg
+   (the on-surface glyph hue, which goes light in dark mode and would drop white-text contrast).
+   Mirrors .btn-danger/.btn-success: hue fill + near-white ink + brightness-dim hover.
+   E3 — min-width fits the longest label ("Confirm squash merge") so swapping method labels, and the
+   in-flight Merging…/Checking… labels, never reflow the morph. */
+.confirmMerge {
+  min-width: 20ch;
+  font-weight: 600;
+  color: oklch(0.99 0 0);
+  background: var(--merged);
+  border-color: var(--merged);
+}
+.confirmMerge:hover:not(:disabled) {
+  filter: brightness(0.92);
 }
