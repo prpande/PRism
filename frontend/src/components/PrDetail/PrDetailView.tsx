@@ -76,6 +76,10 @@ export function PrDetailView({
   // Root ref for #590 inner-diff-scroll restore (scopes the .diff-pane-body query
   // to THIS view's kept-alive subtree).
   const pageRef = useRef<HTMLDivElement>(null);
+  // Stable callback for MergedAnnouncer so its [isMerged, onMerged] effect only
+  // re-runs when isMerged changes (not on every render). pageRef is a stable
+  // object so the empty dep array cannot go stale.
+  const handleMerged = useCallback(() => pageRef.current?.focus(), []);
 
   const { clearPr } = useAiFailure();
   // Clear AI failures for this PR when the view unmounts (e.g. tab closed under PrTabHost
@@ -508,10 +512,7 @@ export function PrDetailView({
           PrActionsPanel) because PrActionsPanel unmounts when isMerged becomes true.
           On a live false→true transition: announces "Pull request merged" first
           (polite queue), then moves focus to pageRef on the next animation frame. */}
-      <MergedAnnouncer
-        isMerged={data?.pr.isMerged ?? false}
-        onMerged={() => pageRef.current?.focus()}
-      />
+      <MergedAnnouncer isMerged={data?.pr.isMerged ?? false} onMerged={handleMerged} />
       <PrHeader
         reference={prRef}
         loading={!data && isLoading}

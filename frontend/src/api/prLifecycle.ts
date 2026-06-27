@@ -33,24 +33,28 @@ function prPath(prRef: PrReference): string {
   return `/api/pr/${prRef.owner}/${prRef.repo}/${prRef.number}`;
 }
 
+// ApiError is { status, requestId, body } — there is NO `.code` field.
+// The endpoint returns the kebab code inside the JSON body ({ code }), so read e.body.code.
+// RequireSubscribed rejects with HTTP 403 + code "unauthorized" (NOT 401 — client.ts
+// pre-empts any real 401 with a global prism-auth-rejected dispatch before throwing). 403
+// is shared with token-cannot-write, so disambiguate by CODE, not status.
+function handleLifecycleError(e: unknown): PrActionResult {
+  if (e instanceof ApiError) {
+    const raw = (e.body as { code?: string } | null | undefined)?.code;
+    if (raw === 'unauthorized') return { ok: false, code: 'subscribe-rejected' };
+    const code = raw && KNOWN.has(raw) ? (raw as PrLifecycleErrorCode) : 'generic';
+    return { ok: false, code };
+  }
+  return { ok: false, code: 'generic' };
+}
+
 async function run(prRef: PrReference, action: string): Promise<PrActionResult> {
   try {
     // apiClient.post attaches X-PRism-Tab-Id on every request (api/client.ts).
     await apiClient.post(`${prPath(prRef)}/${action}`);
     return { ok: true };
   } catch (e) {
-    if (e instanceof ApiError) {
-      // ApiError is { status, requestId, body } — there is NO `.code` field.
-      // The endpoint returns the kebab code inside the JSON body ({ code }), so read e.body.code.
-      const raw = (e.body as { code?: string } | null | undefined)?.code;
-      // RequireSubscribed rejects with HTTP 403 + code "unauthorized" (NOT 401 — client.ts
-      // pre-empts any real 401 with a global prism-auth-rejected dispatch before throwing). 403
-      // is shared with token-cannot-write, so disambiguate by CODE, not status.
-      if (raw === 'unauthorized') return { ok: false, code: 'subscribe-rejected' };
-      const code = raw && KNOWN.has(raw) ? (raw as PrLifecycleErrorCode) : 'generic';
-      return { ok: false, code };
-    }
-    return { ok: false, code: 'generic' };
+    return handleLifecycleError(e);
   }
 }
 
@@ -68,12 +72,6 @@ export async function mergePr(
     await apiClient.post(`${prPath(prRef)}/merge`, { method, headSha });
     return { ok: true };
   } catch (e) {
-    if (e instanceof ApiError) {
-      const raw = (e.body as { code?: string } | null | undefined)?.code;
-      if (raw === 'unauthorized') return { ok: false, code: 'subscribe-rejected' };
-      const code = raw && KNOWN.has(raw) ? (raw as PrLifecycleErrorCode) : 'generic';
-      return { ok: false, code };
-    }
-    return { ok: false, code: 'generic' };
+    return handleLifecycleError(e);
   }
 }

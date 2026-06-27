@@ -114,7 +114,6 @@ export function usePrAction({ prRef, reload, prState }: UsePrActionArgs): UsePrA
   // ── merge state (slice 2) ─────────────────────────────────────────────────────────────────
   const [mergePhase, setMergePhase] = useState<MergePhase>('idle');
   const staleHeadShaRef = useRef<string | null>(null); // a headSha that 409'd; block re-merge until it changes
-  const mergeTimeoutKindRef = useRef<'reload-silent' | 'toast-not-mergeable' | null>(null);
 
   const clearTimer = useCallback(() => {
     if (timerRef.current !== null) {
@@ -137,10 +136,9 @@ export function usePrAction({ prRef, reload, prState }: UsePrActionArgs): UsePrA
       // re-opens invoke for the next action.
       setPending(null);
       inFlight.current = false;
-      // Merge reconcile landed too: drop the phase and the timeout-outcome latch so a later
-      // MERGE_RECONCILE_MS fire can't surface a stale "still processing"/error toast.
+      // Merge reconcile landed too: drop the phase so a later MERGE_RECONCILE_MS fire
+      // can't surface a stale "still processing"/error toast.
       setMergePhase('idle');
-      mergeTimeoutKindRef.current = null;
     }
     // Intentional: depend on the booleans, not the prState object reference, so an unrelated
     // reload that creates a new prState object without changing the lifecycle booleans does NOT
@@ -161,17 +159,14 @@ export function usePrAction({ prRef, reload, prState }: UsePrActionArgs): UsePrA
   const armMergeHold = useCallback(
     (onTimeout: 'reload-silent' | 'toast-not-mergeable') => {
       pendingKindRef.current = 'merge';
-      mergeTimeoutKindRef.current = onTimeout;
       clearTimer();
       timerRef.current = setTimeout(() => {
         timerRef.current = null;
         pendingKindRef.current = null;
-        const outcome = mergeTimeoutKindRef.current;
-        mergeTimeoutKindRef.current = null;
         setPending(null);
         setMergePhase('idle');
         inFlight.current = false;
-        if (outcome === 'toast-not-mergeable') {
+        if (onTimeout === 'toast-not-mergeable') {
           show({ kind: 'error', message: copyFor('merge-not-mergeable') });
         } else {
           reload();
