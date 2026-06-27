@@ -65,7 +65,10 @@ describe('mergePr', () => {
   it('POSTs /merge with method + headSha and returns ok', async () => {
     post.mockResolvedValueOnce(undefined);
     const r = await mergePr(prRef, 'squash', 'abc123');
-    expect(post).toHaveBeenCalledWith('/api/pr/o/r/1/merge', { method: 'squash', headSha: 'abc123' });
+    expect(post).toHaveBeenCalledWith('/api/pr/o/r/1/merge', {
+      method: 'squash',
+      headSha: 'abc123',
+    });
     expect(r).toEqual({ ok: true });
   });
 

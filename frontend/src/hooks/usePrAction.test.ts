@@ -262,10 +262,9 @@ describe('usePrAction', () => {
     mergePrMock.mockResolvedValue({ ok: true });
     let state = { isClosed: false, isDraft: false, isMerged: false };
     const reload = vi.fn();
-    const { result, rerender } = renderHook(
-      (s) => usePrAction({ prRef, reload, prState: s }),
-      { initialProps: state },
-    );
+    const { result, rerender } = renderHook((s) => usePrAction({ prRef, reload, prState: s }), {
+      initialProps: state,
+    });
 
     act(() => result.current.invoke('merge', { method: 'squash', headSha: 'abc' }));
     await act(async () => {

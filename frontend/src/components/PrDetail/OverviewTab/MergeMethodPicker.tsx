@@ -4,7 +4,11 @@ import type { MergeMethodWire } from '../../../api/prLifecycle';
 import styles from './PrActionsPanel.module.css';
 
 const ORDER: MergeMethodWire[] = ['merge', 'squash', 'rebase'];
-const LABEL: Record<MergeMethodWire, string> = { merge: 'Merge commit', squash: 'Squash', rebase: 'Rebase' };
+const LABEL: Record<MergeMethodWire, string> = {
+  merge: 'Merge commit',
+  squash: 'Squash',
+  rebase: 'Rebase',
+};
 
 export function allowedList(a: AllowedMergeMethods): MergeMethodWire[] {
   const list = ORDER.filter((m) => a[m]);
@@ -23,7 +27,14 @@ interface Props {
   rootRef?: Ref<HTMLDivElement>;
 }
 
-export function MergeMethodPicker({ allowed, value, onChange, disabled, onEscape, rootRef }: Props) {
+export function MergeMethodPicker({
+  allowed,
+  value,
+  onChange,
+  disabled,
+  onEscape,
+  rootRef,
+}: Props) {
   const list = allowedList(allowed);
   if (list.length <= 1) return null; // single method → conveyed by the Confirm button label
 
@@ -40,9 +51,19 @@ export function MergeMethodPicker({ allowed, value, onChange, disabled, onEscape
       aria-label="Merge method"
       className={styles.methodPicker}
       onKeyDown={(e) => {
-        if (e.key === 'Escape') { e.preventDefault(); onEscape?.(); return; }
-        if (e.key === 'ArrowRight' || e.key === 'ArrowDown') { e.preventDefault(); move(1); }
-        if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') { e.preventDefault(); move(-1); }
+        if (e.key === 'Escape') {
+          e.preventDefault();
+          onEscape?.();
+          return;
+        }
+        if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
+          e.preventDefault();
+          move(1);
+        }
+        if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+          e.preventDefault();
+          move(-1);
+        }
       }}
     >
       {list.map((m) => {
