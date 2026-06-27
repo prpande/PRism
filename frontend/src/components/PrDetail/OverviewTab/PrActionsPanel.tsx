@@ -16,7 +16,7 @@ const PENDING_ANNOUNCE: Record<PrActionKind, string> = {
   reopen: 'Reopening pull request…',
   ready: 'Marking ready for review…',
   'convert-to-draft': 'Converting to draft…',
-  // Placeholder until Task 8 wires the merge affordance (announcement copy is finalized there).
+  // In-flight progress announce for merge (takes precedence over the confirm prompt in the live region).
   merge: 'Merging pull request…',
 };
 
@@ -200,10 +200,10 @@ export function PrActionsPanel() {
         <span className="sr-only" role="status" aria-live="polite" aria-atomic="true">
           {confirmingClose
             ? 'Close this PR? Use Cancel or Confirm close.'
-            : confirmingMerge
-              ? 'Confirm merge? Use Escape to cancel or the Confirm button to merge.'
-              : pending
-                ? PENDING_ANNOUNCE[pending]
+            : pending
+              ? PENDING_ANNOUNCE[pending]
+              : confirmingMerge
+                ? 'Confirm merge? Use Escape to cancel or the Confirm button to merge.'
                 : ''}
         </span>
 

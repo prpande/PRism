@@ -475,4 +475,34 @@ describe('PrActionsPanel', () => {
     await user.click(screen.getByRole('button', { name: /^merge$/i }));
     expect(screen.getByRole('status')).toHaveTextContent(/confirm merge\?/i);
   });
+
+  // FIX 3 (round-2 finding D3 regression): once pending='merge', PENDING_ANNOUNCE['merge'] must
+  // win over the confirmingMerge branch in the live region. Before this fix, confirmingMerge was
+  // always true during the write (morph stays mounted), so the progress announce was unreachable.
+  it('once merge is in flight (pending=merge), the sr-only live region announces progress, not the confirm prompt', async () => {
+    const user = userEvent.setup();
+    const ctl: { current: Ctl | null } = { current: null };
+    const ready = makePrDetailDto({
+      pr: makePr({
+        state: 'open',
+        isClosed: false,
+        isDraft: false,
+        isMerged: false,
+        mergeReadiness: 'ready',
+        allowedMergeMethods: { merge: true, squash: true, rebase: false },
+        headSha: 'abc',
+      }),
+    });
+    render(<Harness initial={{ prDetail: ready }} ctl={ctl} />);
+    await user.click(screen.getByRole('button', { name: /^merge$/i }));
+    // Armed but not confirmed: confirm prompt should be live.
+    expect(screen.getByRole('status')).toHaveTextContent(/confirm merge\?/i);
+    await user.click(screen.getByRole('button', { name: /confirm merge commit/i }));
+    // Simulate the hook entering the in-flight state (morph stays mounted, confirmingMerge=true).
+    pending = 'merge';
+    act(() => ctl.current!.set({}));
+    // In-flight: progress announce must take precedence over the confirm prompt.
+    expect(screen.getByRole('status')).toHaveTextContent(/merging pull request/i);
+    expect(screen.getByRole('status')).not.toHaveTextContent(/confirm merge\?/i);
+  });
 });
