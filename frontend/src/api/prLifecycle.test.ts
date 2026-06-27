@@ -19,7 +19,7 @@ vi.mock('./client', () => ({
   },
 }));
 
-import { closePr, reopenPr, markReady, convertToDraft } from './prLifecycle';
+import { closePr, reopenPr, markReady, convertToDraft, mergePr } from './prLifecycle';
 import { ApiError } from './client';
 
 const prRef = { owner: 'o', repo: 'r', number: 1 };
@@ -56,5 +56,40 @@ describe('prLifecycle client', () => {
     post.mockRejectedValueOnce(new ApiError(403, null, { code: 'unauthorized' }));
     const r = await convertToDraft(prRef);
     expect(r).toEqual({ ok: false, code: 'subscribe-rejected' });
+  });
+});
+
+describe('mergePr', () => {
+  beforeEach(() => post.mockReset());
+
+  it('POSTs /merge with method + headSha and returns ok', async () => {
+    post.mockResolvedValueOnce(undefined);
+    const r = await mergePr(prRef, 'squash', 'abc123');
+    expect(post).toHaveBeenCalledWith('/api/pr/o/r/1/merge', { method: 'squash', headSha: 'abc123' });
+    expect(r).toEqual({ ok: true });
+  });
+
+  it('maps merge-head-changed body code', async () => {
+    post.mockRejectedValueOnce(new ApiError(409, null, { code: 'merge-head-changed' }));
+    const r = await mergePr(prRef, 'merge', 'abc');
+    expect(r).toEqual({ ok: false, code: 'merge-head-changed' });
+  });
+
+  it('maps merge-not-mergeable body code', async () => {
+    post.mockRejectedValueOnce(new ApiError(409, null, { code: 'merge-not-mergeable' }));
+    const r = await mergePr(prRef, 'rebase', 'sha1');
+    expect(r).toEqual({ ok: false, code: 'merge-not-mergeable' });
+  });
+
+  it('maps unauthorized to subscribe-rejected', async () => {
+    post.mockRejectedValueOnce(new ApiError(403, null, { code: 'unauthorized' }));
+    const r = await mergePr(prRef, 'squash', 'sha2');
+    expect(r).toEqual({ ok: false, code: 'subscribe-rejected' });
+  });
+
+  it('falls back to generic for an unknown code', async () => {
+    post.mockRejectedValueOnce(new ApiError(500, null, { code: 'something-unknown' }));
+    const r = await mergePr(prRef, 'merge', 'sha3');
+    expect(r).toEqual({ ok: false, code: 'generic' });
   });
 });

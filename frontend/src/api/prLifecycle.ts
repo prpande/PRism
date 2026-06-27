@@ -7,8 +7,12 @@ export type PrLifecycleErrorCode =
   | 'reopen-not-possible'
   | 'plan-unsupported-drafts'
   | 'rate-limited'
+  | 'merge-not-mergeable'
+  | 'merge-head-changed'
   | 'subscribe-rejected'
   | 'generic';
+
+export type MergeMethodWire = 'merge' | 'squash' | 'rebase';
 
 export interface PrActionResult {
   ok: boolean;
@@ -21,6 +25,8 @@ const KNOWN: ReadonlySet<string> = new Set([
   'reopen-not-possible',
   'plan-unsupported-drafts',
   'rate-limited',
+  'merge-not-mergeable',
+  'merge-head-changed',
 ]);
 
 function prPath(prRef: PrReference): string {
@@ -52,3 +58,22 @@ export const closePr = (prRef: PrReference) => run(prRef, 'close');
 export const reopenPr = (prRef: PrReference) => run(prRef, 'reopen');
 export const markReady = (prRef: PrReference) => run(prRef, 'ready-for-review');
 export const convertToDraft = (prRef: PrReference) => run(prRef, 'convert-to-draft');
+
+export async function mergePr(
+  prRef: PrReference,
+  method: MergeMethodWire,
+  headSha: string,
+): Promise<PrActionResult> {
+  try {
+    await apiClient.post(`${prPath(prRef)}/merge`, { method, headSha });
+    return { ok: true };
+  } catch (e) {
+    if (e instanceof ApiError) {
+      const raw = (e.body as { code?: string } | null | undefined)?.code;
+      if (raw === 'unauthorized') return { ok: false, code: 'subscribe-rejected' };
+      const code = raw && KNOWN.has(raw) ? (raw as PrLifecycleErrorCode) : 'generic';
+      return { ok: false, code };
+    }
+    return { ok: false, code: 'generic' };
+  }
+}

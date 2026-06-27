@@ -254,6 +254,8 @@ export interface InboxUpdatedEvent {
   newOrUpdatedPrCount: number;
 }
 
+export type AllowedMergeMethods = { merge: boolean; squash: boolean; rebase: boolean };
+
 export interface PrDetailPr {
   reference: PrReference;
   title: string;
@@ -282,6 +284,7 @@ export interface PrDetailPr {
   changesRequestedBy?: Reviewer[] | null;
   awaitingReviewers?: Reviewer[] | null;
   updatedAt?: string;
+  allowedMergeMethods?: AllowedMergeMethods;
 }
 
 export type ClusteringQuality = 'ok' | 'low';
