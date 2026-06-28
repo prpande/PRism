@@ -136,6 +136,17 @@ not mergeable, so it must not be fast-polled. Add `IsDraft` to `ActivePrPollSnap
 `GitHubActivePrBatchReader` from the GraphQL `isDraft` it already reads for the readiness rule. The
 fast-retry condition excludes drafts (`IsDraft == false`).
 
+**Re-open correctness — re-emit readiness on (re)subscribe.** When a client (re)subscribes to a PR
+(`POST /api/events/subscriptions`), the server emits that PR's last-known readiness as a **targeted**
+`pr-updated{ MergeReadinessChanged = true }` to the subscribing connection only (not a fanout). This
+closes the re-open gap: when the poller state survived the unsubscribe/re-subscribe (same-cadence
+race, `ActivePrPoller.cs:121-137`) and readiness is unchanged, no organic event fires, so without
+this the panel would sit on the stale `None` seed until the next genuine readiness change. Value
+source = the poller's last-known readiness for the ref (`ActivePrPollerState.LastMergeReadiness`, or
+the active-PR cache); if it is itself `None` for an open non-draft PR, the fast burst arms as usual.
+Emit only when last-known readiness is non-`None` (mirrors the anti-flicker guard — a `None` re-emit
+would carry nothing and the seed already shows `none`).
+
 Resolution path: poller fast-detects the flip → publishes `ActivePrUpdated{ MergeReadinessChanged }`
 → SSE `pr-updated` → `useActivePrUpdates` → panel (C1) + header update. ~1–3s typical.
 
@@ -251,6 +262,10 @@ GitHub (async mergeability compute, ~seconds)
   definitive (Ready) PR, a `Closed`/`Merged` PR, and a **draft** (`IsDraft == true`,
   `Mergeability == "UNKNOWN"`) PR are **not** fast-scheduled; steady Ready→Ready does not
   fast-schedule.
+- **Re-emit on subscribe (xunit, SSE / subscription endpoint tests):** subscribing to a PR whose
+  last-known readiness is `ready` emits a **targeted** `pr-updated{ MergeReadinessChanged = true }`
+  to that connection only (not fanned out to other subscribers); subscribing when last-known is
+  `None` emits nothing (anti-flicker).
 - **C3a (xunit, `GitHubPrBatchReaderTests`):** open non-draft `UNKNOWN`→`None` is not served from
   cache on the next read (re-fetches) — including **after the fast cap** (never frozen as
   definitive); a **draft** `None` **is** cache-served (never re-fetched); a definitive readiness is
@@ -274,15 +289,6 @@ GitHub (async mergeability compute, ~seconds)
   query would duplicate `IActivePrBatchReader`).
 - No per-row live-readiness SSE channel for the inbox — the inbox updates via its existing
   snapshot+`InboxUpdated` mechanism.
-- **Re-open seed staleness on PR-detail is accepted, with an honest bound.** When you re-open a PR
-  that resolved while you were away, the loader serves the cached `None` seed and the live feed is
-  reset to `undefined`, so the panel shows `none` ("still calculating") briefly. The self-heal is
-  **not** guaranteed within ~1–3s: a `pr-updated` event only re-fires if readiness *changes*
-  (`MergeReadinessChanged`) or on a pruned-state first poll; if the poller state survived the
-  re-subscribe (same-cadence-window race, `ActivePrPoller.cs:121-137`) and readiness is unchanged,
-  no event fires and the seed persists until the *next genuine readiness change*. This is no worse
-  than today's panel (which never updates) and matches the header. If it proves annoying, the cheap
-  fix is to re-emit current readiness on (re)subscribe regardless of change — deferred.
 - **Inbox badge appearance is not proactively announced to AT** (the row button is not a live
   region; its `aria-label` gains the readiness suffix on re-render). Accepted — it matches the
   existing async inbox-update behavior (CI probe, AI enrichment), which is also not announced.
