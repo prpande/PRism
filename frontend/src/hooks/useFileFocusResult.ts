@@ -40,8 +40,12 @@ export function useFileFocusResult(
       return;
     }
     let cancelled = false;
+    // #603 item D — abort the abandoned fetch on PR-switch / gate-toggle /
+    // unmount instead of only discarding its resolution. Mirrors
+    // useWholeFileContent.
+    const controller = new AbortController();
     setState({ status: 'loading', entries: [] });
-    getAiFileFocusResult(prRef)
+    getAiFileFocusResult(prRef, controller.signal)
       .then((outcome) => {
         if (cancelled) return;
         if (outcome.kind === 'no-content') {
@@ -74,6 +78,7 @@ export function useFileFocusResult(
       });
     return () => {
       cancelled = true;
+      controller.abort();
     };
     // retryNonce bumps re-run the effect (error-state Retry); base move does NOT auto-refetch (#374).
     // eslint-disable-next-line react-hooks/exhaustive-deps -- stable primitive prRef fields; report/clear/retry are stable (#331)

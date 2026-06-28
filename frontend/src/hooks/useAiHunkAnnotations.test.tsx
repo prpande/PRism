@@ -81,6 +81,19 @@ it('maps 401 to empty and does not report', async () => {
   expect(result.current.f.activeFailedSeams).not.toContain('hunk-annotations');
 });
 
+it('aborts the in-flight request on unmount (#603 item D)', async () => {
+  let captured: AbortSignal | undefined;
+  vi.spyOn(api, 'getAiHunkAnnotations').mockImplementation((_pr, signal) => {
+    captured = signal;
+    return Promise.resolve(null); // abort() flips the signal on cleanup either way
+  });
+  const { unmount } = renderHook(() => useAiHunkAnnotations(PR, true), { wrapper });
+  await waitFor(() => expect(captured).toBeDefined());
+  expect(captured!.aborted).toBe(false);
+  unmount();
+  expect(captured!.aborted).toBe(true);
+});
+
 it('is empty when disabled', () => {
   const { result } = renderHook(() => ({ e: useAiHunkAnnotations(PR, false), f: useAiFailure() }), {
     wrapper,

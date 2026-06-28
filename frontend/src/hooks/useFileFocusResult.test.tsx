@@ -24,6 +24,21 @@ describe('useFileFocusResult', () => {
     expect(api.getAiFileFocusResult).not.toHaveBeenCalled();
   });
 
+  it('aborts the in-flight request on unmount (#603 item D)', async () => {
+    let captured: AbortSignal | undefined;
+    vi.mocked(api.getAiFileFocusResult).mockImplementation((_pr, signal) => {
+      captured = signal;
+      return Promise.resolve({ kind: 'no-content' as const });
+    });
+    const { unmount } = renderHook(() => useFileFocusResult(PR, true, true));
+    await waitFor(() => expect(captured).toBeDefined());
+    // abort() flips the signal on cleanup regardless of whether the fetch had
+    // already resolved.
+    expect(captured!.aborted).toBe(false);
+    unmount();
+    expect(captured!.aborted).toBe(true);
+  });
+
   it('ok when entries contain high/medium', async () => {
     vi.mocked(api.getAiFileFocusResult).mockResolvedValue({
       kind: 'ok',

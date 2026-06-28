@@ -23,7 +23,11 @@ import { InlineCommentComposer } from '../Composer/InlineCommentComposer';
 import type { InlineAnchor } from '../Composer/InlineCommentComposer';
 import { usePrDetailContext } from '../prDetailContext';
 import { computeAnyOtherDraftsStaged } from '../../../hooks/useDraftSession';
-import type { OptimisticComment } from './optimisticComment';
+import {
+  pruneOptimistic,
+  OPTIMISTIC_FALLBACK_MAX_AGE_MS,
+  type OptimisticComment,
+} from './optimisticComment';
 import { CommentCard } from '../Comment/CommentCard';
 import styles from './FilesTab.module.css';
 import type { ThreadCollapseControl } from './DiffPane/ExistingCommentWidget';
@@ -373,22 +377,31 @@ export function FilesTab() {
   // NEVER the key; see optimisticComment.ts).
   const [optimistic, setOptimistic] = useState<OptimisticComment[]>([]);
 
-  // Cleanup effect: when a refetch lands, drop any optimistic entry whose
-  // postedCommentId now appears as a databaseId among the refetched thread
-  // comments. This is the primary de-dup; ExistingCommentWidget repeats the
-  // same databaseId filter at render time as belt-and-suspenders.
+  // #603 item C — refetch generation. allRealComments is a fresh array on every
+  // reviewComments refetch, so bumping a counter here lets the cleanup below tell
+  // whether a refetch has landed *since* a given placeholder was created (the
+  // precondition for the bounded fallback eviction).
+  const refetchGenRef = useRef(0);
+
+  // Cleanup effect: when a refetch lands, drop optimistic placeholders. Fast
+  // path is the databaseId === postedCommentId match (ExistingCommentWidget
+  // repeats it at render time as belt-and-suspenders). Fallback (#603 item C):
+  // a posted comment can surface with databaseId === null (real GitHub
+  // responses do), which the fast-path can never match — so once a refetch has
+  // landed after the placeholder was created AND it has aged past the bound,
+  // evict it anyway, preventing a permanent visible duplicate. A one-shot timer
+  // re-runs the prune at the age bound so a databaseId-less placeholder still
+  // evicts even without a further refetch.
   useEffect(() => {
-    setOptimistic((prev) => {
-      const next = prev.filter(
-        (opt) =>
-          !allRealComments.some(
-            (c) => c.databaseId != null && c.databaseId === opt.postedCommentId,
-          ),
+    refetchGenRef.current += 1;
+    const gen = refetchGenRef.current;
+    setOptimistic((prev) => pruneOptimistic(prev, allRealComments, gen, Date.now()));
+    const timer = setTimeout(() => {
+      setOptimistic((prev) =>
+        pruneOptimistic(prev, allRealComments, refetchGenRef.current, Date.now()),
       );
-      // Preserve reference identity when nothing changed so this effect doesn't
-      // churn the optimisticByThread memo on every reviewComments update.
-      return next.length === prev.length ? prev : next;
-    });
+    }, OPTIMISTIC_FALLBACK_MAX_AGE_MS);
+    return () => clearTimeout(timer);
   }, [allRealComments]);
 
   // Group reply/existing-thread optimistic entries by threadId for the reply
@@ -562,6 +575,7 @@ export function FilesTab() {
                 body,
                 author: VIEWER_LABEL,
                 createdAt: new Date().toISOString(),
+                createdGen: refetchGenRef.current,
                 postedCommentId,
               },
             ]);
@@ -626,6 +640,7 @@ export function FilesTab() {
             body,
             author: VIEWER_LABEL,
             createdAt: new Date().toISOString(),
+            createdGen: refetchGenRef.current,
             postedCommentId,
           },
         ]);
