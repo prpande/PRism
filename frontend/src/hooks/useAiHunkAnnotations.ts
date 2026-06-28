@@ -28,8 +28,12 @@ export function useAiHunkAnnotations(prRef: PrReference, enabled: boolean): AiHu
       return;
     }
     let cancelled = false;
+    // #603 item D — abort the abandoned fetch on PR-switch / gate-toggle /
+    // unmount instead of only discarding its resolution. Mirrors
+    // useWholeFileContent.
+    const controller = new AbortController();
     setValue({ state: 'loading', annotations: null });
-    getAiHunkAnnotations(prRef)
+    getAiHunkAnnotations(prRef, controller.signal)
       .then((result) => {
         if (cancelled) return;
         // getAiHunkAnnotations resolves null on a 204 — guard before .length (else TypeError
@@ -50,6 +54,7 @@ export function useAiHunkAnnotations(prRef: PrReference, enabled: boolean): AiHu
       });
     return () => {
       cancelled = true;
+      controller.abort();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- stable primitive prRef fields; retryNonce re-runs the fetch (cleanup cancels the prior); report/clear/retry are stable (#331)
   }, [prRef.owner, prRef.repo, prRef.number, enabled, retryNonce]);

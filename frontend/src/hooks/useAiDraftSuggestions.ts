@@ -31,8 +31,12 @@ export function useAiDraftSuggestions(
       return;
     }
     let cancelled = false;
+    // #603 item D — abort the abandoned fetch on PR-switch / gate-toggle /
+    // unmount instead of only discarding its resolution. Mirrors
+    // useWholeFileContent.
+    const controller = new AbortController();
     setValue({ state: 'loading', suggestions: null });
-    getAiDraftSuggestions(prRef)
+    getAiDraftSuggestions(prRef, controller.signal)
       .then((result) => {
         if (cancelled) return;
         // getAiDraftSuggestions resolves null on a 204 — guard before .length (see Task 1).
@@ -52,6 +56,7 @@ export function useAiDraftSuggestions(
       });
     return () => {
       cancelled = true;
+      controller.abort();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- stable primitive prRef fields; retryNonce re-runs the fetch (cleanup cancels the prior); report/clear/retry are stable (#331)
   }, [prRef.owner, prRef.repo, prRef.number, enabled, retryNonce]);

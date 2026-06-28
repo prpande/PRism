@@ -2,9 +2,13 @@
 import { apiClient } from './client';
 import type { PrReference, DraftSuggestion } from './types';
 
-export async function getAiDraftSuggestions(prRef: PrReference): Promise<DraftSuggestion[] | null> {
+export async function getAiDraftSuggestions(
+  prRef: PrReference,
+  signal?: AbortSignal,
+): Promise<DraftSuggestion[] | null> {
   const result = await apiClient.get<DraftSuggestion[] | undefined>(
     `/api/pr/${prRef.owner}/${prRef.repo}/${prRef.number}/ai/draft-suggestions`,
+    { signal },
   );
   return result ?? null;
 }

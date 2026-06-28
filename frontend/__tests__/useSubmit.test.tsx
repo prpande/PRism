@@ -274,6 +274,56 @@ describe('useSubmit', () => {
     expect(result.current.state.kind).toBe('success');
   });
 
+  it('double-fire submit: the second concurrent submit is a no-op; POST#1 keeps ownership and its Finalize:Succeeded is honored', async () => {
+    // POST#1 is held pending. POST#2 (if it fired) would 409 on the pending
+    // review POST#1 already created and idle the dialog, dropping POST#1's
+    // Finalize:Succeeded. The re-entrancy guard must swallow POST#2.
+    let resolvePost1: (v: unknown) => void = () => {};
+    submitReviewMock
+      .mockImplementationOnce(() => new Promise((resolve) => (resolvePost1 = resolve)))
+      .mockRejectedValueOnce(
+        Object.assign(new Error('pending review already exists'), { code: 'submit-in-progress' }),
+      );
+
+    const { result } = renderHook(() => useSubmit(ref));
+
+    let p1!: Promise<void>;
+    let p2!: Promise<void>;
+    act(() => {
+      p1 = result.current.submit('comment');
+    });
+    act(() => {
+      p2 = result.current.submit('comment'); // rapid second click while #1 in flight
+    });
+    await act(async () => {
+      await p2; // the guarded no-op resolves immediately
+    });
+
+    // Only ONE POST fired — the second was swallowed by the re-entrancy guard.
+    expect(submitReviewMock).toHaveBeenCalledTimes(1);
+    expect(result.current.state.kind).toBe('in-flight');
+
+    // POST#1's Finalize:Succeeded arrives → honored (ownership retained).
+    act(() =>
+      emit('submit-progress', {
+        prRef: PR_REF,
+        step: 'Finalize',
+        status: 'Succeeded',
+        done: 1,
+        total: 1,
+        errorMessage: null,
+      }),
+    );
+    expect(result.current.state.kind).toBe('success');
+
+    // POST#1 resolves last — it must not clobber the success.
+    await act(async () => {
+      resolvePost1({ outcome: 'started' });
+      await p1;
+    });
+    expect(result.current.state.kind).toBe('success');
+  });
+
   it('ignores events for a different prRef', async () => {
     const { result } = renderHook(() => useSubmit(ref));
     await act(async () => {
