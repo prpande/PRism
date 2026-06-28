@@ -52,8 +52,14 @@ public sealed partial class InboxRefreshOrchestrator : IInboxRefreshOrchestrator
     private int _newBurstsSinceLastRefresh;    // freshly-armed (PrId, HeadSha) targets this refresh
     private bool _priorPassWasCancelled;       // set when a refresh cancels an in-flight burst
     private readonly ConcurrentDictionary<(string PrId, string HeadSha), int> _burstAttempts = new();
-    private const int FastRetryCap = 5;
-    private static TimeSpan FastBackoff(int n) => TimeSpan.FromSeconds(Math.Pow(2, n));
+
+    // A row eligible for a fast mergeability re-probe: open (not merged/closed), not a draft
+    // (a draft's None is definitive, not transient), and currently transiently-None. Shared by the
+    // launch (prune/count), cap-check, and re-probe passes so the criteria can never drift between
+    // them — gate on the DERIVED MergeReadiness, never the raw mergeable string (#655).
+    private static bool IsReprobeTarget(PrInboxItem p) =>
+        p.MergedAt is null && p.ClosedAt is null && !p.IsDraft
+        && p.MergeReadiness == MergeReadiness.None;
 
     public InboxRefreshOrchestrator(
         IConfigStore config,
@@ -523,8 +529,7 @@ public sealed partial class InboxRefreshOrchestrator : IInboxRefreshOrchestrator
         var targetKeys = current is null
             ? new HashSet<(string PrId, string HeadSha)>()
             : current.Sections.Values.SelectMany(s => s)
-                .Where(p => p.MergedAt is null && p.ClosedAt is null && !p.IsDraft
-                            && p.MergeReadiness == MergeReadiness.None)
+                .Where(IsReprobeTarget)
                 .Select(p => (p.Reference.PrId, p.HeadSha)).ToHashSet();
         foreach (var k in _burstAttempts.Keys)
             if (!targetKeys.Contains(k)) _burstAttempts.TryRemove(k, out _);
@@ -538,9 +543,9 @@ public sealed partial class InboxRefreshOrchestrator : IInboxRefreshOrchestrator
 
     private async Task RunReprobeBurstAsync(CancellationToken ct)
     {
-        for (var attempt = 0; attempt < FastRetryCap && !ct.IsCancellationRequested; attempt++)
+        for (var attempt = 0; attempt < FastPollBurst.Cap && !ct.IsCancellationRequested; attempt++)
         {
-            try { await _burstDelay(FastBackoff(attempt), ct).ConfigureAwait(false); }
+            try { await _burstDelay(FastPollBurst.Backoff(attempt), ct).ConfigureAwait(false); }
             catch (OperationCanceledException) { return; }
             if (!AnyTargetUnderCap()) return;    // all (PrId, HeadSha) keys have spent their budget
             bool more;
@@ -563,13 +568,11 @@ public sealed partial class InboxRefreshOrchestrator : IInboxRefreshOrchestrator
         var current = Volatile.Read(ref _current);
         if (current is null) return false;
         var any = false;
-        foreach (var p in current.Sections.Values.SelectMany(s => s)
-            .Where(p => p.MergedAt is null && p.ClosedAt is null && !p.IsDraft
-                        && p.MergeReadiness == MergeReadiness.None))
+        foreach (var p in current.Sections.Values.SelectMany(s => s).Where(IsReprobeTarget))
         {
             var key = (p.Reference.PrId, p.HeadSha);
             var n = _burstAttempts.GetValueOrDefault(key);
-            if (n >= FastRetryCap) continue;     // capped — no more fast budget for this (ref, sha)
+            if (n >= FastPollBurst.Cap) continue;     // capped — no more fast budget for this (ref, sha)
             _burstAttempts[key] = n + 1;
             any = true;
         }
@@ -586,8 +589,7 @@ public sealed partial class InboxRefreshOrchestrator : IInboxRefreshOrchestrator
         var snap = Volatile.Read(ref _current);
         if (snap is null) return false;
         var targets = snap.Sections.Values.SelectMany(s => s)
-            .Where(p => p.MergedAt is null && p.ClosedAt is null && !p.IsDraft
-                        && p.MergeReadiness == MergeReadiness.None)
+            .Where(IsReprobeTarget)
             .Select(p => p.Reference).ToHashSet();
         if (targets.Count == 0 || _lastRawSet.Count == 0) return false;
 

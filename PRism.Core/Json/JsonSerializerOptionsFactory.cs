@@ -16,7 +16,7 @@ public static class JsonSerializerOptionsFactory
     // when the event record carries intentional nulls only because it was constructed with a
     // sparse subset of fields — an explicit null in a sparse frame would clobber full-load
     // values via snapshot(). The normal fanout path stays on Api (its nulls are real clears).
-    public static JsonSerializerOptions ApiSparse { get; } = BuildApiSparse();
+    public static JsonSerializerOptions ApiSparse { get; } = BuildApi(omitNulls: true);
 
     // Backwards-compat alias.
     public static JsonSerializerOptions Default => Storage;
@@ -39,7 +39,7 @@ public static class JsonSerializerOptionsFactory
         return options;
     }
 
-    private static JsonSerializerOptions BuildApi()
+    private static JsonSerializerOptions BuildApi(bool omitNulls = false)
     {
         var options = new JsonSerializerOptions
         {
@@ -48,20 +48,12 @@ public static class JsonSerializerOptionsFactory
             WriteIndented = false,
             PropertyNameCaseInsensitive = false,
         };
-        options.Converters.Add(new JsonStringEnumConverter(new KebabCaseJsonNamingPolicy()));
-        return options;
-    }
-
-    private static JsonSerializerOptions BuildApiSparse()
-    {
-        var options = new JsonSerializerOptions
+        if (omitNulls)
         {
-            PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-            DictionaryKeyPolicy = JsonNamingPolicy.CamelCase,
-            WriteIndented = false,
-            PropertyNameCaseInsensitive = false,
-            DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
-        };
+            // Sparse SSE frames: omit null members so the frontend's snapshot() keeps its fallback
+            // instead of treating an explicit null as an authoritative clear. See ApiSparse above.
+            options.DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull;
+        }
         options.Converters.Add(new JsonStringEnumConverter(new KebabCaseJsonNamingPolicy()));
         return options;
     }

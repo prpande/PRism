@@ -51,12 +51,6 @@ public sealed partial class ActivePrPoller : BackgroundService, IImmediateRefres
     // NextRetryAt and FastRetryCount after calling TickAsync directly. Mirrors TrackedStateCount.
     internal ActivePrPollerState PeekState(PrReference prRef) => _state[prRef];
 
-    // Fast-retry budget for a PR whose derived readiness is transiently None (GitHub still
-    // computing mergeStateStatus). FastBackoff(n) = 2^n seconds (1, 2, 4, 8, 16s for n=0..4).
-    // The cap is 5 attempts; beyond that the poller falls back to the normal cadence.
-    private const int FastRetryCap = 5;
-    private static TimeSpan FastBackoff(int n) => TimeSpan.FromSeconds(Math.Pow(2, n));
-
     // Default 30s for production; PRISM_POLLER_CADENCE_SECONDS overrides ONLY
     // when the host is running under Test env so that a stray env var set on a
     // production host cannot drive the poller into GitHub secondary-rate-limit
@@ -343,10 +337,10 @@ public sealed partial class ActivePrPoller : BackgroundService, IImmediateRefres
             var wantsFastRetry = snapshot.PrState == PrState.Open
                 && !snapshot.IsDraft
                 && snapshot.MergeReadiness == MergeReadiness.None
-                && state.FastRetryCount < FastRetryCap;
+                && state.FastRetryCount < FastPollBurst.Cap;
             if (wantsFastRetry)
             {
-                state.NextRetryAt = now + FastBackoff(state.FastRetryCount);
+                state.NextRetryAt = now + FastPollBurst.Backoff(state.FastRetryCount);
                 state.FastRetryCount++;
             }
             else
