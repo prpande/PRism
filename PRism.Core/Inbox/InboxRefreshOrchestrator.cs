@@ -535,7 +535,10 @@ public sealed partial class InboxRefreshOrchestrator : IInboxRefreshOrchestrator
             if (!targetKeys.Contains(k)) _burstAttempts.TryRemove(k, out _);
         _newBurstsSinceLastRefresh = targetKeys.Count(k => !_burstAttempts.ContainsKey(k));
 
-        var cts = CancellationTokenSource.CreateLinkedTokenSource(CancellationToken.None);
+        // No parent token: the burst is cancelled only explicitly — by the next RefreshAsync
+        // (which cancels the prior _reprobeCts) or by Dispose. A plain CTS makes that intent
+        // explicit (a linked source over CancellationToken.None never fires anyway; PR #658 review).
+        var cts = new CancellationTokenSource();
         _reprobeCts = cts;
         if (_disposed) { try { cts.Cancel(); } catch (ObjectDisposedException) { } } // Dispose raced past the _disposed check → cancel immediately
         _burstTask = Task.Run(() => RunReprobeBurstAsync(cts.Token));
@@ -609,6 +612,12 @@ public sealed partial class InboxRefreshOrchestrator : IInboxRefreshOrchestrator
             if (_disposed) return false;
             var current = Volatile.Read(ref _current); // RE-READ inside the lock: never patch the pre-read reference
             if (current is null) return false;
+            // Stale-approvals window (accepted): `read` is from the first lock window. If a concurrent
+            // RefreshAsync landed fresher reviewer data between the two locks, this patch could overwrite
+            // it with slightly-staler approver lists. Accepted because (a) the window is sub-millisecond
+            // and reviewer data doesn't change at that cadence, and (b) the next full refresh self-heals.
+            // Do NOT "fix" this by holding _writerLock across the network read above — that re-introduces
+            // the lock-during-I/O stall this split-lock exists to avoid (PR #658 review).
             var anyStillNone = false;
             var changed = new HashSet<string>(StringComparer.Ordinal);
             var newSections = current.Sections.ToDictionary(

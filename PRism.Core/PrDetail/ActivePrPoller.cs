@@ -277,6 +277,10 @@ public sealed partial class ActivePrPoller : BackgroundService, IImmediateRefres
             // zero deltas so the frontend hydration gate (useFirstActivePrPollComplete, spec § 5.6)
             // fires on the first successful poll. LastBaseSha follows the same first-poll null pattern.
             var firstPoll = state.LastHeadSha is null && state.LastCommentCount is null;
+            // ORDER-CRITICAL: compute headChanged against the PRIOR LastHeadSha, BEFORE the state
+            // update overwrites it below. The fast-retry re-arm (`if (headChanged) FastRetryCount = 0`)
+            // depends on this — moving the state mutation above this line silently breaks the re-arm
+            // (the compare would always be false). See the matching note at the re-arm site (PR #658 review).
             var headChanged = state.LastHeadSha is { } ph && ph != snapshot.HeadSha;
             var baseChanged = state.LastBaseSha is { } pb && pb != snapshot.BaseSha;
             var commentChanged = state.LastCommentCount is { } pc && pc != snapshot.CommentCount;

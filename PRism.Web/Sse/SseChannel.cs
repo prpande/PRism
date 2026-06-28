@@ -156,7 +156,13 @@ internal sealed class SseChannel : IDisposable
                         // would clobber the frontend's snapshot() full-load values via the #621 path.
                         var json = JsonSerializer.Serialize(payload, JsonSerializerOptionsFactory.ApiSparse);
                         var frame = $"event: {eventName}\ndata: {json}\n\n";
-                        _ = sub.WriteAsync(frame, CancellationToken.None);
+                        // Route through the same helper as the fanout path so this re-emit gets the
+                        // 5s per-write timeout + stalled-subscriber eviction + delivery logging — a raw
+                        // WriteAsync(CancellationToken.None) here would hang on a stalled pipe until
+                        // Kestrel tore the connection down, with no eviction (PR #658 review).
+                        // Fire-and-forget is deadlock-safe: the helper takes no lock before its first
+                        // await (s.WriteAsync), so any EvictSubscriber runs after this lock releases.
+                        _ = WriteAndEvictOnFailureAsync(sub, frame, prRef, nameof(ActivePrUpdated));
                     }
                     return true;
                 }
