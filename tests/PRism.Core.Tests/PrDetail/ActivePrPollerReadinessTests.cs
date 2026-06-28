@@ -46,6 +46,29 @@ public class ActivePrPollerReadinessTests
     }
 
     [Fact]
+    public async Task Cache_retains_last_non_none_readiness()
+    {
+        // After a Ready tick followed by a transient-None tick, the cache still reports Ready.
+        var pr = new PrReference("o", "r", 1);
+        var reader = new FakeBatchReader(
+            tick1: Ready(headSha: "h", comments: 0, reviews: 0, readiness: MergeReadiness.Ready),
+            tick2: Ready(headSha: "h", comments: 0, reviews: 0, readiness: MergeReadiness.None));
+        var registry = new ActivePrSubscriberRegistry();
+        var bus = new FakeReviewEventBus();
+        var cache = new ActivePrCache(registry);
+        var poller = new ActivePrPoller(
+            registry, new FakePollerReviewService(), reader, bus, cache,
+            NullLogger<ActivePrPoller>.Instance,
+            new FakeHostEnvironment("Production"));
+        registry.Add("sub1", pr);
+
+        await poller.TickAsync(T0, CancellationToken.None);
+        await poller.TickAsync(T0.AddSeconds(30), CancellationToken.None);
+
+        Assert.Equal(MergeReadiness.Ready, cache.GetCurrent(pr)!.MergeReadiness);
+    }
+
+    [Fact]
     public async Task Whole_tick_abort_retains_last_known_and_does_not_publish_blank()
     {
         var reader = new FakeBatchReader(

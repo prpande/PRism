@@ -234,11 +234,16 @@ public sealed partial class ActivePrPoller : BackgroundService
 
             // Publish cache snapshot for PUT /draft (markAllRead) and POST /reload head-shift
             // detection. HighestIssueCommentId stays null in S4 — see IActivePrCache class comment.
+            // MergeReadiness uses the same retain-non-None anti-flicker logic as state.LastMergeReadiness
+            // so a transient GitHub UNKNOWN→None recompute does not blank the cached readiness badge.
             _cache.Update(prRef, new ActivePrSnapshot(
                 HeadSha: snapshot.HeadSha,
                 HighestIssueCommentId: null,
                 ObservedAt: now,
-                BaseSha: snapshot.BaseSha));
+                BaseSha: snapshot.BaseSha,
+                MergeReadiness: snapshot.MergeReadiness != MergeReadiness.None
+                    ? snapshot.MergeReadiness
+                    : (state.LastMergeReadiness ?? MergeReadiness.None)));
         }
     }
 
