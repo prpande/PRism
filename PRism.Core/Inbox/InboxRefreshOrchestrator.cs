@@ -32,6 +32,10 @@ public sealed partial class InboxRefreshOrchestrator : IInboxRefreshOrchestrator
     // Last-seen AI mode, stored as int so Interlocked can touch it (#548). The delta-gate
     // in OnConfigChanged reads/advances it atomically.
     private int _lastAiMode;
+    // Stashed after every RefreshAsync (under _writerLock) so ReprobeOnceAsync can re-read
+    // the full set without reconstructing RawPrInboxItem from PrInboxItem; passing the full
+    // set (not just None-targets) keeps InboxCacheEviction.PruneAbsent whole (#655).
+    private IReadOnlyList<RawPrInboxItem> _lastRawSet = Array.Empty<RawPrInboxItem>();
 
     public InboxRefreshOrchestrator(
         IConfigStore config,
@@ -305,6 +309,8 @@ public sealed partial class InboxRefreshOrchestrator : IInboxRefreshOrchestrator
             var newSnap = new InboxSnapshot(sectionsFinal, enrichmentMap, DateTimeOffset.UtcNow, ciProbeComplete, aiSettled);
             var diff = ComputeDiff(_current, newSnap);
             Volatile.Write(ref _current, newSnap);
+            // Stash under the lock so ReprobeOnceAsync can re-read the full set (#655).
+            _lastRawSet = allRawDistinct;
 
             if (!_firstSnapshotTcs.Task.IsCompleted) _firstSnapshotTcs.TrySetResult();
 
@@ -451,6 +457,86 @@ public sealed partial class InboxRefreshOrchestrator : IInboxRefreshOrchestrator
         _config.Changed -= OnConfigChanged; // and detach the config-change handler (#548)
         _disposed = true;                  // then flag so any in-flight invocation exits early
         _writerLock.Dispose();             // finally release the semaphore
+    }
+
+    // Re-reads still-None open non-draft rows via the batch reader (using the full _lastRawSet
+    // so InboxCacheEviction.PruneAbsent stays whole), patches resolved rows onto a freshly
+    // re-read _current, and publishes InboxUpdated if any row changed.
+    // Returns true if any target is still None after the read (another pass is warranted).
+    // Task 10 drives this in a fast burst; this method is the single-pass primitive (#655).
+    internal async Task<bool> ReprobeOnceAsync(CancellationToken ct)
+    {
+        var snap = Volatile.Read(ref _current);
+        if (snap is null) return false;
+        var targets = snap.Sections.Values.SelectMany(s => s)
+            .Where(p => p.MergedAt is null && p.ClosedAt is null && !p.IsDraft
+                        && p.MergeReadiness == MergeReadiness.None)
+            .Select(p => p.Reference).ToHashSet();
+        if (targets.Count == 0 || _lastRawSet.Count == 0) return false;
+
+        var viewerLogin = _viewerLoginProvider();
+        IReadOnlyDictionary<PrReference, BatchPrData> read;
+        await _writerLock.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            if (_disposed) return false;
+            read = await _batchReader.ReadAsync(_lastRawSet, viewerLogin, ct).ConfigureAwait(false);
+        }
+        finally { _writerLock.Release(); }
+
+        await _writerLock.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            if (_disposed) return false;
+            var current = Volatile.Read(ref _current); // RE-READ inside the lock: never patch the pre-read reference
+            if (current is null) return false;
+            var anyStillNone = false;
+            var changed = new HashSet<string>(StringComparer.Ordinal);
+            var newSections = current.Sections.ToDictionary(
+                kv => kv.Key,
+                kv => (IReadOnlyList<PrInboxItem>)kv.Value.Select(p =>
+                {
+                    if (!targets.Contains(p.Reference)) return p;                      // only rows that were None
+                    if (!read.TryGetValue(p.Reference, out var b)
+                        || b.MergeReadiness == MergeReadiness.None)
+                    { anyStillNone = true; return p; }                                 // vanished OR still computing
+                    changed.Add(kv.Key);
+                    return p with
+                    {
+                        MergeReadiness = b.MergeReadiness,
+                        Approvals = b.Approvals,
+                        ChangesRequested = b.ChangesRequested,
+                        Approvers = b.Approvers,
+                        ChangesRequestedBy = b.ChangesRequestedBy,
+                        AwaitingReviewers = b.AwaitingReviewers,
+                    };
+                }).ToList(),
+                StringComparer.Ordinal);
+            if (changed.Count > 0)
+            {
+                Volatile.Write(ref _current, current with { Sections = newSections });
+                _events.Publish(new InboxUpdated(changed.ToArray(), 0)); // ComputeDiff is patch-blind
+            }
+            return anyStillNone;
+        }
+        finally { _writerLock.Release(); }
+    }
+
+    // Test-only seam: simulates a concurrent RefreshAsync that dropped a PR from the snapshot
+    // (e.g., the PR was closed). The re-probe's patch step re-reads _current inside its lock and
+    // iterates current.Sections directly — a row absent from the fresh _current is never patched
+    // back in (#655 vanished-row guard).
+    internal void SimulateConcurrentDropOf(RawPrInboxItem item)
+    {
+        var current = Volatile.Read(ref _current);
+        if (current is null) return;
+        var newSections = current.Sections.ToDictionary(
+            kv => kv.Key,
+            kv => (IReadOnlyList<PrInboxItem>)kv.Value
+                .Where(p => p.Reference != item.Reference)
+                .ToList(),
+            StringComparer.Ordinal);
+        Volatile.Write(ref _current, current with { Sections = newSections });
     }
 
     // Merge a completed enrichment batch into the live snapshot. Runs synchronously on the

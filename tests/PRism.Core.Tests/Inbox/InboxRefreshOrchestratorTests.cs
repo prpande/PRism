@@ -1310,4 +1310,156 @@ public sealed class InboxRefreshOrchestratorTests
                     MergeReadiness: readiness)));
         }
     }
+
+    // ── ReprobeOnceAsync helpers ─────────────────────────────────────────────────
+
+    // Controllable batch reader for ReprobeOnceAsync tests.
+    // EnqueueReadiness: queues a specific readiness for the next read of that ref AND adds the
+    //   item to the section rows list.
+    // SeedRows: adds items to the section rows list with no queued readiness (defaults to None).
+    // ReadCount / LastReadRefs / ResetReadCount: observation seams.
+    private sealed class ControllableBatchReader : IPrBatchReader
+    {
+        private readonly Dictionary<PrReference, Queue<MergeReadiness>> _queues = new();
+        private readonly List<RawPrInboxItem> _rows = new();
+
+        public int ReadCount { get; private set; }
+        public IReadOnlyList<PrReference>? LastReadRefs { get; private set; }
+        public IReadOnlyList<RawPrInboxItem> Rows => _rows;
+
+        public void EnqueueReadiness(RawPrInboxItem item, MergeReadiness readiness)
+        {
+            if (!_rows.Any(r => r.Reference == item.Reference))
+                _rows.Add(item);
+            if (!_queues.TryGetValue(item.Reference, out var q))
+                _queues[item.Reference] = q = new Queue<MergeReadiness>();
+            q.Enqueue(readiness);
+        }
+
+        public void SeedRows(params RawPrInboxItem[] items)
+        {
+            foreach (var item in items)
+                if (!_rows.Any(r => r.Reference == item.Reference))
+                    _rows.Add(item);
+        }
+
+        public void ResetReadCount() => ReadCount = 0;
+
+        public Task<IReadOnlyDictionary<PrReference, BatchPrData>> ReadAsync(
+            IReadOnlyList<RawPrInboxItem> items, string viewerLogin, CancellationToken ct)
+        {
+            ReadCount++;
+            LastReadRefs = items.Select(i => i.Reference).ToList();
+            return Task.FromResult<IReadOnlyDictionary<PrReference, BatchPrData>>(
+                items.ToDictionary(i => i.Reference, i =>
+                {
+                    var readiness = _queues.TryGetValue(i.Reference, out var q) && q.Count > 0
+                        ? q.Dequeue()
+                        : MergeReadiness.None;
+                    return new BatchPrData(
+                        i.HeadSha, i.Additions, i.Deletions, i.CommitCount, i.ChangedFiles,
+                        i.PushedAt, i.MergedAt, i.ClosedAt,
+                        ViewerLastReviewSha: null,
+                        MergeReadiness: readiness);
+                }));
+        }
+    }
+
+    // Minimal open non-draft PR for reprobe tests (HeadSha non-empty so it survives the
+    // orchestrator's HeadSha filter).
+    private static RawPrInboxItem Pr(int n) => RawPr(n, "sha" + n);
+
+    // Find a row in the snapshot by its PR reference (across all sections).
+    private static PrInboxItem RowFor(InboxSnapshot snap, RawPrInboxItem pr)
+        => snap.Sections.Values.SelectMany(s => s).First(p => p.Reference == pr.Reference);
+
+    // Factory for ReprobeOnceAsync tests: wires a ControllableBatchReader whose Rows list is
+    // fed dynamically to the section runner, so EnqueueReadiness/SeedRows calls before
+    // RefreshAsync are automatically visible to the section query.
+    private static (InboxRefreshOrchestrator Orch, ControllableBatchReader Reader, RecordingEventBus Bus)
+        NewOrchestrator()
+    {
+        var reader = new ControllableBatchReader();
+        var bus = new RecordingEventBus();
+        var configFake = ConfigStoreFake(ConfigWithSections(
+            reviewRequested: true, awaitingAuthor: false, authoredByMe: false, mentioned: false));
+        var sections = new FakeSectionQueryRunner(_ =>
+            new Dictionary<string, IReadOnlyList<RawPrInboxItem>>
+            {
+                ["review-requested"] = reader.Rows
+            });
+        var orch = Build(
+            config: configFake,
+            sections: sections,
+            batchReader: reader,
+            events: bus);
+        return (orch, reader, bus);
+    }
+
+    // ── ReprobeOnceAsync tests ────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task Reprobe_patches_resolved_row_and_publishes_InboxUpdated()
+    {
+        var (orch, reader, bus) = NewOrchestrator();
+        reader.EnqueueReadiness(Pr(7), MergeReadiness.None);
+        await orch.RefreshAsync(default);
+        reader.EnqueueReadiness(Pr(7), MergeReadiness.Ready);
+        bus.Published.Clear();
+
+        var more = await orch.ReprobeOnceAsync(default);
+
+        Assert.False(more);
+        Assert.Equal(MergeReadiness.Ready, RowFor(orch.Current!, Pr(7)).MergeReadiness);
+        Assert.Contains(bus.Published, e => e is InboxUpdated);
+    }
+
+    [Fact]
+    public async Task Reprobe_passes_full_item_set_not_a_subset()
+    {
+        // Both PRs end up None after RefreshAsync (no queued readiness → defaults to None).
+        // ReprobeOnceAsync must pass the FULL _lastRawSet to ReadAsync (both refs),
+        // not just the None-target subset — which would break InboxCacheEviction.PruneAbsent.
+        var (orch, reader, _) = NewOrchestrator();
+        reader.SeedRows(Pr(7), Pr(8));          // both rows in section; no queued readiness → None
+        await orch.RefreshAsync(default);
+        await orch.ReprobeOnceAsync(default);
+
+        Assert.NotNull(reader.LastReadRefs);
+        Assert.Equal(2, reader.LastReadRefs!.Count);
+        Assert.Contains(Pr(7).Reference, reader.LastReadRefs!);
+        Assert.Contains(Pr(8).Reference, reader.LastReadRefs!);
+    }
+
+    [Fact]
+    public async Task Reprobe_skips_a_row_absent_from_current()
+    {
+        // SimulateConcurrentDropOf removes PR 7 from _current (simulating a concurrent
+        // RefreshAsync that closed the PR). ReprobeOnceAsync must NOT patch it back.
+        var (orch, reader, _) = NewOrchestrator();
+        reader.EnqueueReadiness(Pr(7), MergeReadiness.None);
+        await orch.RefreshAsync(default);
+        reader.EnqueueReadiness(Pr(7), MergeReadiness.Ready);
+        orch.SimulateConcurrentDropOf(Pr(7));   // concurrent refresh removed the closed PR
+
+        await orch.ReprobeOnceAsync(default);
+
+        Assert.DoesNotContain(
+            orch.Current!.Sections.SelectMany(s => s.Value),
+            p => p.Reference == Pr(7).Reference);
+    }
+
+    [Fact]
+    public async Task Reprobe_no_targets_returns_false_and_does_not_read()
+    {
+        // PR 8 is Ready after RefreshAsync (queued Ready readiness) — no None targets,
+        // so ReprobeOnceAsync must return false without calling ReadAsync.
+        var (orch, reader, _) = NewOrchestrator();
+        reader.EnqueueReadiness(Pr(8), MergeReadiness.Ready);
+        await orch.RefreshAsync(default);
+        reader.ResetReadCount();
+
+        Assert.False(await orch.ReprobeOnceAsync(default));
+        Assert.Equal(0, reader.ReadCount);
+    }
 }
