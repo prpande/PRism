@@ -159,7 +159,7 @@ public sealed partial class ActivePrPoller : BackgroundService, IImmediateRefres
 
     // Sleeps until it's time to tick. Adaptive: wakes at the soonest NextRetryAt (clamped to
     // [0, _cadence]). A subscribe/commit wake that lands within _minWakeInterval of the last tick
-    // re-delays the REMAINING window instead of ticking — coalescing a reconnect storm to one tick
+    // re-delays at least the remaining guard window instead of ticking — coalescing a reconnect storm to one tick
     // without busy-looping (each iteration awaits a real Task.Delay >= minRemaining).
     private async Task WaitForNextCycleAsync(CancellationToken stoppingToken)
     {
@@ -167,11 +167,7 @@ public sealed partial class ActivePrPoller : BackgroundService, IImmediateRefres
         {
             var now = DateTimeOffset.UtcNow;
             var soonest = _state.Values.Select(s => s.NextRetryAt).Where(t => t is not null).DefaultIfEmpty(null).Min();
-            var adaptive = soonest is { } due
-                ? TimeSpan.FromTicks(Math.Clamp((due - now).Ticks, 0, _cadence.Ticks))
-                : _cadence;
-            var minRemaining = _minWakeInterval - (now - _lastTickAt);   // > 0 while inside the guard window
-            var delay = adaptive < minRemaining ? minRemaining : adaptive;
+            var delay = ComputeWaitDelay(now, _lastTickAt, soonest, _minWakeInterval, _cadence);
             if (delay <= TimeSpan.Zero) return;                          // due and outside the guard window -> tick
 
             using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
@@ -188,6 +184,28 @@ public sealed partial class ActivePrPoller : BackgroundService, IImmediateRefres
             if (DateTimeOffset.UtcNow - _lastTickAt >= _minWakeInterval) return; // wake outside window -> tick now
             // else: woken inside the guard window -> loop and re-delay the remaining window (no tick).
         }
+    }
+
+    // Pure delay arithmetic extracted for deterministic unit testing (no timers, no state).
+    // Returns the duration WaitForNextCycleAsync should sleep before the next tick:
+    //   adaptive = how long until the soonest scheduled fast-retry (clamped to [0, cadence]),
+    //              or cadence when no fast-retry is pending.
+    //   minRemaining = guard window remainder; positive only while inside the guard.
+    //   delay = max(adaptive, minRemaining) — the guard prevents adaptive from going below the
+    //           remaining window, ensuring a within-window wake never causes an immediate re-tick.
+    //   ≤ 0 → caller should return (tick now): due fast-retry, outside the guard window.
+    internal static TimeSpan ComputeWaitDelay(
+        DateTimeOffset now,
+        DateTimeOffset lastTickAt,
+        DateTimeOffset? soonestNextRetry,
+        TimeSpan minWakeInterval,
+        TimeSpan cadence)
+    {
+        var adaptive = soonestNextRetry is { } due
+            ? TimeSpan.FromTicks(Math.Clamp((due - now).Ticks, 0, cadence.Ticks))
+            : cadence;
+        var minRemaining = minWakeInterval - (now - lastTickAt);   // > 0 while inside the guard window
+        return adaptive < minRemaining ? minRemaining : adaptive;
     }
 
     public override void Dispose()
