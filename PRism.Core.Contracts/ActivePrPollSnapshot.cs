@@ -18,4 +18,6 @@ public sealed record ActivePrPollSnapshot(
     // detail readiness popover's people section updates live (parallel to Approvals/ChangesRequested).
     IReadOnlyList<Reviewer>? Approvers = null,
     IReadOnlyList<Reviewer>? ChangesRequestedBy = null,
-    IReadOnlyList<Reviewer>? AwaitingReviewers = null);
+    IReadOnlyList<Reviewer>? AwaitingReviewers = null,
+    // #655 surfaced from GraphQL isDraft so later tasks can skip fast-polling draft PRs.
+    bool IsDraft = false);
