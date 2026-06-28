@@ -1621,15 +1621,66 @@ public sealed class InboxRefreshOrchestratorTests
     [Fact]
     public async Task New_refresh_cancels_prior_in_flight_pass_and_Dispose_cancels()
     {
-        // BlockOnRead makes ReadAsync block on ct cancellation. The burst from pass A stores
-        // cts1 in _reprobeCts. Pass B's LaunchReprobeBurst sees cts1 as the prior burst and
-        // cancels+disposes it (PriorPassWasCancelled=true). Dispose cancels pass B's CTS without
-        // ObjectDisposedException (capture-once Interlocked.Exchange in Dispose).
-        var (orch, reader, _) = NewOrchestrator(testClock: true);
-        reader.BlockOnRead();                 // ReadAsync blocks until ct cancelled
-        await orch.RefreshAsync(default);     // pass A: RefreshAsync completes, burst A queued
-        await orch.RefreshAsync(default);     // pass B: LaunchReprobeBurst cancels burst A's CTS
-        Assert.True(orch.PriorPassWasCancelled);
-        orch.Dispose();                       // cancels pass B's CTS; must not throw ObjectDisposedException
+        // Verify that a second refresh genuinely cancels a burst that is PARKED in its burstDelay.
+        //
+        // Design:
+        //   - A TCS-based burstDelay signals when first entered, then blocks indefinitely
+        //     on the CancellationToken. This parks burst A in the delay (lock-free window)
+        //     without blocking ReadAsync (which holds the writerLock).
+        //   - ONE seeded None row ensures AnyTargetUnderCap() returns true and the burst
+        //     actually starts and reaches the delay.
+        //   - After confirming burst A is parked, we capture its Task, then call pass B.
+        //   - Pass B's LaunchReprobeBurst cancels burst A's CTS → Task.Delay(Infinite, ct)
+        //     throws OperationCanceledException → burst A returns promptly.
+        //   - Assert: PriorPassWasCancelled + burst A's Task finishes quickly (not 31s
+        //     of real backoff). Dispose cancels pass B's CTS; must not throw ObjectDisposedException.
+        var firstDelayEntered = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        Func<TimeSpan, CancellationToken, Task> controllableDelay = async (_, ct) =>
+        {
+            firstDelayEntered.TrySetResult(true); // idempotent: subsequent invocations (burst B) are no-ops
+            await Task.Delay(Timeout.Infinite, ct).ConfigureAwait(false);
+        };
+
+        var reader = new ControllableBatchReader();
+        var bus = new RecordingEventBus();
+        var configFake = ConfigStoreFake(ConfigWithSections(
+            reviewRequested: true, awaitingAuthor: false, authoredByMe: false, mentioned: false));
+        var sections = new FakeSectionQueryRunner(_ =>
+            new Dictionary<string, IReadOnlyList<RawPrInboxItem>>
+            {
+                ["review-requested"] = reader.Rows,
+            });
+        var orch = new InboxRefreshOrchestrator(
+            configFake, sections, reader,
+            new FakeCiDetector(), new InboxDeduplicator(),
+            new FakeAiSeamSelector(new NoopInboxItemEnricher()),
+            bus, StateStoreFake(), () => "testuser",
+            burstDelay: controllableDelay);
+
+        // ONE open non-draft None row so AnyTargetUnderCap() is true and burst A starts.
+        reader.AlwaysNone(Pr(1));
+
+        // Pass A: RefreshAsync finishes, LaunchReprobeBurst spawns burst A.
+        await orch.RefreshAsync(default);
+
+        // Wait for burst A to genuinely enter its burstDelay (confirming it is in-flight).
+        Assert.True(
+            await firstDelayEntered.Task.WaitAsync(TimeSpan.FromSeconds(5)),
+            "burst A must reach burstDelay within 5s");
+
+        // Capture burst A's Task handle before pass B's LaunchReprobeBurst replaces _burstTask.
+        var passABurstTask = orch.WaitForBurstIdle(TimeSpan.Zero);
+
+        // Pass B: LaunchReprobeBurst cancels burst A's CTS → Task.Delay(Infinite, ct) throws OCE.
+        await orch.RefreshAsync(default);
+
+        Assert.True(orch.PriorPassWasCancelled,
+            "pass B must have cancelled burst A's in-flight CTS");
+
+        // Burst A must complete promptly via OperationCanceledException (not run all 5 delays).
+        await passABurstTask.WaitAsync(TimeSpan.FromSeconds(5));
+
+        // Dispose cancels pass B's CTS. Must not throw ObjectDisposedException.
+        orch.Dispose();
     }
 }

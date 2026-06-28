@@ -532,7 +532,7 @@ public sealed partial class InboxRefreshOrchestrator : IInboxRefreshOrchestrator
 
         var cts = CancellationTokenSource.CreateLinkedTokenSource(CancellationToken.None);
         _reprobeCts = cts;
-        if (_disposed) { cts.Cancel(); } // Dispose raced past the _disposed check → cancel immediately
+        if (_disposed) { try { cts.Cancel(); } catch (ObjectDisposedException) { } } // Dispose raced past the _disposed check → cancel immediately
         _burstTask = Task.Run(() => RunReprobeBurstAsync(cts.Token));
     }
 
