@@ -43,4 +43,5 @@ public sealed record ActivePrSnapshot(
     string HeadSha,
     long? HighestIssueCommentId,
     DateTimeOffset ObservedAt,
-    string BaseSha = "");
+    string BaseSha = "",
+    MergeReadiness MergeReadiness = MergeReadiness.None);

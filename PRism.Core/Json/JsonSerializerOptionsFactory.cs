@@ -11,6 +11,13 @@ public static class JsonSerializerOptionsFactory
     // For API wire — camelCase property names (frontend convention), kebab-case enums.
     public static JsonSerializerOptions Api { get; } = BuildApi();
 
+    // For PARTIAL/SPARSE SSE update frames where an ABSENT field means "unchanged/unknown"
+    // (the frontend's snapshot() keeps its fallback), NOT "cleared". Use this instead of Api
+    // when the event record carries intentional nulls only because it was constructed with a
+    // sparse subset of fields — an explicit null in a sparse frame would clobber full-load
+    // values via snapshot(). The normal fanout path stays on Api (its nulls are real clears).
+    public static JsonSerializerOptions ApiSparse { get; } = BuildApi(omitNulls: true);
+
     // Backwards-compat alias.
     public static JsonSerializerOptions Default => Storage;
 
@@ -32,7 +39,7 @@ public static class JsonSerializerOptionsFactory
         return options;
     }
 
-    private static JsonSerializerOptions BuildApi()
+    private static JsonSerializerOptions BuildApi(bool omitNulls = false)
     {
         var options = new JsonSerializerOptions
         {
@@ -41,6 +48,12 @@ public static class JsonSerializerOptionsFactory
             WriteIndented = false,
             PropertyNameCaseInsensitive = false,
         };
+        if (omitNulls)
+        {
+            // Sparse SSE frames: omit null members so the frontend's snapshot() keeps its fallback
+            // instead of treating an explicit null as an authoritative clear. See ApiSparse above.
+            options.DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull;
+        }
         options.Converters.Add(new JsonStringEnumConverter(new KebabCaseJsonNamingPolicy()));
         return options;
     }

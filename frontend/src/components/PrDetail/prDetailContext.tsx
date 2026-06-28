@@ -1,5 +1,5 @@
 import { createContext, useContext, type ReactNode } from 'react';
-import type { PrDetailDto, PrReference } from '../../api/types';
+import type { PrDetailDto, PrReference, MergeReadiness } from '../../api/types';
 import type { UseDraftSessionResult } from '../../hooks/useDraftSession';
 import type { FileFocusState } from '../../hooks/useFileFocusResult';
 import type { CheckRunsResult } from '../../hooks/useCheckRuns';
@@ -50,6 +50,10 @@ export interface PrDetailContextValue {
   // PrActionsPanel disables its lifecycle actions while this is true so a mid-update click can't
   // fire an action against a PR whose state is still settling.
   isLoading: boolean;
+  // #655 — live mergeability resolved by the poller and pushed over the pr-updated SSE feed.
+  // Undefined until the first mergeReadinessChanged event arrives; the panel prefers this value
+  // over the frozen snapshot seed (pr.mergeReadiness) once set.
+  liveMergeReadiness?: MergeReadiness;
 }
 
 const PrDetailContext = createContext<PrDetailContextValue | null>(null);

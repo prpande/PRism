@@ -11,6 +11,7 @@ import {
   type PrDetailContextValue,
 } from '../src/components/PrDetail/prDetailContext';
 import { makePr, makePrDetailDto } from './helpers/prDetail';
+import type { MergeReadiness } from '../src/components/shared/mergeReadiness';
 
 const invoke = vi.fn();
 let pending: string | null = null;
@@ -486,6 +487,22 @@ describe('PrActionsPanel', () => {
     expect(screen.queryByRole('button', { name: /^merge$/i })).not.toBeInTheDocument();
   });
 
+  // ── Task 6 (#655 C1): panel consumes live readiness feed ───────────────────────────────────────
+
+  it('uses live readiness over the snapshot seed', () => {
+    // Snapshot says 'none' (still calculating) but the SSE feed resolved to 'ready'.
+    // The panel must prefer the live value → Merge button must be enabled.
+    renderPanel({ mergeReadiness: 'none' }, { liveMergeReadiness: 'ready' });
+    expect(screen.getByRole('button', { name: /^merge$/i })).toBeEnabled();
+  });
+
+  it('falls back to the snapshot when no live value yet', () => {
+    // No SSE update has arrived yet (liveMergeReadiness === undefined). Panel must
+    // fall back to the snapshot value ('none') and show the calculating message.
+    renderPanel({ mergeReadiness: 'none' }, { liveMergeReadiness: undefined });
+    expect(screen.getByText(/still being calculated/i)).toBeInTheDocument();
+  });
+
   // FIX 1: Refresh → disabled readiness must not drop focus to <body>
   it('Refresh resolves to a disabled readiness → focus lands on reason span, not body (§4a transition 3 disabled)', async () => {
     const user = userEvent.setup();
@@ -563,5 +580,70 @@ describe('PrActionsPanel', () => {
     // In-flight: progress announce must take precedence over the confirm prompt.
     expect(screen.getByRole('status')).toHaveTextContent(/merging pull request/i);
     expect(screen.getByRole('status')).not.toHaveTextContent(/confirm merge\?/i);
+  });
+});
+
+// ── Task 7 (#655 C1): announce auto-resolve + Refresh-focus preservation ───────────────────────
+
+describe('PrActionsPanel — auto-resolve announce + Refresh focus (Task 7)', () => {
+  beforeEach(() => {
+    invoke.mockReset();
+    vi.mocked(refreshPrDetail).mockClear();
+    pending = null;
+    mergePhase = 'idle';
+  });
+
+  // Local helpers that support snapshotReadiness + liveMergeReadiness independently.
+  function panel({
+    snapshotReadiness,
+    liveMergeReadiness,
+  }: {
+    snapshotReadiness: MergeReadiness;
+    liveMergeReadiness: MergeReadiness | undefined;
+  }) {
+    const prDetail = makePrDetailDto({
+      pr: makePr({
+        state: 'open',
+        isDraft: false,
+        isClosed: false,
+        isMerged: false,
+        mergeReadiness: snapshotReadiness,
+        allowedMergeMethods: { merge: true, squash: true, rebase: true },
+        headSha: 'headsha',
+      }),
+    });
+    return (
+      <PrDetailContextProvider value={makePrDetailContextValue({ prDetail, liveMergeReadiness })}>
+        <PrActionsPanel />
+      </PrDetailContextProvider>
+    );
+  }
+
+  function renderPanel(opts: {
+    snapshotReadiness: MergeReadiness;
+    liveMergeReadiness: MergeReadiness | undefined;
+  }) {
+    return render(panel(opts));
+  }
+
+  it('announces ready-to-merge on auto-resolve none -> ready', async () => {
+    const { rerender } = renderPanel({ snapshotReadiness: 'none', liveMergeReadiness: undefined });
+    rerender(panel({ snapshotReadiness: 'none', liveMergeReadiness: 'ready' }));
+    expect(await screen.findByRole('status')).toHaveTextContent(/ready to merge/i);
+  });
+
+  it('does NOT re-announce when navigating back to an already-ready PR', () => {
+    // effective readiness starts at 'ready' (snapshot seed), then a re-emit sets live 'ready'
+    const { rerender } = renderPanel({ snapshotReadiness: 'ready', liveMergeReadiness: undefined });
+    rerender(panel({ snapshotReadiness: 'ready', liveMergeReadiness: 'ready' }));
+    expect(screen.getByRole('status')).toHaveTextContent(''); // no announcement
+  });
+
+  it('moves focus off the Refresh button when readiness auto-resolves', async () => {
+    const { rerender } = renderPanel({ snapshotReadiness: 'none', liveMergeReadiness: undefined });
+    screen.getByRole('button', { name: /refresh/i }).focus();
+    rerender(panel({ snapshotReadiness: 'none', liveMergeReadiness: 'ready' }));
+    expect(document.body).not.toHaveFocus();
+    expect(screen.getByRole('button', { name: /merge/i })).toHaveFocus();
   });
 });

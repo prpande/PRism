@@ -43,6 +43,9 @@ public sealed class GitHubPrBatchReaderTests
     }
 
     // Build a one-alias data response (a0) for a fully-hydrated PR.
+    // Includes definitive readiness fields (isDraft/mergeable/mergeStateStatus) so that open-PR
+    // responses cache normally. Tests that cover specific readiness scenarios use their own inline
+    // JSON bodies. Open PRs in production always receive these fields from the includeReadiness query.
     private static string OneAliasOk(
         string headSha = "head1", int additions = 5, int deletions = 2, int changed = 3,
         int commits = 4, string pushedAt = "2026-06-23T11:00:00Z",
@@ -56,8 +59,10 @@ public sealed class GitHubPrBatchReaderTests
               "headRefOid":"{0}","additions":{1},"deletions":{2},
               "changedFiles":{3},"commits":{{"totalCount":{4}}},
               "mergedAt":{5},"closedAt":{6},
+              "isDraft":false,"mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","reviewDecision":null,
               "headRepository":{{"pushedAt":"{7}"}},
-              "reviews":{{"nodes":{8}}}
+              "reviews":{{"nodes":{8}}},
+              "latestReviews":{{"nodes":[]}},"reviewRequests":{{"nodes":[]}}
             }}}}}},"rateLimit":{{"cost":1,"remaining":4999}}}}
             """,
             headSha, additions, deletions, changed, commits,
@@ -65,15 +70,20 @@ public sealed class GitHubPrBatchReaderTests
     }
 
     // Two fully-hydrated aliases (a0→head h7, a1→head h8), no reviews.
+    // Includes definitive readiness fields so both aliases are cacheable.
     private static string TwoAliasOk()
         => """
         {"data":{
           "a0":{"pullRequest":{"headRefOid":"h7","additions":0,"deletions":0,"changedFiles":0,
             "commits":{"totalCount":1},"mergedAt":null,"closedAt":null,
-            "headRepository":{"pushedAt":"2026-06-23T10:00:00Z"},"reviews":{"nodes":[]}}},
+            "isDraft":false,"mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","reviewDecision":null,
+            "headRepository":{"pushedAt":"2026-06-23T10:00:00Z"},
+            "reviews":{"nodes":[]},"latestReviews":{"nodes":[]},"reviewRequests":{"nodes":[]}}},
           "a1":{"pullRequest":{"headRefOid":"h8","additions":0,"deletions":0,"changedFiles":0,
             "commits":{"totalCount":1},"mergedAt":null,"closedAt":null,
-            "headRepository":{"pushedAt":"2026-06-23T10:00:00Z"},"reviews":{"nodes":[]}}}},
+            "isDraft":false,"mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","reviewDecision":null,
+            "headRepository":{"pushedAt":"2026-06-23T10:00:00Z"},
+            "reviews":{"nodes":[]},"latestReviews":{"nodes":[]},"reviewRequests":{"nodes":[]}}}},
         "rateLimit":{"cost":1,"remaining":1}}
         """;
 
@@ -436,5 +446,107 @@ public sealed class GitHubPrBatchReaderTests
         var r = await reader.ReadAsync(Array.Empty<RawPrInboxItem>(), "viewer", CancellationToken.None);
         r.Should().BeEmpty();
         calls().Should().Be(0);
+    }
+
+    // ---- Task-8 helpers ----
+
+    // Builds a single-alias (a0) response body for an open PR with explicit readiness fields.
+    // Uses string.Format ({{/}} escaping) to avoid CS9007: raw $$-string literals forbid }}
+    // sequences that appear naturally in JSON (e.g. closing multiple nested objects).
+    private static string OpenPrReadinessBody(
+        bool isDraft = false, string? mergeable = "UNKNOWN", string? mergeStateStatus = "UNKNOWN")
+    {
+        var draftVal = isDraft ? "true" : "false";
+        var mergeableJson = mergeable is null ? "null" : $"\"{mergeable}\"";
+        var mssJson = mergeStateStatus is null ? "null" : $"\"{mergeStateStatus}\"";
+        return string.Format(
+            CultureInfo.InvariantCulture,
+            """
+            {{"data":{{"a0":{{"pullRequest":{{
+              "headRefOid":"head1","additions":0,"deletions":0,"changedFiles":0,
+              "commits":{{"totalCount":1}},"mergedAt":null,"closedAt":null,
+              "isDraft":{0},"mergeable":{1},"mergeStateStatus":{2},"reviewDecision":null,
+              "headRepository":{{"pushedAt":"2026-06-23T10:00:00Z"}},
+              "reviews":{{"nodes":[]}},"latestReviews":{{"nodes":[]}},"reviewRequests":{{"nodes":[]}}
+            }}}}}},"rateLimit":{{"cost":1,"remaining":4999}}}}
+            """,
+            draftVal, mergeableJson, mssJson);
+    }
+
+    // Creates a reader whose HTTP handler returns one body per ReadAsync call in order.
+    private static GitHubPrBatchReader SequenceReader(params string[] bodies)
+    {
+        var index = 0;
+        var handler = new FakeHttpMessageHandler(_ =>
+        {
+            var body = bodies[index++];
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new System.Net.Http.StringContent(body, System.Text.Encoding.UTF8, "application/json")
+            };
+        });
+        return new GitHubPrBatchReader(
+            new FakeHttpClientFactory(handler, new Uri("https://api.github.com/")),
+            () => Task.FromResult<string?>("token"),
+            () => "https://github.com");
+    }
+
+    // ---- Task-8 tests ----
+
+    [Fact] // Task-8 A — open non-draft UNKNOWN is not cached; second read re-fetches and gets the resolved value
+    public async Task OpenNonDraft_unknown_readiness_is_not_cached()
+    {
+        var reader = SequenceReader(
+            OpenPrReadinessBody(isDraft: false, mergeable: "UNKNOWN",   mergeStateStatus: "UNKNOWN"),  // 1st fetch — still computing
+            OpenPrReadinessBody(isDraft: false, mergeable: "MERGEABLE", mergeStateStatus: "CLEAN"));   // 2nd fetch — resolved
+
+        var item = Raw(7, updated: T0);
+        var r1 = await reader.ReadAsync(new[] { item }, "viewer", CancellationToken.None);
+        var r2 = await reader.ReadAsync(new[] { item }, "viewer", CancellationToken.None); // same (ref,UpdatedAt)
+
+        r1[item.Reference].MergeReadiness.Should().Be(MergeReadiness.None);   // first read: still computing
+        r2[item.Reference].MergeReadiness.Should().Be(MergeReadiness.Ready);  // re-fetched, NOT cache-served
+    }
+
+    [Fact] // Task-8 B — mergeStateStatus-lag derived-None is NOT cached (gate is on derived value, not raw mergeable)
+    public async Task MergeStateStatus_lag_none_is_not_cached()
+    {
+        var reader = SequenceReader(
+            OpenPrReadinessBody(isDraft: false, mergeable: "MERGEABLE", mergeStateStatus: "UNKNOWN"),  // lag: mergeable definitive but mss stale
+            OpenPrReadinessBody(isDraft: false, mergeable: "MERGEABLE", mergeStateStatus: "CLEAN"));   // fully resolved
+
+        var item = Raw(7, updated: T0);
+        await reader.ReadAsync(new[] { item }, "viewer", CancellationToken.None);
+        var r2 = await reader.ReadAsync(new[] { item }, "viewer", CancellationToken.None);
+
+        r2[item.Reference].MergeReadiness.Should().Be(MergeReadiness.Ready); // re-fetched, not frozen on None
+    }
+
+    [Fact] // Task-8 C — draft None IS cached (drafts have no badge; re-fetching is pointless)
+    public async Task Draft_none_is_cached()
+    {
+        var called = 0;
+        var handler = new FakeHttpMessageHandler(_ =>
+        {
+            called++;
+            if (called > 1)
+                throw new InvalidOperationException($"Handler called {called} times — draft should have been cached, not re-fetched");
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new System.Net.Http.StringContent(
+                    OpenPrReadinessBody(isDraft: true, mergeable: null, mergeStateStatus: "UNKNOWN"),
+                    System.Text.Encoding.UTF8, "application/json")
+            };
+        });
+        var reader = new GitHubPrBatchReader(
+            new FakeHttpClientFactory(handler, new Uri("https://api.github.com/")),
+            () => Task.FromResult<string?>("token"),
+            () => "https://github.com");
+
+        var item = Raw(7, updated: T0);
+        await reader.ReadAsync(new[] { item }, "viewer", CancellationToken.None);
+        var r2 = await reader.ReadAsync(new[] { item }, "viewer", CancellationToken.None); // served from cache — no 2nd fetch
+
+        r2[item.Reference].MergeReadiness.Should().Be(MergeReadiness.None);
     }
 }

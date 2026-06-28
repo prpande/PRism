@@ -22,6 +22,9 @@ internal sealed class FakeActivePrBatchReader : IActivePrBatchReader
 
     public int BatchCallCount { get; private set; }
 
+    // Alias used by wake-signal tests (Task 4) so they read naturally alongside BatchCallCount.
+    public int PollCount => BatchCallCount;
+
     public void SetSnapshot(PrReference prRef, ActivePrPollSnapshot snapshot)
     {
         lock (_gate)

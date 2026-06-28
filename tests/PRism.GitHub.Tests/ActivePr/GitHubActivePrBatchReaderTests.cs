@@ -124,4 +124,24 @@ public sealed class GitHubActivePrBatchReaderTests
         var act = () => reader.PollBatchAsync(new[] { new PrReference("o", "r", 1) }, CancellationToken.None);
         await act.Should().ThrowAsync<RateLimitExceededException>();
     }
+
+    [Fact]
+    public async Task PollBatch_surfaces_isDraft_from_graphql()
+    {
+        // Arrange: a GraphQL response node with isDraft:true — the field is already parsed by
+        // TryParse at line 90; this test guards that it is forwarded to ActivePrPollSnapshot.
+        const string body = """
+        { "data": { "a0": { "pullRequest": { "headRefOid": "hd", "baseRefOid": "bd",
+            "state": "OPEN", "isDraft": true, "mergeable": "UNKNOWN", "mergeStateStatus": "DRAFT",
+            "reviewDecision": null, "reviewThreads": { "nodes": [] },
+            "reviews": { "totalCount": 0 }, "latestReviews": { "nodes": [] } } },
+            "rateLimit": { "cost": 1, "remaining": 4999 } } }
+        """;
+        var reader = NewReaderReturning(body);
+        var pr = new PrReference("o", "r", 7);
+
+        var map = await reader.PollBatchAsync(new[] { pr }, CancellationToken.None);
+
+        map[pr].IsDraft.Should().BeTrue();
+    }
 }

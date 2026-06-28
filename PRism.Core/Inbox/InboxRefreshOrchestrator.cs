@@ -1,3 +1,5 @@
+using System.Collections.Concurrent;
+
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using PRism.AI.Contracts.Dtos;
@@ -22,6 +24,7 @@ public sealed partial class InboxRefreshOrchestrator : IInboxRefreshOrchestrator
     private readonly IAppStateStore _stateStore;
     private readonly Func<string> _viewerLoginProvider;
     private readonly ILogger<InboxRefreshOrchestrator> _log;
+    private readonly Func<TimeSpan, CancellationToken, Task> _burstDelay;
 
     private InboxSnapshot? _current;
     private readonly TaskCompletionSource _firstSnapshotTcs = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -32,6 +35,31 @@ public sealed partial class InboxRefreshOrchestrator : IInboxRefreshOrchestrator
     // Last-seen AI mode, stored as int so Interlocked can touch it (#548). The delta-gate
     // in OnConfigChanged reads/advances it atomically.
     private int _lastAiMode;
+    // Stashed after every RefreshAsync (under _writerLock) so ReprobeOnceAsync can re-read
+    // the full set without reconstructing RawPrInboxItem from PrInboxItem; passing the full
+    // set (not just None-targets) keeps InboxCacheEviction.PruneAbsent whole (#655).
+    private IReadOnlyList<RawPrInboxItem> _lastRawSet = Array.Empty<RawPrInboxItem>();
+
+    // ── Fast re-probe burst (Task 10) ────────────────────────────────────────────
+    // A short burst of re-probes (up to FastRetryCap attempts, backoff 2^n seconds)
+    // is launched after every RefreshAsync to resolve rows stuck on MergeReadiness.None.
+    // Each burst generation has its own CTS; a new refresh cancels the prior generation.
+    // CA2213: disposed via Interlocked.Exchange in Dispose (capture-once pattern); analyzer can't see it.
+#pragma warning disable CA2213
+    private CancellationTokenSource? _reprobeCts;
+#pragma warning restore CA2213
+    private Task? _burstTask;                  // last burst Task.Run handle (WaitForBurstIdle awaits it)
+    private int _newBurstsSinceLastRefresh;    // freshly-armed (PrId, HeadSha) targets this refresh
+    private bool _priorPassWasCancelled;       // set when a refresh cancels an in-flight burst
+    private readonly ConcurrentDictionary<(string PrId, string HeadSha), int> _burstAttempts = new();
+
+    // A row eligible for a fast mergeability re-probe: open (not merged/closed), not a draft
+    // (a draft's None is definitive, not transient), and currently transiently-None. Shared by the
+    // launch (prune/count), cap-check, and re-probe passes so the criteria can never drift between
+    // them — gate on the DERIVED MergeReadiness, never the raw mergeable string (#655).
+    private static bool IsReprobeTarget(PrInboxItem p) =>
+        p.MergedAt is null && p.ClosedAt is null && !p.IsDraft
+        && p.MergeReadiness == MergeReadiness.None;
 
     public InboxRefreshOrchestrator(
         IConfigStore config,
@@ -43,7 +71,8 @@ public sealed partial class InboxRefreshOrchestrator : IInboxRefreshOrchestrator
         IReviewEventBus events,
         IAppStateStore stateStore,
         Func<string> viewerLoginProvider,
-        ILogger<InboxRefreshOrchestrator>? log = null)
+        ILogger<InboxRefreshOrchestrator>? log = null,
+        Func<TimeSpan, CancellationToken, Task>? burstDelay = null)
     {
         _config = config;
         _sections = sections;
@@ -55,6 +84,7 @@ public sealed partial class InboxRefreshOrchestrator : IInboxRefreshOrchestrator
         _stateStore = stateStore;
         _viewerLoginProvider = viewerLoginProvider;
         _log = log ?? NullLogger<InboxRefreshOrchestrator>.Instance;
+        _burstDelay = burstDelay ?? Task.Delay;
         _enrichmentSub = _events.Subscribe<InboxEnrichmentsReady>(OnInboxEnrichmentsReady);
         _lastAiMode = (int)_config.Current.Ui.Ai.Mode;
         _config.Changed += OnConfigChanged;
@@ -305,6 +335,8 @@ public sealed partial class InboxRefreshOrchestrator : IInboxRefreshOrchestrator
             var newSnap = new InboxSnapshot(sectionsFinal, enrichmentMap, DateTimeOffset.UtcNow, ciProbeComplete, aiSettled);
             var diff = ComputeDiff(_current, newSnap);
             Volatile.Write(ref _current, newSnap);
+            // Stash under the lock so ReprobeOnceAsync can re-read the full set (#655).
+            _lastRawSet = allRawDistinct;
 
             if (!_firstSnapshotTcs.Task.IsCompleted) _firstSnapshotTcs.TrySetResult();
 
@@ -334,6 +366,10 @@ public sealed partial class InboxRefreshOrchestrator : IInboxRefreshOrchestrator
             if (ciRateLimit is not null) throw ciRateLimit;
         }
         finally { _writerLock.Release(); }
+        // Launch the fast re-probe burst OUTSIDE the lock so the spawned pass can re-acquire it.
+        // On a hard refresh, clear the per-(PrId,HeadSha) budget first so the burst re-arms fully.
+        if (hardRefresh) _burstAttempts.Clear();
+        LaunchReprobeBurst();
     }
 
     private HashSet<string> ResolveVisibleSections()
@@ -450,7 +486,185 @@ public sealed partial class InboxRefreshOrchestrator : IInboxRefreshOrchestrator
         _enrichmentSub.Dispose();          // unsubscribe first so no new handler invocations start
         _config.Changed -= OnConfigChanged; // and detach the config-change handler (#548)
         _disposed = true;                  // then flag so any in-flight invocation exits early
-        _writerLock.Dispose();             // finally release the semaphore
+        // Capture once: a second Interlocked.Exchange returns null so Cancel + Dispose run on
+        // the same captured reference (avoids cancelling a disposed CTS → ObjectDisposedException).
+        var cts = Interlocked.Exchange(ref _reprobeCts, null);
+        cts?.Cancel();
+        cts?.Dispose();
+        _writerLock.Dispose();
+    }
+
+    // ── Test accessors (internal; not part of the public contract) ───────────────
+    internal Task WaitForBurstIdle(TimeSpan timeout)
+    {
+        var t = _burstTask;
+        if (t is null) return Task.CompletedTask;
+        if (timeout == TimeSpan.Zero) return t; // zero = wait indefinitely (burst runs fast in tests)
+        return t.WaitAsync(timeout);
+    }
+
+    internal int BurstAttempts(RawPrInboxItem item) =>
+        _burstAttempts.Where(kv => kv.Key.PrId == item.Reference.PrId).Select(kv => kv.Value).DefaultIfEmpty(0).Max();
+
+    internal int NewBurstsSinceLastRefresh() => _newBurstsSinceLastRefresh;
+
+    internal bool PriorPassWasCancelled => _priorPassWasCancelled;
+
+    // ── Fast re-probe burst implementation ───────────────────────────────────────
+
+    // Called OUTSIDE the writer-lock (after RefreshAsync releases it) so the spawned
+    // pass can re-acquire the lock without deadlocking on the caller.
+    // Atomically exchanges _reprobeCts to cancel the prior burst generation, then
+    // synchronously computes which (PrId, HeadSha) keys are freshly-armed so
+    // NewBurstsSinceLastRefresh() is observable the moment RefreshAsync returns.
+    private void LaunchReprobeBurst()
+    {
+        var prior = Interlocked.Exchange(ref _reprobeCts, null);
+        if (prior is not null) { _priorPassWasCancelled = true; prior.Cancel(); prior.Dispose(); }
+        if (_disposed) return;
+
+        // Synchronously prune and count: stale keys (headSha changed / PR closed) are
+        // removed; keys NOT yet in the dict are "freshly-armed" targets for this burst.
+        var current = Volatile.Read(ref _current);
+        var targetKeys = current is null
+            ? new HashSet<(string PrId, string HeadSha)>()
+            : current.Sections.Values.SelectMany(s => s)
+                .Where(IsReprobeTarget)
+                .Select(p => (p.Reference.PrId, p.HeadSha)).ToHashSet();
+        foreach (var k in _burstAttempts.Keys)
+            if (!targetKeys.Contains(k)) _burstAttempts.TryRemove(k, out _);
+        _newBurstsSinceLastRefresh = targetKeys.Count(k => !_burstAttempts.ContainsKey(k));
+
+        // No parent token: the burst is cancelled only explicitly — by the next RefreshAsync
+        // (which cancels the prior _reprobeCts) or by Dispose. A plain CTS makes that intent
+        // explicit (a linked source over CancellationToken.None never fires anyway; PR #658 review).
+        var cts = new CancellationTokenSource();
+        _reprobeCts = cts;
+        if (_disposed) { try { cts.Cancel(); } catch (ObjectDisposedException) { } } // Dispose raced past the _disposed check → cancel immediately
+        _burstTask = Task.Run(() => RunReprobeBurstAsync(cts.Token));
+    }
+
+    private async Task RunReprobeBurstAsync(CancellationToken ct)
+    {
+        for (var attempt = 0; attempt < FastPollBurst.Cap && !ct.IsCancellationRequested; attempt++)
+        {
+            try { await _burstDelay(FastPollBurst.Backoff(attempt), ct).ConfigureAwait(false); }
+            catch (OperationCanceledException) { return; }
+            if (!AnyTargetUnderCap()) return;    // all (PrId, HeadSha) keys have spent their budget
+            bool more;
+            try { more = await ReprobeOnceAsync(ct).ConfigureAwait(false); }
+            catch (OperationCanceledException) { return; }
+#pragma warning disable CA1031 // swallow tick errors (mirror CI-probe/refresh passes)
+            catch (Exception) { return; }
+#pragma warning restore CA1031
+            if (!more) return;                   // all still-None targets resolved
+        }
+    }
+
+    // Checks each still-None open non-draft row against the per-(PrId,HeadSha) cap.
+    // Increments the attempt counter for rows under cap (check-before-increment so the
+    // counter reaches exactly FastRetryCap on the last allowed attempt). Returns whether
+    // any row still had budget. A capped (PrId, HeadSha) that arrives on a subsequent
+    // same-headSha comment refresh keeps its capped counter → no re-arm (see brief).
+    private bool AnyTargetUnderCap()
+    {
+        var current = Volatile.Read(ref _current);
+        if (current is null) return false;
+        var any = false;
+        foreach (var p in current.Sections.Values.SelectMany(s => s).Where(IsReprobeTarget))
+        {
+            var key = (p.Reference.PrId, p.HeadSha);
+            var n = _burstAttempts.GetValueOrDefault(key);
+            if (n >= FastPollBurst.Cap) continue;     // capped — no more fast budget for this (ref, sha)
+            _burstAttempts[key] = n + 1;
+            any = true;
+        }
+        return any;
+    }
+
+    // Re-reads still-None open non-draft rows via the batch reader (using the full _lastRawSet
+    // so InboxCacheEviction.PruneAbsent stays whole), patches resolved rows onto a freshly
+    // re-read _current, and publishes InboxUpdated if any row changed.
+    // Returns true if any target is still None after the read (another pass is warranted).
+    // Task 10 drives this in a fast burst; this method is the single-pass primitive (#655).
+    internal async Task<bool> ReprobeOnceAsync(CancellationToken ct)
+    {
+        var snap = Volatile.Read(ref _current);
+        if (snap is null) return false;
+        var targets = snap.Sections.Values.SelectMany(s => s)
+            .Where(IsReprobeTarget)
+            .Select(p => p.Reference).ToHashSet();
+        if (targets.Count == 0 || _lastRawSet.Count == 0) return false;
+
+        var viewerLogin = _viewerLoginProvider();
+        IReadOnlyDictionary<PrReference, BatchPrData> read;
+        await _writerLock.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            if (_disposed) return false;
+            read = await _batchReader.ReadAsync(_lastRawSet, viewerLogin, ct).ConfigureAwait(false);
+        }
+        finally { _writerLock.Release(); }
+
+        await _writerLock.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            if (_disposed) return false;
+            var current = Volatile.Read(ref _current); // RE-READ inside the lock: never patch the pre-read reference
+            if (current is null) return false;
+            // Stale-approvals window (accepted): `read` is from the first lock window. If a concurrent
+            // RefreshAsync landed fresher reviewer data between the two locks, this patch could overwrite
+            // it with slightly-staler approver lists. Accepted because (a) the window is sub-millisecond
+            // and reviewer data doesn't change at that cadence, and (b) the next full refresh self-heals.
+            // Do NOT "fix" this by holding _writerLock across the network read above — that re-introduces
+            // the lock-during-I/O stall this split-lock exists to avoid (PR #658 review).
+            var anyStillNone = false;
+            var changed = new HashSet<string>(StringComparer.Ordinal);
+            var newSections = current.Sections.ToDictionary(
+                kv => kv.Key,
+                kv => (IReadOnlyList<PrInboxItem>)kv.Value.Select(p =>
+                {
+                    if (!targets.Contains(p.Reference)) return p;                      // only rows that were None
+                    if (!read.TryGetValue(p.Reference, out var b)
+                        || b.MergeReadiness == MergeReadiness.None)
+                    { anyStillNone = true; return p; }                                 // vanished OR still computing
+                    changed.Add(kv.Key);
+                    return p with
+                    {
+                        MergeReadiness = b.MergeReadiness,
+                        Approvals = b.Approvals,
+                        ChangesRequested = b.ChangesRequested,
+                        Approvers = b.Approvers,
+                        ChangesRequestedBy = b.ChangesRequestedBy,
+                        AwaitingReviewers = b.AwaitingReviewers,
+                    };
+                }).ToList(),
+                StringComparer.Ordinal);
+            if (changed.Count > 0)
+            {
+                Volatile.Write(ref _current, current with { Sections = newSections });
+                _events.Publish(new InboxUpdated(changed.ToArray(), 0)); // ComputeDiff is patch-blind
+            }
+            return anyStillNone;
+        }
+        finally { _writerLock.Release(); }
+    }
+
+    // Test-only seam: simulates a concurrent RefreshAsync that dropped a PR from the snapshot
+    // (e.g., the PR was closed). The re-probe's patch step re-reads _current inside its lock and
+    // iterates current.Sections directly — a row absent from the fresh _current is never patched
+    // back in (#655 vanished-row guard).
+    internal void SimulateConcurrentDropOf(RawPrInboxItem item)
+    {
+        var current = Volatile.Read(ref _current);
+        if (current is null) return;
+        var newSections = current.Sections.ToDictionary(
+            kv => kv.Key,
+            kv => (IReadOnlyList<PrInboxItem>)kv.Value
+                .Where(p => p.Reference != item.Reference)
+                .ToList(),
+            StringComparer.Ordinal);
+        Volatile.Write(ref _current, current with { Sections = newSections });
     }
 
     // Merge a completed enrichment batch into the live snapshot. Runs synchronously on the

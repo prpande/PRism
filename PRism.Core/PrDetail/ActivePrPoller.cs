@@ -10,7 +10,10 @@ namespace PRism.Core.PrDetail;
 // BackgroundService that polls every PR with at least one active subscriber and publishes
 // ActivePrUpdated when head SHA or comment count changes. Per-PR backoff isolates flaky
 // PRs from healthy ones — see spec § 6.2.
-public sealed partial class ActivePrPoller : BackgroundService
+// Implements IImmediateRefresh (Task 4) so the SSE channel can cut the cadence delay
+// short the moment a new subscriber connects — causing mergeability to resolve in ~1s
+// instead of waiting up to 30s for the next scheduled tick.
+public sealed partial class ActivePrPoller : BackgroundService, IImmediateRefresh
 {
     private readonly ActivePrSubscriberRegistry _registry;
     private readonly IPrReader _review;
@@ -23,10 +26,30 @@ public sealed partial class ActivePrPoller : BackgroundService
     private readonly ILogger<ActivePrPoller> _logger;
     private readonly ConcurrentDictionary<PrReference, ActivePrPollerState> _state = new();
 
+    // Coalescing wake signal: Release() cuts the current WaitForNextCycleAsync short so a
+    // newly-connected SSE subscriber's mergeability resolves in ~1s not up to 30s. Capacity 1
+    // + initial 0: first Release transitions 0→1 and wakes the waiter; a second Release while
+    // already pending throws SemaphoreFullException (swallowed) — a duplicate wake in the same
+    // window is the correct coalesce semantic.
+    private readonly SemaphoreSlim _refreshSignal = new(0, 1);
+
+    // Min-interval guard: a wake that lands within _minWakeInterval of the last tick re-delays
+    // the remaining window instead of ticking — coalescing reconnect storms to one extra tick.
+    // Default 3s; tests inject a shorter value to observe the guard without waiting wall-clock.
+    private readonly TimeSpan _minWakeInterval;
+
+    // Timestamp of the last completed tick (updated in ExecuteAsync after TickAsync returns).
+    // DateTimeOffset.MinValue on first cycle so the guard never fires before the first tick.
+    private DateTimeOffset _lastTickAt = DateTimeOffset.MinValue;
+
     // Read-only observability seam for tests: the number of PRs with retained poller state.
     // Backs the regression assertion that _state does not grow without bound across
     // subscribe/unsubscribe cycles (issue #609). No behavior; surfaces _state.Count only.
     internal int TrackedStateCount => _state.Count;
+
+    // Test accessor: exposes the mutable per-PR state bag so unit tests can assert on
+    // NextRetryAt and FastRetryCount after calling TickAsync directly. Mirrors TrackedStateCount.
+    internal ActivePrPollerState PeekState(PrReference prRef) => _state[prRef];
 
     // Default 30s for production; PRISM_POLLER_CADENCE_SECONDS overrides ONLY
     // when the host is running under Test env so that a stray env var set on a
@@ -64,7 +87,8 @@ public sealed partial class ActivePrPoller : BackgroundService
         IReviewEventBus bus,
         IActivePrCache cache,
         ILogger<ActivePrPoller> logger,
-        IHostEnvironment env)
+        IHostEnvironment env,
+        TimeSpan minWakeInterval = default)
     {
         ArgumentNullException.ThrowIfNull(registry);
         ArgumentNullException.ThrowIfNull(review);
@@ -74,12 +98,27 @@ public sealed partial class ActivePrPoller : BackgroundService
         ArgumentNullException.ThrowIfNull(env);
         _cadence = ResolveCadence(env);
         ArgumentNullException.ThrowIfNull(logger);
+        _minWakeInterval = minWakeInterval == default ? TimeSpan.FromSeconds(3) : minWakeInterval;
         _registry = registry;
         _review = review;
         _batch = batch;
         _bus = bus;
         _cache = cache;
         _logger = logger;
+    }
+
+    /// <summary>
+    /// Signals the poller loop to cut its current wait short and tick immediately.
+    /// Called by the SSE channel when a new subscriber connects so mergeability
+    /// resolves in ~1s rather than waiting up to 30s for the next cadence tick.
+    /// Coalescing: multiple calls within one min-interval window collapse to one
+    /// extra tick (the SemaphoreFullException catch absorbs duplicates).
+    /// </summary>
+    public void RequestImmediateRefresh()
+    {
+        try { _refreshSignal.Release(); }
+        catch (SemaphoreFullException) { /* already signalled; coalesce */ }
+        catch (ObjectDisposedException) { /* poller stopped; signal is moot */ }
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -100,15 +139,73 @@ public sealed partial class ActivePrPoller : BackgroundService
                 s_tickFailedLog(_logger, ex);
             }
 #pragma warning restore CA1031
+            _lastTickAt = DateTimeOffset.UtcNow;
             try
             {
-                await Task.Delay(_cadence, stoppingToken).ConfigureAwait(false);
+                await WaitForNextCycleAsync(stoppingToken).ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
                 return;
             }
         }
+    }
+
+    // Sleeps until it's time to tick. Adaptive: wakes at the soonest NextRetryAt (clamped to
+    // [0, _cadence]). A subscribe/commit wake that lands within _minWakeInterval of the last tick
+    // re-delays at least the remaining guard window instead of ticking — coalescing a reconnect storm to one tick
+    // without busy-looping (each iteration awaits a real Task.Delay >= minRemaining).
+    private async Task WaitForNextCycleAsync(CancellationToken stoppingToken)
+    {
+        while (!stoppingToken.IsCancellationRequested)
+        {
+            var now = DateTimeOffset.UtcNow;
+            var soonest = _state.Values.Select(s => s.NextRetryAt).Where(t => t is not null).DefaultIfEmpty(null).Min();
+            var delay = ComputeWaitDelay(now, _lastTickAt, soonest, _minWakeInterval, _cadence);
+            if (delay <= TimeSpan.Zero) return;                          // due and outside the guard window -> tick
+
+            using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
+            var delayTask = Task.Delay(delay, linkedCts.Token);
+            var signalTask = _refreshSignal.WaitAsync(linkedCts.Token);
+            var winner = await Task.WhenAny(delayTask, signalTask).ConfigureAwait(false);
+            if (stoppingToken.IsCancellationRequested) return;
+            await linkedCts.CancelAsync().ConfigureAwait(false);
+            // Signal-loss defense (ADV-PR2-001): timer won but a signal had also fired -> re-arm it.
+            if (winner == delayTask && signalTask.IsCompletedSuccessfully)
+            { try { _refreshSignal.Release(); } catch (SemaphoreFullException) { } catch (ObjectDisposedException) { } }
+
+            if (winner == delayTask) return;                            // adaptive/cadence elapsed -> tick
+            if (DateTimeOffset.UtcNow - _lastTickAt >= _minWakeInterval) return; // wake outside window -> tick now
+            // else: woken inside the guard window -> loop and re-delay the remaining window (no tick).
+        }
+    }
+
+    // Pure delay arithmetic extracted for deterministic unit testing (no timers, no state).
+    // Returns the duration WaitForNextCycleAsync should sleep before the next tick:
+    //   adaptive = how long until the soonest scheduled fast-retry (clamped to [0, cadence]),
+    //              or cadence when no fast-retry is pending.
+    //   minRemaining = guard window remainder; positive only while inside the guard.
+    //   delay = max(adaptive, minRemaining) — the guard prevents adaptive from going below the
+    //           remaining window, ensuring a within-window wake never causes an immediate re-tick.
+    //   ≤ 0 → caller should return (tick now): due fast-retry, outside the guard window.
+    internal static TimeSpan ComputeWaitDelay(
+        DateTimeOffset now,
+        DateTimeOffset lastTickAt,
+        DateTimeOffset? soonestNextRetry,
+        TimeSpan minWakeInterval,
+        TimeSpan cadence)
+    {
+        var adaptive = soonestNextRetry is { } due
+            ? TimeSpan.FromTicks(Math.Clamp((due - now).Ticks, 0, cadence.Ticks))
+            : cadence;
+        var minRemaining = minWakeInterval - (now - lastTickAt);   // > 0 while inside the guard window
+        return adaptive < minRemaining ? minRemaining : adaptive;
+    }
+
+    public override void Dispose()
+    {
+        _refreshSignal.Dispose();
+        base.Dispose();
     }
 
     // Internal for unit tests; ExecuteAsync passes DateTimeOffset.UtcNow each tick. The
@@ -180,6 +277,10 @@ public sealed partial class ActivePrPoller : BackgroundService
             // zero deltas so the frontend hydration gate (useFirstActivePrPollComplete, spec § 5.6)
             // fires on the first successful poll. LastBaseSha follows the same first-poll null pattern.
             var firstPoll = state.LastHeadSha is null && state.LastCommentCount is null;
+            // ORDER-CRITICAL: compute headChanged against the PRIOR LastHeadSha, BEFORE the state
+            // update overwrites it below. The fast-retry re-arm (`if (headChanged) FastRetryCount = 0`)
+            // depends on this — moving the state mutation above this line silently breaks the re-arm
+            // (the compare would always be false). See the matching note at the re-arm site (PR #658 review).
             var headChanged = state.LastHeadSha is { } ph && ph != snapshot.HeadSha;
             var baseChanged = state.LastBaseSha is { } pb && pb != snapshot.BaseSha;
             var commentChanged = state.LastCommentCount is { } pc && pc != snapshot.CommentCount;
@@ -230,15 +331,40 @@ public sealed partial class ActivePrPoller : BackgroundService
             if (snapshot.MergeReadiness != MergeReadiness.None)
                 state.LastMergeReadiness = snapshot.MergeReadiness;
             state.ConsecutiveErrors = 0;
-            state.NextRetryAt = null;
+            // Fast-retry scheduling: if this PR's derived readiness is transiently None (GitHub
+            // still computing mergeStateStatus) and the burst budget is not yet exhausted, schedule
+            // an early re-poll at exponential backoff. Re-arm the budget when the head SHA changes
+            // (new commit supersedes the previous burst) using the already-computed headChanged local
+            // — DO NOT compare snapshot.HeadSha != state.LastHeadSha here, because line 224 has
+            // already overwritten LastHeadSha to the new value, so that compare is always false.
+            if (headChanged) state.FastRetryCount = 0; // new commit -> re-arm the burst budget
+            var wantsFastRetry = snapshot.PrState == PrState.Open
+                && !snapshot.IsDraft
+                && snapshot.MergeReadiness == MergeReadiness.None
+                && state.FastRetryCount < FastPollBurst.Cap;
+            if (wantsFastRetry)
+            {
+                state.NextRetryAt = now + FastPollBurst.Backoff(state.FastRetryCount);
+                state.FastRetryCount++;
+            }
+            else
+            {
+                state.NextRetryAt = null;       // replaces the unconditional pre-Task-3 reset
+                if (snapshot.MergeReadiness != MergeReadiness.None) state.FastRetryCount = 0; // resolved -> reset budget
+            }
 
             // Publish cache snapshot for PUT /draft (markAllRead) and POST /reload head-shift
             // detection. HighestIssueCommentId stays null in S4 — see IActivePrCache class comment.
+            // MergeReadiness uses the same retain-non-None anti-flicker logic as state.LastMergeReadiness
+            // so a transient GitHub UNKNOWN→None recompute does not blank the cached readiness badge.
             _cache.Update(prRef, new ActivePrSnapshot(
                 HeadSha: snapshot.HeadSha,
                 HighestIssueCommentId: null,
                 ObservedAt: now,
-                BaseSha: snapshot.BaseSha));
+                BaseSha: snapshot.BaseSha,
+                MergeReadiness: snapshot.MergeReadiness != MergeReadiness.None
+                    ? snapshot.MergeReadiness
+                    : (state.LastMergeReadiness ?? MergeReadiness.None)));
         }
     }
 

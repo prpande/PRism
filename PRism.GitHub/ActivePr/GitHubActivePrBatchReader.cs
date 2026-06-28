@@ -105,7 +105,8 @@ public sealed class GitHubActivePrBatchReader : IActivePrBatchReader
             ChangesRequested: changes,
             Approvers: approvers,
             ChangesRequestedBy: changesRequestedBy,
-            AwaitingReviewers: awaitingReviewers);
+            AwaitingReviewers: awaitingReviewers,
+            IsDraft: isDraft);
         return true;
     }
 

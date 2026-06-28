@@ -149,9 +149,15 @@ public static class ServiceCollectionExtensions
         // simple in-memory map; the poller is a BackgroundService that ticks every 30s
         // and publishes ActivePrUpdated to the bus when head SHA or comment count
         // changes. Per-PR backoff isolates flaky PRs from healthy ones (spec § 6.2).
+        // Task 4 (#655): dual-register so the SSE channel can resolve ActivePrPoller by
+        // concrete type (IImmediateRefresh) while the host still runs it as a BackgroundService.
+        // The factory delegate ensures both IHostedService and the two singleton bindings
+        // resolve to the SAME instance (no second copy is created).
         services.AddSingleton<ActivePrSubscriberRegistry>();
         services.AddSingleton<IActivePrCache, ActivePrCache>();
-        services.AddHostedService<ActivePrPoller>();
+        services.AddSingleton<ActivePrPoller>();
+        services.AddHostedService(sp => sp.GetRequiredService<ActivePrPoller>());
+        services.AddSingleton<IImmediateRefresh>(sp => sp.GetRequiredService<ActivePrPoller>());
 
         return services;
     }
