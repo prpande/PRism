@@ -38,6 +38,10 @@ batch readers, SSE fan-out, React/TS frontend (`useActivePrUpdates`, `prDetailCo
 - **No flicker regression.** Reuse the existing anti-flicker guard: only a change **to** a
   non-`None` readiness publishes (`ActivePrPoller.cs:195-196`); a transient `None` must never
   blank or churn a live badge.
+- **Skip drafts entirely.** A draft PR is legitimately `None` (rule: draft → `None`) and must
+  **never** be fast-polled on either surface — its `None` is definitive, not transient. Draft
+  detection requires `isDraft`, which both readiness readers already fetch from GraphQL for the
+  rule; it is plumbed where the skip decision is made (see C2, C3).
 
 ---
 
@@ -87,8 +91,8 @@ cadence**.
 **Change — make the poll cadence adaptive per PR:**
 - Track a per-PR fast-retry counter in `ActivePrPollerState` (distinct from the existing
   error-backoff counter).
-- In `TickAsync`, after deriving the snapshot, if the PR is **open** and its `Mergeability`
-  string is `"UNKNOWN"` and the fast-retry counter is under the cap, set
+- In `TickAsync`, after deriving the snapshot, if the PR is **open**, **not a draft**, and its
+  `Mergeability` string is `"UNKNOWN"` and the fast-retry counter is under the cap, set
   `state.NextRetryAt = now + fastBackoff(attempt)` (1s, 2s, 4s, 8s, 16s) and increment the
   counter. When readiness becomes definitive (non-`None`) the counter resets and normal cadence
   resumes.
@@ -98,10 +102,10 @@ cadence**.
 - After the cap (≈5 fast attempts) a still-`UNKNOWN` PR stops being fast-scheduled and falls back
   to the 30s cadence.
 
-**Draft note:** a draft open PR can also report `mergeable: UNKNOWN`; it would get a brief
-(~30s, capped) fast-poll burst that resolves to a still-`None` readiness (draft → `None` by rule)
-and publishes nothing (anti-flicker). This is harmless and bounded, so we accept it rather than
-adding an `isDraft` field to the snapshot.
+**Draft skip:** a draft open PR can also report `mergeable: UNKNOWN`, but a draft is legitimately
+not mergeable, so it must not be fast-polled. Add `IsDraft` to `ActivePrPollSnapshot`, populated by
+`GitHubActivePrBatchReader` from the GraphQL `isDraft` it already reads for the readiness rule. The
+fast-retry condition excludes drafts (`IsDraft == false`).
 
 Resolution path: poller fast-detects the flip → publishes `ActivePrUpdated{ MergeReadinessChanged }`
 → SSE `pr-updated` → `useActivePrUpdates` → panel (C1) + header update. ~1–3s typical.
@@ -110,11 +114,17 @@ Resolution path: poller fast-detects the flip → publishes `ActivePrUpdated{ Me
 
 Two changes, both mirroring patterns the inbox already uses (the CI probe / async-enrichment patch).
 
-**C3a — stop freezing `None`.** In `GitHubPrBatchReader`, a derived `None` for an **open,
-non-draft** PR is **non-definitive**: it is not served as a cache hit, so a re-read re-fetches it.
-(A definitive readiness — `Ready`/`Conflicts`/etc. — caches normally under `(ref, UpdatedAt)`.)
-The non-definitive state is bounded by the per-`(ref, UpdatedAt)` attempt cap below; after the
-cap, the `None` is cached so re-reads stop until `UpdatedAt` changes.
+**C3a — stop freezing `None`.** In `GitHubPrBatchReader`, a derived `None` is treated as
+**non-definitive only for an open, non-draft PR whose `mergeable` is `UNKNOWN`** — it is not
+served as a cache hit, so a re-read re-fetches it. A draft, closed, or merged PR (and any
+definitive readiness — `Ready`/`Conflicts`/etc.) caches normally under `(ref, UpdatedAt)`; the
+reader already has `isDraft` at derivation time, so drafts are never marked non-definitive. The
+non-definitive state is bounded by the per-`(ref, UpdatedAt)` attempt cap below; after the cap,
+the `None` is cached so re-reads stop until `UpdatedAt` changes.
+
+To let the inbox orchestrator select re-probe targets (C3b) without re-deriving draftness, expose
+`IsDraft` (or an equivalent "readiness pending" signal) on the inbox item so "open, non-draft,
+still-`UNKNOWN`" rows are identifiable; drafts are excluded from the target set.
 
 **C3b — fast readiness re-probe pass.** After `RefreshAsync` hydrates and leaves open non-draft
 PRs at `None`, run a short-backoff background pass (analogous to the CI probe at
@@ -174,15 +184,17 @@ GitHub (async mergeability compute, ~seconds)
 - **C2 (xunit, `ActivePrPollerTests`):** open `UNKNOWN` PR schedules `NextRetryAt ≈ now+1s`;
   `ExecuteAsync` loop wakes early (`min(cadence, nextRetry)`); resolves on a definitive tick and
   publishes `ActivePrUpdated{ MergeReadinessChanged }`; stops fast-scheduling after the cap;
-  a definitive (Ready) PR and a `Closed`/`Merged` PR are **not** fast-scheduled; steady Ready→Ready
-  does not fast-schedule.
-- **C3a (xunit, `GitHubPrBatchReaderTests`):** open non-draft `None` is not served from cache on
-  the next read (re-fetches); a definitive readiness is cache-served; after the attempt cap, `None`
-  is cache-served (stops re-fetching).
-- **C3b (xunit, `InboxRefreshOrchestratorTests`):** a refresh leaving an open PR at `None` triggers
-  a re-probe that re-reads only that row, patches the snapshot, and publishes `InboxUpdated`; stops
-  at cap; a refresh with all-definitive readiness triggers no re-probe; one pass in flight per
-  generation.
+  a definitive (Ready) PR, a `Closed`/`Merged` PR, and a **draft** (`IsDraft == true`,
+  `Mergeability == "UNKNOWN"`) PR are **not** fast-scheduled; steady Ready→Ready does not
+  fast-schedule.
+- **C3a (xunit, `GitHubPrBatchReaderTests`):** open non-draft `UNKNOWN`→`None` is not served from
+  cache on the next read (re-fetches); a **draft** `None` **is** cache-served (never re-fetched); a
+  definitive readiness is cache-served; after the attempt cap, `None` is cache-served (stops
+  re-fetching).
+- **C3b (xunit, `InboxRefreshOrchestratorTests`):** a refresh leaving an open non-draft PR at `None`
+  triggers a re-probe that re-reads only that row, patches the snapshot, and publishes
+  `InboxUpdated`; a **draft** at `None` is **not** a re-probe target; stops at cap; a refresh with
+  all-definitive readiness triggers no re-probe; one pass in flight per generation.
 - **Live B-gate:** push a commit to a `prpande/prism-sandbox` PR and immediately observe both the
   inbox badge and the detail panel resolve from blank → definitive within a few seconds, with no
   manual refresh (validates the GitHub `UNKNOWN`→definitive premise on a re-read).
@@ -199,6 +211,5 @@ GitHub (async mergeability compute, ~seconds)
 
 ## Issue Tracking
 
-#655 is scoped to **PR-detail** ("PR-detail mergeability stuck on 'None'…"). The **inbox** portion
-(C3) extends beyond that title. File it as a sibling issue (or re-scope #655 to cover both) before
-merge so the inbox work is tracked. Both ship together on this branch.
+#655 is **re-scoped to cover both surfaces** — PR-detail (C1/C2) and inbox (C3) — and its body is
+updated to describe the inbox case and the draft-skip. Both ship together on this branch.
