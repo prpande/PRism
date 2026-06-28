@@ -19,6 +19,20 @@ internal static class GitHubErrorMapper
         return new SubmitErrorDto(code, message);
     }
 
-    internal static IResult ToResult(Exception ex) =>
-        Results.Json(Map(ex), statusCode: StatusCodes.Status502BadGateway);
+    // #605 item E — surface auth-class GitHub failures with their real HTTP status instead of
+    // flattening every upstream error to 502. A revoked / under-scoped token reported as 502 reads
+    // as a transient upstream blip → the client futilely retries; 401/403 tells it to re-auth. The
+    // sanitized `code` (github-unauthorized / github-forbidden) is unchanged, so frontend callers —
+    // which branch on `code`, never the literal HTTP status — keep working.
+    internal static IResult ToResult(Exception ex)
+    {
+        var dto = Map(ex);
+        var status = dto.Code switch
+        {
+            "github-unauthorized" => StatusCodes.Status401Unauthorized,
+            "github-forbidden" => StatusCodes.Status403Forbidden,
+            _ => StatusCodes.Status502BadGateway,
+        };
+        return Results.Json(dto, statusCode: status);
+    }
 }

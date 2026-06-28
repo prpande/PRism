@@ -1,3 +1,4 @@
+using System.Linq;
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
@@ -280,6 +281,77 @@ public class PrCommentEndpointTests
         body.GetProperty("code").GetString().Should().Be("github-network-error");
     }
 
+    // ── #605 item B: concurrent edit during post is not lost ──────────────────
+
+    [Fact]
+    public async Task PostComment_inline_reReads_body_so_concurrent_edit_is_not_lost()
+    {
+        using var ctx = CommentTestContext.Create();
+        await ctx.SeedSessionAsync("o", "r", 20, SessionWithInlineDraft(draftId: "d1", body: "v1"));
+
+        // Simulate a concurrent PUT /draft that rewrites the body to "v2" landing AFTER the
+        // endpoint's pre-lock discrimination load but BEFORE the GitHub call. The pre-fix code
+        // captured the body at the discrimination load ("v1") and posted that, silently losing v2.
+        ctx.Store.ArmAfterNextLoad(() => ctx.EditDraftCommentBodyAsync("o", "r", 20, "d1", "v2"));
+
+        var resp = await ctx.Post(20, "d1");
+
+        resp.StatusCode.Should().Be(HttpStatusCode.OK);
+        ctx.Submitter.ReviewComments.Should().ContainSingle()
+            .Which.Request.BodyMarkdown.Should().Be("v2", "the post must send the latest persisted body, not a stale pre-lock snapshot");
+    }
+
+    [Fact]
+    public async Task PostReply_reReads_body_so_concurrent_edit_is_not_lost()
+    {
+        using var ctx = CommentTestContext.Create();
+        await ctx.SeedSessionAsync("o", "r", 23, SessionWithReplyDraft(draftId: "r1", body: "v1", parentThreadId: "PRRT_abc"));
+
+        // Symmetric to the inline case (PostComment_inline_reReads_body_…): a concurrent PUT /draft
+        // rewrites the reply body to "v2", landing AFTER the endpoint's pre-lock discrimination load
+        // but BEFORE the GitHub call. The pre-fix code captured "v1" at the discrimination load and
+        // posted that, silently losing v2.
+        ctx.Store.ArmAfterNextLoad(() => ctx.EditDraftReplyBodyAsync("o", "r", 23, "r1", "v2"));
+
+        var resp = await ctx.Post(23, "r1");
+
+        resp.StatusCode.Should().Be(HttpStatusCode.OK);
+        ctx.Submitter.ReviewCommentReplies.Should().ContainSingle()
+            .Which.Body.Should().Be("v2", "the reply post must send the latest persisted body, not a stale pre-lock snapshot");
+    }
+
+    // ── #605 item E: auth-class GitHub failure maps to a non-502 status, keeps its code ──
+
+    [Fact]
+    public async Task PostComment_github_401_maps_to_401_keeps_github_unauthorized_code()
+    {
+        using var ctx = CommentTestContext.Create();
+        await ctx.SeedSessionAsync("o", "r", 21, SessionWithInlineDraft());
+        ctx.Submitter.InjectReviewCommentFailure(new HttpRequestException(
+            "GitHub HTTP 401", null, System.Net.HttpStatusCode.Unauthorized));
+
+        var resp = await ctx.Post(21, "d1");
+
+        resp.StatusCode.Should().Be(HttpStatusCode.Unauthorized, "a revoked token must not look like a transient 502");
+        var body = await resp.Content.ReadFromJsonAsync<JsonElement>(CamelCase);
+        body.GetProperty("code").GetString().Should().Be("github-unauthorized");
+    }
+
+    [Fact]
+    public async Task PostComment_github_403_maps_to_403_keeps_github_forbidden_code()
+    {
+        using var ctx = CommentTestContext.Create();
+        await ctx.SeedSessionAsync("o", "r", 22, SessionWithInlineDraft());
+        ctx.Submitter.InjectReviewCommentFailure(new HttpRequestException(
+            "GitHub HTTP 403", null, System.Net.HttpStatusCode.Forbidden));
+
+        var resp = await ctx.Post(22, "d1");
+
+        resp.StatusCode.Should().Be(HttpStatusCode.Forbidden, "an under-scoped token must not look like a transient 502");
+        var body = await resp.Content.ReadFromJsonAsync<JsonElement>(CamelCase);
+        body.GetProperty("code").GetString().Should().Be("github-forbidden");
+    }
+
     // ── 9. Lock held → 409 submit-in-progress ─────────────────────────────────
 
     [Fact]
@@ -339,9 +411,57 @@ internal sealed class CommentTestContext : IDisposable
             s.AddSingleton<IReviewEventBus>(Bus);
             s.RemoveAll<IActivePrCache>();
             s.AddSingleton<IActivePrCache>(ActivePrCache);
+
+            // #605 item B — wrap the file-backed IAppStateStore in a transparent decorator so a
+            // test can inject a one-shot concurrent edit between the endpoint's discrimination load
+            // and its body re-read. No-op passthrough unless ArmAfterNextLoad is called.
+            var original = s.Last(d => d.ServiceType == typeof(IAppStateStore));
+            s.Remove(original);
+            s.AddSingleton<IAppStateStore>(sp =>
+                new EditInjectingStore((IAppStateStore)original.ImplementationFactory!(sp)));
         }));
         _ = _derived.Services;
     }
+
+    // #605 item B — the decorating store the running app resolves (singleton), so the test can arm
+    // the one-shot edit hook on the same instance the request pipeline uses.
+    public EditInjectingStore Store => (EditInjectingStore)_derived.Services.GetRequiredService<IAppStateStore>();
+
+    // Directly mutates a draft comment's body (simulating a concurrent PUT /draft) without going
+    // through the decorator's LoadAsync hook.
+    public Task EditDraftCommentBodyAsync(string owner, string repo, int number, string draftId, string newBody) =>
+        StateStore.UpdateAsync(state =>
+        {
+            var key = $"{owner}/{repo}/{number}";
+            if (!state.Reviews.Sessions.TryGetValue(key, out var session)) return state;
+            var sessions = new Dictionary<string, ReviewSessionState>(state.Reviews.Sessions)
+            {
+                [key] = session with
+                {
+                    DraftComments = session.DraftComments
+                        .Select(d => d.Id == draftId ? d with { BodyMarkdown = newBody } : d).ToList(),
+                },
+            };
+            return state.WithDefaultReviews(state.Reviews with { Sessions = sessions });
+        }, CancellationToken.None);
+
+    // Directly mutates a draft reply's body (simulating a concurrent PUT /draft) without going
+    // through the decorator's LoadAsync hook.
+    public Task EditDraftReplyBodyAsync(string owner, string repo, int number, string draftId, string newBody) =>
+        StateStore.UpdateAsync(state =>
+        {
+            var key = $"{owner}/{repo}/{number}";
+            if (!state.Reviews.Sessions.TryGetValue(key, out var session)) return state;
+            var sessions = new Dictionary<string, ReviewSessionState>(state.Reviews.Sessions)
+            {
+                [key] = session with
+                {
+                    DraftReplies = session.DraftReplies
+                        .Select(d => d.Id == draftId ? d with { BodyMarkdown = newBody } : d).ToList(),
+                },
+            };
+            return state.WithDefaultReviews(state.Reviews with { Sessions = sessions });
+        }, CancellationToken.None);
 
     public static CommentTestContext Create(bool subscribeAll = true) => new(subscribeAll);
 

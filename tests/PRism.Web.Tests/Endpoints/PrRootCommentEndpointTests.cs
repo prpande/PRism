@@ -167,10 +167,10 @@ public class PrRootCommentEndpointTests
         body.GetProperty("postedCommentId").GetInt64().Should().Be(99);
     }
 
-    // ── GitHub failure → 502 ─────────────────────────────────────────────────
+    // ── GitHub auth failure → 403 (#605 item E; was 502) ─────────────────────
 
     [Fact]
-    public async Task PostRootComment_force_failure_returns_502()
+    public async Task PostRootComment_forbidden_returns_403()
     {
         using var ctx = RootCommentTestContext.Create();
         await ctx.SeedSessionAsync("o", "r", 24, SessionWithRootDraft());
@@ -182,14 +182,16 @@ public class PrRootCommentEndpointTests
 
         var resp = await ctx.Post(24);
 
-        resp.StatusCode.Should().Be(HttpStatusCode.BadGateway);
+        // #605 item E — an auth-class GitHub failure now surfaces its real status (403), not a
+        // 502 that reads as transient. The sanitized `code` / message are unchanged.
+        resp.StatusCode.Should().Be(HttpStatusCode.Forbidden);
         var body = await resp.Content.ReadFromJsonAsync<JsonElement>(CamelCase);
         body.GetProperty("code").GetString().Should().Be("github-forbidden");
         var message = body.GetProperty("message").GetString();
         message.Should().Be("GitHub rejected the request (forbidden). Check your token's permissions.");
         message.Should().NotContain("RAW_GITHUB_SECRET_BODY", "the raw GitHub error body must not leak to the client");
 
-        // State-preservation: the endpoint returns 502 BEFORE the stamp/delete overlays run.
+        // State-preservation: the endpoint returns BEFORE the stamp/delete overlays run.
         // The PR-root draft must still exist, PostedCommentId must still be null (not stamped),
         // and DraftComments count must be unchanged (draft not deleted).
         var session = await ctx.LoadSessionAsync("o", "r", 24);

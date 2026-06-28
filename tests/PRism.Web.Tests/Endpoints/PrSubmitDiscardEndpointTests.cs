@@ -89,10 +89,10 @@ public class PrSubmitDiscardEndpointTests
         loaded.DraftComments[0].ThreadId.Should().BeNull("ThreadId cleared by ClearPendingReviewStamps");
     }
 
-    // ── GitHub 5xx on Delete → 502, stamps NOT cleared ──────────────────────
+    // ── GitHub forbidden on Delete → 403 (#605 item E; was 502), stamps NOT cleared ──
 
     [Fact]
-    public async Task Discard_github_5xx_returns_502_and_leaves_stamps()
+    public async Task Discard_github_forbidden_returns_403_and_leaves_stamps()
     {
         using var ctx = DiscardTestContext.Create();
         var session = SubmitEndpointsTestContext.ValidSession() with
@@ -114,7 +114,10 @@ public class PrSubmitDiscardEndpointTests
 
         var resp = await ctx.Discard(103);
 
-        resp.StatusCode.Should().Be(HttpStatusCode.BadGateway);
+        // #605 item E — an auth-class GitHub failure now surfaces its real status (403), not a
+        // 502 that reads as transient. The sanitized `code` / message and stamp-preservation are
+        // unchanged.
+        resp.StatusCode.Should().Be(HttpStatusCode.Forbidden);
         var body = await resp.Content.ReadFromJsonAsync<JsonElement>(CamelCase);
         body.GetProperty("code").GetString().Should().Be("github-forbidden");
         var message = body.GetProperty("message").GetString();

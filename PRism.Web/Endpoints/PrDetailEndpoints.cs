@@ -239,7 +239,17 @@ internal static partial class PrDetailEndpoints
                     await stateStore.UpdateAsync(state =>
                     {
                         var session = state.Reviews.Sessions.GetValueOrDefault(key) ?? PrDraftEndpoints.NewEmptySession();
-                        var viewedFiles = session.ViewedFiles.ToDictionary(kv => kv.Key, kv => kv.Value);
+                        // #605 item F — prune superseded-SHA entries on write. The map is path→head-SHA;
+                        // stale-head entries (from prior iterations) otherwise accumulate toward the
+                        // 10000 cap and round-trip in full to the frontend. body.HeadSha was already
+                        // verified equal to the current snapshot head above, so it is the live head;
+                        // keep only entries recorded at it. The FE already filters to head-matched
+                        // entries (useFileViewState.ts), so this is a pure size win with no visible
+                        // behavior change. Pruning before the cap check also lets the pruned size, not
+                        // the stale-bloated size, gate the cap.
+                        var viewedFiles = session.ViewedFiles
+                            .Where(kv => string.Equals(kv.Value, body.HeadSha, StringComparison.Ordinal))
+                            .ToDictionary(kv => kv.Key, kv => kv.Value);
 
                         if (body.Viewed)
                         {
