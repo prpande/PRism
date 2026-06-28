@@ -17,6 +17,12 @@ internal sealed class SseChannel : IDisposable
     private readonly InboxSubscriberCount _subs;
     private readonly ILogger<SseChannel> _log;
     private readonly ActivePrSubscriberRegistry _activeRegistry;
+    // Task 5: optional cache + poller deps injected as trailing nullable params so the ~15
+    // existing `new SseChannel(bus, subs, registry, logger)` call sites compile unchanged.
+    // Production DI injects them (both are registered singletons); tests that don't exercise
+    // the new paths pass null implicitly.
+    private readonly IActivePrCache? _cache;
+    private readonly IImmediateRefresh? _poller;
 
     // subscriberId → SseSubscriber. The single source of truth for "who is connected".
     private readonly ConcurrentDictionary<string, SseSubscriber> _subscribers = new();
@@ -60,13 +66,17 @@ internal sealed class SseChannel : IDisposable
         IReviewEventBus bus,
         InboxSubscriberCount subs,
         ActivePrSubscriberRegistry activeRegistry,
-        ILogger<SseChannel> log)
+        ILogger<SseChannel> log,
+        IActivePrCache? cache = null,
+        IImmediateRefresh? poller = null)
     {
         ArgumentNullException.ThrowIfNull(bus);
         ArgumentNullException.ThrowIfNull(activeRegistry);
         _subs = subs;
         _log = log;
         _activeRegistry = activeRegistry;
+        _cache = cache;
+        _poller = poller;
         _busInbox = bus.Subscribe<InboxUpdated>(OnInboxUpdated);
         _busActivePr = bus.Subscribe<ActivePrUpdated>(OnActivePrUpdated);
         _busStateChanged = bus.Subscribe<StateChanged>(OnStateChanged);
@@ -125,6 +135,26 @@ internal sealed class SseChannel : IDisposable
                 if (_subscribers.ContainsKey(subscriberId))
                 {
                     _activeRegistry.Add(subscriberId, prRef);
+                    // Task 5: fast-probe mergeability for the newly-viewed PR; and re-emit a
+                    // targeted pr-updated if the cache already holds a non-None readiness so
+                    // the panel shows the badge without waiting for the next poll cycle.
+                    _poller?.RequestImmediateRefresh();
+                    var readiness = _cache?.GetCurrent(prRef)?.MergeReadiness ?? MergeReadiness.None;
+                    if (readiness != MergeReadiness.None && _subscribers.TryGetValue(subscriberId, out var sub))
+                    {
+                        var evt = new ActivePrUpdated(
+                            prRef,
+                            HeadShaChanged: false,
+                            CommentCountChanged: false,
+                            NewHeadSha: null,
+                            CommentCountDelta: 0,
+                            MergeReadiness: readiness,
+                            MergeReadinessChanged: true);
+                        var (eventName, payload) = SseEventProjection.Project(evt);
+                        var json = JsonSerializer.Serialize(payload, JsonSerializerOptionsFactory.Api);
+                        var frame = $"event: {eventName}\ndata: {json}\n\n";
+                        _ = sub.WriteAsync(frame, CancellationToken.None);
+                    }
                     return true;
                 }
             }
@@ -288,6 +318,10 @@ internal sealed class SseChannel : IDisposable
     {
         var subscriberList = _activeRegistry.SubscribersFor(evt.PrRef);
         s_sseActivePrFanoutLog(_log, nameof(ActivePrUpdated), evt.PrRef, subscriberList.Count, evt.HeadShaChanged, evt.CommentCountChanged, null);
+        // Task 5: a new head SHA means the PR's merge state may have changed; cut the poller's
+        // delay short so the updated mergeability lands in the fast-burst window (Task 3 re-arms
+        // the budget on headChanged, so this wakes the correct burst tier).
+        if (evt.HeadShaChanged) _poller?.RequestImmediateRefresh();
 
         var (eventName, payload) = SseEventProjection.Project(evt);
         var json = JsonSerializer.Serialize(payload, JsonSerializerOptionsFactory.Api);
