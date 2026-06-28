@@ -124,14 +124,21 @@ export function useReconcile({
       return { complete: false, banner: BANNER_GENERIC, state: 'error' };
     })().finally(() => {
       clearTimeout(timer);
-      inFlight.current = false;
     });
 
-    // Gate every observable effect on the view still being mounted.
-    if (!mounted.current) return;
+    // Gate every observable effect on the view still being mounted. Hold the
+    // re-entrancy guard until the terminal outcome has actually been applied
+    // (or the view unmounted): clearing it inside the IIFE's .finally() above
+    // would open a microtask gap where inFlight is false but the outcome is
+    // not yet applied, letting a second rapid click start a duplicate POST.
+    if (!mounted.current) {
+      inFlight.current = false;
+      return;
+    }
     if (outcome.complete) p.onReloadComplete();
     setBanner(outcome.banner);
     setState(outcome.state);
+    inFlight.current = false;
   }, []);
 
   const clearBanner = useCallback(() => {

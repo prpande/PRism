@@ -199,8 +199,11 @@ export function useSubmit(reference: PrReference): UseSubmitResult {
         if (submitGenRef.current === gen) {
           ownsActiveSubmit.current = false;
           setState({ kind: 'idle' }); // 409 / 4xx return to idle; caller surfaces a toast
+          // Only the live generation surfaces the error. A superseded submit's
+          // late rejection must not propagate to the caller (it would risk a
+          // spurious error toast for a submit the user already replaced).
+          throw err;
         }
-        throw err;
       } finally {
         submitInFlightRef.current = false;
       }
