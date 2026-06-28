@@ -101,6 +101,19 @@ export function useSubmit(reference: PrReference): UseSubmitResult {
   // POSTs, the second 409-ing on the already-consumed pending review and
   // surfacing a spurious "state changed" toast.
   const foreignActionInFlightRef = useRef(false);
+  // Re-entry guard for submit()/retry() (#603 item B). Mirrors
+  // foreignActionInFlightRef: a rapid double-fire while the POST is in flight
+  // would otherwise let POST#2's pre-pipeline 409 (the pending review POST#1
+  // just created) run its catch, idle the dialog, and drop POST#1's later
+  // Finalize:Succeeded SSE. Cleared in `fire`'s finally once the POST resolves;
+  // the SSE-driven phase is intentionally not guarded. Defense-in-depth —
+  // SubmitDialog also freezes its controls in-flight.
+  const submitInFlightRef = useRef(false);
+  // Generation token: each fire() captures the generation it started; the catch
+  // only reverts ownership/state when its generation is still current, so a
+  // superseding fire() can't have its ownership clobbered by an older call's
+  // late rejection.
+  const submitGenRef = useRef(0);
 
   useEffect(() => {
     if (!stream) return;
@@ -164,6 +177,11 @@ export function useSubmit(reference: PrReference): UseSubmitResult {
 
   const fire = useCallback(
     async (verdict: DraftVerdict, initialSteps: SubmitProgressStep[]) => {
+      // Re-entrancy guard: a rapid second submit/retry while the POST is in
+      // flight is a no-op (#603 item B).
+      if (submitInFlightRef.current) return;
+      submitInFlightRef.current = true;
+      const gen = ++submitGenRef.current;
       lastVerdictRef.current = verdict;
       ownsActiveSubmit.current = true;
       // Go in-flight *before* the await — the submit endpoint is fire-and-forget
@@ -175,9 +193,19 @@ export function useSubmit(reference: PrReference): UseSubmitResult {
       try {
         await submitReviewApi(reference, verdict);
       } catch (err) {
-        ownsActiveSubmit.current = false;
-        setState({ kind: 'idle' }); // 409 / 4xx return to idle; caller surfaces a toast
-        throw err;
+        // Only revert if THIS call is still the active generation. A superseding
+        // fire() makes us stale; reverting here would clobber the newer submit's
+        // ownership and let an old 409 idle the dialog (#603 item B).
+        if (submitGenRef.current === gen) {
+          ownsActiveSubmit.current = false;
+          setState({ kind: 'idle' }); // 409 / 4xx return to idle; caller surfaces a toast
+          // Only the live generation surfaces the error. A superseded submit's
+          // late rejection must not propagate to the caller (it would risk a
+          // spurious error toast for a submit the user already replaced).
+          throw err;
+        }
+      } finally {
+        submitInFlightRef.current = false;
       }
     },
     [reference],

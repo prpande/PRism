@@ -66,6 +66,19 @@ it('never reports loading when disabled (no working-marker flash) and does not f
   expect(spy).not.toHaveBeenCalled();
 });
 
+it('aborts the in-flight request on unmount (#603 item D)', async () => {
+  let captured: AbortSignal | undefined;
+  vi.spyOn(api, 'getAiDraftSuggestions').mockImplementation((_pr, signal) => {
+    captured = signal;
+    return Promise.resolve(null); // abort() flips the signal on cleanup either way
+  });
+  const { unmount } = renderHook(() => useAiDraftSuggestions(PR, true), { wrapper });
+  await waitFor(() => expect(captured).toBeDefined());
+  expect(captured!.aborted).toBe(false);
+  unmount();
+  expect(captured!.aborted).toBe(true);
+});
+
 it('reports on any non-401 throw (the seam has no backend 503 path today — see spec)', async () => {
   vi.spyOn(api, 'getAiDraftSuggestions').mockRejectedValue(new ApiError(500, null, ''));
   const { result } = renderHook(() => ({ e: useAiDraftSuggestions(PR, true), f: useAiFailure() }), {

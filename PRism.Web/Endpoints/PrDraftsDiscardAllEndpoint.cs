@@ -7,6 +7,7 @@ using PRism.Core.Events;
 using PRism.Core.PrDetail;
 using PRism.Core.State;
 using PRism.Web.Logging;
+using PRism.Web.Submit;
 
 namespace PRism.Web.Endpoints;
 
@@ -37,6 +38,8 @@ internal static class PrDraftsDiscardAllEndpoint
         IActivePrCache activePrCache,
         IReviewSubmitter submitter,
         IReviewEventBus bus,
+        SubmitLockRegistry lockRegistry,
+        SubmitCancellationRegistry cancellationRegistry,
         ILoggerFactory loggerFactory,
         IHostApplicationLifetime appLifetime,
         CancellationToken ct)
@@ -46,22 +49,42 @@ internal static class PrDraftsDiscardAllEndpoint
         if (RequireSubscribed.Check(activePrCache, prRef, "Subscribe to this PR before discarding.") is { } notSubscribed)
             return notSubscribed;
 
+        // #605 item A — take the per-PR submit lock before wiping the session, mirroring
+        // /submit/discard (PrSubmitEndpoints.DiscardOwnPendingReviewAsync). Without this, a
+        // concurrent in-flight /submit (or /comment/post) could re-materialise a half-populated
+        // pending review on top of the local clear. Cancel any in-flight pipeline first (idempotent
+        // no-op when idle), then wait for it to release the lock; 504 if it does not within the
+        // window so the caller can retry rather than racing the pipeline.
+        cancellationRegistry.RequestCancel(prRef);
+        var discardHandle = await lockRegistry.TryAcquireAsync(prRef, DiscardTimeouts.LockAcquireTimeout, ct).ConfigureAwait(false);
+        if (discardHandle is null)
+            return Results.Json(new SubmitErrorDto("pipeline-cancellation-timeout",
+                "The in-flight submit pipeline did not release within the allowed window. Try again."),
+                statusCode: StatusCodes.Status504GatewayTimeout);
+
         string? pendingToDelete = null;
-        await stateStore.UpdateAsync(state =>
+        try
         {
-            if (!state.Reviews.Sessions.TryGetValue(sessionKey, out var existing)) return state;
-            pendingToDelete = existing.PendingReviewId;
-            var cleared = existing with
+            await stateStore.UpdateAsync(state =>
             {
-                DraftComments = Array.Empty<DraftComment>(),
-                DraftReplies = Array.Empty<DraftReply>(),
-                DraftVerdict = null,
-                DraftVerdictStatus = DraftVerdictStatus.Draft,
-                PendingReviewId = null,
-                PendingReviewCommitOid = null,
-            };
-            return state.WithSession(sessionKey, cleared);
-        }, ct).ConfigureAwait(false);
+                if (!state.Reviews.Sessions.TryGetValue(sessionKey, out var existing)) return state;
+                pendingToDelete = existing.PendingReviewId;
+                var cleared = existing with
+                {
+                    DraftComments = Array.Empty<DraftComment>(),
+                    DraftReplies = Array.Empty<DraftReply>(),
+                    DraftVerdict = null,
+                    DraftVerdictStatus = DraftVerdictStatus.Draft,
+                    PendingReviewId = null,
+                    PendingReviewCommitOid = null,
+                };
+                return state.WithSession(sessionKey, cleared);
+            }, ct).ConfigureAwait(false);
+        }
+        finally
+        {
+            await discardHandle.DisposeAsync().ConfigureAwait(false);
+        }
 
         bus.Publish(new StateChanged(prRef, DiscardedFields, SourceTabId: null));
 

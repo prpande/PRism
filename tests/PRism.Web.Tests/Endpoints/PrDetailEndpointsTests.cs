@@ -714,6 +714,51 @@ public class PrDetailEndpointsTests
         (await resp.Content.ReadAsStringAsync()).Should().Contain("/viewed/cap-exceeded");
     }
 
+    // #605 item F — a write at the current head prunes ViewedFiles entries recorded at a stale head.
+    [Fact]
+    public async Task Post_files_viewed_prunes_superseded_sha_entries_on_write()
+    {
+        var (factory, _) = MakeFactory();
+        using var _f = factory;
+
+        Directory.CreateDirectory(factory.DataDir);
+
+        // Seed a ViewedFiles map containing a stale-head entry (recorded at "head0", not the current
+        // "head1" snapshot head) plus a current-head entry, before the SUT loads it.
+        using (var seedStore = new AppStateStore(factory.DataDir))
+        {
+            var initial = await seedStore.LoadAsync(CancellationToken.None);
+            var viewedFiles = new Dictionary<string, string>
+            {
+                ["src/Stale.cs"] = "head0",   // superseded — must be pruned
+                ["src/Kept.cs"] = "head1",    // current head — must survive
+            };
+            var sessions = new Dictionary<string, ReviewSessionState>
+            {
+                ["octo/repo/1"] = new ReviewSessionState(new Dictionary<string, TabStamp>(), null, null, null, viewedFiles, new List<DraftComment>(), new List<DraftReply>(), null, DraftVerdictStatus.Draft)
+            };
+            await seedStore.SaveAsync(initial.WithDefaultReviews(initial.Reviews with { Sessions = sessions }), CancellationToken.None);
+        }
+
+        var client = factory.CreateClient();
+        await client.GetAsync(new Uri("/api/pr/octo/repo/1", UriKind.Relative));
+        var validBase = new string('a', 40);
+        var validHead = new string('b', 40);
+        await client.GetAsync(new Uri($"/api/pr/octo/repo/1/diff?range={validBase}..{validHead}", UriKind.Relative));
+
+        var resp = await client.PostAsJsonAsync(
+            new Uri("/api/pr/octo/repo/1/files/viewed", UriKind.Relative),
+            new { path = "src/Foo.cs", headSha = "head1", viewed = true });
+
+        resp.StatusCode.Should().Be(HttpStatusCode.NoContent);
+
+        using var stateStore = new AppStateStore(factory.DataDir);
+        var state = await stateStore.LoadAsync(CancellationToken.None);
+        var viewed = state.Reviews.Sessions["octo/repo/1"].ViewedFiles;
+        viewed.Should().ContainKey("src/Foo.cs").And.ContainKey("src/Kept.cs");
+        viewed.Should().NotContainKey("src/Stale.cs", "stale-head entries must be pruned on write");
+    }
+
     [Fact]
     public async Task Post_files_viewed_returns_422_when_path_canonicalizes_but_not_in_diff()
     {

@@ -22,6 +22,12 @@ public class RequestSizeLimitTests
     [InlineData("POST", "/api/pr/acme/api/123/submit/discard")]   // T11 — new endpoint
     [InlineData("POST", "/api/pr/acme/api/123/root-comment/post")] // T10 — new endpoint
     [InlineData("POST", "/api/feedback")]                          // #211 — feedback cap
+    [InlineData("POST", "/api/preferences")]                       // #605 D — previously uncapped
+    [InlineData("POST", "/api/auth/connect")]                      // #605 D — previously uncapped
+    [InlineData("POST", "/api/auth/connect/commit")]              // #605 D — previously uncapped
+    [InlineData("POST", "/api/auth/host-change-resolution")]      // #605 D — previously uncapped
+    [InlineData("POST", "/api/pr/acme/api/123/comment/post")]    // #605 D — previously uncapped
+    [InlineData("POST", "/api/pr/acme/api/123/ai/summary/regenerate")] // #605 D — previously uncapped
     public async Task Mutating_request_with_oversize_body_returns_413(string method, string path)
     {
         using var factory = new PRismWebApplicationFactory();

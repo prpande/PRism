@@ -70,6 +70,50 @@ public class PrDraftEndpointTests : IClassFixture<PRismWebApplicationFactory>
         body!.AssignedId.Should().NotBeNullOrEmpty();
     }
 
+    // #605 item C — newDraftComment must validate LineNumber >= 1 and a non-null Side at create,
+    // returning a clean 422 instead of persisting a bad draft that only fails later at submit.
+    [Fact]
+    public async Task NewDraftComment_lineNumber_zero_returns_422()
+    {
+        var client = ClientWithTab();
+        var resp = await client.PutAsJsonAsync("/api/pr/acme/api/123/draft", NewCommentPatch(line: 0));
+
+        resp.StatusCode.Should().Be(HttpStatusCode.UnprocessableEntity);
+        (await resp.Content.ReadAsStringAsync()).Should().Contain("line-number-invalid");
+    }
+
+    [Fact]
+    public async Task NewDraftComment_empty_side_returns_422()
+    {
+        var client = ClientWithTab();
+        var resp = await client.PutAsJsonAsync("/api/pr/acme/api/123/draft", NewCommentPatch(side: ""));
+
+        resp.StatusCode.Should().Be(HttpStatusCode.UnprocessableEntity);
+        (await resp.Content.ReadAsStringAsync()).Should().Contain("side-missing");
+    }
+
+    [Fact]
+    public async Task NewDraftComment_null_side_returns_422()
+    {
+        var client = ClientWithTab();
+        // Raw JSON with `side` omitted entirely → NewDraftCommentPayload.Side binds to null.
+        var raw = new
+        {
+            newDraftComment = new
+            {
+                filePath = "src/Foo.cs",
+                lineNumber = 42,
+                anchoredSha = new string('a', 40),
+                anchoredLineContent = "line content",
+                bodyMarkdown = "a draft comment",
+            },
+        };
+        var resp = await client.PutAsJsonAsync("/api/pr/acme/api/123/draft", raw);
+
+        resp.StatusCode.Should().Be(HttpStatusCode.UnprocessableEntity);
+        (await resp.Content.ReadAsStringAsync()).Should().Contain("side-missing");
+    }
+
     [Fact]
     public async Task Missing_session_token_returns_401()
     {

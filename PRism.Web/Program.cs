@@ -309,6 +309,16 @@ app.UseWhen(
         // rejecting any legitimate request.
         if (HttpMethods.IsPost(method) && path.StartsWithSegments("/api/feedback", StringComparison.Ordinal))
             return true;
+        // #605 item D — body-reading mutating endpoints that were missing from the cap allow-list.
+        // /api/preferences (preferences JSON), /api/auth/connect + /connect/commit (PAT submit, the
+        // StartsWithSegments covers both leaves), and /api/auth/host-change-resolution all read a
+        // request body but had no 16 KiB cap; add them for parity with the other mutating routes.
+        if (HttpMethods.IsPost(method) && path.StartsWithSegments("/api/preferences", StringComparison.Ordinal))
+            return true;
+        if (HttpMethods.IsPost(method) && path.StartsWithSegments("/api/auth/connect", StringComparison.Ordinal))
+            return true;
+        if (HttpMethods.IsPost(method) && path.StartsWithSegments("/api/auth/host-change-resolution", StringComparison.Ordinal))
+            return true;
         // #311 — POST /api/inbox/refresh has NO request body, so it is intentionally absent
         // from this allow-list (nothing to amplify / cap). Listed here so the omission is a
         // recorded decision, not an oversight.
@@ -322,7 +332,10 @@ app.UseWhen(
             || value.EndsWith("/submit/foreign-pending-review/discard", StringComparison.Ordinal)
             || value.EndsWith("/drafts/discard-all", StringComparison.Ordinal)
             || value.EndsWith("/submit/discard", StringComparison.Ordinal)
-            || value.EndsWith("/root-comment/post", StringComparison.Ordinal);
+            || value.EndsWith("/root-comment/post", StringComparison.Ordinal)
+            // #605 item D — these /api/pr leaf POSTs read a body but were not capped.
+            || value.EndsWith("/comment/post", StringComparison.Ordinal)
+            || value.EndsWith("/ai/summary/regenerate", StringComparison.Ordinal);
     },
     branch => branch.Use(async (ctx, next) =>
     {

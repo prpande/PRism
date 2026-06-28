@@ -52,6 +52,11 @@ internal sealed class SubmitEndpointsTestContext : IDisposable
 
     public IAppStateStore StateStore => _derived.Services.GetRequiredService<IAppStateStore>();
 
+    // #605 item A — exposes the per-PR submit lock so a test can assert the lock state after a
+    // request (e.g. that /drafts/discard-all serialised through the lock and released it).
+    public PRism.Web.Submit.SubmitLockRegistry LockRegistry =>
+        _derived.Services.GetRequiredService<PRism.Web.Submit.SubmitLockRegistry>();
+
     // Default tabId matches the "tab-test" key used in ValidSession() / EmptySession() so the
     // submit-gate per-tab lookup (TabStamps[callerTabId]) finds the seeded stamp. Tests that
     // exercise the tab-id-missing path pass `tabId: null` (NOT `""`) to suppress the header
