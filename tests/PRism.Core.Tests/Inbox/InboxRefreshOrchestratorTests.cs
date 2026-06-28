@@ -1313,15 +1313,21 @@ public sealed class InboxRefreshOrchestratorTests
 
     // ── ReprobeOnceAsync helpers ─────────────────────────────────────────────────
 
-    // Controllable batch reader for ReprobeOnceAsync tests.
+    // Controllable batch reader for ReprobeOnceAsync and burst tests.
     // EnqueueReadiness: queues a specific readiness for the next read of that ref AND adds the
     //   item to the section rows list.
     // SeedRows: adds items to the section rows list with no queued readiness (defaults to None).
+    // ResolveAfter: seeds row + enqueues `attempts` Nones then Ready (burst resolves on attempt N).
+    // AlwaysNone: seeds row (with optional headSha override); empty queue → always None.
+    // BumpUpdatedAt: mutates the row's UpdatedAt (simulates a comment — headSha unchanged).
+    // NewHead: mutates the row's headSha (simulates a new commit → new burst key).
+    // BlockOnRead: makes ReadAsync block until ct is cancelled (tests cancellation paths).
     // ReadCount / LastReadRefs / ResetReadCount: observation seams.
     private sealed class ControllableBatchReader : IPrBatchReader
     {
         private readonly Dictionary<PrReference, Queue<MergeReadiness>> _queues = new();
         private readonly List<RawPrInboxItem> _rows = new();
+        private bool _blockReads;
 
         public int ReadCount { get; private set; }
         public IReadOnlyList<PrReference>? LastReadRefs { get; private set; }
@@ -1351,24 +1357,80 @@ public sealed class InboxRefreshOrchestratorTests
 
         public void ResetReadCount() => ReadCount = 0;
 
-        public Task<IReadOnlyDictionary<PrReference, BatchPrData>> ReadAsync(
+        // Task 10 additions ───────────────────────────────────────────────────────
+
+        // Seeds the row + enqueues (attempts) Nones + 1 Ready.
+        // On the burst: the initial RefreshAsync read consumes None #1; then each burst
+        // attempt consumes one more entry, resolving to Ready on the last.
+        public void ResolveAfter(RawPrInboxItem item, int attempts)
+        {
+            var row = item;
+            var idx = _rows.FindIndex(r => r.Reference == item.Reference);
+            if (idx >= 0) _rows[idx] = row; else _rows.Add(row);
+            if (!_queues.TryGetValue(item.Reference, out var q))
+                _queues[item.Reference] = q = new Queue<MergeReadiness>();
+            for (var i = 0; i < attempts; i++) q.Enqueue(MergeReadiness.None);
+            q.Enqueue(MergeReadiness.Ready);
+        }
+
+        // Seeds the row with the given headSha (or item's own headSha if omitted).
+        // No queue → ReadAsync returns None on every call.
+        public void AlwaysNone(RawPrInboxItem item, string? headSha = null)
+        {
+            var row = headSha != null ? item with { HeadSha = headSha } : item;
+            var idx = _rows.FindIndex(r => r.Reference == item.Reference);
+            if (idx >= 0) _rows[idx] = row; else _rows.Add(row);
+        }
+
+        // Bumps the row's UpdatedAt while keeping headSha → simulates a comment-only change.
+        public void BumpUpdatedAt(RawPrInboxItem item, string headSha)
+        {
+            var idx = _rows.FindIndex(r => r.Reference == item.Reference);
+            var bumped = DateTimeOffset.UtcNow.AddSeconds(1);
+            if (idx >= 0)
+                _rows[idx] = _rows[idx] with { UpdatedAt = bumped, HeadSha = headSha };
+            else
+                _rows.Add(item with { UpdatedAt = bumped, HeadSha = headSha });
+        }
+
+        // Changes the row's headSha → simulates a new commit (new burst key → re-arms).
+        public void NewHead(RawPrInboxItem item, string headSha)
+        {
+            var idx = _rows.FindIndex(r => r.Reference == item.Reference);
+            if (idx >= 0) _rows[idx] = _rows[idx] with { HeadSha = headSha };
+            else _rows.Add(item with { HeadSha = headSha });
+        }
+
+        // Makes the next ReadAsync call block until ct is cancelled (tests cancellation paths).
+        public void BlockOnRead() => _blockReads = true;
+
+        public async Task<IReadOnlyDictionary<PrReference, BatchPrData>> ReadAsync(
             IReadOnlyList<RawPrInboxItem> items, string viewerLogin, CancellationToken ct)
         {
             ReadCount++;
             LastReadRefs = items.Select(i => i.Reference).ToList();
             OnRead?.Invoke(); // mid-read hook: fires after recording the call, before returning
-            return Task.FromResult<IReadOnlyDictionary<PrReference, BatchPrData>>(
-                items.ToDictionary(i => i.Reference, i =>
-                {
-                    var readiness = _queues.TryGetValue(i.Reference, out var q) && q.Count > 0
-                        ? q.Dequeue()
-                        : MergeReadiness.None;
-                    return new BatchPrData(
-                        i.HeadSha, i.Additions, i.Deletions, i.CommitCount, i.ChangedFiles,
-                        i.PushedAt, i.MergedAt, i.ClosedAt,
-                        ViewerLastReviewSha: null,
-                        MergeReadiness: readiness);
-                }));
+            // Block only when there are items — the main RefreshAsync path calls ReadAsync with
+            // the full allRawDistinct list (may be non-empty); the burst's ReprobeOnceAsync also
+            // calls it with _lastRawSet.  An empty-item call from RefreshAsync on a no-rows
+            // scenario returns immediately so the test doesn't deadlock.
+            if (_blockReads && items.Count > 0)
+            {
+                // Block until ct is cancelled (propagates OperationCanceledException so finally
+                // blocks in ReprobeOnceAsync release the lock cleanly).
+                await Task.Delay(Timeout.Infinite, ct).ConfigureAwait(false);
+            }
+            return items.ToDictionary(i => i.Reference, i =>
+            {
+                var readiness = _queues.TryGetValue(i.Reference, out var q) && q.Count > 0
+                    ? q.Dequeue()
+                    : MergeReadiness.None;
+                return new BatchPrData(
+                    i.HeadSha, i.Additions, i.Deletions, i.CommitCount, i.ChangedFiles,
+                    i.PushedAt, i.MergedAt, i.ClosedAt,
+                    ViewerLastReviewSha: null,
+                    MergeReadiness: readiness);
+            });
         }
     }
 
@@ -1380,11 +1442,13 @@ public sealed class InboxRefreshOrchestratorTests
     private static PrInboxItem RowFor(InboxSnapshot snap, RawPrInboxItem pr)
         => snap.Sections.Values.SelectMany(s => s).First(p => p.Reference == pr.Reference);
 
-    // Factory for ReprobeOnceAsync tests: wires a ControllableBatchReader whose Rows list is
-    // fed dynamically to the section runner, so EnqueueReadiness/SeedRows calls before
-    // RefreshAsync are automatically visible to the section query.
+    // Factory for ReprobeOnceAsync / burst tests: wires a ControllableBatchReader whose Rows
+    // list is fed dynamically to the section runner, so EnqueueReadiness/SeedRows/AlwaysNone
+    // calls before RefreshAsync are automatically visible to the section query.
+    // testClock:true injects an immediate burstDelay so the burst runs synchronously in tests
+    // (avoids a 31-second real-time wait from the FastBackoff schedule).
     private static (InboxRefreshOrchestrator Orch, ControllableBatchReader Reader, RecordingEventBus Bus)
-        NewOrchestrator()
+        NewOrchestrator(bool testClock = false)
     {
         var reader = new ControllableBatchReader();
         var bus = new RecordingEventBus();
@@ -1395,11 +1459,20 @@ public sealed class InboxRefreshOrchestratorTests
             {
                 ["review-requested"] = reader.Rows
             });
-        var orch = Build(
-            config: configFake,
-            sections: sections,
-            batchReader: reader,
-            events: bus);
+        Func<TimeSpan, CancellationToken, Task>? burstDelay = testClock
+            ? (_, ct) => ct.IsCancellationRequested ? Task.FromCanceled(ct) : Task.CompletedTask
+            : null;
+        var orch = new InboxRefreshOrchestrator(
+            configFake,
+            sections,
+            reader,
+            new FakeCiDetector(),
+            new InboxDeduplicator(),
+            new FakeAiSeamSelector(new NoopInboxItemEnricher()),
+            bus,
+            StateStoreFake(),
+            () => "testuser",
+            burstDelay: burstDelay);
         return (orch, reader, bus);
     }
 
@@ -1486,5 +1559,77 @@ public sealed class InboxRefreshOrchestratorTests
 
         Assert.False(await orch.ReprobeOnceAsync(default));
         Assert.Equal(0, reader.ReadCount);
+    }
+
+    // ── Task 10: burst lifecycle tests ────────────────────────────────────────────
+
+    [Fact]
+    public async Task Refresh_launches_burst_that_resolves_then_stops()
+    {
+        // ResolveAfter(Pr(7), attempts:2): enqueues None,None,Ready.
+        // RefreshAsync consumes the first None → snapshot has MergeReadiness.None.
+        // Burst attempt 0: AnyTargetUnderCap (n=0→1) → ReprobeOnceAsync → reads None → more=true.
+        // Burst attempt 1: AnyTargetUnderCap (n=1→2) → ReprobeOnceAsync → reads Ready → patches → more=false → stops.
+        var (orch, reader, _) = NewOrchestrator(testClock: true);
+        reader.ResolveAfter(Pr(7), attempts: 2);
+        await orch.RefreshAsync(default);
+        await orch.WaitForBurstIdle(TimeSpan.FromSeconds(5));
+        Assert.Equal(MergeReadiness.Ready, RowFor(orch.Current!, Pr(7)).MergeReadiness);
+    }
+
+    [Fact]
+    public async Task Burst_caps_at_five_attempts_for_never_resolving_row()
+    {
+        // AlwaysNone: empty queue → every read returns None. Burst runs exactly 5 times
+        // (FastRetryCap=5, loop exits when attempt reaches 5). BurstAttempts == 5.
+        var (orch, reader, _) = NewOrchestrator(testClock: true);
+        reader.AlwaysNone(Pr(7));
+        await orch.RefreshAsync(default);
+        await orch.WaitForBurstIdle(TimeSpan.FromSeconds(40));
+        Assert.Equal(5, orch.BurstAttempts(Pr(7)));
+    }
+
+    [Fact]
+    public async Task Comment_only_UpdatedAt_bump_does_not_rearm_burst()
+    {
+        // After the burst exhausts its budget for (Pr(7).PrId, "abc"),
+        // a comment (UpdatedAt changes, headSha same "abc") must NOT re-arm a new burst:
+        // the key is still in _burstAttempts at cap → NewBurstsSinceLastRefresh == 0.
+        var (orch, reader, _) = NewOrchestrator(testClock: true);
+        reader.AlwaysNone(Pr(7), headSha: "abc");
+        await orch.RefreshAsync(default);
+        await orch.WaitForBurstIdle(TimeSpan.FromSeconds(40)); // exhaust budget for (ref, abc)
+        reader.BumpUpdatedAt(Pr(7), headSha: "abc");           // comment: UpdatedAt ↑, headSha same
+        await orch.RefreshAsync(default);
+        Assert.Equal(0, orch.NewBurstsSinceLastRefresh());
+    }
+
+    [Fact]
+    public async Task New_commit_rearms_burst()
+    {
+        // After the budget for (Pr(7).PrId, "abc") is exhausted, a new commit (headSha "def")
+        // produces a new key → not in _burstAttempts → re-armed → NewBurstsSinceLastRefresh >= 1.
+        var (orch, reader, _) = NewOrchestrator(testClock: true);
+        reader.AlwaysNone(Pr(7), headSha: "abc");
+        await orch.RefreshAsync(default);
+        await orch.WaitForBurstIdle(TimeSpan.FromSeconds(40)); // exhaust budget for (ref, abc)
+        reader.NewHead(Pr(7), headSha: "def");
+        await orch.RefreshAsync(default);
+        Assert.True(orch.NewBurstsSinceLastRefresh() >= 1);
+    }
+
+    [Fact]
+    public async Task New_refresh_cancels_prior_in_flight_pass_and_Dispose_cancels()
+    {
+        // BlockOnRead makes ReadAsync block on ct cancellation. The burst from pass A stores
+        // cts1 in _reprobeCts. Pass B's LaunchReprobeBurst sees cts1 as the prior burst and
+        // cancels+disposes it (PriorPassWasCancelled=true). Dispose cancels pass B's CTS without
+        // ObjectDisposedException (capture-once Interlocked.Exchange in Dispose).
+        var (orch, reader, _) = NewOrchestrator(testClock: true);
+        reader.BlockOnRead();                 // ReadAsync blocks until ct cancelled
+        await orch.RefreshAsync(default);     // pass A: RefreshAsync completes, burst A queued
+        await orch.RefreshAsync(default);     // pass B: LaunchReprobeBurst cancels burst A's CTS
+        Assert.True(orch.PriorPassWasCancelled);
+        orch.Dispose();                       // cancels pass B's CTS; must not throw ObjectDisposedException
     }
 }

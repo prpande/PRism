@@ -1,3 +1,5 @@
+using System.Collections.Concurrent;
+
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using PRism.AI.Contracts.Dtos;
@@ -22,6 +24,7 @@ public sealed partial class InboxRefreshOrchestrator : IInboxRefreshOrchestrator
     private readonly IAppStateStore _stateStore;
     private readonly Func<string> _viewerLoginProvider;
     private readonly ILogger<InboxRefreshOrchestrator> _log;
+    private readonly Func<TimeSpan, CancellationToken, Task> _burstDelay;
 
     private InboxSnapshot? _current;
     private readonly TaskCompletionSource _firstSnapshotTcs = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -37,6 +40,21 @@ public sealed partial class InboxRefreshOrchestrator : IInboxRefreshOrchestrator
     // set (not just None-targets) keeps InboxCacheEviction.PruneAbsent whole (#655).
     private IReadOnlyList<RawPrInboxItem> _lastRawSet = Array.Empty<RawPrInboxItem>();
 
+    // ── Fast re-probe burst (Task 10) ────────────────────────────────────────────
+    // A short burst of re-probes (up to FastRetryCap attempts, backoff 2^n seconds)
+    // is launched after every RefreshAsync to resolve rows stuck on MergeReadiness.None.
+    // Each burst generation has its own CTS; a new refresh cancels the prior generation.
+    // CA2213: disposed via Interlocked.Exchange in Dispose (capture-once pattern); analyzer can't see it.
+#pragma warning disable CA2213
+    private CancellationTokenSource? _reprobeCts;
+#pragma warning restore CA2213
+    private Task? _burstTask;                  // last burst Task.Run handle (WaitForBurstIdle awaits it)
+    private int _newBurstsSinceLastRefresh;    // freshly-armed (PrId, HeadSha) targets this refresh
+    private bool _priorPassWasCancelled;       // set when a refresh cancels an in-flight burst
+    private readonly ConcurrentDictionary<(string PrId, string HeadSha), int> _burstAttempts = new();
+    private const int FastRetryCap = 5;
+    private static TimeSpan FastBackoff(int n) => TimeSpan.FromSeconds(Math.Pow(2, n));
+
     public InboxRefreshOrchestrator(
         IConfigStore config,
         ISectionQueryRunner sections,
@@ -47,7 +65,8 @@ public sealed partial class InboxRefreshOrchestrator : IInboxRefreshOrchestrator
         IReviewEventBus events,
         IAppStateStore stateStore,
         Func<string> viewerLoginProvider,
-        ILogger<InboxRefreshOrchestrator>? log = null)
+        ILogger<InboxRefreshOrchestrator>? log = null,
+        Func<TimeSpan, CancellationToken, Task>? burstDelay = null)
     {
         _config = config;
         _sections = sections;
@@ -59,6 +78,7 @@ public sealed partial class InboxRefreshOrchestrator : IInboxRefreshOrchestrator
         _stateStore = stateStore;
         _viewerLoginProvider = viewerLoginProvider;
         _log = log ?? NullLogger<InboxRefreshOrchestrator>.Instance;
+        _burstDelay = burstDelay ?? Task.Delay;
         _enrichmentSub = _events.Subscribe<InboxEnrichmentsReady>(OnInboxEnrichmentsReady);
         _lastAiMode = (int)_config.Current.Ui.Ai.Mode;
         _config.Changed += OnConfigChanged;
@@ -340,6 +360,10 @@ public sealed partial class InboxRefreshOrchestrator : IInboxRefreshOrchestrator
             if (ciRateLimit is not null) throw ciRateLimit;
         }
         finally { _writerLock.Release(); }
+        // Launch the fast re-probe burst OUTSIDE the lock so the spawned pass can re-acquire it.
+        // On a hard refresh, clear the per-(PrId,HeadSha) budget first so the burst re-arms fully.
+        if (hardRefresh) _burstAttempts.Clear();
+        LaunchReprobeBurst();
     }
 
     private HashSet<string> ResolveVisibleSections()
@@ -456,7 +480,100 @@ public sealed partial class InboxRefreshOrchestrator : IInboxRefreshOrchestrator
         _enrichmentSub.Dispose();          // unsubscribe first so no new handler invocations start
         _config.Changed -= OnConfigChanged; // and detach the config-change handler (#548)
         _disposed = true;                  // then flag so any in-flight invocation exits early
-        _writerLock.Dispose();             // finally release the semaphore
+        // Capture once: a second Interlocked.Exchange returns null so Cancel + Dispose run on
+        // the same captured reference (avoids cancelling a disposed CTS → ObjectDisposedException).
+        var cts = Interlocked.Exchange(ref _reprobeCts, null);
+        cts?.Cancel();
+        cts?.Dispose();
+        _writerLock.Dispose();
+    }
+
+    // ── Test accessors (internal; not part of the public contract) ───────────────
+    internal Task WaitForBurstIdle(TimeSpan timeout)
+    {
+        var t = _burstTask;
+        if (t is null) return Task.CompletedTask;
+        if (timeout == TimeSpan.Zero) return t; // zero = wait indefinitely (burst runs fast in tests)
+        return t.WaitAsync(timeout);
+    }
+
+    internal int BurstAttempts(RawPrInboxItem item) =>
+        _burstAttempts.Where(kv => kv.Key.PrId == item.Reference.PrId).Select(kv => kv.Value).DefaultIfEmpty(0).Max();
+
+    internal int NewBurstsSinceLastRefresh() => _newBurstsSinceLastRefresh;
+
+    internal bool PriorPassWasCancelled => _priorPassWasCancelled;
+
+    // ── Fast re-probe burst implementation ───────────────────────────────────────
+
+    // Called OUTSIDE the writer-lock (after RefreshAsync releases it) so the spawned
+    // pass can re-acquire the lock without deadlocking on the caller.
+    // Atomically exchanges _reprobeCts to cancel the prior burst generation, then
+    // synchronously computes which (PrId, HeadSha) keys are freshly-armed so
+    // NewBurstsSinceLastRefresh() is observable the moment RefreshAsync returns.
+    private void LaunchReprobeBurst()
+    {
+        var prior = Interlocked.Exchange(ref _reprobeCts, null);
+        if (prior is not null) { _priorPassWasCancelled = true; prior.Cancel(); prior.Dispose(); }
+        if (_disposed) return;
+
+        // Synchronously prune and count: stale keys (headSha changed / PR closed) are
+        // removed; keys NOT yet in the dict are "freshly-armed" targets for this burst.
+        var current = Volatile.Read(ref _current);
+        var targetKeys = current is null
+            ? new HashSet<(string PrId, string HeadSha)>()
+            : current.Sections.Values.SelectMany(s => s)
+                .Where(p => p.MergedAt is null && p.ClosedAt is null && !p.IsDraft
+                            && p.MergeReadiness == MergeReadiness.None)
+                .Select(p => (p.Reference.PrId, p.HeadSha)).ToHashSet();
+        foreach (var k in _burstAttempts.Keys)
+            if (!targetKeys.Contains(k)) _burstAttempts.TryRemove(k, out _);
+        _newBurstsSinceLastRefresh = targetKeys.Count(k => !_burstAttempts.ContainsKey(k));
+
+        var cts = CancellationTokenSource.CreateLinkedTokenSource(CancellationToken.None);
+        _reprobeCts = cts;
+        if (_disposed) { cts.Cancel(); } // Dispose raced past the _disposed check → cancel immediately
+        _burstTask = Task.Run(() => RunReprobeBurstAsync(cts.Token));
+    }
+
+    private async Task RunReprobeBurstAsync(CancellationToken ct)
+    {
+        for (var attempt = 0; attempt < FastRetryCap && !ct.IsCancellationRequested; attempt++)
+        {
+            try { await _burstDelay(FastBackoff(attempt), ct).ConfigureAwait(false); }
+            catch (OperationCanceledException) { return; }
+            if (!AnyTargetUnderCap()) return;    // all (PrId, HeadSha) keys have spent their budget
+            bool more;
+            try { more = await ReprobeOnceAsync(ct).ConfigureAwait(false); }
+            catch (OperationCanceledException) { return; }
+#pragma warning disable CA1031 // swallow tick errors (mirror CI-probe/refresh passes)
+            catch (Exception) { return; }
+#pragma warning restore CA1031
+            if (!more) return;                   // all still-None targets resolved
+        }
+    }
+
+    // Checks each still-None open non-draft row against the per-(PrId,HeadSha) cap.
+    // Increments the attempt counter for rows under cap (check-before-increment so the
+    // counter reaches exactly FastRetryCap on the last allowed attempt). Returns whether
+    // any row still had budget. A capped (PrId, HeadSha) that arrives on a subsequent
+    // same-headSha comment refresh keeps its capped counter → no re-arm (see brief).
+    private bool AnyTargetUnderCap()
+    {
+        var current = Volatile.Read(ref _current);
+        if (current is null) return false;
+        var any = false;
+        foreach (var p in current.Sections.Values.SelectMany(s => s)
+            .Where(p => p.MergedAt is null && p.ClosedAt is null && !p.IsDraft
+                        && p.MergeReadiness == MergeReadiness.None))
+        {
+            var key = (p.Reference.PrId, p.HeadSha);
+            var n = _burstAttempts.GetValueOrDefault(key);
+            if (n >= FastRetryCap) continue;     // capped — no more fast budget for this (ref, sha)
+            _burstAttempts[key] = n + 1;
+            any = true;
+        }
+        return any;
     }
 
     // Re-reads still-None open non-draft rows via the batch reader (using the full _lastRawSet
