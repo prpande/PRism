@@ -124,6 +124,8 @@ export async function startSidecar(opts: SidecarOptions): Promise<Sidecar> {
     }
     fireTimingHook(opts.onHealthy);
 
+    attachPostStartupListeners(child);
+
     return {
       baseUrl,
       stop: () => stopChild(child),
@@ -139,6 +141,28 @@ export async function startSidecar(opts: SidecarOptions): Promise<Sidecar> {
     }
     throw err;
   }
+}
+
+/**
+ * Attach the PERSISTENT listeners the long-lived sidecar child needs after a successful
+ * startup. readPortFromStdout's cleanup() removed its transient 'error'/'exit' listeners
+ * once the port was parsed, leaving the child with only a stderr-drain listener. A
+ * ChildProcess that emits 'error' with NO 'error' listener re-throws it as an UNCAUGHT
+ * exception, crashing the Electron main process and bypassing the graceful before-quit
+ * stop. The 'error' handler here logs and tears the child down instead of throwing; the
+ * 'exit' handler logs an unexpected post-startup exit.
+ */
+export function attachPostStartupListeners(child: ChildProcess): void {
+  child.on("error", (err: Error) => {
+    console.error("[sidecar] child process error after startup:", err);
+    // Best-effort teardown; stopChild no-ops if the child has already exited.
+    void stopChild(child);
+  });
+  child.on("exit", (code: number | null, signal: NodeJS.Signals | null) => {
+    console.error(
+      `[sidecar] child process exited after startup (code ${code}, signal ${signal}).`,
+    );
+  });
 }
 
 export function readPortFromStdout(

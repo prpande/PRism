@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import type { ChildProcess } from "node:child_process";
 import {
+  attachPostStartupListeners,
   readPortFromStdout,
   stopChild,
   DEFAULT_PHASE_TIMEOUT_MS,
@@ -86,6 +87,36 @@ test("stopChild does not re-kill a child already terminated by a signal (no 5s q
     "a signal-killed child must not be signalled again",
   );
   await stopPromise; // resolves immediately on the early-return path
+});
+
+test("attachPostStartupListeners absorbs a post-startup 'error' instead of letting it crash the process", () => {
+  // #607-B: after startup the long-lived child has no 'error' listener, so an emitted
+  // 'error' is re-thrown by EventEmitter as an uncaught exception (Electron main crash).
+  // With the persistent listener attached, emit('error') must NOT throw and must trigger
+  // a teardown (stopChild → SIGTERM) rather than escape.
+  const child = new EventEmitter() as unknown as ChildProcess;
+  const killCalls: Array<string | number | undefined> = [];
+  (child as unknown as { exitCode: number | null }).exitCode = null;
+  (child as unknown as { signalCode: string | null }).signalCode = null;
+  (child as unknown as { kill: (s?: string | number) => boolean }).kill = (
+    signal?: string | number,
+  ) => {
+    killCalls.push(signal);
+    return true;
+  };
+
+  attachPostStartupListeners(child);
+
+  // EventEmitter re-throws an 'error' emission when there is NO 'error' listener; the
+  // assertion proves the listener is present (no throw).
+  assert.doesNotThrow(() =>
+    child.emit("error", new Error("boom after startup")),
+  );
+  // The error handler initiated a graceful teardown.
+  assert.deepEqual(killCalls, ["SIGTERM"]);
+
+  // Settle stopChild's pending grace timer so the test process exits cleanly.
+  child.emit("exit", null, "SIGTERM");
 });
 
 test("stopChild is a no-op for a child that already exited normally", async () => {

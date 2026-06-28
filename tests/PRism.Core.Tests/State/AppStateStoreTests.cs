@@ -47,6 +47,38 @@ public class AppStateStoreTests
     }
 
     [Fact]
+    public async Task LoadAsync_self_heals_two_corrupt_loads_in_the_same_second_without_throwing()
+    {
+        // Regression for #607-A: the quarantine name used 1-second wall-clock resolution
+        // (yyyyMMddHHmmss). Two corrupt loads in the same second produced the SAME
+        // quarantine target, so the second File.Move(overwrite:false) threw IOException —
+        // which escaped the catch(JsonException) raw, leaving the corrupt file unhandled.
+        // A collision-proof (Guid) name lets BOTH loads self-heal in the same instant.
+        using var dir = new TempDataDir();
+        var statePath = Path.Combine(dir.Path, "state.json");
+
+        await File.WriteAllTextAsync(statePath, "{ corrupt one");
+        using (var store1 = new AppStateStore(dir.Path))
+        {
+            var first = await store1.LoadAsync(CancellationToken.None);
+            first.Version.Should().Be(7);
+        }
+
+        // Corrupt it again immediately — same wall-clock second as the first heal.
+        await File.WriteAllTextAsync(statePath, "{ corrupt two");
+        using (var store2 = new AppStateStore(dir.Path))
+        {
+            var second = await store2.LoadAsync(CancellationToken.None);
+            second.Version.Should().Be(7);
+        }
+
+        // Both corrupt files were quarantined under DISTINCT names (no collision throw),
+        // and state.json is a fresh valid default.
+        Directory.GetFiles(dir.Path, "state.json.corrupt-*").Should().HaveCount(2);
+        File.Exists(statePath).Should().BeTrue();
+    }
+
+    [Fact]
     public async Task SaveAsync_writes_atomically_via_temp_rename()
     {
         using var dir = new TempDataDir();

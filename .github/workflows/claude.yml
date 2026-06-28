@@ -15,9 +15,17 @@ on:
 
 jobs:
   claude:
+    # Author-association gate (prompt-injection defense): the comment/issue body becomes
+    # the agent's prompt, so only summon Claude for trusted authors. On a public repo any
+    # drive-by commenter could otherwise inject instructions. OWNER/MEMBER/COLLABORATOR
+    # are the repo-trusted associations; CONTRIBUTOR/FIRST_TIME_CONTRIBUTOR/NONE are not.
     if: |
-      (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude')) ||
-      (github.event_name == 'issues' && (contains(github.event.issue.body, '@claude') || contains(github.event.issue.title, '@claude')))
+      (github.event_name == 'issue_comment' &&
+        contains(github.event.comment.body, '@claude') &&
+        contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association)) ||
+      (github.event_name == 'issues' &&
+        (contains(github.event.issue.body, '@claude') || contains(github.event.issue.title, '@claude')) &&
+        contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.issue.author_association))
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -35,10 +43,33 @@ jobs:
       # native installer reports success but leaves no binary at
       # ~/.local/bin/claude on some runners. Install explicitly here so
       # the binary is present before the action's runtime checks fire.
-      # Drop this step once the upstream regression is resolved.
+      # Drop this step (and the pin below) once the upstream regression is resolved.
       - name: Pre-install Claude Code CLI
+        shell: bash
+        env:
+          # Supply-chain hardening (#607-C): DOWNLOAD the bootstrap installer, verify it
+          # byte-for-byte against this pin, and only THEN execute it — instead of piping an
+          # unpinned remote script straight into bash on a runner that the action step later
+          # hands CLAUDE_CODE_OAUTH_TOKEN. The bootstrap script itself verifies the
+          # downloaded CLI binary's SHA256 against a per-release manifest, so pinning the
+          # script + the script's own binary checksum gives end-to-end integrity.
+          #
+          # FAIL-CLOSED: if Anthropic legitimately updates the bootstrap script this step
+          # fails until a maintainer re-reviews the new script and updates this hash — the
+          # intended behavior for a token-bearing step. Recompute with:
+          #   curl -fsSL https://claude.ai/install.sh | sha256sum
+          # (pinned 2026-06-28; claude.ai/install.sh redirects to
+          # downloads.claude.ai/claude-code-releases/bootstrap.sh)
+          #
+          # RESIDUAL (upstream limitation): the bootstrap always downloads the LATEST CLI
+          # regardless of any version argument, so the CLI version is not pinnable here —
+          # but each binary is still manifest-checksum-verified by the script.
+          CLAUDE_INSTALLER_SHA256: 005ec1a937f32dfbb74f9e810287bcb12cba2d5cae4c9277aa8c6364adbf1787
         run: |
-          curl -fsSL https://claude.ai/install.sh | bash
+          set -euo pipefail
+          curl -fsSL https://claude.ai/install.sh -o "$RUNNER_TEMP/claude-install.sh"
+          echo "${CLAUDE_INSTALLER_SHA256}  $RUNNER_TEMP/claude-install.sh" | sha256sum -c -
+          bash "$RUNNER_TEMP/claude-install.sh"
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
       - name: Run Claude Code

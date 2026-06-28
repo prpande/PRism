@@ -133,13 +133,60 @@ public sealed class AppStateStore : IAppStateStore, IDisposable
         catch (JsonException)
         {
             // The future-version branch in MigrateIfNeeded may have stamped IsReadOnlyMode=true
-            // before deserialization failed. Quarantine replaces state.json with a fresh v2
+            // before deserialization failed. Quarantine replaces state.json with a fresh
             // default, so the read-only condition no longer holds.
             IsReadOnlyMode = false;
-            var quarantine = $"{_path}.corrupt-{DateTime.UtcNow:yyyyMMddHHmmss}";
-            File.Move(_path, quarantine, overwrite: false);
-            await SaveCoreAsync(AppState.Default, ct).ConfigureAwait(false);
+            await QuarantineAndResetAsync(ct).ConfigureAwait(false);
             return AppState.Default;
+        }
+    }
+
+    // Self-heal a corrupt state.json. Move the bad file aside under a collision-proof name,
+    // then write a fresh default. Both steps are best-effort: NEITHER a quarantine-name
+    // collision (two corrupt loads in the same instant) NOR a failed resave (disk full,
+    // permissions) may escape LoadAsync as an unhandled exception — that would leave the
+    // corrupt file in place AND propagate a raw IOException past the catch(JsonException)
+    // that is supposed to make corruption recoverable.
+    private async Task QuarantineAndResetAsync(CancellationToken ct)
+    {
+        // Collision-proof name: a Guid (plus a millisecond-resolution timestamp for human
+        // readability) — NOT the old 1-second `yyyyMMddHHmmss`. Two corrupt loads in the
+        // same wall-clock second previously produced the SAME name, so the second
+        // File.Move(overwrite:false) threw IOException (destination exists) and escaped the
+        // catch(JsonException) raw — the corrupt file was never quarantined or replaced.
+        var quarantine = $"{_path}.corrupt-{DateTime.UtcNow:yyyyMMddHHmmssfff}-{Guid.NewGuid():N}";
+        try
+        {
+            File.Move(_path, quarantine, overwrite: false);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // The move-aside failed (residual name collision, a lock on the file, or
+            // permissions). Fall back to deleting the corrupt file so its stale content is
+            // gone even if the resave below also fails. If the delete fails too, swallow it:
+            // SaveCoreAsync's atomic rename overwrites _path anyway, and we must not crash
+            // the load over an un-quarantinable corrupt file.
+            try
+            {
+                File.Delete(_path);
+            }
+            catch (Exception delEx) when (delEx is IOException or UnauthorizedAccessException)
+            {
+                // Can't move OR delete. Degrade gracefully — the resave attempt overwrites.
+            }
+        }
+
+        try
+        {
+            await SaveCoreAsync(AppState.Default, ct).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // The resave failed (disk full, permissions). Self-heal still degrades
+            // gracefully: the corrupt file is already quarantined/deleted, and the caller
+            // returns the in-memory AppState.Default so the app starts. A later successful
+            // SaveAsync persists the default. (OperationCanceledException is intentionally
+            // NOT swallowed — a cancelled load should propagate cancellation.)
         }
     }
 
