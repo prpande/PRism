@@ -159,9 +159,19 @@ export function attachPostStartupListeners(child: ChildProcess): void {
     void stopChild(child);
   });
   child.on("exit", (code: number | null, signal: NodeJS.Signals | null) => {
-    console.error(
-      `[sidecar] child process exited after startup (code ${code}, signal ${signal}).`,
-    );
+    const message = `[sidecar] child process exited after startup (code ${code}, signal ${signal}).`;
+    // A graceful teardown goes through stopChild, which sends SIGTERM (escalating to SIGKILL
+    // after the grace window), so an exit carrying either signal is expected, not a fault. A
+    // clean code-0 exit is likewise expected. Only an exit with a non-zero/absent code that
+    // did NOT originate from our own teardown signal is genuinely unexpected — log THAT at
+    // error level; treat normal shutdown as informational so graceful quit stops spamming
+    // the console with a spurious error.
+    const tornDownByUs = signal === "SIGTERM" || signal === "SIGKILL";
+    if (!tornDownByUs && code !== 0) {
+      console.error(message);
+    } else {
+      console.log(message);
+    }
   });
 }
 

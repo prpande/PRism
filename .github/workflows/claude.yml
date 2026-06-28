@@ -19,6 +19,13 @@ jobs:
     # the agent's prompt, so only summon Claude for trusted authors. On a public repo any
     # drive-by commenter could otherwise inject instructions. OWNER/MEMBER/COLLABORATOR
     # are the repo-trusted associations; CONTRIBUTOR/FIRST_TIME_CONTRIBUTOR/NONE are not.
+    #
+    # For the issues branch we gate on the ISSUE AUTHOR's association (github.event.issue
+    # .author_association) — NOT an assignee or any other actor — because the issue body,
+    # written by that author, is what becomes the agent's prompt. So the author is the
+    # trust principal. A trusted user who wants @claude to act on an untrusted person's
+    # issue should summon it via their OWN comment (the issue_comment branch gates on the
+    # commenter), which makes their trusted text the prompt instead of the untrusted body.
     if: |
       (github.event_name == 'issue_comment' &&
         contains(github.event.comment.body, '@claude') &&

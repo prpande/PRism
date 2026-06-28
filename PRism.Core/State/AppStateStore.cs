@@ -166,6 +166,8 @@ public sealed class AppStateStore : IAppStateStore, IDisposable
             // gone even if the resave below also fails. If the delete fails too, swallow it:
             // SaveCoreAsync's atomic rename overwrites _path anyway, and we must not crash
             // the load over an un-quarantinable corrupt file.
+            System.Diagnostics.Trace.TraceWarning(
+                $"AppStateStore: quarantine move-aside of corrupt state.json failed ({ex.GetType().Name}: {ex.Message}); falling back to delete.");
             try
             {
                 File.Delete(_path);
@@ -173,6 +175,8 @@ public sealed class AppStateStore : IAppStateStore, IDisposable
             catch (Exception delEx) when (delEx is IOException or UnauthorizedAccessException)
             {
                 // Can't move OR delete. Degrade gracefully — the resave attempt overwrites.
+                System.Diagnostics.Trace.TraceWarning(
+                    $"AppStateStore: quarantine delete of corrupt state.json also failed ({delEx.GetType().Name}: {delEx.Message}); relying on resave to overwrite.");
             }
         }
 
@@ -187,6 +191,8 @@ public sealed class AppStateStore : IAppStateStore, IDisposable
             // returns the in-memory AppState.Default so the app starts. A later successful
             // SaveAsync persists the default. (OperationCanceledException is intentionally
             // NOT swallowed — a cancelled load should propagate cancellation.)
+            System.Diagnostics.Trace.TraceWarning(
+                $"AppStateStore: resave of fresh default state.json after quarantine failed ({ex.GetType().Name}: {ex.Message}); returning in-memory default.");
         }
     }
 
