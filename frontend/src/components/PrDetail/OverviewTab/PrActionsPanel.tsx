@@ -61,12 +61,15 @@ export function PrActionsPanel() {
   const methodPickerRef = useRef<HTMLDivElement | null>(null); // forwarded to the radiogroup root
   const refreshArmedRef = useRef(false); // set on a Refresh click; consumed by the readiness effect
   const wasConfirmingMergeRef = useRef(false); // tracks the merge-morph edge for focus-return-on-exit
+  const refreshFocusedRef = useRef(false); // true while the Refresh button holds focus
 
   // Allowed merge methods (default to all on cold-load; the picker collapses to the Confirm label
   // when only one is allowed). Computed before the early return so the focus-on-arm effect (a hook)
   // can read it unconditionally. `readiness` likewise drives the refresh-focus effect.
   const allowed = pr?.allowedMergeMethods ?? { merge: true, squash: true, rebase: true };
   const readiness = (liveMergeReadiness ?? pr?.mergeReadiness ?? 'none') as MergeReadiness;
+  const prevReadinessRef = useRef<MergeReadiness>(readiness); // seeded to first effective value
+  const [readinessAnnounce, setReadinessAnnounce] = useState('');
   // Stable id for the disabled-reason ReadinessBadge popover (same component the PR-detail header
   // uses); scoped to this PR so the tooltip-singleton coordinates with the header badge.
   const readinessId = `merge-readiness-${prRef.owner}-${prRef.repo}-${prRef.number}`;
@@ -128,16 +131,39 @@ export function PrActionsPanel() {
   // This preserves focus-stays-in-panel for BOTH outcomes. If readiness stays `none`, the Refresh
   // link stays mounted and keeps focus. An unrelated (non-Refresh) readiness change leaves
   // refreshArmedRef false, so it never steals focus.
+  // refreshFocusedRef covers the auto-resolve path (#655): if the Refresh button held focus when
+  // the SSE-driven readiness resolved (unmounting the Refresh button without triggering onBlur),
+  // the flag is still true and we route focus identically to the armed path.
   useEffect(() => {
-    if (refreshArmedRef.current && readiness !== 'none') {
+    if ((refreshArmedRef.current || refreshFocusedRef.current) && readiness !== 'none') {
       refreshArmedRef.current = false;
-      if (MERGE_ENABLED.has(readiness)) {
-        mergeBtnRef.current?.focus();
-      } else {
-        mergeReasonRef.current?.focus();
-      }
+      refreshFocusedRef.current = false;
+      if (MERGE_ENABLED.has(readiness)) mergeBtnRef.current?.focus();
+      else mergeReasonRef.current?.focus();
     }
   }, [readiness]);
+
+  // Announce a `none`→non-`none` readiness transition in the sr-only live region (#655 C1).
+  // Only `readiness === 'ready'` is "ready to merge"; `unstable` / `ready-with-changes-requested`
+  // are non-`none` but not unambiguously mergeable, so use READINESS_LONG for every other state.
+  // Seeded to the first effective value so navigation to an already-ready PR never re-announces.
+  useEffect(() => {
+    const prev = prevReadinessRef.current;
+    prevReadinessRef.current = readiness;
+    if (prev === 'none' && readiness !== 'none') {
+      setReadinessAnnounce(
+        readiness === 'ready' ? 'Pull request is ready to merge' : READINESS_LONG[readiness],
+      );
+    }
+  }, [readiness]);
+
+  // Clear the readiness announcement ~5 s after it is set so the live region does not re-read
+  // stale text on unrelated re-renders. One self-cancelling timer per announcement.
+  useEffect(() => {
+    if (!readinessAnnounce) return;
+    const id = window.setTimeout(() => setReadinessAnnounce(''), 5000);
+    return () => window.clearTimeout(id);
+  }, [readinessAnnounce]);
 
   // Focus the Cancel button when the confirm morph opens (a11y).
   useEffect(() => {
@@ -228,7 +254,9 @@ export function PrActionsPanel() {
               ? PENDING_ANNOUNCE[pending]
               : confirmingMerge
                 ? 'Confirm merge? Use the Back button or Escape to cancel, or the Confirm button to merge.'
-                : ''}
+                : readinessAnnounce
+                  ? readinessAnnounce
+                  : ''}
         </span>
 
         {/* Each button leads with the shared PrStateGlyph for the state it moves the PR TO (the same
@@ -366,6 +394,12 @@ export function PrActionsPanel() {
                           type="button"
                           className={styles.refreshLink}
                           disabled={refreshing}
+                          onFocus={() => {
+                            refreshFocusedRef.current = true;
+                          }}
+                          onBlur={() => {
+                            refreshFocusedRef.current = false;
+                          }}
                           onClick={() => {
                             refreshArmedRef.current = true;
                             setRefreshing(true);
