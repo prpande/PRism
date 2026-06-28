@@ -111,15 +111,18 @@ public sealed partial class GitHubPrBatchReader : IPrBatchReader
         for (var i = 0; i < stale.Count; i += MaxBatch)
         {
             var chunk = stale.GetRange(i, Math.Min(MaxBatch, stale.Count - i));
-            foreach (var (it, data) in await FetchChunkAsync(http, token, host, chunk, viewerLogin, includeReadiness, ct).ConfigureAwait(false))
+            foreach (var (it, data, nonDefinitive) in await FetchChunkAsync(http, token, host, chunk, viewerLogin, includeReadiness, ct).ConfigureAwait(false))
             {
-                _cache[(it.Reference, it.UpdatedAt)] = data;
+                // Skip caching transient derived-None so the next tick re-fetches until GitHub
+                // finishes its merge-state computation. Draft None is definitive (nonDefinitive=false)
+                // and IS cached — drafts never show a readiness badge so re-fetching is pointless.
+                if (!nonDefinitive) _cache[(it.Reference, it.UpdatedAt)] = data;
                 result[it.Reference] = data;
             }
         }
     }
 
-    private async Task<List<(RawPrInboxItem Item, BatchPrData Data)>> FetchChunkAsync(
+    private async Task<List<(RawPrInboxItem Item, BatchPrData Data, bool NonDefinitive)>> FetchChunkAsync(
         HttpClient http, string? token, string host,
         List<RawPrInboxItem> chunk, string viewerLogin, bool includeReadiness, CancellationToken ct)
     {
@@ -150,7 +153,7 @@ public sealed partial class GitHubPrBatchReader : IPrBatchReader
         // (GitHubGraphQL.ThrowIfRateLimited) so the active-PR batch reader uses the same model.
         GitHubGraphQL.ThrowIfRateLimited(doc.RootElement, "inbox batch hydration");
 
-        var results = new List<(RawPrInboxItem, BatchPrData)>();
+        var results = new List<(RawPrInboxItem, BatchPrData, bool)>();
         if (!doc.RootElement.TryGetProperty("data", out var data) || data.ValueKind != JsonValueKind.Object)
         {
             // 200 with no usable data object (non-rate-limit errors-without-data). Degrade: every
@@ -172,8 +175,8 @@ public sealed partial class GitHubPrBatchReader : IPrBatchReader
             {
                 if (data.TryGetProperty(alias, out var repoNode)
                     && repoNode.ValueKind == JsonValueKind.Object
-                    && TryParse(repoNode, it, viewerLogin, out var parsed))
-                    results.Add((it, parsed));
+                    && TryParse(repoNode, it, viewerLogin, out var parsed, out var nonDef))
+                    results.Add((it, parsed, nonDef));
                 else
                     dropped++;
             }
@@ -220,9 +223,11 @@ public sealed partial class GitHubPrBatchReader : IPrBatchReader
         return sb.ToString();
     }
 
-    private bool TryParse(JsonElement repoNode, RawPrInboxItem raw, string viewerLogin, out BatchPrData data)
+    private bool TryParse(JsonElement repoNode, RawPrInboxItem raw, string viewerLogin,
+        out BatchPrData data, out bool nonDefinitive)
     {
         data = null!;
+        nonDefinitive = false;  // safe default for all early-return paths
         if (!repoNode.TryGetProperty("pullRequest", out var pr) || pr.ValueKind != JsonValueKind.Object)
             return false;
 
@@ -252,6 +257,11 @@ public sealed partial class GitHubPrBatchReader : IPrBatchReader
 
         var prState = PrStates.FromTimestamps(mergedAt, closedAt);
         var readiness = MergeReadinessRule.Derive(prState, isDraft, mergeable, mergeStateStatus, reviewDecision);
+        // Non-definitive: GitHub's merge-state computation is still in progress (derived None for an
+        // open, non-draft PR). Caching this would freeze the badge until UpdatedAt bumps, which GitHub
+        // does NOT do when it finishes computing mergeability. Draft None is definitive — drafts show
+        // no readiness badge, so re-fetching them serves no purpose.
+        nonDefinitive = readiness == MergeReadiness.None && prState == PrState.Open && !isDraft;
         var (approvals, changesRequested) = GitHubPrParser.CountLatestReviews(pr);
         var (approvers, changesRequestedBy) = GitHubPrParser.ParseLatestReviewers(pr);
         var awaitingReviewers = GitHubPrParser.ParseRequestedReviewers(pr);
