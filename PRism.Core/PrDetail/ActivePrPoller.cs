@@ -28,6 +28,16 @@ public sealed partial class ActivePrPoller : BackgroundService
     // subscribe/unsubscribe cycles (issue #609). No behavior; surfaces _state.Count only.
     internal int TrackedStateCount => _state.Count;
 
+    // Test accessor: exposes the mutable per-PR state bag so unit tests can assert on
+    // NextRetryAt and FastRetryCount after calling TickAsync directly. Mirrors TrackedStateCount.
+    internal ActivePrPollerState PeekState(PrReference prRef) => _state[prRef];
+
+    // Fast-retry budget for a PR whose derived readiness is transiently None (GitHub still
+    // computing mergeStateStatus). FastBackoff(n) = 2^n seconds (1, 2, 4, 8, 16s for n=0..4).
+    // The cap is 5 attempts; beyond that the poller falls back to the normal cadence.
+    private const int FastRetryCap = 5;
+    private static TimeSpan FastBackoff(int n) => TimeSpan.FromSeconds(Math.Pow(2, n));
+
     // Default 30s for production; PRISM_POLLER_CADENCE_SECONDS overrides ONLY
     // when the host is running under Test env so that a stray env var set on a
     // production host cannot drive the poller into GitHub secondary-rate-limit
@@ -230,7 +240,27 @@ public sealed partial class ActivePrPoller : BackgroundService
             if (snapshot.MergeReadiness != MergeReadiness.None)
                 state.LastMergeReadiness = snapshot.MergeReadiness;
             state.ConsecutiveErrors = 0;
-            state.NextRetryAt = null;
+            // Fast-retry scheduling: if this PR's derived readiness is transiently None (GitHub
+            // still computing mergeStateStatus) and the burst budget is not yet exhausted, schedule
+            // an early re-poll at exponential backoff. Re-arm the budget when the head SHA changes
+            // (new commit supersedes the previous burst) using the already-computed headChanged local
+            // — DO NOT compare snapshot.HeadSha != state.LastHeadSha here, because line 224 has
+            // already overwritten LastHeadSha to the new value, so that compare is always false.
+            if (headChanged) state.FastRetryCount = 0; // new commit -> re-arm the burst budget
+            var wantsFastRetry = snapshot.PrState == PrState.Open
+                && !snapshot.IsDraft
+                && snapshot.MergeReadiness == MergeReadiness.None
+                && state.FastRetryCount < FastRetryCap;
+            if (wantsFastRetry)
+            {
+                state.NextRetryAt = now + FastBackoff(state.FastRetryCount);
+                state.FastRetryCount++;
+            }
+            else
+            {
+                state.NextRetryAt = null;       // replaces the unconditional pre-Task-3 reset
+                if (snapshot.MergeReadiness != MergeReadiness.None) state.FastRetryCount = 0; // resolved -> reset budget
+            }
 
             // Publish cache snapshot for PUT /draft (markAllRead) and POST /reload head-shift
             // detection. HighestIssueCommentId stays null in S4 — see IActivePrCache class comment.

@@ -15,4 +15,8 @@ internal sealed class ActivePrPollerState
     public MergeReadiness? LastMergeReadiness { get; set; }
     public int ConsecutiveErrors { get; set; }
     public DateTimeOffset? NextRetryAt { get; set; }
+    // Number of fast-retry attempts issued for the current (ref, headSha) burst. Incremented
+    // each time wantsFastRetry is true; reset to 0 on a new HeadSha or a resolved readiness.
+    // Capped at FastRetryCap (5) so the poller reverts to the normal cadence after the burst.
+    public int FastRetryCount { get; set; }
 }
