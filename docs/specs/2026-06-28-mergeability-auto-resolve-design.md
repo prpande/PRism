@@ -149,10 +149,23 @@ cadence**.
   PR has no poller state and no `NextRetryAt`, and `ExecuteAsync` is already asleep on a flat
   cadence — so `min(cadence, NextRetryAt)` cannot shorten the *current* sleep, and the burst can't
   even start for up to 30s, missing the "couple of seconds" goal exactly where it matters most. Add
-  a **coalescing wake signal** to `ActivePrPoller` (mirror `InboxPoller.RequestImmediateRefresh` — a
-  `SemaphoreSlim(0,1)` raced against the `Task.Delay`), triggered when a PR newly subscribes
-  (`ActivePrSubscriberRegistry`). The woken tick polls the new ref, observes `None`, and arms the
-  burst within ~1s.
+  a **coalescing wake signal** to `ActivePrPoller`, triggered when a PR newly subscribes
+  (`ActivePrSubscriberRegistry`). Implementation specifics:
+  - `ExecuteAsync` must adopt `InboxPoller`'s full pattern — a `SemaphoreSlim(0,1)` raced against
+    `Task.Delay` via `Task.WhenAny`, **including the signal-loss defense** (`InboxPoller.cs:89-103`,
+    ADV-PR2-001). The current flat `Task.Delay(_cadence)` (`ActivePrPoller.cs:105`) has no signal
+    race; a bare `min(cadence, NextRetryAt)` delay does **not** cover the freshly-subscribed (no
+    prior state) case.
+  - **DI seam.** `ActivePrPoller` is registered hosted-service-only
+    (`AddHostedService<ActivePrPoller>()`), so it can't be injected to receive the signal. Switch to
+    `InboxPoller`'s dual registration — `AddSingleton<ActivePrPoller>()` + `AddHostedService(sp =>
+    sp.GetRequiredService<ActivePrPoller>())` — inject the concrete `ActivePrPoller` into
+    `SseChannel` (already modified for the re-emit) and call `RequestImmediateRefresh` from
+    `TrySubscribe` after the registry add. Add a resolvability test mirroring `InboxPoller`'s.
+  - **Min-interval guard.** `useActivePrUpdates` re-subscribes on every SSE reconnect, so a reconnect
+    storm would fire back-to-back wakes → back-to-back full-batch readiness polls past the cadence
+    floor. Ignore a wake if the loop already ticked within the last few seconds (mirror the
+    manual-refresh debounce), so churn can't amplify the expensive query.
 - After the cap (≈5 fast attempts) a still-`UNKNOWN` PR stops being *fast*-scheduled and falls back
   to the normal 30s cadence (it is **not** frozen — the poller keeps polling, and the panel keeps
   overlaying the live value when it eventually resolves).
@@ -180,10 +193,20 @@ readiness. So: add a `MergeReadiness` field to `ActivePrSnapshot`/`IActivePrCach
 existing `_cache.Update` call (`ActivePrPoller.cs:237`) from `snapshot.MergeReadiness`; inject the
 already-registered `IActivePrCache` singleton into `SseChannel`; the subscribe path
 (`SseChannel.TrySubscribe`, which already resolves the subscriber id) writes a targeted `pr-updated`
-frame to that one connection when the cached readiness is non-`None`. If it is `None` (or absent —
-a brand-new subscription), emit nothing and let the C2 burst arm. This adds `IActivePrCache`/
-`ActivePrSnapshot`, `SseChannel`, and the subscription endpoint to C1/C2's file set (see Delivery
-slicing).
+frame to that one connection when the cached readiness is non-`None`. The cache field **retains the
+last-known non-`None`** readiness (mirror `ActivePrPollerState.LastMergeReadiness` at
+`ActivePrPoller.cs:230-231` — do not overwrite a cached `Ready` with a transient recompute `None`),
+so a re-subscribe surfaces the last real value. If it is `None`/absent (a brand-new PR that has never
+resolved), emit nothing and let the C2 burst arm. This adds `IActivePrCache`/`ActivePrSnapshot`,
+`SseChannel`, and the subscription endpoint to C1/C2's file set (see Delivery slicing).
+
+*Narrow known race (accepted):* the poller publishes `ActivePrUpdated` (`:205`) **before**
+`_cache.Update` (`:237`), so a re-subscribe whose cache read lands in that microsecond window — for a
+PR resolving `None`→`Ready` on that exact tick with surviving poller state — both misses the organic
+fanout and reads the pre-update value, emitting nothing; the steady `Ready→Ready` anti-flicker guard
+then never re-publishes. Recovery: the value is in the cache after `:237`, so the next re-navigation
+(or any genuine readiness change) resolves it. Not worth reordering the load-bearing
+publish-before-update sequence for a window this narrow.
 
 Resolution path: poller fast-detects the flip → publishes `ActivePrUpdated{ MergeReadinessChanged }`
 → SSE `pr-updated` → `useActivePrUpdates` → panel (C1) + header update. ~1–3s typical.
@@ -233,7 +256,10 @@ None`**; if any, run a short-backoff background pass on the fast schedule (1s, 2
   `_disposed` *after* acquiring `_writerLock`** (not only before the sleep) — a continuation that
   wakes after a newer generation already wrote would otherwise clobber a newer snapshot or touch a
   disposed lock. Reused patch-and-publish body: take `_writerLock`, re-read `_current`,
-  `Volatile.Write` the patched snapshot, publish `InboxUpdated`.
+  `Volatile.Write` the patched snapshot, publish `InboxUpdated`. **Patch onto the freshly-re-read
+  `_current`, not the pre-sleep captured item set**, and skip any resolved row that is absent from it
+  (mirror `OnInboxEnrichmentsReady`'s `liveByPrId.TryGetValue(...) → continue` guard) — a PR that a
+  concurrent refresh dropped (merged/closed mid-burst) must not be resurrected.
 - Stop when all targets are definitive or the cap is reached; either way the rows stay non-frozen
   (C3a) and ride the normal 60s refresh thereafter.
 
@@ -263,9 +289,15 @@ GitHub (async mergeability compute, ~seconds)
 
 - Schedule: `fastBackoff(n)` = `2^n` seconds for n = 0..4 → **1, 2, 4, 8, 16s**; ≈5 attempts,
   ~31s worst case. Common case resolves at attempt 0–1 (1–3s).
-- Cap key: detail = per `(ref, headSha)` (in `ActivePrPollerState`); inbox = per `(ref, UpdatedAt)`
-  (in the orchestrator). A new commit (headSha/UpdatedAt change) resets the budget. For the inbox, a
-  manual hard refresh resets the orchestrator counter directly (re-opening the burst on demand).
+- Cap key: **per `(ref, headSha)` on both surfaces** (detail in `ActivePrPollerState`; inbox in the
+  orchestrator — so the inbox item must carry `headSha`, one more readiness-query field). Keying on
+  `headSha` (not the inbox's `(ref, UpdatedAt)` cache key) is deliberate: mergeability is recomputed
+  on a head/base change, **not** on a comment — and `UpdatedAt` bumps on any activity including
+  comments. Keying the budget on `UpdatedAt` would let a comment on a never-resolving (e.g. no-push)
+  PR re-arm a fresh expensive burst every time, and would defeat the post-cap "demote stuck rows"
+  mitigation (the key would keep resetting). A genuine new commit (headSha change) resets the budget
+  and re-arms; a base-only re-compute is rare and rides the normal cadence. A manual hard refresh
+  resets the inbox orchestrator counter directly (re-opening the burst on demand).
 - After the cap: the PR is no longer *fast*-scheduled but is **not frozen** — detail reverts to the
   30s poll cadence, inbox to the 60s refresh re-read (C3a). A slow-to-compute PR therefore still
   self-heals automatically (no manual refresh required); the cap only stops the 1Hz burst.
@@ -315,7 +347,10 @@ GitHub (async mergeability compute, ~seconds)
   `Closed`/`Merged` PR, and a **draft** are **not** fast-scheduled; steady Ready→Ready does not.
 - **Re-emit on subscribe (xunit, SSE / subscription endpoint tests):** with the active-PR cache
   holding `ready` for a ref, subscribing emits a **targeted** `pr-updated{ MergeReadinessChanged =
-  true }` to that connection only (not fanned out); cached `None`/absent emits nothing.
+  true }` to that connection only (not fanned out); cached `None`/absent emits nothing; the cache
+  **retains last-known non-`None`** (a transient `None` tick does not overwrite a cached `ready`). A
+  **DI resolvability test** confirms `ActivePrPoller` resolves both as a singleton and as the hosted
+  service after the dual-registration switch.
 - **C3a (xunit, `GitHubPrBatchReaderTests`):** an open non-draft PR whose **derived readiness is
   `None`** (test both the `mergeable == UNKNOWN` and the `mergeStateStatus`-lag inputs) is not
   written to cache and is re-fetched on the next read — **always** (it is a stateless skip, no cap in
@@ -325,10 +360,12 @@ GitHub (async mergeability compute, ~seconds)
   None` row triggers a re-probe that calls `ReadAsync` with the **full item set** (not a subset) and
   patches only that row — assert the readiness cache for the OTHER rows is **not** evicted; the
   re-probe holds `_writerLock` around `ReadAsync` (no concurrent reader entry with a normal refresh);
-  the **orchestrator** fast-attempt counter caps the burst and a hard refresh resets it; a **draft**
-  at `None` is **not** a target; all-definitive readiness triggers no re-probe; a new refresh
-  **cancels the prior in-flight pass**; `Dispose()` cancels the re-probe CTS; after the cap the pass
-  stops but the row stays non-frozen.
+  the **orchestrator** fast-attempt counter (keyed on `(ref, headSha)`) caps the burst and a hard
+  refresh resets it; a **comment-only `UpdatedAt` bump does NOT re-arm** the burst (head unchanged);
+  a resolved row **absent from the freshly-re-read `_current`** (PR closed mid-burst) is **not**
+  patched back in; a **draft** at `None` is **not** a target; all-definitive readiness triggers no
+  re-probe; a new refresh **cancels the prior in-flight pass**; `Dispose()` cancels the re-probe CTS;
+  after the cap the pass stops but the row stays non-frozen.
 - **Live B-gate:** push a commit to a `prpande/prism-sandbox` PR and immediately observe both the
   inbox badge and the detail panel resolve from blank → definitive within a few seconds, with no
   manual refresh (validates the GitHub `UNKNOWN`→definitive premise on a re-read). Also exercise the
@@ -351,10 +388,10 @@ GitHub (async mergeability compute, ~seconds)
 updated to describe the inbox case and the draft-skip.
 
 **Delivery slicing.** C1+C2 (PR-detail: `PrActionsPanel`, `PrDetailView`, `prDetailContext`,
-`ActivePrPoller`, `ActivePrSnapshot`/`IActivePrCache`, `SseChannel`, the subscription endpoint) and
-C3 (inbox: `GitHubPrBatchReader`, `InboxRefreshOrchestrator`, the inbox item DTO, `InboxRow`) still
-share **no modified files** and touch independent pipeline paths, so they are independently
-deliverable. They ship together on this branch per direction; if C3's net-new re-probe lifecycle
+`ActivePrPoller`, `ActivePrSnapshot`/`IActivePrCache`, `SseChannel`, the subscription endpoint, and
+the `ServiceCollectionExtensions` DI registration for the poller dual-register) and C3 (inbox:
+`GitHubPrBatchReader`, `InboxRefreshOrchestrator`, the inbox item DTO, `InboxRow`) still share **no
+modified files** and touch independent pipeline paths, so they are independently deliverable. They ship together on this branch per direction; if C3's net-new re-probe lifecycle
 (detached task + per-generation CTS + writer-lock serialization) hits complications, C1+C2 may be
 split to a separate PR so the PR-detail fix is not blocked. C3 is the larger/riskier half (new
 background machinery), so it carries the deeper review and test burden.
