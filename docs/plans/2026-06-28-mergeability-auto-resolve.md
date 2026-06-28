@@ -34,9 +34,10 @@
 - `PRism.Core.Contracts/IActivePrCache.cs` — add `MergeReadiness` to `ActivePrSnapshot`.
 - `PRism.GitHub/ActivePr/GitHubActivePrBatchReader.cs` — populate `IsDraft`.
 - `PRism.Core/PrDetail/ActivePrPollerState.cs` — add `FastRetryCount`.
-- `PRism.Core/PrDetail/ActivePrPoller.cs` — fast-retry gate, conditional `NextRetryAt` reset, adaptive wake delay, `RequestImmediateRefresh` signal + min-interval, populate cache readiness (retain non-`None`).
-- `PRism.Core/ServiceCollectionExtensions.cs` — dual-register `ActivePrPoller`.
-- `PRism.Web/Sse/SseChannel.cs` — inject `IActivePrCache` + `ActivePrPoller`; re-emit readiness + wake on subscribe.
+- `PRism.Core/PrDetail/IImmediateRefresh.cs` — **new** one-method seam `{ void RequestImmediateRefresh(); }` so `SseChannel` consumes a fakeable interface, not the `BackgroundService` directly.
+- `PRism.Core/PrDetail/ActivePrPoller.cs` — implement `IImmediateRefresh`; fast-retry gate, conditional `NextRetryAt` reset, adaptive wake delay, `RequestImmediateRefresh` signal + min-interval, populate cache readiness (retain non-`None`).
+- `PRism.Core/ServiceCollectionExtensions.cs` — dual-register `ActivePrPoller` (+ `IImmediateRefresh` → same singleton).
+- `PRism.Web/Sse/SseChannel.cs` — inject `IActivePrCache` + `IImmediateRefresh`; re-emit readiness + wake on subscribe; wake on `HeadShaChanged` fanout.
 - `frontend/src/components/PrDetail/prDetailContext.tsx` — add `liveMergeReadiness`.
 - `frontend/src/components/PrDetail/PrDetailView.tsx` — feed `updates.mergeReadiness` into the context.
 - `frontend/src/components/PrDetail/OverviewTab/PrActionsPanel.tsx` — read `live ?? snapshot`; announcement; focus recovery.
@@ -44,6 +45,8 @@
 **Inbox slice**
 - `PRism.GitHub/Inbox/GitHubPrBatchReader.cs` — stateless derived-`None` cache-skip.
 - `PRism.Core/Inbox/InboxRefreshOrchestrator.cs` — fast re-probe pass + lifecycle.
+
+**Test harness note:** the test-helper names in the snippets below (`NewPoller`, `FakeBatchReader`, `NewOrchestrator`, `FakeActivePrCache`, `FakeImmediateRefresh`, `Poll.Until`, `NewChannel`, `BuildPrismServiceProvider`, `PeekState`, `RowFor`, `Pr(n)`, `Snap(...)`) are **illustrative** — the implementer builds or extends the real xunit fixtures (the existing `ActivePrPollerTests`/`InboxRefreshOrchestratorTests`/`GitHubPrBatchReaderTests` fixtures and helpers). Exact factory signatures are the implementer's to define; the snippets fix behaviour and assertions, not helper APIs.
 
 ---
 
@@ -182,7 +185,7 @@ git commit -m "feat(#655): carry last-known readiness on the active-PR cache"
 
 **Files:**
 - Modify: `PRism.Core/PrDetail/ActivePrPollerState.cs:7-18` (add `FastRetryCount`)
-- Modify: `PRism.Core/PrDetail/ActivePrPoller.cs` (`TickAsync` scheduling + `:233` conditional reset; `ExecuteAsync` adaptive delay)
+- Modify: `PRism.Core/PrDetail/ActivePrPoller.cs` (`TickAsync` scheduling + `:233` conditional reset; the `ExecuteAsync` adaptive delay lands in Task 4)
 - Test: `tests/PRism.Core.Tests/PrDetail/ActivePrPollerTests.cs`
 
 **Interfaces:**
@@ -247,16 +250,14 @@ Add an internal test accessor on `ActivePrPoller` (mirror `TrackedStateCount`):
 internal ActivePrPollerState PeekState(PrReference prRef) => _state[prRef];
 ```
 
-- [ ] **Step 4: Schedule the fast retry** in `TickAsync`, in the per-candidate `foreach` (after the snapshot is derived, alongside the existing state updates). Compute the gate, then make the existing `state.NextRetryAt = null;` reset (`:233`) conditional:
+- [ ] **Step 4: Schedule the fast retry** in `TickAsync`, in the per-candidate `foreach`. This block **replaces the unconditional `state.NextRetryAt = null;` at `:233`** (it must run after the state-update lines at `:224-232`, which set `LastHeadSha` etc.). Re-arm the budget off the **already-computed `headChanged` local (`:183`)** — do **not** compare `snapshot.HeadSha != state.LastHeadSha` here, because `:224` has already overwritten `LastHeadSha` to the new value, so that compare is always false. Compute the headSha reset *before* the gate so a new commit past the cap re-arms:
 
 ```csharp
-var nonTerminal = snapshot.PrState == PrState.Open;
-var wantsFastRetry = nonTerminal
+if (headChanged) state.FastRetryCount = 0;   // new commit -> re-arm the burst budget (Burst-budget key = (ref, headSha))
+var wantsFastRetry = snapshot.PrState == PrState.Open
     && !snapshot.IsDraft
     && snapshot.MergeReadiness == MergeReadiness.None
     && state.FastRetryCount < FastRetryCap;
-
-// (existing) state.LastHeadSha/.../ConsecutiveErrors = 0; updates stay as-is...
 if (wantsFastRetry)
 {
     state.NextRetryAt = now + FastBackoff(state.FastRetryCount);
@@ -276,25 +277,13 @@ private const int FastRetryCap = 5;
 private static TimeSpan FastBackoff(int n) => TimeSpan.FromSeconds(Math.Pow(2, n));
 ```
 
-- [ ] **Step 5: Adaptive `ExecuteAsync` delay.** Change the flat `Task.Delay(_cadence, ...)` (`:105`) so a near-future `NextRetryAt` shortens the sleep:
+The adaptive `ExecuteAsync` delay that makes the loop wake at the soonest `NextRetryAt` is introduced in **Task 4** (together with the wake signal). Through this task the loop keeps its flat `Task.Delay(_cadence, …)` — the budget arithmetic is fully proven by the `PeekState` assertions driving `TickAsync` directly, with no `ExecuteAsync` involvement.
 
-```csharp
-var soonest = _state.Values
-    .Select(s => s.NextRetryAt)
-    .Where(t => t is not null)
-    .DefaultIfEmpty(null)
-    .Min();
-var delay = soonest is { } due
-    ? TimeSpan.FromTicks(Math.Clamp((due - DateTimeOffset.UtcNow).Ticks, TimeSpan.FromMilliseconds(50).Ticks, _cadence.Ticks))
-    : _cadence;
-await Task.Delay(delay, stoppingToken).ConfigureAwait(false);
-```
+> **Add to Step 1 tests:** a fourth test — after a capped burst (`FastRetryCount == 5`), a `TickAsync` whose snapshot carries a **changed `HeadSha`** resets `FastRetryCount` to 0 and re-arms `NextRetryAt` to `now + 1s`.
 
-(Task 4 replaces this `Task.Delay` with the `WhenAny`+signal version; this step proves the budget arithmetic in isolation first.)
+- [ ] **Step 5: Run the four tests — verify they pass.**
 
-- [ ] **Step 6: Run the three tests — verify they pass.**
-
-- [ ] **Step 7: Commit.**
+- [ ] **Step 6: Commit.**
 
 ```bash
 git add PRism.Core/PrDetail/ActivePrPollerState.cs PRism.Core/PrDetail/ActivePrPoller.cs tests/PRism.Core.Tests/PrDetail/ActivePrPollerTests.cs
@@ -306,12 +295,13 @@ git commit -m "feat(#655): adaptive fast-retry for UNKNOWN readiness in ActivePr
 ## Task 4: `ActivePrPoller` wake signal + DI dual-register
 
 **Files:**
-- Modify: `PRism.Core/PrDetail/ActivePrPoller.cs` (`_refreshSignal`, `RequestImmediateRefresh`, `ExecuteAsync` `WhenAny`+signal-loss, min-interval)
-- Modify: `PRism.Core/ServiceCollectionExtensions.cs:152-154` (dual-register)
+- Create: `PRism.Core/PrDetail/IImmediateRefresh.cs` (`public interface IImmediateRefresh { void RequestImmediateRefresh(); }`)
+- Modify: `PRism.Core/PrDetail/ActivePrPoller.cs` (implement `IImmediateRefresh`; `_refreshSignal`, `RequestImmediateRefresh`, injectable `_minWakeInterval`, `ExecuteAsync` `WhenAny`+signal-loss + adaptive delay + min-interval loop)
+- Modify: `PRism.Core/ServiceCollectionExtensions.cs:152-154` (dual-register + `IImmediateRefresh`)
 - Test: `tests/PRism.Core.Tests/PrDetail/ActivePrPollerTests.cs`; `tests/PRism.Web.Tests/.../ActivePrPollerResolvableTests.cs` (new, mirror `InboxPollerResolvableTests`)
 
 **Interfaces:**
-- Produces: `ActivePrPoller.RequestImmediateRefresh()` (public), consumed by `SseChannel` in Task 5.
+- Produces: `IImmediateRefresh.RequestImmediateRefresh()` (implemented by `ActivePrPoller`), consumed by `SseChannel` in Task 5. `ActivePrPoller` takes an optional ctor `TimeSpan minWakeInterval` (default 3s) so tests can shrink it.
 
 - [ ] **Step 1: Write the failing tests:**
 
@@ -333,14 +323,17 @@ public async Task RequestImmediateRefresh_wakes_the_loop_within_one_second()
 [Fact]
 public async Task RequestImmediateRefresh_is_rate_limited_by_min_interval()
 {
-    var (poller, _, batch) = NewPoller(cadenceSeconds: 30);
+    // Inject a short, KNOWN min-interval so the assertion is on the guard, not wall-clock.
+    var (poller, _, batch) = NewPoller(cadenceSeconds: 30, minWakeInterval: TimeSpan.FromMilliseconds(200));
     using var cts = new CancellationTokenSource();
     Subscribe(poller, Pr(1));
-    await poller.StartAsync(cts.Token);
-    for (var i = 0; i < 10; i++) poller.RequestImmediateRefresh(); // storm
-    await Task.Delay(500);
-    Assert.True(batch.PollCount <= 2);                        // coalesced + min-interval, not 10
-    cts.Cancel();
+    var run = poller.StartAsync(cts.Token);
+    for (var i = 0; i < 10; i++) poller.RequestImmediateRefresh(); // storm within one min-interval window
+    // Poll until the first wake-driven tick lands, then confirm the storm coalesced: a burst of
+    // wakes inside one MinWakeInterval must collapse to a single extra tick, not 10.
+    await Poll.Until(() => batch.PollCount >= 1, timeout: TimeSpan.FromSeconds(2));
+    Assert.True(batch.PollCount <= 2);                        // initial tick + one coalesced wake
+    cts.Cancel(); await run;
 }
 ```
 
@@ -359,14 +352,14 @@ public void ActivePrPoller_resolves_as_singleton_and_hosted_service()
 
 - [ ] **Step 2: Run — verify failure** (`RequestImmediateRefresh` missing; resolvability fails because `ActivePrPoller` isn't registered as a singleton).
 
-- [ ] **Step 3: Add the signal + min-interval** to `ActivePrPoller`:
+- [ ] **Step 3: Add the signal + injectable min-interval** to `ActivePrPoller` (declare `: IImmediateRefresh` on the class; add a ctor param `TimeSpan minWakeInterval = default` stored as `_minWakeInterval = minWakeInterval == default ? TimeSpan.FromSeconds(3) : minWakeInterval;`):
 
 ```csharp
 private readonly SemaphoreSlim _refreshSignal = new(0, 1);
+private readonly TimeSpan _minWakeInterval;       // ctor-injected; default 3s
 private DateTimeOffset _lastTickAt = DateTimeOffset.MinValue;
-private static readonly TimeSpan MinWakeInterval = TimeSpan.FromSeconds(3);
 
-public void RequestImmediateRefresh()
+public void RequestImmediateRefresh()             // IImmediateRefresh
 {
     try { _refreshSignal.Release(); }
     catch (SemaphoreFullException) { /* already signalled; coalesce */ }
@@ -374,31 +367,51 @@ public void RequestImmediateRefresh()
 }
 ```
 
-- [ ] **Step 4: Rewrite the `ExecuteAsync` delay** to the `InboxPoller` `WhenAny`+signal-loss pattern (copy the block from `InboxPoller.cs:75-103`), computing `delay` via the Task-3 adaptive formula, and honor the min-interval so a wake within `MinWakeInterval` of the last tick is ignored:
+- [ ] **Step 4: Replace the flat `Task.Delay(_cadence, …)` (`:105`)** with an adaptive WhenAny wait that folds in the Task-3 delay formula AND a REAL min-interval guard loop (not a comment). Set `_lastTickAt = DateTimeOffset.UtcNow;` immediately after each `TickAsync`, then `await WaitForNextCycleAsync(stoppingToken);`:
 
 ```csharp
-// after each TickAsync: _lastTickAt = DateTimeOffset.UtcNow;
-using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
-var delayTask = Task.Delay(delay, linkedCts.Token);
-var signalTask = _refreshSignal.WaitAsync(linkedCts.Token);
-var winner = await Task.WhenAny(delayTask, signalTask).ConfigureAwait(false);
-if (stoppingToken.IsCancellationRequested) return;
-await linkedCts.CancelAsync().ConfigureAwait(false);
-if (winner == delayTask && signalTask.IsCompletedSuccessfully)
+// Sleeps until it's time to tick. Adaptive: wakes at the soonest NextRetryAt (clamped to
+// [0, _cadence]). A subscribe/commit wake that lands within _minWakeInterval of the last tick
+// re-delays the REMAINING window instead of ticking — coalescing a reconnect storm to one tick
+// without busy-looping (each iteration awaits a real Task.Delay >= minRemaining).
+private async Task WaitForNextCycleAsync(CancellationToken stoppingToken)
 {
-    try { _refreshSignal.Release(); } catch (SemaphoreFullException) { } catch (ObjectDisposedException) { }
+    while (!stoppingToken.IsCancellationRequested)
+    {
+        var now = DateTimeOffset.UtcNow;
+        var soonest = _state.Values.Select(s => s.NextRetryAt).Where(t => t is not null).DefaultIfEmpty(null).Min();
+        var adaptive = soonest is { } due
+            ? TimeSpan.FromTicks(Math.Clamp((due - now).Ticks, 0, _cadence.Ticks))
+            : _cadence;
+        var minRemaining = _minWakeInterval - (now - _lastTickAt);   // > 0 while inside the guard window
+        var delay = adaptive < minRemaining ? minRemaining : adaptive;
+        if (delay <= TimeSpan.Zero) return;                          // due and outside the guard window -> tick
+
+        using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
+        var delayTask = Task.Delay(delay, linkedCts.Token);
+        var signalTask = _refreshSignal.WaitAsync(linkedCts.Token);
+        var winner = await Task.WhenAny(delayTask, signalTask).ConfigureAwait(false);
+        if (stoppingToken.IsCancellationRequested) return;
+        await linkedCts.CancelAsync().ConfigureAwait(false);
+        // Signal-loss defense (ADV-PR2-001): timer won but a signal had also fired -> re-arm it.
+        if (winner == delayTask && signalTask.IsCompletedSuccessfully)
+        { try { _refreshSignal.Release(); } catch (SemaphoreFullException) { } catch (ObjectDisposedException) { } }
+
+        if (winner == delayTask) return;                            // adaptive/cadence elapsed -> tick
+        if (DateTimeOffset.UtcNow - _lastTickAt >= _minWakeInterval) return; // wake outside window -> tick now
+        // else: woken inside the guard window -> loop and re-delay the remaining window (no tick).
+    }
 }
-// If woken by the signal but DateTimeOffset.UtcNow - _lastTickAt < MinWakeInterval, loop back to re-delay
-// the remaining interval instead of ticking (reconnect-storm guard).
 ```
 
-Dispose `_refreshSignal` in the poller's `Dispose`/`StopAsync` path (mirror `InboxPoller.Dispose`).
+Dispose `_refreshSignal` in the poller's `Dispose` (mirror `InboxPoller.Dispose`).
 
 - [ ] **Step 5: Dual-register** in `ServiceCollectionExtensions.cs` — replace `services.AddHostedService<ActivePrPoller>();` with:
 
 ```csharp
 services.AddSingleton<ActivePrPoller>();
 services.AddHostedService(sp => sp.GetRequiredService<ActivePrPoller>());
+services.AddSingleton<IImmediateRefresh>(sp => sp.GetRequiredService<ActivePrPoller>());
 ```
 
 - [ ] **Step 6: Run all Task-4 tests — verify pass.**
@@ -415,11 +428,16 @@ git commit -m "feat(#655): subscribe wake signal + dual-register for ActivePrPol
 ## Task 5: Re-emit readiness + wake the poller on subscribe
 
 **Files:**
-- Modify: `PRism.Web/Sse/SseChannel.cs:59-85` (ctor deps), `:115-133` (`TrySubscribe`)
+- Modify: `PRism.Web/Sse/SseChannel.cs:59-85` (ctor deps), `:115-133` (`TrySubscribe`), `:287-301` (`OnActivePrUpdated` fanout wake)
 - Test: `tests/PRism.Web.Tests/Sse/SseChannelTests.cs` (or the existing SSE/subscription test file)
 
 **Interfaces:**
-- Consumes: `IActivePrCache.GetCurrent(prRef)?.MergeReadiness` (Task 2), `ActivePrPoller.RequestImmediateRefresh` (Task 4), the existing `SseEventProjection` for `ActivePrUpdated` → `pr-updated`.
+- Consumes: `IActivePrCache.GetCurrent(prRef)?.MergeReadiness` (Task 2), `IImmediateRefresh.RequestImmediateRefresh` (Task 4). Reuse `SseEventProjection.Project(evt)` — it returns a **`(string eventName, object payload)` tuple** (NOT a frame string); the frame is built exactly as `OnActivePrUpdated` does it (`:292-294`):
+  ```csharp
+  var (eventName, payload) = SseEventProjection.Project(evt);
+  var json = JsonSerializer.Serialize(payload, JsonSerializerOptionsFactory.Api);
+  var frame = $"event: {eventName}\ndata: {json}\n\n";
+  ```
 
 - [ ] **Step 1: Write the failing tests:**
 
@@ -450,45 +468,68 @@ public async Task Subscribe_emits_nothing_when_cached_readiness_none()
 [Fact]
 public void Subscribe_requests_immediate_poll()
 {
-    var poller = new FakeWakeable();
+    var poller = new FakeImmediateRefresh();                 // implements IImmediateRefresh
     var channel = NewChannel(poller: poller, out var sub);
     channel.TrySubscribe(sub.CookieSession, Pr(1));
     Assert.Equal(1, poller.WakeCount);
 }
+
+[Fact]
+public void HeadShaChanged_fanout_wakes_the_poller()        // new-commit-while-viewing
+{
+    var poller = new FakeImmediateRefresh();
+    var channel = NewChannel(poller: poller, out var sub);
+    channel.TrySubscribe(sub.CookieSession, Pr(1));          // wake #1 (subscribe)
+    PublishActivePrUpdated(channel, Pr(1), headShaChanged: true);
+    Assert.Equal(2, poller.WakeCount);                       // + wake #2 (new head)
+    PublishActivePrUpdated(channel, Pr(1), headShaChanged: false);
+    Assert.Equal(2, poller.WakeCount);                       // a non-head event does NOT wake
+}
 ```
 
-- [ ] **Step 2: Run — verify failure** (ctor doesn't take the cache/poller; no re-emit).
+- [ ] **Step 2: Run — verify failure** (ctor doesn't take the cache/poller; no re-emit; no fanout wake).
 
-- [ ] **Step 3: Inject the deps** into `SseChannel`'s constructor (`IActivePrCache cache, ActivePrPoller poller`) and store them. No DI cycle: the poller's deps (registry/cache/bus/reader) don't reference `SseChannel`.
+- [ ] **Step 3: Inject the deps** into `SseChannel`'s constructor — add `IActivePrCache cache, IImmediateRefresh poller` and store them. No DI cycle: the poller's deps (registry/cache/bus/reader) don't reference `SseChannel`.
 
-- [ ] **Step 4: Re-emit + wake** in `TrySubscribe`, right after the successful `_activeRegistry.Add(subscriberId, prRef);`:
+- [ ] **Step 4: Re-emit + wake in `TrySubscribe`.** The real method holds `lock (_cookieGate)` and walks the cookie's subscriber list newest-first; the re-emit + wake go right after the successful `_activeRegistry.Add(subscriberId, prRef);`, before `return true;` (`subscriberId` and `_subscribers[subscriberId]` are both in scope there):
 
 ```csharp
 _activeRegistry.Add(subscriberId, prRef);
-_poller.RequestImmediateRefresh();
+_poller.RequestImmediateRefresh();                          // fast-probe the new subscription
 var readiness = _cache.GetCurrent(prRef)?.MergeReadiness ?? MergeReadiness.None;
 if (readiness != MergeReadiness.None && _subscribers.TryGetValue(subscriberId, out var sub))
 {
-    var evt = new ActivePrUpdated(prRef, HeadShaChanged: false, CommentCountChanged: false,
-        NewHeadSha: null, CommentCountDelta: 0, IsMerged: false, IsClosed: false,
-        BaseShaChanged: false, NewBaseSha: null,
-        MergeReadiness: readiness, MergeReadinessChanged: true,
-        Approvals: null, ChangesRequested: null, Approvers: null, ChangesRequestedBy: null, AwaitingReviewers: null);
-    var frame = SseEventProjection.Project(evt);             // reuse the existing projection helper
+    var evt = new ActivePrUpdated(
+        prRef,
+        HeadShaChanged: false,
+        CommentCountChanged: false,
+        NewHeadSha: null,
+        CommentCountDelta: 0,
+        MergeReadiness: readiness,
+        MergeReadinessChanged: true);                        // remaining params keep their record defaults
+    var (eventName, payload) = SseEventProjection.Project(evt);
+    var json = JsonSerializer.Serialize(payload, JsonSerializerOptionsFactory.Api);
+    var frame = $"event: {eventName}\ndata: {json}\n\n";
     _ = sub.WriteAsync(frame, CancellationToken.None);       // fire-and-forget to that one connection
 }
 return true;
 ```
 
-(If `SseEventProjection.Project` is private, expose the same internal helper `OnActivePrUpdated`/`FanoutProjected` uses — but scoped to the single `sub`, not the fanout list.)
+- [ ] **Step 5: Wake on the `HeadShaChanged` fanout** (new-commit-while-viewing — user-approved scope). At the top of `OnActivePrUpdated` (`:287`), after the fanout log, add:
 
-- [ ] **Step 5: Run the Task-5 tests — verify pass.**
+```csharp
+if (evt.HeadShaChanged) _poller.RequestImmediateRefresh();  // new head -> fast-probe its mergeability
+```
 
-- [ ] **Step 6: Commit.**
+The poller's Task-3 `headChanged` reset re-arms the burst budget, so the new head resolves on the fast tier instead of waiting up to a full cadence.
+
+- [ ] **Step 6: Run the Task-5 tests — verify pass.**
+
+- [ ] **Step 7: Commit.**
 
 ```bash
 git add PRism.Web/Sse/SseChannel.cs tests/PRism.Web.Tests/Sse/SseChannelTests.cs
-git commit -m "feat(#655): re-emit readiness and wake the poller on PR subscribe"
+git commit -m "feat(#655): re-emit readiness + wake the poller on subscribe and new-head fanout"
 ```
 
 ---
@@ -562,7 +603,7 @@ git commit -m "feat(#655): merge panel consumes live readiness feed"
 - Test: `frontend/src/components/PrDetail/OverviewTab/PrActionsPanel.test.tsx`
 
 **Interfaces:**
-- Consumes: `READINESS_SHORT` from `../../shared/mergeReadiness` (add to the existing import at `:10`), `MERGE_ENABLED`.
+- Consumes: `READINESS_LONG` and `MERGE_ENABLED` from `../../shared/mergeReadiness` (add to the existing import at `:10`).
 
 - [ ] **Step 1: Write the failing tests:**
 
@@ -591,10 +632,10 @@ it('moves focus off the Refresh button when readiness auto-resolves', async () =
 
 - [ ] **Step 2: Run — verify failure.**
 
-- [ ] **Step 3: Add the announcement branch.** Track effective readiness in a ref seeded to the snapshot, fire only on a `none`→non-`none` transition:
+- [ ] **Step 3: Add the announcement branch.** Track effective readiness in a ref seeded to the snapshot, fire only on a `none`→non-`none` transition. **Only `readiness === 'ready'` is "ready to merge"** — `unstable` / `ready-with-changes-requested` are non-`none` but NOT mergeable, so announcing them as "ready" is wrong; use `READINESS_LONG[readiness]` for every other state:
 
 ```typescript
-import { READINESS_LONG, READINESS_SHORT, MERGE_ENABLED, type MergeReadiness } from '../../shared/mergeReadiness';
+import { READINESS_LONG, MERGE_ENABLED, type MergeReadiness } from '../../shared/mergeReadiness';
 
 const prevReadinessRef = useRef<MergeReadiness>(readiness); // seeded to first effective value
 const [readinessAnnounce, setReadinessAnnounce] = useState('');
@@ -603,12 +644,20 @@ useEffect(() => {
   prevReadinessRef.current = readiness;
   if (prev === 'none' && readiness !== 'none') {
     setReadinessAnnounce(
-      MERGE_ENABLED.has(readiness)
+      readiness === 'ready'
         ? 'Pull request is ready to merge'
-        : `Merge unavailable: ${READINESS_SHORT[readiness]}`,
+        : READINESS_LONG[readiness], // e.g. "Merge blocked", "Mergeable, but checks are unstable"
     );
   }
 }, [readiness]);
+
+// role=status re-reads its text on any re-render, so a stale announcement would be re-spoken on an
+// unrelated update. Clear it ~5s after it's set (one self-cancelling timer per announcement).
+useEffect(() => {
+  if (!readinessAnnounce) return;
+  const id = window.setTimeout(() => setReadinessAnnounce(''), 5000);
+  return () => window.clearTimeout(id);
+}, [readinessAnnounce]);
 ```
 
 Add `readinessAnnounce` as a branch in the `role=status` ternary (`:224-232`), after the existing branches and before the `''` fallback (a readiness change during `confirmingClose`/`confirmingMerge` is an impossible flow, so ordering is harmless):
@@ -619,21 +668,23 @@ Add `readinessAnnounce` as a branch in the `role=status` ternary (`:224-232`), a
   : ''}
 ```
 
-- [ ] **Step 4: Widen the focus-recovery guard** (`:131-140`). Add a `refreshBtnRef` to the Refresh button (`:364-385`) and widen the condition:
+- [ ] **Step 4: Widen the focus-recovery guard** (`:131-140`). Do **not** test `document.activeElement === refreshBtnRef.current` — React nulls the ref during the commit phase *before* this passive effect runs, so that compare is always false. Track focus with a boolean ref set by the Refresh button's `onFocus`/`onBlur` (React's `onBlur` does **not** fire on unmount, so the flag survives the auto-resolve transition that removes the Refresh button):
 
 ```typescript
-const refreshBtnRef = useRef<HTMLButtonElement | null>(null);
-// ...
+const refreshFocusedRef = useRef(false); // true while the Refresh button holds focus
+// On the Refresh <button> (:364-385): onFocus={() => { refreshFocusedRef.current = true; }}
+//                                      onBlur={() => { refreshFocusedRef.current = false; }}
 useEffect(() => {
-  if ((refreshArmedRef.current || document.activeElement === refreshBtnRef.current) && readiness !== 'none') {
+  if ((refreshArmedRef.current || refreshFocusedRef.current) && readiness !== 'none') {
     refreshArmedRef.current = false;
+    refreshFocusedRef.current = false;
     if (MERGE_ENABLED.has(readiness)) mergeBtnRef.current?.focus();
     else mergeReasonRef.current?.focus();
   }
 }, [readiness]);
 ```
 
-Attach `ref={refreshBtnRef}` to the Refresh `<button>`.
+Attach the `onFocus`/`onBlur` handlers to the Refresh `<button>`.
 
 - [ ] **Step 5: Run the tests — verify pass; prettier + tsc.**
 
@@ -654,7 +705,7 @@ git commit -m "feat(#655): announce mergeability auto-resolve and preserve focus
 ## Task 8: Inbox — stateless derived-`None` cache-skip
 
 **Files:**
-- Modify: `PRism.GitHub/Inbox/GitHubPrBatchReader.cs` (the parse-and-cache path around `:248-254`; cache write into `_cache`)
+- Modify: `PRism.GitHub/Inbox/GitHubPrBatchReader.cs` — `TryParse` (`:223-265`, computes `readiness`/`prState`/`isDraft`) and `FetchInto` (`:106-120`, owns the `_cache[…] = data;` write at `:116`). The gate inputs and the cache write are in **different methods**, and `BatchPrData` has no `isDraft`, so thread a `nonDefinitive` bool from `TryParse` → `FetchChunkAsync` → `FetchInto`.
 - Test: `tests/PRism.GitHub.Tests/Inbox/GitHubPrBatchReaderTests.cs`
 
 **Interfaces:**
@@ -703,22 +754,32 @@ public async Task Draft_none_is_cached()
 
 - [ ] **Step 2: Run — verify failure** (the `None` is currently cached, so `r2` re-serves it / draft test passes vacuously only if logic exists).
 
-- [ ] **Step 3: Implement the skip.** In the parse path (after `var readiness = MergeReadinessRule.Derive(...)`, `:254`), compute whether the row is non-definitive and skip the cache write:
+- [ ] **Step 3: Thread `nonDefinitive` and guard the cache write.**
 
-```csharp
-var nonDefinitive =
-    readiness == MergeReadiness.None
-    && prState == PrState.Open
-    && !isDraft;
-// ... build the BatchPrData as today ...
-if (!nonDefinitive)
-{
-    _cache[(item.Reference, item.UpdatedAt)] = data;   // existing cache write — now guarded
-}
-// always include `data` in the returned result map (the read still returns the fresh value)
-```
+  1. In `TryParse`, add an `out bool nonDefinitive` param. Set it on **every** return path: `nonDefinitive = false;` next to `data = null!;` at the top (so the early `return false;` paths are covered), and after `:254` (`var readiness = MergeReadinessRule.Derive(...)`):
 
-(Locate the existing `_cache[...] = data;` line and wrap it in the `if (!nonDefinitive)`. The returned dictionary entry is unchanged — only the cache *write* is skipped.)
+  ```csharp
+  nonDefinitive = readiness == MergeReadiness.None && prState == PrState.Open && !isDraft;
+  ```
+
+  2. Change `FetchChunkAsync`'s return type to `List<(RawPrInboxItem Item, BatchPrData Data, bool NonDefinitive)>` and its parse call (`:175`):
+
+  ```csharp
+  if (data.TryGetProperty(alias, out var repoNode)
+      && repoNode.ValueKind == JsonValueKind.Object
+      && TryParse(repoNode, it, viewerLogin, out var parsed, out var nonDef))
+      results.Add((it, parsed, nonDef));
+  ```
+
+  3. In `FetchInto` (`:114-118`), guard the cache write but **always** return the fresh value:
+
+  ```csharp
+  foreach (var (it, data, nonDefinitive) in await FetchChunkAsync(http, token, host, chunk, viewerLogin, includeReadiness, ct).ConfigureAwait(false))
+  {
+      if (!nonDefinitive) _cache[(it.Reference, it.UpdatedAt)] = data; // skip caching transient UNKNOWN
+      result[it.Reference] = data;                                     // read still returns the fresh value
+  }
+  ```
 
 - [ ] **Step 4: Run the three tests — verify pass.**
 
@@ -738,8 +799,8 @@ git commit -m "feat(#655): inbox batch reader stops freezing transient UNKNOWN r
 - Test: `tests/PRism.Core.Tests/Inbox/InboxRefreshOrchestratorTests.cs`
 
 **Interfaces:**
-- Consumes: `GitHubPrBatchReader` skip (Task 8), `_writerLock`, `_current`, `InboxUpdated`.
-- Produces: `internal Task<bool> ReprobeOnceAsync(CancellationToken ct)` — re-reads still-`None` open non-draft rows once, patches resolved rows, returns `true` if any row is still `None` (i.e. another pass is warranted).
+- Consumes: `GitHubPrBatchReader` skip (Task 8), `_writerLock`, `_current`, `_viewerLoginProvider()` (NOT `_viewerLogin` — that field does not exist), `IPrBatchReader.ReadAsync` (returns `IReadOnlyDictionary<PrReference, BatchPrData>`), `InboxUpdated`.
+- Produces: a retained `_lastRawSet` (the `allRawDistinct` list `RefreshAsync` feeds the batch reader) so the re-probe can re-read the **full** set without reconstructing `RawPrInboxItem` from `PrInboxItem`; and `internal Task<bool> ReprobeOnceAsync(CancellationToken ct)` — re-reads still-`None` open non-draft rows once, patches resolved rows onto a freshly-read `_current`, returns `true` if any target is still `None` (another pass warranted).
 
 - [ ] **Step 1: Write the failing tests:**
 
@@ -791,44 +852,60 @@ public async Task Reprobe_no_targets_returns_false_and_does_not_read()
 
 - [ ] **Step 2: Run — verify failure** (`ReprobeOnceAsync` undefined).
 
-- [ ] **Step 3: Implement `ReprobeOnceAsync`.** Select targets from `_current` (open, `!IsDraft`, `MergeReadiness == None`); if none, return `false` without reading. Otherwise hold `_writerLock` around the full-set `ReadAsync`, then patch onto a freshly-read `_current` skipping vanished rows (mirror `OnInboxEnrichmentsReady`'s `liveByPrId` guard at `:471-474`):
+- [ ] **Step 3a: Stash the raw set.** Add a field `private IReadOnlyList<RawPrInboxItem> _lastRawSet = Array.Empty<RawPrInboxItem>();` and, inside `RefreshAsync` (still under `_writerLock`, right after `Volatile.Write(ref _current, newSnap);` at `:307`), add `_lastRawSet = allRawDistinct;`. This is the exact set fed to `ReadAsync` at `:146`, so re-reading it keeps `InboxCacheEviction.PruneAbsent` whole.
+
+- [ ] **Step 3b: Implement `ReprobeOnceAsync`.** Select targets from `_current` (open, `!IsDraft`, `MergeReadiness == None`); if none, return `false` without reading. Hold `_writerLock` around the full-set `ReadAsync`, release it across nothing (the read is the only awaited call), then re-acquire and patch onto a **freshly re-read** `_current` (a concurrent `RefreshAsync` may have replaced it). Iterating `current.Sections` directly is the vanished-row guard — a row dropped from `_current` is simply never patched back in:
 
 ```csharp
 internal async Task<bool> ReprobeOnceAsync(CancellationToken ct)
 {
-    var snap = _current;
+    var snap = Volatile.Read(ref _current);
     if (snap is null) return false;
     var targets = snap.Sections.Values.SelectMany(s => s)
         .Where(p => p.MergedAt is null && p.ClosedAt is null && !p.IsDraft && p.MergeReadiness == MergeReadiness.None)
-        .ToList();
-    if (targets.Count == 0) return false;
+        .Select(p => p.Reference).ToHashSet();
+    if (targets.Count == 0 || _lastRawSet.Count == 0) return false;
 
-    var fullSet = snap.Sections.Values.SelectMany(s => s).Select(ToRaw).ToList(); // FULL set -> PruneAbsent safe
-    IReadOnlyDictionary<PrReference, RawPrInboxItem> read;
+    var viewerLogin = _viewerLoginProvider();
+    IReadOnlyDictionary<PrReference, BatchPrData> read;
     await _writerLock.WaitAsync(ct).ConfigureAwait(false);
-    try { if (_disposed) return false; read = await _batchReader.ReadAsync(fullSet, _viewerLogin, ct).ConfigureAwait(false); }
+    try { if (_disposed) return false; read = await _batchReader.ReadAsync(_lastRawSet, viewerLogin, ct).ConfigureAwait(false); }
     finally { _writerLock.Release(); }
 
     await _writerLock.WaitAsync(ct).ConfigureAwait(false);
     try
     {
         if (_disposed) return false;
-        var current = _current;
+        var current = Volatile.Read(ref _current);   // RE-READ inside the lock — never patch the pre-read reference
         if (current is null) return false;
-        var liveByPrId = current.Sections.Values.SelectMany(s => s)
-            .GroupBy(p => p.Reference.PrId, StringComparer.Ordinal)
-            .ToDictionary(g => g.Key, g => g.First(), StringComparer.Ordinal);
-        var anyStillNone = false; var changed = false;
-        // build a patched section map: for each target ref, if present in liveByPrId AND read resolved it, replace readiness.
-        var patched = PatchReadiness(current, read, targets, liveByPrId, ref anyStillNone, ref changed);
-        if (changed) { Volatile.Write(ref _current, patched); _events.Publish(new InboxUpdated(patched.Sections.Keys.ToArray(), 0)); }
+        var anyStillNone = false;
+        var changed = new HashSet<string>(StringComparer.Ordinal);
+        var newSections = current.Sections.ToDictionary(
+            kv => kv.Key,
+            kv => (IReadOnlyList<PrInboxItem>)kv.Value.Select(p =>
+            {
+                if (!targets.Contains(p.Reference)) return p;                       // only rows that were None
+                if (!read.TryGetValue(p.Reference, out var b) || b.MergeReadiness == MergeReadiness.None)
+                { anyStillNone = true; return p; }                                  // vanished from read OR still computing
+                changed.Add(kv.Key);
+                return p with
+                {
+                    MergeReadiness = b.MergeReadiness, Approvals = b.Approvals,
+                    ChangesRequested = b.ChangesRequested, Approvers = b.Approvers,
+                    ChangesRequestedBy = b.ChangesRequestedBy, AwaitingReviewers = b.AwaitingReviewers,
+                };
+            }).ToList(),
+            StringComparer.Ordinal);
+        if (changed.Count > 0)
+        {
+            Volatile.Write(ref _current, current with { Sections = newSections });
+            _events.Publish(new InboxUpdated(changed.ToArray(), 0));               // ComputeDiff is patch-blind; publish unconditionally
+        }
         return anyStillNone;
     }
     finally { _writerLock.Release(); }
 }
 ```
-
-Implement `PatchReadiness` to: skip any target absent from `liveByPrId` (vanished — not resurrected); for present rows whose `read` value is non-`None`, set the new readiness; mark `anyStillNone = true` for rows still `None`. Add `ToRaw` (map `PrInboxItem`→`RawPrInboxItem`) or reuse the orchestrator's existing materialization seam.
 
 - [ ] **Step 4: Run the four tests — verify pass.**
 
@@ -911,18 +988,31 @@ public async Task New_refresh_cancels_prior_in_flight_pass_and_Dispose_cancels()
 
 - [ ] **Step 2: Run — verify failure.**
 
-- [ ] **Step 3: Add the loop + state.** Fields:
+- [ ] **Step 3: Add the loop + state.** Fields (the four test-accessor backing stores are required by the Step-1 tests):
 
 ```csharp
 private CancellationTokenSource? _reprobeCts;
+private Task? _burstTask;                                  // last burst Task.Run handle (WaitForBurstIdle awaits it)
+private int _newBurstsSinceLastRefresh;                    // freshly-armed (ref, headSha) targets this refresh
+private bool _priorPassWasCancelled;                       // set when a refresh cancels an in-flight pass
 private readonly ConcurrentDictionary<(string PrId, string HeadSha), int> _burstAttempts = new();
 private const int FastRetryCap = 5;
 private static TimeSpan FastBackoff(int n) => TimeSpan.FromSeconds(Math.Pow(2, n));
+
+// Test accessors (illustrative — match the Step-1 tests):
+internal Task WaitForBurstIdle(TimeSpan timeout) => _burstTask is { } t ? t.WaitAsync(timeout) : Task.CompletedTask;
+internal int BurstAttempts(PrReference r) =>
+    _burstAttempts.Where(kv => kv.Key.PrId == r.PrId).Select(kv => kv.Value).DefaultIfEmpty(0).Max();
+internal int NewBurstsSinceLastRefresh() => _newBurstsSinceLastRefresh;
+internal bool PriorPassWasCancelled => _priorPassWasCancelled;
 ```
 
-At the end of `RefreshAsync` (after the snapshot is published, near `:548`), launch the burst (replace the prior pass's CTS):
+> **Burst delay must be virtualizable.** `RunReprobeBurstAsync` below uses `FastBackoff` (1+2+4+8+16 = 31s real time). The tests run the burst to completion, so the delay must go through an injectable seam (a `TimeProvider`/delay func the `testClock: true` harness fast-forwards) — a real 31s `Task.Delay` would make the suite hang. Wire that seam as part of this task.
+
+As the **final statements of `RefreshAsync`, after the `finally { _writerLock.Release(); }` block at `:336`** (NOT near `:548` — that line is in `OnConfigChanged`; placing the launch outside the lock lets the spawned pass re-acquire it). On a `hardRefresh`, clear the budget first (Step 4), then launch:
 
 ```csharp
+if (hardRefresh) _burstAttempts.Clear();
 LaunchReprobeBurst();
 ```
 
@@ -930,35 +1020,62 @@ LaunchReprobeBurst();
 private void LaunchReprobeBurst()
 {
     var prior = Interlocked.Exchange(ref _reprobeCts, null);
-    prior?.Cancel(); prior?.Dispose();
+    if (prior is not null) { _priorPassWasCancelled = true; prior.Cancel(); prior.Dispose(); } // capture once -> Cancel AND Dispose
     if (_disposed) return;
+
+    // Prune budget keys no longer live, then count freshly-armed (ref, headSha) targets SYNCHRONOUSLY so
+    // NewBurstsSinceLastRefresh() is observable the moment RefreshAsync returns (a comment-only UpdatedAt
+    // bump keeps the same headSha key -> not fresh -> 0; a new commit is a new key -> fresh -> >=1).
+    var current = Volatile.Read(ref _current);
+    var targetKeys = current is null ? new HashSet<(string, string)>()
+        : current.Sections.Values.SelectMany(s => s)
+            .Where(p => p.MergedAt is null && p.ClosedAt is null && !p.IsDraft && p.MergeReadiness == MergeReadiness.None)
+            .Select(p => (p.Reference.PrId, p.HeadSha)).ToHashSet();
+    foreach (var k in _burstAttempts.Keys) if (!targetKeys.Contains(k)) _burstAttempts.TryRemove(k, out _);
+    _newBurstsSinceLastRefresh = targetKeys.Count(k => !_burstAttempts.ContainsKey(k));
+
     var cts = CancellationTokenSource.CreateLinkedTokenSource(CancellationToken.None);
     _reprobeCts = cts;
-    _ = Task.Run(() => RunReprobeBurstAsync(cts.Token));
+    if (_disposed) { cts.Cancel(); }                       // Dispose raced past the _disposed check -> cancel the just-armed pass
+    _burstTask = Task.Run(() => RunReprobeBurstAsync(cts.Token));
 }
 
 private async Task RunReprobeBurstAsync(CancellationToken ct)
 {
-    try
+    for (var attempt = 0; attempt < FastRetryCap && !ct.IsCancellationRequested; attempt++)
     {
-        for (var attempt = 0; attempt < FastRetryCap && !ct.IsCancellationRequested; attempt++)
-        {
-            try { await Task.Delay(FastBackoff(attempt), ct).ConfigureAwait(false); }
-            catch (OperationCanceledException) { return; }
-            // budget gate keyed on (PrId, headSha): increment per still-None target; stop if all capped
-            if (!AnyTargetUnderCap()) return;
-            bool more;
-            try { more = await ReprobeOnceAsync(ct).ConfigureAwait(false); }
-            catch (OperationCanceledException) { return; }
-            catch (Exception) { return; }     // swallow tick errors (mirror CI-probe/refresh passes)
-            if (!more) return;                 // all resolved
-        }
+        try { await Task.Delay(FastBackoff(attempt), ct).ConfigureAwait(false); } // via the virtualizable seam
+        catch (OperationCanceledException) { return; }
+        if (!AnyTargetUnderCap()) return;                  // every still-None target has spent its budget
+        bool more;
+        try { more = await ReprobeOnceAsync(ct).ConfigureAwait(false); }
+        catch (OperationCanceledException) { return; }
+        catch (Exception) { return; }                      // swallow tick errors (mirror CI-probe/refresh passes)
+        if (!more) return;                                 // all resolved
     }
-    finally { /* leave _reprobeCts; next refresh replaces it */ }
 }
 ```
 
-`AnyTargetUnderCap()` increments `_burstAttempts[(PrId, headSha)]` for each still-`None` target and returns whether any is `< FastRetryCap`; prune `_burstAttempts` entries whose `(PrId, headSha)` is absent from `_current` (so a comment-only `UpdatedAt` bump keeps the same `headSha` key → no re-arm; a new commit is a new key → re-arms).
+`AnyTargetUnderCap()` consumes one attempt per still-`None` target (capping cleanly at `FastRetryCap`) and returns whether any target still has budget:
+
+```csharp
+private bool AnyTargetUnderCap()
+{
+    var current = Volatile.Read(ref _current);
+    if (current is null) return false;
+    var any = false;
+    foreach (var p in current.Sections.Values.SelectMany(s => s)
+        .Where(p => p.MergedAt is null && p.ClosedAt is null && !p.IsDraft && p.MergeReadiness == MergeReadiness.None))
+    {
+        var key = (p.Reference.PrId, p.HeadSha);
+        var n = _burstAttempts.GetValueOrDefault(key);
+        if (n >= FastRetryCap) continue;                   // capped (ref, headSha) — no more fast budget
+        _burstAttempts[key] = n + 1;
+        any = true;
+    }
+    return any;
+}
+```
 
 - [ ] **Step 4: hardRefresh resets the budget.** In `RefreshAsync(..., bool hardRefresh = false, ...)`, when `hardRefresh`, clear `_burstAttempts` before `LaunchReprobeBurst()` so the manual inbox Refresh re-opens the fast burst. (Debounce is the frontend Refresh button's existing disabled-while-loading; no backend change needed.)
 
@@ -970,8 +1087,11 @@ public void Dispose()
     _enrichmentSub.Dispose();
     _config.Changed -= OnConfigChanged;
     _disposed = true;
-    Interlocked.Exchange(ref _reprobeCts, null)?.Cancel();
-    Interlocked.Exchange(ref _reprobeCts, null)?.Dispose();
+    // Capture once: a second Interlocked.Exchange returns null, so Cancel + Dispose must run on the
+    // SAME captured reference (the prior code cancelled but never disposed the CTS).
+    var cts = Interlocked.Exchange(ref _reprobeCts, null);
+    cts?.Cancel();
+    cts?.Dispose();
     _writerLock.Dispose();
 }
 ```
