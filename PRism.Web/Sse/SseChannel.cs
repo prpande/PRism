@@ -151,7 +151,10 @@ internal sealed class SseChannel : IDisposable
                             MergeReadiness: readiness,
                             MergeReadinessChanged: true);
                         var (eventName, payload) = SseEventProjection.Project(evt);
-                        var json = JsonSerializer.Serialize(payload, JsonSerializerOptionsFactory.Api);
+                        // Use ApiSparse (not Api) — this is a sparse re-emit: Approvals/Approvers/etc.
+                        // are null only because the frame carries mergeability only. An explicit null
+                        // would clobber the frontend's snapshot() full-load values via the #621 path.
+                        var json = JsonSerializer.Serialize(payload, JsonSerializerOptionsFactory.ApiSparse);
                         var frame = $"event: {eventName}\ndata: {json}\n\n";
                         _ = sub.WriteAsync(frame, CancellationToken.None);
                     }

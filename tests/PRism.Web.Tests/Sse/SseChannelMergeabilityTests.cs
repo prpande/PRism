@@ -151,6 +151,48 @@ public class SseChannelMergeabilityTests
     }
 
     // ---------------------------------------------------------------------------------
+    // Test 5: subscribe re-emit must NOT carry explicit null for approver/count fields
+    //         (an explicit null clobbers the frontend's snapshot() full-load values — #655)
+    // ---------------------------------------------------------------------------------
+    [Fact]
+    public async Task Subscribe_reemit_omits_null_approver_and_count_fields()
+    {
+        var bus = new ReviewEventBus();
+        var subs = new InboxSubscriberCount();
+        var registry = new ActivePrSubscriberRegistry();
+        var cache = new FakeActivePrCache();
+        var prRef = new PrReference("o", "r", 1);
+        cache.Update(prRef, new ActivePrSnapshot("sha1", null, DateTimeOffset.UtcNow, MergeReadiness: MergeReadiness.Ready));
+        using var channel = new SseChannel(bus, subs, registry, NullLogger<SseChannel>.Instance, cache);
+
+        var bodyA = new CapturingStream();
+        var ctxA = new DefaultHttpContext { Response = { Body = bodyA } };
+        using var ctsA = new CancellationTokenSource();
+        var taskA = channel.RunSubscriberAsync(ctxA.Response, cookieSessionId: "c1", ctsA.Token);
+        await TestPoll.UntilAsync(() => subs.Current == 1, TimeSpan.FromSeconds(5));
+
+        channel.TrySubscribe("c1", prRef);
+
+        await TestPoll.UntilAsync(
+            () => bodyA.WrittenString.Contains("event: pr-updated", StringComparison.Ordinal),
+            TimeSpan.FromSeconds(5),
+            "re-emit must arrive within 5s");
+
+        bodyA.WrittenString.Should().Contain("event: pr-updated");
+        bodyA.WrittenString.Should().Contain("\"mergeReadiness\":\"ready\"");
+        // The sparse re-emit must NOT carry approver/count fields as explicit null — an explicit
+        // null would clobber the full-load approval count + reviewer popover via snapshot() (#621).
+        bodyA.WrittenString.Should().NotContain("\"approvers\":null");
+        bodyA.WrittenString.Should().NotContain("\"approvals\":null");
+        bodyA.WrittenString.Should().NotContain("\"changesRequested\":null");
+        bodyA.WrittenString.Should().NotContain("\"changesRequestedBy\":null");
+        bodyA.WrittenString.Should().NotContain("\"awaitingReviewers\":null");
+
+        await ctsA.CancelAsync();
+        try { await taskA; } catch (OperationCanceledException) { } catch (IOException) { }
+    }
+
+    // ---------------------------------------------------------------------------------
     // Shared fakes
     // ---------------------------------------------------------------------------------
 
