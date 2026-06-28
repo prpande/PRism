@@ -141,12 +141,16 @@ export type PostReloadResult =
   | { ok: false; status: 0; kind: 'network'; body: unknown }
   | { ok: false; status: number; kind: 'other'; body: unknown };
 
-export async function postReload(prRef: PrReference, headSha: string): Promise<PostReloadResult> {
+export async function postReload(
+  prRef: PrReference,
+  headSha: string,
+  signal?: AbortSignal,
+): Promise<PostReloadResult> {
   try {
     await apiClient.post<unknown>(
       `${prPath(prRef)}/reload`,
       { headSha },
-      { headers: tabIdHeader() },
+      { headers: tabIdHeader(), signal },
     );
     return { ok: true };
   } catch (e) {

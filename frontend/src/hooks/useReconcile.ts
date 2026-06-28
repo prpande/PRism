@@ -1,6 +1,10 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { postReload, type PostReloadResult } from '../api/draft';
 import type { PrReference } from '../api/types';
+
+// Mirrors usePrDetailRefresh: a hung reload fetch must not leave the UI stuck in
+// 'reloading' forever — abort it after this window and surface the generic banner.
+const TIMEOUT_MS = 30_000;
 
 // Spec § 3.3 + plan Task 46. Wraps POST /api/pr/{ref}/reload with the spec's
 // head-shift auto-retry policy:
@@ -59,58 +63,75 @@ export function useReconcile({
   const propsRef = useRef({ prRef, headSha, onReloadComplete });
   propsRef.current = { prRef, headSha, onReloadComplete };
 
+  // Re-entrancy guard (synchronous — state updates are async): a second click
+  // while a reload is in flight is a no-op, so the later resolver can't clobber
+  // the earlier one's result.
+  const inFlight = useRef(false);
+  // Mounted guard: a reload that resolves after the view tore down must not
+  // setState (React warning) or fire onReloadComplete against a dead view.
+  const mounted = useRef(true);
+  useEffect(
+    () => () => {
+      mounted.current = false;
+    },
+    [],
+  );
+
   const reload = useCallback(async () => {
     const p = propsRef.current;
     if (p.headSha === null) return;
+    if (inFlight.current) return;
+    // Capture into a local so the property narrowing survives the nested async
+    // closure below (TS resets property narrowing across function boundaries).
+    const headSha = p.headSha;
 
+    inFlight.current = true;
     setState('reloading');
     setBanner(null);
 
-    const first: PostReloadResult = await postReload(p.prRef, p.headSha);
-    if (first.ok) {
-      p.onReloadComplete();
-      setState('idle');
-      return;
-    }
+    // One AbortController + timeout spans the initial POST and the stale-head
+    // auto-retry. postReload maps an abort to its no-throw `network` result, so
+    // a timed-out (hung) fetch lands on the generic banner instead of stuck
+    // 'reloading'.
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
 
-    if (first.status === 409 && first.kind === 'reload-in-progress') {
-      setBanner(BANNER_IN_PROGRESS);
-      setState('error');
-      return;
-    }
+    type Outcome = { complete: boolean; banner: string | null; state: UseReconcileState };
+    const outcome: Outcome = await (async (): Promise<Outcome> => {
+      const first: PostReloadResult = await postReload(p.prRef, headSha, controller.signal);
+      if (first.ok) return { complete: true, banner: null, state: 'idle' };
 
-    if (first.status === 409 && first.kind === 'reload-stale-head') {
-      const newHead = extractCurrentHeadSha(first.body);
-      if (newHead === null) {
-        // Backend signaled stale-head but didn't include the new sha.
-        // Without a retry sha there's nothing to do — treat as generic.
-        setBanner(BANNER_GENERIC);
-        setState('error');
-        return;
+      if (first.status === 409 && first.kind === 'reload-in-progress') {
+        return { complete: false, banner: BANNER_IN_PROGRESS, state: 'error' };
       }
-      const second = await postReload(p.prRef, newHead);
-      if (second.ok) {
-        p.onReloadComplete();
-        setState('idle');
-        return;
-      }
-      if (second.status === 409 && second.kind === 'reload-stale-head') {
-        setBanner(BANNER_STALE_HEAD);
-        setState('error');
-        return;
-      }
-      if (second.status === 409 && second.kind === 'reload-in-progress') {
-        setBanner(BANNER_IN_PROGRESS);
-        setState('error');
-        return;
-      }
-      setBanner(BANNER_GENERIC);
-      setState('error');
-      return;
-    }
 
-    setBanner(BANNER_GENERIC);
-    setState('error');
+      if (first.status === 409 && first.kind === 'reload-stale-head') {
+        const newHead = extractCurrentHeadSha(first.body);
+        // Backend signaled stale-head but didn't include the new sha. Without a
+        // retry sha there's nothing to do — treat as generic.
+        if (newHead === null) return { complete: false, banner: BANNER_GENERIC, state: 'error' };
+        const second = await postReload(p.prRef, newHead, controller.signal);
+        if (second.ok) return { complete: true, banner: null, state: 'idle' };
+        if (second.status === 409 && second.kind === 'reload-stale-head') {
+          return { complete: false, banner: BANNER_STALE_HEAD, state: 'error' };
+        }
+        if (second.status === 409 && second.kind === 'reload-in-progress') {
+          return { complete: false, banner: BANNER_IN_PROGRESS, state: 'error' };
+        }
+        return { complete: false, banner: BANNER_GENERIC, state: 'error' };
+      }
+
+      return { complete: false, banner: BANNER_GENERIC, state: 'error' };
+    })().finally(() => {
+      clearTimeout(timer);
+      inFlight.current = false;
+    });
+
+    // Gate every observable effect on the view still being mounted.
+    if (!mounted.current) return;
+    if (outcome.complete) p.onReloadComplete();
+    setBanner(outcome.banner);
+    setState(outcome.state);
   }, []);
 
   const clearBanner = useCallback(() => {

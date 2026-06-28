@@ -9,10 +9,14 @@ export type AiFileFocusOutcome =
   | { kind: 'auth' }
   | { kind: 'error'; reason: AiFailureReason };
 
-export async function getAiFileFocusResult(prRef: PrReference): Promise<AiFileFocusOutcome> {
+export async function getAiFileFocusResult(
+  prRef: PrReference,
+  signal?: AbortSignal,
+): Promise<AiFileFocusOutcome> {
   try {
     const result = await apiClient.get<FileFocusResult | undefined>(
       `/api/pr/${prRef.owner}/${prRef.repo}/${prRef.number}/ai/file-focus`,
+      { signal },
     );
     // 204 → apiClient returns undefined.
     return result ? { kind: 'ok', result } : { kind: 'no-content' };
