@@ -449,6 +449,14 @@ internal static class PrDraftEndpoints
                         return Results.UnprocessableEntity(new { error = "sha-format-invalid" });
                     if (PathValidation.Canonicalize(ndc.FilePath) is null)
                         return Results.UnprocessableEntity(new { error = "file-path-invalid" });
+                    // #605 item C — LineNumber is a non-nullable int (an omitted JSON field binds to 0)
+                    // and Side binds to null when omitted; neither was validated, so a (line 0 / null
+                    // side) draft persisted and only failed at submit when GitHub rejected it. Reject
+                    // at create with a clean 422 instead. Lines are 1-indexed; Side must be present.
+                    if (ndc.LineNumber < 1)
+                        return Results.UnprocessableEntity(new { error = "line-number-invalid" });
+                    if (string.IsNullOrEmpty(ndc.Side))
+                        return Results.UnprocessableEntity(new { error = "side-missing" });
                     payload = ndc;
                     return null;
                 }

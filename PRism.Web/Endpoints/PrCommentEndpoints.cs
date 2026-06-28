@@ -77,10 +77,19 @@ internal static class PrCommentEndpoints
             return await AlreadyPostedAsync(store, sessionKey, draft.Id, draft.BodyMarkdown, draft.PostedBodySnapshot, posted, prRef, bus, isReply: false, ct).ConfigureAwait(false);
         if (string.IsNullOrEmpty(draft.AnchoredSha))
             return Results.Json(new SubmitErrorDto("missing-anchor", "This draft has no commit anchor; reopen the composer and try again."), statusCode: StatusCodes.Status400BadRequest);
-        if (draft.BodyMarkdown.Length > PipelineMarker.GitHubReviewBodyMaxChars) return BodyTooLarge();
+
+        // #605 item B — re-read the draft body from the store inside the submit lock, immediately
+        // before the GitHub call. The body captured by the caller's pre-lock LoadAsync can be made
+        // stale by a concurrent PUT /draft (the draft writer participates only in the store's _gate,
+        // not this submit lock) that landed between that load and here; posting the stale snapshot
+        // would silently lose the edit and then StampThenDelete would drop the draft for good. Other
+        // fields (anchor / file / line) are immutable for a draft, so only the body is re-read.
+        var freshBody = await ReloadCommentBodyAsync(store, sessionKey, draft.Id, ct).ConfigureAwait(false);
+        if (freshBody is null) return NoDraft();
+        if (freshBody.Length > PipelineMarker.GitHubReviewBodyMaxChars) return BodyTooLarge();
 
         var request = new ReviewCommentRequest(draft.AnchoredSha, draft.FilePath, draft.LineNumber.Value,
-            (draft.Side ?? "right").ToUpperInvariant(), draft.BodyMarkdown);
+            (draft.Side ?? "right").ToUpperInvariant(), freshBody);
         CreatedReviewCommentResult created;
         try { created = await submitter.CreateReviewCommentAsync(prRef, request, ct).ConfigureAwait(false); }
         catch (OperationCanceledException) { throw; }
@@ -89,7 +98,7 @@ internal static class PrCommentEndpoints
         catch (Exception ex) { s_commentPostFailed(lf.CreateLogger(LoggerCategory), sessionKey, ex); return GitHubErrorMapper.ToResult(ex); }
 #pragma warning restore CA1031
 
-        await StampThenDeleteComment(store, sessionKey, draft.Id, created.Id, draft.BodyMarkdown, ct).ConfigureAwait(false);
+        await StampThenDeleteComment(store, sessionKey, draft.Id, created.Id, freshBody, ct).ConfigureAwait(false);
         Publish(bus, prRef, created.Id);
         return Results.Json(new PostCommentOkDto(created.Id));
     }
@@ -102,19 +111,41 @@ internal static class PrCommentEndpoints
             return await AlreadyPostedAsync(store, sessionKey, draft.Id, draft.BodyMarkdown, draft.PostedBodySnapshot, posted, prRef, bus, isReply: true, ct).ConfigureAwait(false);
         if (string.IsNullOrWhiteSpace(draft.ParentThreadId))
             return Results.Json(new SubmitErrorDto("missing-thread", "This reply draft has no parent thread; reload the page and try again."), statusCode: StatusCodes.Status400BadRequest);
-        if (draft.BodyMarkdown.Length > PipelineMarker.GitHubReviewBodyMaxChars) return BodyTooLarge();
+
+        // #605 item B — re-read the reply body inside the submit lock immediately before the GitHub
+        // call (see PostInlineAsync for the race rationale).
+        var freshBody = await ReloadReplyBodyAsync(store, sessionKey, draft.Id, ct).ConfigureAwait(false);
+        if (freshBody is null) return NoDraft();
+        if (freshBody.Length > PipelineMarker.GitHubReviewBodyMaxChars) return BodyTooLarge();
 
         CreatedReviewCommentResult created;
-        try { created = await submitter.CreateReviewCommentReplyAsync(prRef, draft.ParentThreadId, draft.BodyMarkdown, ct).ConfigureAwait(false); }
+        try { created = await submitter.CreateReviewCommentReplyAsync(prRef, draft.ParentThreadId, freshBody, ct).ConfigureAwait(false); }
         catch (OperationCanceledException) { throw; }
         catch (HttpRequestException hre) { s_commentPostFailed(lf.CreateLogger(LoggerCategory), sessionKey, hre); return GitHubErrorMapper.ToResult(hre); }
 #pragma warning disable CA1031
         catch (Exception ex) { s_commentPostFailed(lf.CreateLogger(LoggerCategory), sessionKey, ex); return GitHubErrorMapper.ToResult(ex); }
 #pragma warning restore CA1031
 
-        await StampThenDeleteReply(store, sessionKey, draft.Id, created.Id, draft.BodyMarkdown, ct).ConfigureAwait(false);
+        await StampThenDeleteReply(store, sessionKey, draft.Id, created.Id, freshBody, ct).ConfigureAwait(false);
         Publish(bus, prRef, created.Id);
         return Results.Json(new PostCommentOkDto(created.Id));
+    }
+
+    // #605 item B — re-read the current persisted body for a draft (by id, scoped to the session)
+    // so the posting path sends the latest text rather than a pre-lock snapshot. Returns null when
+    // the draft no longer exists (a concurrent delete) → the caller surfaces no-draft.
+    private static async Task<string?> ReloadCommentBodyAsync(IAppStateStore store, string sessionKey, string draftId, CancellationToken ct)
+    {
+        var state = await store.LoadAsync(ct).ConfigureAwait(false);
+        if (!state.Reviews.Sessions.TryGetValue(sessionKey, out var s)) return null;
+        return s.DraftComments.FirstOrDefault(d => d.Id == draftId)?.BodyMarkdown;
+    }
+
+    private static async Task<string?> ReloadReplyBodyAsync(IAppStateStore store, string sessionKey, string draftId, CancellationToken ct)
+    {
+        var state = await store.LoadAsync(ct).ConfigureAwait(false);
+        if (!state.Reviews.Sessions.TryGetValue(sessionKey, out var s)) return null;
+        return s.DraftReplies.FirstOrDefault(r => r.Id == draftId)?.BodyMarkdown;
     }
 
     private static void Publish(IReviewEventBus bus, PrReference prRef, long id)
