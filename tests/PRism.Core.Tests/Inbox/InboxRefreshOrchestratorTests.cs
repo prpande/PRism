@@ -1327,6 +1327,12 @@ public sealed class InboxRefreshOrchestratorTests
         public IReadOnlyList<PrReference>? LastReadRefs { get; private set; }
         public IReadOnlyList<RawPrInboxItem> Rows => _rows;
 
+        // Optional hook invoked inside ReadAsync (after recording the call, before returning
+        // the result). Tests that need to exercise the between-blocks race in ReprobeOnceAsync
+        // set this to mutate _current mid-read — simulating a concurrent RefreshAsync that drops
+        // a PR between target-selection and the patch block (#655 vanished-row guard).
+        public Action? OnRead { get; set; }
+
         public void EnqueueReadiness(RawPrInboxItem item, MergeReadiness readiness)
         {
             if (!_rows.Any(r => r.Reference == item.Reference))
@@ -1350,6 +1356,7 @@ public sealed class InboxRefreshOrchestratorTests
         {
             ReadCount++;
             LastReadRefs = items.Select(i => i.Reference).ToList();
+            OnRead?.Invoke(); // mid-read hook: fires after recording the call, before returning
             return Task.FromResult<IReadOnlyDictionary<PrReference, BatchPrData>>(
                 items.ToDictionary(i => i.Reference, i =>
                 {
@@ -1434,16 +1441,34 @@ public sealed class InboxRefreshOrchestratorTests
     [Fact]
     public async Task Reprobe_skips_a_row_absent_from_current()
     {
-        // SimulateConcurrentDropOf removes PR 7 from _current (simulating a concurrent
-        // RefreshAsync that closed the PR). ReprobeOnceAsync must NOT patch it back.
+        // Exercises the between-blocks vanished-row guard in ReprobeOnceAsync (#655).
+        //
+        // Timeline:
+        //   1. RefreshAsync seeds _current with PR 7 as MergeReadiness.None (a valid target).
+        //   2. ReprobeOnceAsync starts: target-selection includes PR 7 (it is None, open, non-draft).
+        //   3. ReadAsync is called (inside the first lock); the OnRead hook fires mid-read and
+        //      calls SimulateConcurrentDropOf — mutating _current to remove PR 7, simulating a
+        //      concurrent RefreshAsync that closed the PR between the two lock blocks.
+        //   4. The patch block (second lock) re-reads _current fresh, finds PR 7 absent, and must
+        //      NOT resurrect it — the vanished-row guard prevents iterating over a gone row.
+        //
+        // Previously, this test dropped PR 7 BEFORE ReprobeOnceAsync started, so targets was
+        // empty and the method returned false at the no-targets early-exit — never reaching the
+        // re-read guard. The OnRead hook ensures the drop happens AFTER target-selection.
         var (orch, reader, _) = NewOrchestrator();
-        reader.EnqueueReadiness(Pr(7), MergeReadiness.None);
+        reader.EnqueueReadiness(Pr(7), MergeReadiness.None);   // PR 7 in snapshot as None
         await orch.RefreshAsync(default);
-        reader.EnqueueReadiness(Pr(7), MergeReadiness.Ready);
-        orch.SimulateConcurrentDropOf(Pr(7));   // concurrent refresh removed the closed PR
+        reader.EnqueueReadiness(Pr(7), MergeReadiness.Ready);  // next read would return Ready
+        reader.ResetReadCount();                                // isolate ReprobeOnceAsync's read
+
+        // Drop PR 7 mid-read: fires inside ReadAsync, after target-selection, before patch block
+        reader.OnRead = () => orch.SimulateConcurrentDropOf(Pr(7));
 
         await orch.ReprobeOnceAsync(default);
 
+        // (a) ReadAsync was invoked — the method did NOT short-circuit at the no-targets early return
+        Assert.Equal(1, reader.ReadCount);
+        // (b) PR 7 is absent from Current — the patch block did not resurrect a vanished row
         Assert.DoesNotContain(
             orch.Current!.Sections.SelectMany(s => s.Value),
             p => p.Reference == Pr(7).Reference);
