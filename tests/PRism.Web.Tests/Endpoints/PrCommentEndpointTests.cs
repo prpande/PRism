@@ -301,6 +301,25 @@ public class PrCommentEndpointTests
             .Which.Request.BodyMarkdown.Should().Be("v2", "the post must send the latest persisted body, not a stale pre-lock snapshot");
     }
 
+    [Fact]
+    public async Task PostReply_reReads_body_so_concurrent_edit_is_not_lost()
+    {
+        using var ctx = CommentTestContext.Create();
+        await ctx.SeedSessionAsync("o", "r", 23, SessionWithReplyDraft(draftId: "r1", body: "v1", parentThreadId: "PRRT_abc"));
+
+        // Symmetric to the inline case (PostComment_inline_reReads_body_…): a concurrent PUT /draft
+        // rewrites the reply body to "v2", landing AFTER the endpoint's pre-lock discrimination load
+        // but BEFORE the GitHub call. The pre-fix code captured "v1" at the discrimination load and
+        // posted that, silently losing v2.
+        ctx.Store.ArmAfterNextLoad(() => ctx.EditDraftReplyBodyAsync("o", "r", 23, "r1", "v2"));
+
+        var resp = await ctx.Post(23, "r1");
+
+        resp.StatusCode.Should().Be(HttpStatusCode.OK);
+        ctx.Submitter.ReviewCommentReplies.Should().ContainSingle()
+            .Which.Body.Should().Be("v2", "the reply post must send the latest persisted body, not a stale pre-lock snapshot");
+    }
+
     // ── #605 item E: auth-class GitHub failure maps to a non-502 status, keeps its code ──
 
     [Fact]
@@ -420,6 +439,24 @@ internal sealed class CommentTestContext : IDisposable
                 [key] = session with
                 {
                     DraftComments = session.DraftComments
+                        .Select(d => d.Id == draftId ? d with { BodyMarkdown = newBody } : d).ToList(),
+                },
+            };
+            return state.WithDefaultReviews(state.Reviews with { Sessions = sessions });
+        }, CancellationToken.None);
+
+    // Directly mutates a draft reply's body (simulating a concurrent PUT /draft) without going
+    // through the decorator's LoadAsync hook.
+    public Task EditDraftReplyBodyAsync(string owner, string repo, int number, string draftId, string newBody) =>
+        StateStore.UpdateAsync(state =>
+        {
+            var key = $"{owner}/{repo}/{number}";
+            if (!state.Reviews.Sessions.TryGetValue(key, out var session)) return state;
+            var sessions = new Dictionary<string, ReviewSessionState>(state.Reviews.Sessions)
+            {
+                [key] = session with
+                {
+                    DraftReplies = session.DraftReplies
                         .Select(d => d.Id == draftId ? d with { BodyMarkdown = newBody } : d).ToList(),
                 },
             };
