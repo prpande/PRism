@@ -451,6 +451,7 @@ export function PrDetailView({
       toggleViewed,
       reload,
       isLoading,
+      liveMergeReadiness: updates.mergeReadiness,
     }),
     [
       prRef,
@@ -459,6 +460,7 @@ export function PrDetailView({
       presence.readOnly,
       updates.subscribed,
       updates.baseShaChanged,
+      updates.mergeReadiness,
       selectSubTab,
       fileFocus,
       checks,

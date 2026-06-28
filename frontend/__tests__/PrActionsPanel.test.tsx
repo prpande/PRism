@@ -486,6 +486,22 @@ describe('PrActionsPanel', () => {
     expect(screen.queryByRole('button', { name: /^merge$/i })).not.toBeInTheDocument();
   });
 
+  // ── Task 6 (#655 C1): panel consumes live readiness feed ───────────────────────────────────────
+
+  it('uses live readiness over the snapshot seed', () => {
+    // Snapshot says 'none' (still calculating) but the SSE feed resolved to 'ready'.
+    // The panel must prefer the live value → Merge button must be enabled.
+    renderPanel({ mergeReadiness: 'none' }, { liveMergeReadiness: 'ready' });
+    expect(screen.getByRole('button', { name: /^merge$/i })).toBeEnabled();
+  });
+
+  it('falls back to the snapshot when no live value yet', () => {
+    // No SSE update has arrived yet (liveMergeReadiness === undefined). Panel must
+    // fall back to the snapshot value ('none') and show the calculating message.
+    renderPanel({ mergeReadiness: 'none' }, { liveMergeReadiness: undefined });
+    expect(screen.getByText(/still being calculated/i)).toBeInTheDocument();
+  });
+
   // FIX 1: Refresh → disabled readiness must not drop focus to <body>
   it('Refresh resolves to a disabled readiness → focus lands on reason span, not body (§4a transition 3 disabled)', async () => {
     const user = userEvent.setup();

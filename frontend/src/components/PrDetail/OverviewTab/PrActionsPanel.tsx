@@ -40,7 +40,7 @@ const CONFIRM_LABEL: Record<MergeMethodWire, string> = {
 };
 
 export function PrActionsPanel() {
-  const { prRef, prDetail, readOnly, reload, isLoading } = usePrDetailContext();
+  const { prRef, prDetail, readOnly, reload, isLoading, liveMergeReadiness } = usePrDetailContext();
   const pr = prDetail?.pr;
   // Pass the OBSERVED lifecycle state (not prDetail identity) so the fallback reconciles on THIS
   // action's target, immune to unrelated reloads (round-2 finding A1).
@@ -66,7 +66,7 @@ export function PrActionsPanel() {
   // when only one is allowed). Computed before the early return so the focus-on-arm effect (a hook)
   // can read it unconditionally. `readiness` likewise drives the refresh-focus effect.
   const allowed = pr?.allowedMergeMethods ?? { merge: true, squash: true, rebase: true };
-  const readiness = (pr?.mergeReadiness ?? 'none') as MergeReadiness;
+  const readiness = (liveMergeReadiness ?? pr?.mergeReadiness ?? 'none') as MergeReadiness;
   // Stable id for the disabled-reason ReadinessBadge popover (same component the PR-detail header
   // uses); scoped to this PR so the tooltip-singleton coordinates with the header badge.
   const readinessId = `merge-readiness-${prRef.owner}-${prRef.repo}-${prRef.number}`;
