@@ -25,6 +25,52 @@ public sealed class GitHubActivePrBatchReaderTests
             () => "https://github.com");
     }
 
+    private static string QueryOf(string? body)
+    {
+        using var doc = System.Text.Json.JsonDocument.Parse(body!);
+        return doc.RootElement.GetProperty("query").GetString()!;
+    }
+
+    // #665 byte-identity characterization: pins the EXACT posted GraphQL query so the shared
+    // dispatch/envelope extraction (RunAliasedBatchAsync) cannot silently change the wire output.
+    // Golden captured from the pre-refactor BuildQuery output.
+    [Fact]
+    public async Task Posts_byte_identical_aliased_query()
+    {
+        var handler = new RecordingHttpMessageHandler(HttpStatusCode.OK, """{"data":{}}""");
+        var reader = new GitHubActivePrBatchReader(
+            new FakeHttpClientFactory(handler, new Uri("https://api.github.com/")),
+            () => Task.FromResult<string?>("token"), () => "https://github.com");
+
+        await reader.PollBatchAsync(new[] { new PrReference("o", "r", 1) }, CancellationToken.None);
+
+        QueryOf(handler.LastRequestBody).Should().Be(
+            """query{a0: repository(owner:"o", name:"r"){ pullRequest(number:1){ headRefOid baseRefOid state isDraft mergeable mergeStateStatus reviewDecision reviewThreads(first:100){ nodes{ comments{ totalCount } } } reviews{ totalCount } latestReviews(first:20){ nodes{ author{ login avatarUrl } state } } reviewRequests(first:20){ nodes{ requestedReviewer{ ... on User{ login avatarUrl } ... on Team{ name } } } } } } rateLimit{ cost remaining } }""");
+    }
+
+    // #665 byte-identity: a JSON-escapable owner/repo must serialize through the shared envelope
+    // exactly as today. The plain-owner test above pins the full envelope byte-for-byte; this one
+    // pins that owner/name still route through JsonSerializer.Serialize (STJ escapes " and \), so
+    // the extraction can't quietly swap the escaping. Built from JsonSerializer to avoid a
+    // hand-encoded \u literal while staying a true equality check on the serialized owner/name.
+    [Fact]
+    public async Task Posts_query_escaping_owner_and_name_via_json_serializer()
+    {
+        const string owner = "o\"q\\b";
+        const string repo = "re\"po";
+        var handler = new RecordingHttpMessageHandler(HttpStatusCode.OK, """{"data":{}}""");
+        var reader = new GitHubActivePrBatchReader(
+            new FakeHttpClientFactory(handler, new Uri("https://api.github.com/")),
+            () => Task.FromResult<string?>("token"), () => "https://github.com");
+
+        await reader.PollBatchAsync(new[] { new PrReference(owner, repo, 9) }, CancellationToken.None);
+
+        var ser = System.Text.Json.JsonSerializer.Serialize(owner);
+        var serName = System.Text.Json.JsonSerializer.Serialize(repo);
+        QueryOf(handler.LastRequestBody).Should().StartWith(
+            $"query{{a0: repository(owner:{ser}, name:{serName}){{ pullRequest(number:9){{ headRefOid");
+    }
+
     [Fact]
     public async Task Batches_all_refs_and_derives_readiness_per_alias()
     {
