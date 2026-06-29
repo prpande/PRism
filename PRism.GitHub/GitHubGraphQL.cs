@@ -1,8 +1,10 @@
 using System.Globalization;
 using System.Linq;
+using System.Net;
 using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
+using PRism.Core.Contracts;
 using PRism.Core.Inbox;
 
 namespace PRism.GitHub;
@@ -98,6 +100,66 @@ internal static partial class GitHubGraphQL
         {
             // Logging must never break the GraphQL call; an unparseable 200 body is the caller's problem.
         }
+    }
+
+    // #665 — the shared aliased-GraphQL-batch dispatch, extracted from GitHubPrBatchReader and
+    // GitHubActivePrBatchReader, which had each copied this build→POST→429→Parse→ThrowIfRateLimited
+    // block (the loop + query envelope; only the helpers were shared before). Builds ONE chunk's
+    // aliased query, POSTs it, translates BOTH rate-limit signals to RateLimitExceededException
+    // (message tagged with `context`, reproducing each reader's verbatim wording):
+    //   • HTTP 429 — PostAsync throws HttpRequestException (StatusCode preserved)
+    //   • 200 body with errors[].type == "RATE_LIMITED" — ThrowIfRateLimited
+    // Returns the parsed response document. The CALLER owns it (`using var doc = …`) and does its
+    // own data-guard, per-alias parse, and observability — those genuinely differ between the two
+    // readers (inbox: InboxJsonGuard isolation + dropped/cost logs; active: plain skip). Chunking +
+    // the chunk size stay with the caller (the readers cap at different alias counts by design).
+    internal static async Task<JsonDocument> RunAliasedBatchAsync<TItem>(
+        HttpClient http, string? token, string host, ILogger log,
+        IReadOnlyList<(string Alias, TItem Item)> aliased,
+        Func<TItem, PrReference> refOf,
+        string perRefSelection,
+        string context,
+        CancellationToken ct)
+    {
+        var query = BuildAliasedQuery(aliased, refOf, perRefSelection);
+        string body;
+        try
+        {
+            body = await PostAsync(http, token, host, log, query, new { }, ct).ConfigureAwait(false);
+        }
+        catch (HttpRequestException ex) when (ex.StatusCode == HttpStatusCode.TooManyRequests)
+        {
+            throw new RateLimitExceededException(
+                $"GitHub GraphQL rate limit (HTTP 429) during {context}.", retryAfter: null);
+        }
+
+        var doc = JsonDocument.Parse(body);
+        try { ThrowIfRateLimited(doc.RootElement, context); }
+        catch { doc.Dispose(); throw; }   // don't leak the doc when RATE_LIMITED throws
+        return doc;
+    }
+
+    // Shared aliased-batch query envelope. `perRefSelection` is the verbatim field list inside
+    // pullRequest{ … } — caller-specific (and, for the inbox, readiness-conditional). The envelope
+    // (alias → repository(owner,name) → pullRequest(number) wrapper + trailing rateLimit) is the
+    // copied part this consolidates; owner/name go through JsonSerializer.Serialize (quote/backslash
+    // escaping), number through InvariantCulture, exactly as both readers did. Byte-identity is
+    // pinned by the #665 characterization tests at the reader seam.
+    private static string BuildAliasedQuery<TItem>(
+        IReadOnlyList<(string Alias, TItem Item)> aliased, Func<TItem, PrReference> refOf, string perRefSelection)
+    {
+        var sb = new StringBuilder("query{");
+        foreach (var (alias, item) in aliased)
+        {
+            var r = refOf(item);
+            sb.Append(alias).Append(": repository(owner:")
+              .Append(JsonSerializer.Serialize(r.Owner)).Append(", name:")
+              .Append(JsonSerializer.Serialize(r.Repo)).Append("){ pullRequest(number:")
+              .Append(r.Number.ToString(CultureInfo.InvariantCulture))
+              .Append("){ ").Append(perRefSelection).Append(" } } ");
+        }
+        sb.Append("rateLimit{ cost remaining } }");
+        return sb.ToString();
     }
 
     // Throws RateLimitExceededException on a 200 body carrying errors[].type == "RATE_LIMITED".
