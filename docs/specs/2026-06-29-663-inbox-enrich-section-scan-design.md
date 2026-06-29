@@ -49,13 +49,13 @@ making the whole apply `O(N + R)` instead of `O(R × S × N)`.
 
 ```csharp
 // one pass over current.Sections
-var liveByPrId = new Dictionary<string, (PrInboxItem Item, List<string> Sections)>(StringComparer.Ordinal);
+var liveByPrId = new Dictionary<string, (PrInboxItem Item, HashSet<string> Sections)>(StringComparer.Ordinal);
 foreach (var (sectionKey, items) in current.Sections)
     foreach (var p in items)
     {
         if (!liveByPrId.TryGetValue(p.Reference.PrId, out var entry))
-            liveByPrId[p.Reference.PrId] = entry = (p, new List<string>());   // first occurrence == today's g.First()
-        if (!entry.Sections.Contains(sectionKey)) entry.Sections.Add(sectionKey);
+            liveByPrId[p.Reference.PrId] = entry = (p, new HashSet<string>(StringComparer.Ordinal)); // first occurrence == today's g.First()
+        entry.Sections.Add(sectionKey);   // set dedups a PrId recurring within one section
     }
 ```
 
@@ -75,9 +75,10 @@ sectionKey>`, which would drop the extra section(s) and change the published
 
 - **Representative item:** first occurrence in `current.Sections` enumeration order
   == today's `GroupBy(...).First()`. Unchanged.
-- **Section keys:** every section the PrId appears in. `.Contains` guards against a
-  duplicate key (a PrId twice in one section), matching `.Any()` adding the section
-  once; the consuming `changedSections` is a `HashSet` anyway.
+- **Section keys:** every section the PrId appears in, held in a `HashSet<string>` so
+  a PrId recurring within one section adds the key once — matching the old `.Any()`
+  scan, which added each section at most once; the consuming `changedSections` is a
+  `HashSet` anyway.
 
 ### Secondary — `newByRef` dictionary → `HashSet<PrReference>`
 

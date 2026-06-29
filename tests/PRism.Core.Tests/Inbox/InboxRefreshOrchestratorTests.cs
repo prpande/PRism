@@ -992,6 +992,7 @@ public sealed class InboxRefreshOrchestratorTests
         // on every appearance of the PR — identical to the pre-#663 per-section scan.
         published.Should().ContainSingle();
         published[0].ChangedSectionIds.Should().BeEquivalentTo(new[] { "authored-by-me", "awaiting-author" });
+        published[0].NewOrUpdatedPrCount.Should().Be(1); // one chip applied for the single result
     }
 
     [Fact]

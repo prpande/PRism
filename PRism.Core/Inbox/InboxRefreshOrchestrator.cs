@@ -691,13 +691,13 @@ public sealed partial class InboxRefreshOrchestrator : IInboxRefreshOrchestrator
             // and every section key the PrId appears in (#508 working-marker clear). This replaces
             // the former per-result `O(sections × items)` `.Any()` re-scan with an O(1) lookup,
             // dropping the apply from O(results × sections × items) to O(items + results) (#663).
-            var liveByPrId = new Dictionary<string, (PrInboxItem Item, List<string> Sections)>(StringComparer.Ordinal);
+            var liveByPrId = new Dictionary<string, (PrInboxItem Item, HashSet<string> Sections)>(StringComparer.Ordinal);
             foreach (var (sectionKey, items) in current.Sections)
                 foreach (var p in items)
                 {
                     if (!liveByPrId.TryGetValue(p.Reference.PrId, out var entry))
-                        liveByPrId[p.Reference.PrId] = entry = (p, new List<string>());
-                    if (!entry.Sections.Contains(sectionKey)) entry.Sections.Add(sectionKey);
+                        liveByPrId[p.Reference.PrId] = entry = (p, new HashSet<string>(StringComparer.Ordinal));
+                    entry.Sections.Add(sectionKey); // set dedups a PrId that recurs in one section
                 }
 
             var merged = new Dictionary<string, InboxItemEnrichment>(current.Enrichments, StringComparer.Ordinal);
