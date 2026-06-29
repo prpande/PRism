@@ -1,5 +1,4 @@
 using System;
-using System.Collections.Generic;
 using System.Globalization;
 using System.Net.Http;
 using System.Text.Json;
@@ -27,29 +26,17 @@ public sealed partial class GitHubNotificationsReader : INotificationsReader
 
     public async Task<NotificationsResult> ReadAsync(DateTimeOffset since, CancellationToken ct)
     {
-        try
-        {
-            var token = await _readToken().ConfigureAwait(false);
-            using var http = _httpFactory.CreateClient("github");
-            var sinceParam = Uri.EscapeDataString(since.UtcDateTime.ToString("O", CultureInfo.InvariantCulture));
-            var url = $"notifications?all=true&since={sinceParam}&per_page={PerPage}";
-            using var resp = await GitHubHttp.SendAsync(http, HttpMethod.Get, url, token, ct).ConfigureAwait(false);
-            if (!resp.IsSuccessStatusCode) return new NotificationsResult([], Degraded: true);
-
-            using var stream = await resp.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
-            using var doc = await JsonDocument.ParseAsync(stream, cancellationToken: ct).ConfigureAwait(false);
-            if (doc.RootElement.ValueKind != JsonValueKind.Array) return new NotificationsResult([], Degraded: true);
-
-            var list = new List<RawNotification>(doc.RootElement.GetArrayLength());
-            foreach (var el in doc.RootElement.EnumerateArray())
-                if (Parse(el) is { } n) list.Add(n);
-            return new NotificationsResult(list, Degraded: false);
-        }
-        catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
-        catch (Exception ex) when (ex is HttpRequestException or JsonException or TaskCanceledException)
-        { return new NotificationsResult([], Degraded: true); }
+        var sinceParam = Uri.EscapeDataString(since.UtcDateTime.ToString("O", CultureInfo.InvariantCulture));
+        var url = $"notifications?all=true&since={sinceParam}&per_page={PerPage}";
+        var (items, degraded) = await GitHubArrayReader
+            .ReadAsync(_httpFactory, _readToken, url, Parse, ct).ConfigureAwait(false);
+        return new NotificationsResult(items, degraded);
     }
 
+    // NOTE: this delegate runs inside GitHubArrayReader's guarded region, whose catch filter
+    // is (HttpRequestException | JsonException | TaskCanceledException). It must not throw
+    // anything else — hence int.TryParse below, NOT int.Parse (an OverflowException would
+    // escape that filter and 500 /api/activity). Don't "simplify" to int.Parse. (#665)
     private static RawNotification? Parse(JsonElement el)
     {
         if (!el.TryGetProperty("subject", out var subject)) return null;
@@ -60,9 +47,9 @@ public sealed partial class GitHubNotificationsReader : INotificationsReader
         var m = PullsUrl().Match(apiUrl);
         if (!m.Success) return null;
         // TryParse, not Parse: the regex guarantees digits but not magnitude. A malformed
-        // or oversized digit run would overflow int and throw OverflowException, which the
-        // ReadAsync catch filter does NOT cover (only Http/Json/TaskCanceled) — it would
-        // escape and 500 /api/activity, violating degrade-don't-throw. Drop instead.
+        // or oversized digit run would overflow int and throw OverflowException, which
+        // GitHubArrayReader's catch filter does NOT cover (only Http/Json/TaskCanceled) — it
+        // would escape and 500 /api/activity, violating degrade-don't-throw. Drop instead.
         if (!int.TryParse(m.Groups[1].Value, NumberStyles.None, CultureInfo.InvariantCulture, out var pr))
             return null;
 
