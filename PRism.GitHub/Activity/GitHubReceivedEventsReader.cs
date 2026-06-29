@@ -1,5 +1,4 @@
 using System;
-using System.Collections.Generic;
 using System.Net.Http;
 using System.Text.Json;
 using System.Threading;
@@ -29,40 +28,16 @@ public sealed class GitHubReceivedEventsReader : IReceivedEventsReader
 
     public async Task<ReceivedEventsResult> ReadAsync(CancellationToken ct)
     {
+        // Empty-login short-circuits before any HTTP — a caller concern, not a transport
+        // fault, so it stays outside the shared guarded region.
         var login = await _readLogin().ConfigureAwait(false);
         if (string.IsNullOrEmpty(login))
             return new ReceivedEventsResult([], Degraded: true);
 
-        try
-        {
-            var token = await _readToken().ConfigureAwait(false);
-            using var http = _httpFactory.CreateClient("github");
-            var url = $"users/{Uri.EscapeDataString(login)}/received_events?per_page={PerPage}";
-            using var resp = await GitHubHttp.SendAsync(http, HttpMethod.Get, url, token, ct).ConfigureAwait(false);
-            if (!resp.IsSuccessStatusCode)
-                return new ReceivedEventsResult([], Degraded: true);
-
-            using var stream = await resp.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
-            using var doc = await JsonDocument.ParseAsync(stream, cancellationToken: ct).ConfigureAwait(false);
-            if (doc.RootElement.ValueKind != JsonValueKind.Array)
-                return new ReceivedEventsResult([], Degraded: true);
-
-            var list = new List<RawReceivedEvent>(doc.RootElement.GetArrayLength());
-            foreach (var el in doc.RootElement.EnumerateArray())
-            {
-                var parsed = Parse(el);
-                if (parsed is not null) list.Add(parsed);
-            }
-            return new ReceivedEventsResult(list, Degraded: false);
-        }
-        catch (OperationCanceledException) when (ct.IsCancellationRequested)
-        {
-            throw;   // genuine cancellation propagates
-        }
-        catch (Exception ex) when (ex is HttpRequestException or JsonException or TaskCanceledException)
-        {
-            return new ReceivedEventsResult([], Degraded: true);
-        }
+        var url = $"users/{Uri.EscapeDataString(login)}/received_events?per_page={PerPage}";
+        var (items, degraded) = await GitHubArrayReader
+            .ReadAsync(_httpFactory, _readToken, url, Parse, ct).ConfigureAwait(false);
+        return new ReceivedEventsResult(items, degraded);
     }
 
     private static RawReceivedEvent? Parse(JsonElement el)
