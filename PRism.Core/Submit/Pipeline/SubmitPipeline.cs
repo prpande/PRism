@@ -188,8 +188,24 @@ public sealed class SubmitPipeline
         string currentHeadSha, IProgress<SubmitProgressEvent> progress, CancellationToken ct)
     {
         progress.Report(new SubmitProgressEvent(SubmitStep.BeginPendingReview, SubmitStepStatus.Started, 0, 1));
+        // #659 — re-read the PR-root summary from the store immediately before sending it as the
+        // GitHub review body, so a concurrent PUT /draft to the summary is not lost. This closes the
+        // window on the fresh-start path only: Begin runs solely on the no-existing-pending-review
+        // branch, and on resume GitHub has already fixed the review body (there is no update-review-
+        // body capability on IReviewSubmitter). Fall back to the snapshot's PR-root body only when the
+        // session is absent from the store; a store-read failure becomes a retryable Begin failure.
+        // Unlike the thread/reply sites, the re-read summary is intentionally NOT folded back into the
+        // working session (no StampPrRootBody): on a Begin-then-later-step-fail, the persisted PR-root
+        // draft may revert to the snapshot body while GitHub keeps the posted summary — a self-healing
+        // transient (a retry resumes, skipping Begin, and ClearSubmittedSession drops the unposted
+        // PR-root draft on success). Adding lockstep here would imply a summary freshness guarantee
+        // that the begin-once / no-update-body design cannot keep. See the design doc's Out of scope.
         var result = await InvokeAsync(SubmitStep.BeginPendingReview, 0, 1, session, progress,
-            () => _submitter.BeginPendingReviewAsync(reference, currentHeadSha, ExtractPrRootBody(session), ct)).ConfigureAwait(false);
+            async () =>
+            {
+                var summaryBody = await ReloadPrRootBodyAsync(sessionKey, ct).ConfigureAwait(false) ?? ExtractPrRootBody(session);
+                return await _submitter.BeginPendingReviewAsync(reference, currentHeadSha, summaryBody, ct).ConfigureAwait(false);
+            }).ConfigureAwait(false);
 
         // Stamp the new pending-review id immediately (caller persisted the session under sessionKey);
         // if this fails, the at-failure session carries the stamp so the endpoint persists it on retry
@@ -307,11 +323,26 @@ public sealed class SubmitPipeline
                 // Falls through to create.
             }
 
+            // #659 (remainder of #605 B) — re-read the body from the store immediately before the
+            // GitHub call, inside the submit lock, so a concurrent PUT /draft (which participates only
+            // in the store's _gate, not this lock) that landed after the endpoint's pre-lock snapshot
+            // is reflected here, not lost. Anchor fields (file/line/side) are immutable for a draft —
+            // no PUT /draft op edits them — so only the body is re-read. Fall back to the snapshot body
+            // when the draft is absent from the store (vanished mid-submit) so the fix can only improve
+            // freshness, never regress. A store-read failure routes through InvokeAsync as a retryable
+            // AttachThreads failure, like every other store/adapter call in the pipeline.
+            var freshBody = await InvokeAsync(SubmitStep.AttachThreads, done, total, current, progress,
+                async () => await ReloadDraftBodyAsync(sessionKey, draft.Id, ct).ConfigureAwait(false) ?? draft.BodyMarkdown).ConfigureAwait(false);
+            // Keep the working snapshot in lockstep with what we post: a later step failure hands the
+            // endpoint an at-failure session it persists wholesale (WithSession), so its body must
+            // match what GitHub received or the store would revert the concurrent edit GitHub kept.
+            current = StampDraftBody(current, draft.Id, freshBody);
+
             // FilePath and LineNumber are both non-null here: the Where filter at the top of this
             // method already excluded PR-root drafts (FilePath is null || LineNumber is null).
             var request = new DraftThreadRequest(
                 DraftId: draft.Id,
-                BodyMarkdown: PipelineMarker.Inject(draft.BodyMarkdown, draft.Id),
+                BodyMarkdown: PipelineMarker.Inject(freshBody, draft.Id),
                 FilePath: draft.FilePath!,
                 LineNumber: draft.LineNumber!.Value,
                 Side: (draft.Side ?? "right").ToUpperInvariant());
@@ -444,7 +475,15 @@ public sealed class SubmitPipeline
                     $"reply {reply.Id}: parent thread {reply.ParentThreadId} no longer exists on the pending review", current);
             }
 
-            var bodyWithMarker = PipelineMarker.Inject(reply.BodyMarkdown, reply.Id);
+            // #659 — re-read the reply body under the submit lock immediately before the GitHub call
+            // (see the thread site in StepAttachThreadsAsync). Fall back to the snapshot body when the
+            // reply is absent from the store; a store-read failure becomes a retryable AttachReplies
+            // step failure.
+            var freshBody = await InvokeAsync(SubmitStep.AttachReplies, done, total, current, progress,
+                async () => await ReloadReplyBodyAsync(sessionKey, reply.Id, ct).ConfigureAwait(false) ?? reply.BodyMarkdown).ConfigureAwait(false);
+            current = StampReplyBody(current, reply.Id, freshBody);
+
+            var bodyWithMarker = PipelineMarker.Inject(freshBody, reply.Id);
             AttachReplyResult result;
             try
             {
@@ -634,6 +673,35 @@ public sealed class SubmitPipeline
         => session.DraftComments
             .FirstOrDefault(d => d.IsPrRoot)?.BodyMarkdown ?? "";
 
+    // ---- #659 — body re-read under the submit lock (mirrors #605 B's ReloadCommentBodyAsync) ----
+    // Re-read a single draft / reply / PR-root body from the store right before its GitHub call. A
+    // concurrent PUT /draft participates only in the store's _gate (not the submit lock), so the body
+    // captured in the caller's pre-lock snapshot can be stale; LoadAsync sees the committed edit.
+    // Returns null when the session (or the draft/reply) is absent so the caller falls back to the
+    // snapshot body — the fix only ever improves freshness.
+    private async Task<string?> ReloadDraftBodyAsync(string sessionKey, string draftId, CancellationToken ct)
+    {
+        var state = await _stateStore.LoadAsync(ct).ConfigureAwait(false);
+        if (!state.Reviews.Sessions.TryGetValue(sessionKey, out var s)) return null;
+        return s.DraftComments.FirstOrDefault(d => string.Equals(d.Id, draftId, StringComparison.Ordinal))?.BodyMarkdown;
+    }
+
+    private async Task<string?> ReloadReplyBodyAsync(string sessionKey, string replyId, CancellationToken ct)
+    {
+        var state = await _stateStore.LoadAsync(ct).ConfigureAwait(false);
+        if (!state.Reviews.Sessions.TryGetValue(sessionKey, out var s)) return null;
+        return s.DraftReplies.FirstOrDefault(r => string.Equals(r.Id, replyId, StringComparison.Ordinal))?.BodyMarkdown;
+    }
+
+    // Returns the store's current PR-root body (or "" when the session has no PR-root draft — the
+    // user cleared the summary, the fresh truth). Null only when the session itself is absent, so the
+    // caller falls back to the snapshot's PR-root body.
+    private async Task<string?> ReloadPrRootBodyAsync(string sessionKey, CancellationToken ct)
+    {
+        var state = await _stateStore.LoadAsync(ct).ConfigureAwait(false);
+        return state.Reviews.Sessions.TryGetValue(sessionKey, out var s) ? ExtractPrRootBody(s) : null;
+    }
+
     private static AppState WithSession(AppState state, string sessionKey, ReviewSessionState session)
     {
         var sessions = new Dictionary<string, ReviewSessionState>(state.Reviews.Sessions) { [sessionKey] = session };
@@ -657,6 +725,24 @@ public sealed class SubmitPipeline
         {
             DraftReplies = session.DraftReplies
                 .Select(r => string.Equals(r.Id, replyId, StringComparison.Ordinal) ? r with { ReplyCommentId = commentId } : r)
+                .ToList(),
+        };
+
+    // #659 — fold the re-read body into the working snapshot so it stays in lockstep with what was
+    // posted to GitHub (the at-failure session the endpoint persists must match GitHub's body).
+    private static ReviewSessionState StampDraftBody(ReviewSessionState session, string draftId, string body)
+        => session with
+        {
+            DraftComments = session.DraftComments
+                .Select(d => string.Equals(d.Id, draftId, StringComparison.Ordinal) ? d with { BodyMarkdown = body } : d)
+                .ToList(),
+        };
+
+    private static ReviewSessionState StampReplyBody(ReviewSessionState session, string replyId, string body)
+        => session with
+        {
+            DraftReplies = session.DraftReplies
+                .Select(r => string.Equals(r.Id, replyId, StringComparison.Ordinal) ? r with { BodyMarkdown = body } : r)
                 .ToList(),
         };
 
