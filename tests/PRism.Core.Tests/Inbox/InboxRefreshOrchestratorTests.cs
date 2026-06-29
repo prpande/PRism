@@ -955,6 +955,47 @@ public sealed class InboxRefreshOrchestratorTests
     }
 
     [Fact]
+    public async Task OnInboxEnrichmentsReady_marks_all_sections_for_a_multi_section_PR()
+    {
+        // #663: enrichment-apply must mark EVERY section a PR appears in. A PR can
+        // legitimately land in two non-paired sections (authored-by-me + awaiting-author
+        // are outside the deduplicator's pairs), so the folded PrId→sections map has to
+        // preserve every section key. A single-valued PrId→section map would mark only
+        // one section and silently drop the other from the published ChangedSectionIds.
+        var bus = new ReviewEventBus();
+        var published = new List<InboxUpdated>();
+        bus.Subscribe<InboxUpdated>(e => published.Add(e));
+
+        var dual = RawOpen(42, "Add X", "d"); // octo/repo#42 — same item in both sections
+        var sections = new FakeSectionQueryRunner(_ => new Dictionary<string, IReadOnlyList<RawPrInboxItem>>
+        {
+            ["authored-by-me"]  = new[] { dual },
+            ["awaiting-author"] = new[] { dual },
+        });
+        var configFake = ConfigStoreFake(ConfigWithSections(
+            reviewRequested: false, awaitingAuthor: true, authoredByMe: true, mentioned: false));
+        using var orch = Build(config: configFake, sections: sections, events: bus);
+
+        await orch.RefreshAsync(default);
+        // Premise: the PR survives in BOTH sections (non-paired → no dedup collapse).
+        orch.Current!.Sections["authored-by-me"].Should().ContainSingle(p => p.Reference.Number == 42);
+        orch.Current!.Sections["awaiting-author"].Should().ContainSingle(p => p.Reference.Number == 42);
+        published.Clear();
+
+        var liveToken = InboxEnrichmentContent.Token("Add X", "d");
+        bus.Publish(new InboxEnrichmentsReady(new[]
+        {
+            new InboxEnrichmentResult("octo/repo#42", "Feature", liveToken),
+        }));
+
+        // The single result must flag BOTH sections so the FE clears its working marker
+        // on every appearance of the PR — identical to the pre-#663 per-section scan.
+        published.Should().ContainSingle();
+        published[0].ChangedSectionIds.Should().BeEquivalentTo(new[] { "authored-by-me", "awaiting-author" });
+        published[0].NewOrUpdatedPrCount.Should().Be(1); // one chip applied for the single result
+    }
+
+    [Fact]
     public async Task RefreshAsync_keeps_authored_draft_visible_in_authored_by_me_with_IsDraft_true()
     {
         // #501 visibility guard: an authored draft must survive enrichment + dedup +

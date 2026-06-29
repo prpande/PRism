@@ -439,7 +439,11 @@ public sealed partial class InboxRefreshOrchestrator : IInboxRefreshOrchestrator
         {
             var oldItems = prior.Sections.TryGetValue(kv.Key, out var v) ? v : Array.Empty<PrInboxItem>();
             var oldByRef = oldItems.ToDictionary(p => p.Reference);
-            var newByRef = kv.Value.ToDictionary(p => p.Reference);
+            // Only the removal check below consumes this, and it only needs set membership —
+            // a HashSet avoids allocating a throwaway value-carrying dictionary per section
+            // per refresh tick (#663). Section queries return distinct refs, so the dedup the
+            // set does (vs ToDictionary's throw-on-dup) is inert on every realizable batch.
+            var newRefs = new HashSet<PrReference>(kv.Value.Select(p => p.Reference));
             var sectionChanged = false;
             foreach (var n in kv.Value)
             {
@@ -457,7 +461,7 @@ public sealed partial class InboxRefreshOrchestrator : IInboxRefreshOrchestrator
             // disappeared PR is a real change, even if the field name says otherwise.
             foreach (var o in oldItems)
             {
-                if (!newByRef.ContainsKey(o.Reference))
+                if (!newRefs.Contains(o.Reference))
                 {
                     newOrUpdated++; sectionChanged = true;
                 }
@@ -682,10 +686,19 @@ public sealed partial class InboxRefreshOrchestrator : IInboxRefreshOrchestrator
             var current = _current;
             if (current is null) return;
 
-            var liveByPrId = current.Sections.Values
-                .SelectMany(s => s)
-                .GroupBy(p => p.Reference.PrId, StringComparer.Ordinal)
-                .ToDictionary(g => g.Key, g => g.First(), StringComparer.Ordinal);
+            // One pass over the live snapshot, folding two lookups the per-result loop needs:
+            // the #410 token-guard representative (first occurrence == the old GroupBy(...).First())
+            // and every section key the PrId appears in (#508 working-marker clear). This replaces
+            // the former per-result `O(sections × items)` `.Any()` re-scan with an O(1) lookup,
+            // dropping the apply from O(results × sections × items) to O(items + results) (#663).
+            var liveByPrId = new Dictionary<string, (PrInboxItem Item, HashSet<string> Sections)>(StringComparer.Ordinal);
+            foreach (var (sectionKey, items) in current.Sections)
+                foreach (var p in items)
+                {
+                    if (!liveByPrId.TryGetValue(p.Reference.PrId, out var entry))
+                        liveByPrId[p.Reference.PrId] = entry = (p, new HashSet<string>(StringComparer.Ordinal));
+                    entry.Sections.Add(sectionKey); // set dedups a PrId that recurs in one section
+                }
 
             var merged = new Dictionary<string, InboxItemEnrichment>(current.Enrichments, StringComparer.Ordinal);
             var settled = new HashSet<string>(current.AiEnrichmentSettled, StringComparer.Ordinal);
@@ -694,7 +707,8 @@ public sealed partial class InboxRefreshOrchestrator : IInboxRefreshOrchestrator
             var newlySettled = 0;
             foreach (var r in evt.Results)
             {
-                if (!liveByPrId.TryGetValue(r.PrId, out var live)) continue;      // PR gone since batch started
+                if (!liveByPrId.TryGetValue(r.PrId, out var entry)) continue;     // PR gone since batch started
+                var live = entry.Item;
                 if (InboxEnrichmentContent.Token(live.Title, live.Description) != r.ContentToken) continue; // stale edit-during-batch (#410 guard)
                 if (settled.Add(r.PrId)) newlySettled++;                          // resolved against the live PR → settled, chip or not
                 if (r.CategoryChip is not null)                                   // Enrichments stays chip-only on this path
@@ -702,9 +716,9 @@ public sealed partial class InboxRefreshOrchestrator : IInboxRefreshOrchestrator
                     merged[r.PrId] = new InboxItemEnrichment(r.PrId, r.CategoryChip, HoverSummary: null);
                     applied++;
                 }
-                // Runs for chip-less settles too: the section must be in changedSections so the FE clears its working marker even when no chip landed (#508).
-                foreach (var kv in current.Sections)
-                    if (kv.Value.Any(p => p.Reference.PrId == r.PrId)) changedSections.Add(kv.Key);
+                // Runs for chip-less settles too: every section the PR appears in must be in
+                // changedSections so the FE clears its working marker even when no chip landed (#508).
+                foreach (var key in entry.Sections) changedSections.Add(key);
             }
             // Commit if a chip landed OR a PR newly settled — an all-"Other" batch must
             // still clear the FE's working markers. A no-op batch (all stale/gone) → both 0 → return.
