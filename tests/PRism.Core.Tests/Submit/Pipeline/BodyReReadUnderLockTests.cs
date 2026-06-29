@@ -78,7 +78,7 @@ public class BodyReReadUnderLockTests
         var pending = new InMemoryReviewSubmitter.InMemoryPendingReview("PRR_x", "head1", DateTimeOffset.UtcNow, "");
         pending.Threads.Add(new InMemoryReviewSubmitter.InMemoryThread(
             "PRRT_parent", "src/Foo.cs", 1, "RIGHT", "head1",
-            Body: "parent\n\n<!-- prism:client-id:parentdraft -->", IsResolved: false,
+            Body: "parent body", IsResolved: false,
             Replies: new List<InMemoryReviewSubmitter.InMemoryComment>()));
         fake.SeedPendingReview(Ref, pending);
 
@@ -92,6 +92,39 @@ public class BodyReReadUnderLockTests
 
         await pipeline.SubmitAsync(Ref, snapshot, SubmitEvent.Comment, "head1", NoopProgress.Instance, CancellationToken.None);
 
+        var parent = fake.GetPending(Ref)!.Threads.Single(t => t.Id == "PRRT_parent");
+        var reply = Assert.Single(parent.Replies);
+        Assert.Equal(PipelineMarker.Inject("v2", "r1"), reply.Body);
+    }
+
+    // Site 2 (recreate fall-through) — a reply whose stamped ReplyCommentId is gone from the parent's
+    // server reply chain recreates through the SAME re-read block. Mirrors the thread recreate test —
+    // guards the shared chokepoint if create / recreate ever diverge for replies (they're separate
+    // branches today). Bot F1.
+    [Fact]
+    public async Task AttachReply_recreatePath_reReads_reply_body()
+    {
+        var fake = FakeFailingFinalize();
+        // Parent thread present but with NO replies → the reply's stamped ReplyCommentId is absent on
+        // the server → falls through to recreate.
+        var pending = new InMemoryReviewSubmitter.InMemoryPendingReview("PRR_x", "head1", DateTimeOffset.UtcNow, "");
+        pending.Threads.Add(new InMemoryReviewSubmitter.InMemoryThread(
+            "PRRT_parent", "src/Foo.cs", 1, "RIGHT", "head1",
+            Body: "parent body", IsResolved: false,
+            Replies: new List<InMemoryReviewSubmitter.InMemoryComment>()));
+        fake.SeedPendingReview(Ref, pending);
+
+        var snapshot = SessionFactory.With(headSha: "head1", pendingReviewId: "PRR_x",
+            replies: new[] { SessionFactory.Reply("r1", "PRRT_parent", replyCommentId: "PRRC_gone", body: "v1") });
+        var stored = SessionFactory.With(headSha: "head1", pendingReviewId: "PRR_x",
+            replies: new[] { SessionFactory.Reply("r1", "PRRT_parent", replyCommentId: "PRRC_gone", body: "v2") });
+        var store = new InMemoryAppStateStore();
+        store.SeedSession(SessionKey, stored);
+        var pipeline = new SubmitPipeline(fake, store);
+
+        await pipeline.SubmitAsync(Ref, snapshot, SubmitEvent.Comment, "head1", NoopProgress.Instance, CancellationToken.None);
+
+        Assert.Equal(1, fake.AttachReplyCallCount);  // recreated, not skipped
         var parent = fake.GetPending(Ref)!.Threads.Single(t => t.Id == "PRRT_parent");
         var reply = Assert.Single(parent.Replies);
         Assert.Equal(PipelineMarker.Inject("v2", "r1"), reply.Body);
@@ -135,5 +168,27 @@ public class BodyReReadUnderLockTests
         var failed = Assert.IsType<SubmitOutcome.Failed>(outcome);
         Assert.Equal(SubmitStep.Finalize, failed.FailedStep);
         Assert.Equal("v2", failed.NewSession.DraftComments.Single(d => d.Id == "d1").BodyMarkdown);
+    }
+
+    // Null-fallback — when the draft is absent from the store (re-read returns null), the pipeline
+    // falls back to the snapshot body, so the `?? draft.BodyMarkdown` branch is live, not dead. The
+    // store session is present but carries no drafts (the draft was removed mid-submit); the snapshot
+    // still drives the attach loop. Correctness can only improve, never regress. Bot F4.
+    [Fact]
+    public async Task AttachThread_draftAbsentFromStore_fallsBackToSnapshotBody()
+    {
+        var fake = FakeFailingFinalize();
+
+        var snapshot = SessionFactory.With(headSha: "head1", drafts: new[] { SessionFactory.Draft("d1", body: "v1") });
+        // Store session exists but has NO drafts → ReloadDraftBodyAsync returns null → fallback.
+        var stored = SessionFactory.With(headSha: "head1");
+        var store = new InMemoryAppStateStore();
+        store.SeedSession(SessionKey, stored);
+        var pipeline = new SubmitPipeline(fake, store);
+
+        await pipeline.SubmitAsync(Ref, snapshot, SubmitEvent.Comment, "head1", NoopProgress.Instance, CancellationToken.None);
+
+        var thread = Assert.Single(fake.GetPending(Ref)!.Threads);
+        Assert.Equal(PipelineMarker.Inject("v1", "d1"), thread.Body);
     }
 }
