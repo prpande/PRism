@@ -25,12 +25,6 @@ public sealed class GitHubGraphQLRunAliasedBatchTests
         return (new FakeHttpClientFactory(handler, new Uri("https://api.github.com/")).CreateClient("github"), handler);
     }
 
-    private static string QueryOf(string? requestBody)
-    {
-        using var doc = System.Text.Json.JsonDocument.Parse(requestBody!);
-        return doc.RootElement.GetProperty("query").GetString()!;
-    }
-
     [Fact]
     public async Task Builds_aliased_envelope_for_each_ref_with_trailing_ratelimit()
     {
@@ -45,7 +39,7 @@ public sealed class GitHubGraphQLRunAliasedBatchTests
             http, "token", "https://github.com", NullLogger.Instance,
             aliased, r => r, "FIELDS", "test context", CancellationToken.None);
 
-        QueryOf(handler.LastRequestBody).Should().Be(
+        GraphQlRequest.QueryOf(handler.LastRequestBody).Should().Be(
             """query{a0: repository(owner:"o", name:"r"){ pullRequest(number:1){ FIELDS } } a1: repository(owner:"o2", name:"r2"){ pullRequest(number:2){ FIELDS } } rateLimit{ cost remaining } }""");
     }
 

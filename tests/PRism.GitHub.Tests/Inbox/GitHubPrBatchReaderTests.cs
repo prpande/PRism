@@ -100,12 +100,6 @@ public sealed class GitHubPrBatchReaderTests
         return (reader, log);
     }
 
-    private static string QueryOf(string? body)
-    {
-        using var doc = System.Text.Json.JsonDocument.Parse(body!);
-        return doc.RootElement.GetProperty("query").GetString()!;
-    }
-
     // #665 byte-identity characterization: pins the EXACT posted open-PR (includeReadiness:true)
     // query so the shared dispatch/envelope extraction cannot change the wire output. Golden
     // captured from the pre-refactor BuildQuery output.
@@ -119,7 +113,7 @@ public sealed class GitHubPrBatchReaderTests
 
         await reader.ReadAsync(new[] { Raw(7, "acme", "api") }, "viewer", CancellationToken.None);
 
-        QueryOf(handler.LastRequestBody).Should().Be(
+        GraphQlRequest.QueryOf(handler.LastRequestBody).Should().Be(
             """query{a0: repository(owner:"acme", name:"api"){ pullRequest(number:7){ headRefOid additions deletions changedFiles commits{ totalCount } mergedAt closedAt headRepository{ pushedAt } isDraft mergeable mergeStateStatus reviewDecision reviews(last:100){ nodes{ author{ login } submittedAt commit{ oid } } } latestReviews(first:20){ nodes{ author{ login avatarUrl } state } } reviewRequests(first:20){ nodes{ requestedReviewer{ ... on User{ login avatarUrl } ... on Team{ name } } } } } } rateLimit{ cost remaining } }""");
     }
 
@@ -134,7 +128,7 @@ public sealed class GitHubPrBatchReaderTests
 
         await reader.ReadAsync(new[] { Raw(7, "acme", "api") with { IsClosedHistory = true } }, "viewer", CancellationToken.None);
 
-        QueryOf(handler.LastRequestBody).Should().Be(
+        GraphQlRequest.QueryOf(handler.LastRequestBody).Should().Be(
             """query{a0: repository(owner:"acme", name:"api"){ pullRequest(number:7){ headRefOid additions deletions changedFiles commits{ totalCount } mergedAt closedAt headRepository{ pushedAt } } } rateLimit{ cost remaining } }""");
     }
 

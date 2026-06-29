@@ -25,12 +25,6 @@ public sealed class GitHubActivePrBatchReaderTests
             () => "https://github.com");
     }
 
-    private static string QueryOf(string? body)
-    {
-        using var doc = System.Text.Json.JsonDocument.Parse(body!);
-        return doc.RootElement.GetProperty("query").GetString()!;
-    }
-
     // #665 byte-identity characterization: pins the EXACT posted GraphQL query so the shared
     // dispatch/envelope extraction (RunAliasedBatchAsync) cannot silently change the wire output.
     // Golden captured from the pre-refactor BuildQuery output.
@@ -44,7 +38,7 @@ public sealed class GitHubActivePrBatchReaderTests
 
         await reader.PollBatchAsync(new[] { new PrReference("o", "r", 1) }, CancellationToken.None);
 
-        QueryOf(handler.LastRequestBody).Should().Be(
+        GraphQlRequest.QueryOf(handler.LastRequestBody).Should().Be(
             """query{a0: repository(owner:"o", name:"r"){ pullRequest(number:1){ headRefOid baseRefOid state isDraft mergeable mergeStateStatus reviewDecision reviewThreads(first:100){ nodes{ comments{ totalCount } } } reviews{ totalCount } latestReviews(first:20){ nodes{ author{ login avatarUrl } state } } reviewRequests(first:20){ nodes{ requestedReviewer{ ... on User{ login avatarUrl } ... on Team{ name } } } } } } rateLimit{ cost remaining } }""");
     }
 
@@ -67,7 +61,7 @@ public sealed class GitHubActivePrBatchReaderTests
 
         var ser = System.Text.Json.JsonSerializer.Serialize(owner);
         var serName = System.Text.Json.JsonSerializer.Serialize(repo);
-        QueryOf(handler.LastRequestBody).Should().StartWith(
+        GraphQlRequest.QueryOf(handler.LastRequestBody).Should().StartWith(
             $"query{{a0: repository(owner:{ser}, name:{serName}){{ pullRequest(number:9){{ headRefOid");
     }
 
