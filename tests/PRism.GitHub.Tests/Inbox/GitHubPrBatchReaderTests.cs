@@ -100,6 +100,38 @@ public sealed class GitHubPrBatchReaderTests
         return (reader, log);
     }
 
+    // #665 byte-identity characterization: pins the EXACT posted open-PR (includeReadiness:true)
+    // query so the shared dispatch/envelope extraction cannot change the wire output. Golden
+    // captured from the pre-refactor BuildQuery output.
+    [Fact]
+    public async Task Posts_byte_identical_open_query()
+    {
+        var handler = new RecordingHttpMessageHandler(HttpStatusCode.OK, """{"data":{}}""");
+        var reader = new GitHubPrBatchReader(
+            new FakeHttpClientFactory(handler, new Uri("https://api.github.com/")),
+            () => Task.FromResult<string?>("token"), () => "https://github.com");
+
+        await reader.ReadAsync(new[] { Raw(7, "acme", "api") }, "viewer", CancellationToken.None);
+
+        GraphQlRequest.QueryOf(handler.LastRequestBody).Should().Be(
+            """query{a0: repository(owner:"acme", name:"api"){ pullRequest(number:7){ headRefOid additions deletions changedFiles commits{ totalCount } mergedAt closedAt headRepository{ pushedAt } isDraft mergeable mergeStateStatus reviewDecision reviews(last:100){ nodes{ author{ login } submittedAt commit{ oid } } } latestReviews(first:20){ nodes{ author{ login avatarUrl } state } } reviewRequests(first:20){ nodes{ requestedReviewer{ ... on User{ login avatarUrl } ... on Team{ name } } } } } } rateLimit{ cost remaining } }""");
+    }
+
+    // #665 byte-identity: closed-PR (includeReadiness:false) light selection — no readiness block.
+    [Fact]
+    public async Task Posts_byte_identical_closed_query()
+    {
+        var handler = new RecordingHttpMessageHandler(HttpStatusCode.OK, """{"data":{}}""");
+        var reader = new GitHubPrBatchReader(
+            new FakeHttpClientFactory(handler, new Uri("https://api.github.com/")),
+            () => Task.FromResult<string?>("token"), () => "https://github.com");
+
+        await reader.ReadAsync(new[] { Raw(7, "acme", "api") with { IsClosedHistory = true } }, "viewer", CancellationToken.None);
+
+        GraphQlRequest.QueryOf(handler.LastRequestBody).Should().Be(
+            """query{a0: repository(owner:"acme", name:"api"){ pullRequest(number:7){ headRefOid additions deletions changedFiles commits{ totalCount } mergedAt closedAt headRepository{ pushedAt } } } rateLimit{ cost remaining } }""");
+    }
+
     [Fact] // Test 1 — query construction
     public async Task Builds_aliased_query_with_owner_name_number_and_ratelimit()
     {

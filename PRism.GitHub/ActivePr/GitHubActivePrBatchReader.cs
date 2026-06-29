@@ -1,5 +1,3 @@
-using System.Globalization;
-using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -44,21 +42,13 @@ public sealed class GitHubActivePrBatchReader : IActivePrBatchReader
         foreach (var chunk in Chunk(refs, MaxBatch))
         {
             var aliased = chunk.Select((r, i) => ($"a{i}", r)).ToList();
-            var query = BuildQuery(aliased);
             using var http = _httpFactory.CreateClient("github");
-            string json;
-            try
-            {
-                json = await GitHubGraphQL.PostAsync(http, await _readToken().ConfigureAwait(false),
-                    _readHost(), _log, query, new { }, ct).ConfigureAwait(false);
-            }
-            catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.TooManyRequests)
-            {
-                throw new RateLimitExceededException("GitHub GraphQL rate limit (HTTP 429) during active-PR batch poll.", retryAfter: null);
-            }
+            // Shared dispatch (#665): build envelope → POST → 429/RATE_LIMITED translation → parse.
+            // Per-alias parsing stays here (it differs from the inbox reader's).
+            using var doc = await GitHubGraphQL.RunAliasedBatchAsync(
+                http, await _readToken().ConfigureAwait(false), _readHost(), _log,
+                aliased, r => r, ActiveSelection, "active-PR batch poll", ct).ConfigureAwait(false);
 
-            using var doc = JsonDocument.Parse(json);
-            GitHubGraphQL.ThrowIfRateLimited(doc.RootElement, "active-PR batch poll");
             if (!doc.RootElement.TryGetProperty("data", out var data) || data.ValueKind != JsonValueKind.Object)
                 continue;
 
@@ -71,6 +61,19 @@ public sealed class GitHubActivePrBatchReader : IActivePrBatchReader
         }
         return result;
     }
+
+    // The per-PR field selection inside pullRequest{ … }, consumed by the shared
+    // GitHubGraphQL.RunAliasedBatchAsync envelope. Must end at the reviewRequests close with NO
+    // trailing space: the envelope resumes with a leading-space " } } ", so a trailing space here
+    // would insert a double space into the query. The envelope supplies the pullRequest + repository
+    // closes. Distinct from the
+    // inbox selection (no diff-stat / pushedAt / viewer-last-review; has baseRefOid/state +
+    // reviewThreads comment counts). Byte-identity pinned by GitHubActivePrBatchReaderTests.
+    private const string ActiveSelection =
+        "headRefOid baseRefOid state isDraft mergeable mergeStateStatus reviewDecision " +
+        "reviewThreads(first:100){ nodes{ comments{ totalCount } } } reviews{ totalCount } " +
+        "latestReviews(first:20){ nodes{ author{ login avatarUrl } state } } " +
+        "reviewRequests(first:20){ nodes{ requestedReviewer{ ... on User{ login avatarUrl } ... on Team{ name } } } }";
 
     private static bool TryParse(JsonElement repoNode, out ActivePrPollSnapshot snapshot)
     {
@@ -128,25 +131,6 @@ public sealed class GitHubActivePrBatchReader : IActivePrBatchReader
                 total += tc.GetInt32();
         }
         return total;
-    }
-
-    private static string BuildQuery(List<(string Alias, PrReference Ref)> aliased)
-    {
-        var sb = new StringBuilder("query{");
-        foreach (var (alias, r) in aliased)
-            sb.Append(alias).Append(": repository(owner:")
-              .Append(JsonSerializer.Serialize(r.Owner)).Append(", name:")
-              .Append(JsonSerializer.Serialize(r.Repo)).Append("){ pullRequest(number:")
-              .Append(r.Number.ToString(CultureInfo.InvariantCulture))
-              .Append("){ headRefOid baseRefOid state isDraft mergeable mergeStateStatus reviewDecision ")
-              .Append("reviewThreads(first:100){ nodes{ comments{ totalCount } } } reviews{ totalCount } ")
-              // latestReviews is collapsed (one per reviewer); 20 covers any real PR for the
-              // approval/changes-requested counts and keeps the per-alias cost low (#593).
-              // avatarUrl + reviewRequests (#593) feed the live detail readiness popover's people section.
-              .Append("latestReviews(first:20){ nodes{ author{ login avatarUrl } state } } ")
-              .Append("reviewRequests(first:20){ nodes{ requestedReviewer{ ... on User{ login avatarUrl } ... on Team{ name } } } } } } ");
-        sb.Append("rateLimit{ cost remaining } }");
-        return sb.ToString();
     }
 
     private static IEnumerable<IReadOnlyList<PrReference>> Chunk(IReadOnlyList<PrReference> items, int size)

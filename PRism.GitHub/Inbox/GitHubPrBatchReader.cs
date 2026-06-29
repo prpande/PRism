@@ -1,7 +1,4 @@
 using System.Collections.Concurrent;
-using System.Globalization;
-using System.Net;
-using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -127,31 +124,15 @@ public sealed partial class GitHubPrBatchReader : IPrBatchReader
         List<RawPrInboxItem> chunk, string viewerLogin, bool includeReadiness, CancellationToken ct)
     {
         var aliased = chunk.Select((it, idx) => (Alias: $"a{idx}", Item: it)).ToList();
-        var query = BuildQuery(aliased, includeReadiness);
 
-        string body;
-        try
-        {
-            // Route through the shared transport so the PAT same-host egress guard stays in the
-            // chain. PostAsync throws HttpRequestException (StatusCode preserved) on non-2xx and
-            // returns the raw 200 body verbatim. Empty variables — owner/name/number are inlined.
-            body = await GitHubGraphQL.PostAsync(http, token, host, _log, query, new { }, ct).ConfigureAwait(false);
-        }
-        catch (HttpRequestException ex) when (ex.StatusCode == HttpStatusCode.TooManyRequests)
-        {
-            // REST parity: a hydration/awaiting 429 backs the poller off. PostAsync's exception
-            // carries no Retry-After, so RetryAfter is null and the poller runs the next tick at
-            // its normal cadence (InboxPoller has no separate max-backoff).
-            throw new RateLimitExceededException(
-                "GitHub GraphQL rate limit (HTTP 429) during inbox batch hydration.", retryAfter: null);
-        }
-
-        using var doc = JsonDocument.Parse(body);
-
-        // Primary rate limit arrives as HTTP 200 with errors[].type == RATE_LIMITED (data:null).
-        // Inspect errors[] BEFORE reading data (which is null in that case). Shared guard
-        // (GitHubGraphQL.ThrowIfRateLimited) so the active-PR batch reader uses the same model.
-        GitHubGraphQL.ThrowIfRateLimited(doc.RootElement, "inbox batch hydration");
+        // Shared dispatch (#665): build the aliased envelope → POST (PAT same-host egress guard
+        // stays in the chain via PostAsync) → translate HTTP-429 AND 200/RATE_LIMITED to
+        // RateLimitExceededException so the poller backs off. The per-alias parse + observability
+        // below stay here (they differ from the active-PR reader's). REST parity: the 429 carries
+        // no Retry-After (RetryAfter null) — InboxPoller runs the next tick at normal cadence.
+        using var doc = await GitHubGraphQL.RunAliasedBatchAsync(
+            http, token, host, _log, aliased, it => it.Reference,
+            InboxSelection(includeReadiness), "inbox batch hydration", ct).ConfigureAwait(false);
 
         var results = new List<(RawPrInboxItem, BatchPrData, bool)>();
         if (!doc.RootElement.TryGetProperty("data", out var data) || data.ValueKind != JsonValueKind.Object)
@@ -191,36 +172,33 @@ public sealed partial class GitHubPrBatchReader : IPrBatchReader
         return results;
     }
 
-    // Builds the aliased-batch query. The common selection (core hydration scalars) is requested
-    // for every PR; the merge-readiness selection is added ONLY when includeReadiness is true (open
-    // candidates). mergeable/mergeStateStatus force per-PR server-side merge-state computation and
-    // reviews(last:100)/latestReviews are heavy, so closed PRs — which render no badge (D5) and need
-    // no ViewerLastReviewSha (awaiting-author is open-only) — omit all of it (#593). TryParse is
+    // The per-PR field selection inside pullRequest{ … }, consumed by the shared
+    // GitHubGraphQL.RunAliasedBatchAsync envelope. The common selection (core hydration scalars) is
+    // requested for every PR; the merge-readiness block is added ONLY when includeReadiness is true
+    // (open candidates). mergeable/mergeStateStatus force per-PR server-side merge-state computation
+    // and reviews(last:100)/latestReviews are heavy, so closed PRs — which render no badge (D5) and
+    // need no ViewerLastReviewSha (awaiting-author is open-only) — omit all of it (#593). TryParse is
     // tolerant: absent readiness fields parse to None/null, which is correct for terminal PRs.
-    private static string BuildQuery(List<(string Alias, RawPrInboxItem Item)> aliased, bool includeReadiness)
+    //
+    // Byte-identity rule (pinned by GitHubPrBatchReaderTests): `common` ends at the headRepository
+    // close with NO trailing space (the envelope supplies the pullRequest + repository closes); the
+    // open query injects the separating space at composition (common + " " + readiness), reproducing
+    // the previous builder's `pushedAt } ` + `isDraft …` junction exactly.
+    private static string InboxSelection(bool includeReadiness)
     {
-        var sb = new StringBuilder("query{");
-        foreach (var (alias, it) in aliased)
-        {
-            sb.Append(alias).Append(": repository(owner:")
-              .Append(JsonSerializer.Serialize(it.Reference.Owner)).Append(", name:")
-              .Append(JsonSerializer.Serialize(it.Reference.Repo)).Append("){ pullRequest(number:")
-              .Append(it.Reference.Number.ToString(CultureInfo.InvariantCulture))
-              .Append("){ headRefOid additions deletions changedFiles commits{ totalCount } ")
-              .Append("mergedAt closedAt headRepository{ pushedAt } ");
-            if (includeReadiness)
-                sb.Append("isDraft mergeable mergeStateStatus reviewDecision ")
-                  .Append("reviews(last:100){ nodes{ author{ login } submittedAt commit{ oid } } } ")
-                  // latestReviews is collapsed (one entry per reviewer); 20 covers any real PR's
-                  // distinct reviewers for the approval/changes-requested counts (cheap vs first:100).
-                  // avatarUrl (#593) feeds the popover people section's avatars.
-                  .Append("latestReviews(first:20){ nodes{ author{ login avatarUrl } state } } ")
-                  // reviewRequests (#593) = still-requested ("waiting on") reviewers; union over User|Team.
-                  .Append("reviewRequests(first:20){ nodes{ requestedReviewer{ ... on User{ login avatarUrl } ... on Team{ name } } } } ");
-            sb.Append("} } "); // close pullRequest selection, repository selection
-        }
-        sb.Append("rateLimit{ cost remaining } }");
-        return sb.ToString();
+        const string common =
+            "headRefOid additions deletions changedFiles commits{ totalCount } " +
+            "mergedAt closedAt headRepository{ pushedAt }";
+        if (!includeReadiness) return common;
+        const string readiness =
+            "isDraft mergeable mergeStateStatus reviewDecision " +
+            "reviews(last:100){ nodes{ author{ login } submittedAt commit{ oid } } } " +
+            // latestReviews is collapsed (one entry per reviewer); 20 covers any real PR's distinct
+            // reviewers for the approval/changes-requested counts. avatarUrl (#593) feeds the popover.
+            "latestReviews(first:20){ nodes{ author{ login avatarUrl } state } } " +
+            // reviewRequests (#593) = still-requested ("waiting on") reviewers; union over User|Team.
+            "reviewRequests(first:20){ nodes{ requestedReviewer{ ... on User{ login avatarUrl } ... on Team{ name } } } }";
+        return common + " " + readiness;
     }
 
     private bool TryParse(JsonElement repoNode, RawPrInboxItem raw, string viewerLogin,
