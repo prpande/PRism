@@ -1,6 +1,6 @@
 # AppStateStore in-memory parsed-state cache — design (#664)
 
-**Status:** draft — awaiting human gate (B2)
+**Status:** approved — B2 approach gate cleared (owner sign-off); 1× ce-doc-review + claude bot review both approved
 **Issue:** [#664](https://github.com/prpande/PRism/issues/664) — `perf(core): AppStateStore re-reads/re-parses/re-migrates state.json on every load`
 **Tier / Risk:** T2 / gated B2 (persisted-state surface)
 **Author:** Claude Code executor
