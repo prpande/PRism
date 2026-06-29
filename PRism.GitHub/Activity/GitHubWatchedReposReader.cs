@@ -1,5 +1,4 @@
 using System;
-using System.Collections.Generic;
 using System.Net.Http;
 using System.Text.Json;
 using System.Threading;
@@ -24,26 +23,13 @@ public sealed class GitHubWatchedReposReader : IWatchedReposReader
 
     public async Task<WatchedReposResult> ReadAsync(CancellationToken ct)
     {
-        try
-        {
-            var token = await _readToken().ConfigureAwait(false);
-            using var http = _httpFactory.CreateClient("github");
-            var url = $"user/subscriptions?per_page={PerPage}";
-            using var resp = await GitHubHttp.SendAsync(http, HttpMethod.Get, url, token, ct).ConfigureAwait(false);
-            if (!resp.IsSuccessStatusCode) return new WatchedReposResult([], Degraded: true);
-
-            using var stream = await resp.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
-            using var doc = await JsonDocument.ParseAsync(stream, cancellationToken: ct).ConfigureAwait(false);
-            if (doc.RootElement.ValueKind != JsonValueKind.Array) return new WatchedReposResult([], Degraded: true);
-
-            var list = new List<string>(doc.RootElement.GetArrayLength());
-            foreach (var el in doc.RootElement.EnumerateArray())
-                if (el.TryGetProperty("full_name", out var fn) && fn.GetString() is { Length: > 0 } name)
-                    list.Add(name);
-            return new WatchedReposResult(list, Degraded: false);
-        }
-        catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
-        catch (Exception ex) when (ex is HttpRequestException or JsonException or TaskCanceledException)
-        { return new WatchedReposResult([], Degraded: true); }
+        var url = $"user/subscriptions?per_page={PerPage}";
+        var (items, degraded) = await GitHubArrayReader
+            .ReadAsync(_httpFactory, _readToken, url, Parse, ct).ConfigureAwait(false);
+        return new WatchedReposResult(items, degraded);
     }
+
+    // Drops entries with a missing or empty full_name (returns null → GitHubArrayReader skips it).
+    private static string? Parse(JsonElement el) =>
+        el.TryGetProperty("full_name", out var fn) && fn.GetString() is { Length: > 0 } name ? name : null;
 }
