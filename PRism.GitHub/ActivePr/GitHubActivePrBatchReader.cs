@@ -64,7 +64,9 @@ public sealed class GitHubActivePrBatchReader : IActivePrBatchReader
 
     // The per-PR field selection inside pullRequest{ … }, consumed by the shared
     // GitHubGraphQL.RunAliasedBatchAsync envelope. Must end at the reviewRequests close with NO
-    // trailing space — the envelope supplies the pullRequest + repository closes. Distinct from the
+    // trailing space: the envelope resumes with a leading-space " } } ", so a trailing space here
+    // would insert a double space into the query. The envelope supplies the pullRequest + repository
+    // closes. Distinct from the
     // inbox selection (no diff-stat / pushedAt / viewer-last-review; has baseRefOid/state +
     // reviewThreads comment counts). Byte-identity pinned by GitHubActivePrBatchReaderTests.
     private const string ActiveSelection =

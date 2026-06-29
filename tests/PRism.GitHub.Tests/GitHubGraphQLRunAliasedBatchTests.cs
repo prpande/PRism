@@ -53,8 +53,9 @@ public sealed class GitHubGraphQLRunAliasedBatchTests
             http, "token", "https://github.com", NullLogger.Instance,
             aliased, r => r, "FIELDS", "my-batch-context", CancellationToken.None);
 
-        (await act.Should().ThrowAsync<RateLimitExceededException>())
-            .Which.Message.Should().Contain("my-batch-context").And.Contain("HTTP 429");
+        var ex = (await act.Should().ThrowAsync<RateLimitExceededException>()).Which;
+        ex.Message.Should().Contain("my-batch-context").And.Contain("HTTP 429");
+        ex.RetryAfter.Should().BeNull();   // PostAsync's 429 carries no Retry-After → poller normal cadence
     }
 
     [Fact]
@@ -67,8 +68,9 @@ public sealed class GitHubGraphQLRunAliasedBatchTests
             http, "token", "https://github.com", NullLogger.Instance,
             aliased, r => r, "FIELDS", "my-batch-context", CancellationToken.None);
 
-        (await act.Should().ThrowAsync<RateLimitExceededException>())
-            .Which.Message.Should().Contain("my-batch-context");
+        var ex = (await act.Should().ThrowAsync<RateLimitExceededException>()).Which;
+        ex.Message.Should().Contain("my-batch-context");
+        ex.RetryAfter.Should().BeNull();
     }
 
     [Fact]
