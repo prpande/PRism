@@ -31,6 +31,19 @@ public sealed class AppStateStore : IAppStateStore, IDisposable
     private readonly string _path;
     private readonly SemaphoreSlim _gate = new(1, 1);
 
+    // #664 — in-memory copy of the parsed AppState, mirroring ConfigStore._current. null means
+    // not-yet-loaded / invalidated; non-null is served on the steady-state LoadAsync path so a
+    // hit is a field access, not a full read→parse→migrate→deserialize. Read and written ONLY
+    // under _gate, so it shares the store's existing single-writer serialization (no new lock).
+    //
+    // Correctness rests on the single-writer invariant: AppStateStore is the sole writer of its
+    // state.json — enforced cross-process by LockfileManager (state.json.lock, held for the
+    // process lifetime; refuses a second live backend per dataDir) and in-process by singleton
+    // registration. No FileSystemWatcher is needed (unlike ConfigStore's user-editable
+    // config.json): there is no external writer to observe. See
+    // docs/specs/2026-06-29-appstatestore-memory-cache-design.md § 4.
+    private AppState? _current;
+
     public AppStateStore(string dataDir)
     {
         _path = Path.Combine(dataDir, "state.json");
@@ -104,6 +117,14 @@ public sealed class AppStateStore : IAppStateStore, IDisposable
     // between LoadAsync (public, takes the gate) and UpdateAsync (already inside the gate).
     private async Task<AppState> LoadCoreAsync(CancellationToken ct)
     {
+        // #664 cache-hit fast path. Serving the cached instance under _gate (rather than a
+        // lock-free read) is a HARD INVARIANT, not a tuning choice: the _gate-protected ordering
+        // between a writer's `_current = state` (set after the atomic move, see SaveCoreAsync) and
+        // this read is what preserves the #659 "re-read body under submit lock" guarantee. Do not
+        // replace this with a lock-free fast path — it would silently reopen the #659 race.
+        if (_current is not null)
+            return _current;
+
         if (!File.Exists(_path))
         {
             await SaveCoreAsync(AppState.Default, ct).ConfigureAwait(false);
@@ -128,6 +149,10 @@ public sealed class AppStateStore : IAppStateStore, IDisposable
 
             var state = node.Deserialize<AppState>(JsonSerializerOptionsFactory.Storage)
                 ?? AppState.Default;
+            // #664 — cache on the success return. The migrate and read-only/future-version paths
+            // reach here WITHOUT calling SaveCoreAsync (they don't persist), so this is the only
+            // place that caches those states — it is NOT redundant with SaveCoreAsync's cache-set.
+            _current = state;
             return state;
         }
         catch (JsonException)
@@ -136,6 +161,10 @@ public sealed class AppStateStore : IAppStateStore, IDisposable
             // before deserialization failed. Quarantine replaces state.json with a fresh
             // default, so the read-only condition no longer holds.
             IsReadOnlyMode = false;
+            // #664 — deliberately do NOT set _current here. QuarantineAndResetAsync's resave (via
+            // SaveCoreAsync) caches AppState.Default on success; if that resave fails (disk full /
+            // permissions), _current stays null so the next load re-enters the missing-file branch
+            // and retries the seed write — preserving the "every load retries the seed" self-heal.
             await QuarantineAndResetAsync(ct).ConfigureAwait(false);
             return AppState.Default;
         }
@@ -219,6 +248,10 @@ public sealed class AppStateStore : IAppStateStore, IDisposable
                     ex);
             }
             IsReadOnlyMode = false;
+            // #664 — invalidate the cache. The file is now gone and the caller restarts the
+            // process; null'ing _current means any in-process LoadAsync before the restart
+            // re-seeds AppState.Default from the missing-file path rather than serving stale state.
+            _current = null;
         }
         finally
         {
@@ -232,6 +265,11 @@ public sealed class AppStateStore : IAppStateStore, IDisposable
         var json = JsonSerializer.Serialize(state, JsonSerializerOptionsFactory.Storage);
         await File.WriteAllTextAsync(temp, json, ct).ConfigureAwait(false);
         await AtomicFileMove.MoveAsync(temp, _path, ct).ConfigureAwait(false);
+        // #664 — update the cache AFTER the atomic move commits, under _gate. Setting it post-move
+        // makes disk and cache flip together for any _gate holder; this ordering is load-bearing
+        // for #659 (see the cache-hit note in LoadCoreAsync). On a failed write the move throws
+        // before this line, so _current keeps the last-good state and never drifts ahead of disk.
+        _current = state;
     }
 
     private JsonObject MigrateIfNeeded(JsonNode root)
