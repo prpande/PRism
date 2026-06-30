@@ -2,6 +2,7 @@ import { render } from '@testing-library/react';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { DiffPane } from './DiffPane';
 import type { FileChange, ReviewThreadDto, PrReference } from '../../../../api/types';
+import type { DiffMode } from './DiffPane';
 import { useWholeFileContent } from '../../../../hooks/useWholeFileContent';
 
 vi.mock('../../../../hooks/useWholeFileContent');
@@ -18,11 +19,10 @@ vi.mock('../../../Markdown/HighlightedLine', () => ({
   },
 }));
 
-// Pin syntax to a stable, ready, empty map so there is no async token-arrival
-// re-render to pollute the count, and so `syntax` keeps a single identity across
-// renders (the precondition the real useSyntaxTokens also satisfies via its
-// useMemo'd EMPTY sentinel). Empty tokens route context/solo lines through
-// HighlightedLine's plaintext fallback — exactly the path we count.
+// Pin syntax to a stable, ready, empty map: no async token-arrival re-render to
+// pollute the count, and a single `syntax` identity across renders (which the real
+// useSyntaxTokens also guarantees via its useMemo'd EMPTY sentinel). Empty tokens
+// route context/solo lines through HighlightedLine's plaintext fallback.
 vi.mock('../../../../hooks/useSyntaxTokens', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../../../hooks/useSyntaxTokens')>();
   const EMPTY = { oldLineTokens: new Map(), newLineTokens: new Map(), ready: true } as const;
@@ -64,10 +64,24 @@ const threadAtLine1: ReviewThreadDto = {
 };
 
 // Stable reference across renders — models the scroll case this change targets, where
-// DiffPane re-renders but FilesTab does not, so the reviewThreads prop keeps its
-// identity. (A fresh array literal each render would correctly bust the threadsByLine
-// memo — that is the deferred FilesTab-originated re-render case, not the scroll case.)
+// DiffPane re-renders but FilesTab does not, so reviewThreads keeps its identity. (A
+// fresh array literal each render would correctly bust the threadsByLine memo — that
+// is the deferred FilesTab-originated re-render case, not the scroll case.)
 const stableThreads: ReviewThreadDto[] = [threadAtLine1];
+
+const paneProps = (overrides: {
+  diffMode: DiffMode;
+  reviewThreads: ReviewThreadDto[];
+  truncated: boolean;
+}) => ({
+  prRef,
+  selectedPath: 'src/main.ts',
+  file,
+  prUrl: '',
+  headSha: 'h',
+  baseSha: 'b',
+  ...overrides,
+});
 
 const flush = () => new Promise((r) => setTimeout(r, 0));
 
@@ -87,15 +101,7 @@ describe('DiffPane row memoization (#670)', () => {
   it('does not re-render rows on an unrelated re-render (split mode)', async () => {
     const { rerender } = render(
       <DiffPane
-        prRef={prRef}
-        selectedPath="src/main.ts"
-        file={file}
-        diffMode="side-by-side"
-        truncated={false}
-        reviewThreads={[]}
-        prUrl=""
-        headSha="h"
-        baseSha="b"
+        {...paneProps({ diffMode: 'side-by-side', reviewThreads: [], truncated: false })}
       />,
     );
     await flush();
@@ -103,17 +109,7 @@ describe('DiffPane row memoization (#670)', () => {
 
     hl.count = 0;
     rerender(
-      <DiffPane
-        prRef={prRef}
-        selectedPath="src/main.ts"
-        file={file}
-        diffMode="side-by-side"
-        truncated={true}
-        reviewThreads={[]}
-        prUrl=""
-        headSha="h"
-        baseSha="b"
-      />,
+      <DiffPane {...paneProps({ diffMode: 'side-by-side', reviewThreads: [], truncated: true })} />,
     );
     expect(hl.count).toBe(0);
   });
@@ -124,15 +120,7 @@ describe('DiffPane row memoization (#670)', () => {
   it('does not re-render a threaded row on an unrelated re-render (unified mode)', async () => {
     const { rerender } = render(
       <DiffPane
-        prRef={prRef}
-        selectedPath="src/main.ts"
-        file={file}
-        diffMode="unified"
-        truncated={false}
-        reviewThreads={stableThreads}
-        prUrl=""
-        headSha="h"
-        baseSha="b"
+        {...paneProps({ diffMode: 'unified', reviewThreads: stableThreads, truncated: false })}
       />,
     );
     await flush();
@@ -141,15 +129,7 @@ describe('DiffPane row memoization (#670)', () => {
     hl.count = 0;
     rerender(
       <DiffPane
-        prRef={prRef}
-        selectedPath="src/main.ts"
-        file={file}
-        diffMode="unified"
-        truncated={true}
-        reviewThreads={stableThreads}
-        prUrl=""
-        headSha="h"
-        baseSha="b"
+        {...paneProps({ diffMode: 'unified', reviewThreads: stableThreads, truncated: true })}
       />,
     );
     expect(hl.count).toBe(0);
