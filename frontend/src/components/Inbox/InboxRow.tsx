@@ -129,6 +129,7 @@ export function InboxRow({
   return (
     <button
       className={styles.row}
+      data-testid="inbox-row"
       data-unread={hasUnseenActivity ? 'true' : 'false'}
       data-grouped={grouped ? 'true' : 'false'}
       onClick={onClick}

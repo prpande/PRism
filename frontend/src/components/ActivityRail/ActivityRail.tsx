@@ -111,7 +111,7 @@ function Row({ item }: { item: ActivityItem }) {
   );
 
   return (
-    <li className={styles.item}>
+    <li className={styles.item} data-testid="activity-row">
       {path ? (
         <Link to={path} className={styles.rowLink} aria-label={label} title={tip}>
           {inner}

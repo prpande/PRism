@@ -192,6 +192,22 @@ internal static class TestEndpoints
             return Results.Ok(new { ok = true });
         });
 
+        // #619 cold-start e2e: flip FakeReviewBackingStore.InboxSeeded WITHOUT running a
+        // RefreshAsync — unlike /test/seed-inbox above, this deliberately does NOT touch the
+        // orchestrator. A snapshot already rehydrated at boot (InboxCacheRehydrator →
+        // TryRehydrate, the real production cold-start path) stays in place, so the FE's first
+        // GET /api/inbox observes the genuine rehydrated stale snapshot rather than a freshly
+        // refreshed one. The poller's first (subscriber-triggered) RefreshAsync then reconciles
+        // to the seeded scenario PR (row kept, stale cleared) instead of an empty inbox. Pure
+        // backing-store mutation — no orchestrator/production-path shim.
+        app.MapPost("/test/seed-inbox-store-only", (IServiceProvider sp) =>
+        {
+            var store = sp.GetService<FakeReviewBackingStore>();
+            if (store is null) return StoreMissing("/test/seed-inbox-store-only");
+            store.SeedInbox();
+            return Results.Ok(new { ok = true });
+        });
+
         // Resets per-test state: the in-memory FakeReviewBackingStore (head sha,
         // reachable shas, iterations, file content, PR state), the FakeReviewSubmitter
         // (pending reviews, injected failures, knobs, counters), the PrDetailLoader's

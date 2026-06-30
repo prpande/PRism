@@ -12,6 +12,7 @@
     "test:e2e": "playwright test",
     "setup-real-e2e-fixtures": "tsx scripts/setup-real-e2e-fixtures.ts",
     "test:e2e:real": "playwright test --config=playwright.real.config.ts",
+    "test:e2e:coldstart": "playwright test --config=playwright.coldstart.config.ts",
     "lint": "eslint . && prettier --check ."
   },
   "dependencies": {
