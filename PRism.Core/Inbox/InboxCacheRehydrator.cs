@@ -37,12 +37,13 @@ public sealed class InboxCacheRehydrator : IHostedService
 
     public Task StartAsync(CancellationToken cancellationToken)
     {
-        var accounts = _config.Current.Github.Accounts;
+        var cfg = _config.Current; // single snapshot (each .Current acquires the reader lock)
+        var accounts = cfg.Github.Accounts;
         var login = accounts.Count > 0 ? accounts[0].Login : null;
         if (string.IsNullOrEmpty(login))
             return Task.CompletedTask; // first-ever connect not yet persisted → skeleton → live
 
-        var identity = new CacheIdentity(login, _config.Current.Github.Host);
+        var identity = new CacheIdentity(login, cfg.Github.Host);
         var snapshot = _cache.TryLoad(identity);
         if (snapshot is not null)
             _orchestrator.TryRehydrate(snapshot);

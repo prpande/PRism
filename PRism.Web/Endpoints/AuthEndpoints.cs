@@ -110,18 +110,9 @@ internal static partial class AuthEndpoints
             // (#137 Task 8). The soft-warning early return above commits no token and so
             // does NOT reset — resetting there would needlessly evict a still-valid cache.
             activityProvider.Reset();
-            // #619 — a token change behaves exactly like a first load: drop both caches (awaited) so the
-            // prior identity's data is gone before the response returns. Fail-closed: runs even if the
-            // config write above threw. Invalidate the inbox writer epoch FIRST (round-2 ADV-1) so every
-            // already-captured pre-rotation write is dropped by the drainer's epoch gate — even one that
-            // ScheduleCacheWrites AFTER this returns (an in-flight RefreshAsync holding _writerLock across
-            // I/O, or a ~53s-late OnInboxEnrichmentsReady). A plain drain alone would NOT stop those, and on
-            // a same-login rotation the captured-identity stamp + config backstop would both wrongly accept
-            // the resurrected inbox-snapshot.json. InvalidateCacheWritesAsync bumps the epoch AND awaits the
-            // in-flight loop, so any SaveAsync already past the gate finishes before the EvictAsync below.
-            await orchestrator.InvalidateCacheWritesAsync().ConfigureAwait(false);
-            await inboxCache.EvictAsync(ct).ConfigureAwait(false);
-            await activityCache.EvictAsync(ct).ConfigureAwait(false);
+            // #619 — a token change behaves like a first load: invalidate + evict both caches (awaited,
+            // fail-closed even if the config write above threw). See the helper for the epoch-gate ordering.
+            await InvalidateAndEvictColdStartCachesAsync(orchestrator, inboxCache, activityCache, ct).ConfigureAwait(false);
             Log.ConnectCommitted(log, result.Login ?? "(empty)");
             return Results.Ok(new AuthConnectSuccess(Ok: true, Login: result.Login, Host: config.Current.Github.Host));
         });
@@ -164,11 +155,8 @@ internal static partial class AuthEndpoints
 #pragma warning restore CA1031
             // Token-commit path: invalidate any activity feed cached under a prior token (#137 Task 8).
             activityProvider.Reset();
-            // #619 — evict both cold-start caches (awaited) so the prior identity's data is gone
-            // before the response returns. Invalidate the inbox writer epoch FIRST (round-2 ADV-1).
-            await orchestrator.InvalidateCacheWritesAsync().ConfigureAwait(false);
-            await inboxCache.EvictAsync(ct).ConfigureAwait(false);
-            await activityCache.EvictAsync(ct).ConfigureAwait(false);
+            // #619 — invalidate + evict both cold-start caches (awaited); see the helper for ordering.
+            await InvalidateAndEvictColdStartCachesAsync(orchestrator, inboxCache, activityCache, ct).ConfigureAwait(false);
             Log.CommitSucceeded(log, login ?? "(empty)");
             return Results.Ok(new AuthCommitSuccess(Ok: true, Host: config.Current.Github.Host));
         });
@@ -438,13 +426,9 @@ internal static partial class AuthEndpoints
             // block, so subscribing to it would reproduce the same-login-rotation gap; an
             // unconditional imperative Reset() here closes it.
             activityProvider.Reset();
-            // #619 — evict both cold-start caches on EVERY successful replace (incl. same-login rotation,
-            // where IdentityChanged does not fire), alongside Reset(). Invalidate the inbox writer epoch
-            // first (round-2 ADV-1: bump the epoch so the drainer drops every pre-rotation write, then await
-            // the in-flight loop); awaited evict — gone before the response.
-            await orchestrator.InvalidateCacheWritesAsync().ConfigureAwait(false);
-            await inboxCache.EvictAsync(ct).ConfigureAwait(false);
-            await activityCache.EvictAsync(ct).ConfigureAwait(false);
+            // #619 — invalidate + evict both cold-start caches on EVERY successful replace (incl. the
+            // same-login rotation, where IdentityChanged does not fire), alongside Reset() above.
+            await InvalidateAndEvictColdStartCachesAsync(orchestrator, inboxCache, activityCache, ct).ConfigureAwait(false);
 
             return Results.Ok(new AuthReplaceResponse(
                 Ok: true,
@@ -469,6 +453,24 @@ internal static partial class AuthEndpoints
         AuthValidationWarning.None => throw new InvalidOperationException("WarningToWire called with None — caller should not serialize a non-warning."),
         _ => throw new InvalidOperationException($"Unmapped AuthValidationWarning value: {warning}"),
     };
+
+    // #619 — the security-sensitive cold-start-cache teardown shared by every auth token-change site
+    // (/connect, /connect/commit, /replace). Invalidate the inbox writer epoch FIRST (round-2 ADV-1:
+    // bump the epoch so the drainer drops every already-captured pre-rotation write — even one that
+    // ScheduleCacheWrites after this returns — THEN await the in-flight loop), only THEN evict both
+    // caches (awaited) so the prior identity's data is gone before the response returns. Fail-closed:
+    // runs regardless of any preceding best-effort config write. Keep all sites on this one helper so
+    // the ordering contract can't drift (call `activityProvider.Reset()` at the site BEFORE this).
+    private static async Task InvalidateAndEvictColdStartCachesAsync(
+        InboxRefreshOrchestrator orchestrator,
+        IIdentityKeyedFileCache<InboxSnapshot> inboxCache,
+        IIdentityKeyedFileCache<ActivityResponse> activityCache,
+        CancellationToken ct)
+    {
+        await orchestrator.InvalidateCacheWritesAsync().ConfigureAwait(false);
+        await inboxCache.EvictAsync(ct).ConfigureAwait(false);
+        await activityCache.EvictAsync(ct).ConfigureAwait(false);
+    }
 
     private static partial class Log
     {

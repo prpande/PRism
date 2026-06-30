@@ -390,10 +390,9 @@ public sealed partial class InboxRefreshOrchestrator : IInboxRefreshOrchestrator
             // always refetches and clears `stale`, even when the rehydrated snapshot already equals
             // live (diff.Changed == false). Consumed here, after the commit: a network-failed refresh
             // throws before reaching this line and leaves the flag armed (the data is still stale).
-            var effectiveForceNotify = forceNotify;
             if (_rehydratedAwaitingRevalidate)
             {
-                effectiveForceNotify = true;
+                forceNotify = true;
                 _rehydratedAwaitingRevalidate = false;
             }
 
@@ -413,7 +412,7 @@ public sealed partial class InboxRefreshOrchestrator : IInboxRefreshOrchestrator
                     diff.ChangedSectionIds.ToArray(),
                     diff.NewOrUpdatedPrCount));
             }
-            else if (effectiveForceNotify)
+            else if (forceNotify)
             {
                 // An AI-mode-change refresh re-populates the enrichments/settled set without
                 // touching the PR set, so ComputeDiff (enrichment-blind) sees no change. Publish

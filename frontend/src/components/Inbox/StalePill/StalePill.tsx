@@ -27,7 +27,7 @@ export function StalePill({ lastRefreshedAt }: StalePillProps) {
   const show = Number.isFinite(ageMs) && ageMs > STALE_LABEL_THRESHOLD_MS;
 
   return (
-    <div className={styles.slot} data-reserved="true">
+    <div className={styles.slot}>
       {show && (
         <span className={styles.pill} data-testid="inbox-stale-pill">
           Updated {formatAge(lastRefreshedAt)}

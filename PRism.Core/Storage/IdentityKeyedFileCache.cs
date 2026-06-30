@@ -69,11 +69,7 @@ public sealed partial class IdentityKeyedFileCache<T> : IIdentityKeyedFileCache<
         {
             if (!File.Exists(_path)) return null;
 
-            string raw;
-            using (var fs = new FileStream(_path, FileMode.Open, FileAccess.Read, FileShare.Read))
-            using (var reader = new StreamReader(fs))
-                raw = reader.ReadToEnd();
-
+            var raw = File.ReadAllText(_path);
             var envelope = JsonSerializer.Deserialize<Envelope>(raw, JsonSerializerOptionsFactory.Storage);
             if (envelope is null) return null;
             if (envelope.Version != _schemaVersion) return null;
