@@ -1,0 +1,19 @@
+.slot {
+  position: relative; /* round-2 DES-2 — contain the global sr-only abspos region so it can't escape and scroll the page */
+  min-height: 24px; /* reserve space so show/hide never reflows the toolbar */
+  display: flex;
+  align-items: center;
+}
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  padding: 0 10px;
+  border-radius: 11px;
+  font-size: 0.75rem;
+  color: var(--text-3);
+  background: var(--surface-3);
+  border: 1px solid var(--border-1);
+  white-space: nowrap;
+}
