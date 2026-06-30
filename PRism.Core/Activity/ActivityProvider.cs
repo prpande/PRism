@@ -149,7 +149,26 @@ public sealed partial class ActivityProvider : IActivityProvider, IDisposable
                 // CancellationToken.None so a request-abort doesn't surface an unobserved task exception.
                 // Stamp with `loginSnapshot` (captured BEFORE the fan-out, round-2 SEC-1) + the `host` local,
                 // NOT a fresh _viewerLogin.Get() — a mid-call token swap must not re-attribute alice's feed to bob.
-                _ = _fileCache.SaveAsync(resp, new CacheIdentity(loginSnapshot, host), CancellationToken.None);
+                //
+                // The write is detached (best-effort). The continuation re-checks the generation: this
+                // gen-gate (line above) only guards the CHECK POINT, not the detached write's COMPLETION —
+                // a Reset()+awaited EvictAsync on the auth path can land BETWEEN the check and the file
+                // write, resurrecting an evicted feed. Cross-identity is already safe (the next read is
+                // identity-gated → miss for the new login), but a SAME-LOGIN rotation would otherwise leave
+                // a stale own-feed served on the next cold boot. So: if the generation moved while our
+                // write was in flight, evict the just-written file (parity with the inbox epoch-gate's
+                // awaited drain — whole-branch review).
+                var writeGen = gen;
+                _ = _fileCache.SaveAsync(resp, new CacheIdentity(loginSnapshot, host), CancellationToken.None)
+                    .ContinueWith(
+                        _ =>
+                        {
+                            if (Volatile.Read(ref _generation) != writeGen)
+                                _ = _fileCache.EvictAsync(CancellationToken.None);
+                        },
+                        CancellationToken.None,
+                        TaskContinuationOptions.None,
+                        TaskScheduler.Default);
             }
 
             return resp;

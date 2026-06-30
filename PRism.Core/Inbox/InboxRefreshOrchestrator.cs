@@ -211,6 +211,11 @@ public sealed partial class InboxRefreshOrchestrator : IInboxRefreshOrchestrator
                 .GroupBy(p => p.Reference).Select(g => g.First()).ToList();
             var viewerLogin = _viewerLoginProvider();
             var writeEpoch = Volatile.Read(ref _cacheWriteEpoch); // #619 round-2 ADV-1 — capture WITH the fetch login, before network I/O
+            // NOTE (whole-branch review, Minor): these two reads are not atomic. If a rotation's epoch
+            // Increment becomes visible in the sub-instruction gap between them, the snapshot is stamped
+            // with the new epoch but the old login. For a cross-identity rotation the read identity-gate
+            // still rejects it (no leak); for a same-login rotation it can resurrect a stale own snapshot
+            // that self-heals on the next successful refresh. The window is not worth a lock here.
             var batch = await _batchReader.ReadAsync(allRawDistinct, viewerLogin, ct).ConfigureAwait(false);
             // Map batch hydration onto each raw item; refs the batch didn't resolve are absent →
             // they fall back to the raw item (empty HeadSha) → dropped by the Where filter below.

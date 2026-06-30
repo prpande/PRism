@@ -1,3 +1,4 @@
+using System;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -104,5 +105,41 @@ public sealed class ActivityCacheTests
         sut.Reset();
 
         fileCache.EvictCount.Should().BeGreaterThan(0, "Reset must fire-and-forget EvictAsync");
+    }
+
+    // -----------------------------------------------------------------------
+    // Whole-branch review (Important) — a write-through that LANDS after a rotation's evict is
+    // undone by its continuation (the gen-gate guards the check point, not the detached write's
+    // completion). Without the continuation re-evict, the resurrected same-login feed survives.
+    // -----------------------------------------------------------------------
+
+    [Fact]
+    public async Task Write_through_landing_after_a_rotation_evict_is_re_evicted()
+    {
+        var saveGate = new TaskCompletionSource();
+        var reEvicted = new TaskCompletionSource();
+        var fileCache = new RecordingIdentityCache<ActivityResponse> { SaveDelay = () => saveGate.Task };
+        var sut = ActivityTestData.Provider(fileCache, new SpyReaders(),
+            login: "octocat", host: "github.com");
+
+        // First call: the live fetch reaches the write-through, which blocks on saveGate (in flight).
+        await sut.GetActivityAsync(CancellationToken.None);
+
+        // Signal on the SECOND evict — the continuation-driven re-evict (the first is Reset()'s).
+        fileCache.OnEvict = () =>
+        {
+            if (fileCache.EvictCount >= 2) reEvicted.TrySetResult();
+        };
+
+        // Token rotation while the write is pending: bump generation + evict the not-yet-written file.
+        sut.Reset();
+
+        // Let the pending write land: it records (resurrects the file), then its continuation sees the
+        // bumped generation and evicts the just-written file.
+        saveGate.SetResult();
+
+        await reEvicted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        fileCache.TryLoad(new CacheIdentity("octocat", "github.com")).Should().BeNull(
+            "a write-through that lands after a rotation's evict must be undone by its continuation");
     }
 }

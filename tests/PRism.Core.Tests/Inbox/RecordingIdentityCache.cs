@@ -12,13 +12,22 @@ public sealed class RecordingIdentityCache<T> : IIdentityKeyedFileCache<T> where
     private (T Payload, CacheIdentity Identity)? _last;
     private readonly Func<T, CacheIdentity>? _seed;
 
+    /// <summary>Optional gate: when set, SaveAsync awaits it BEFORE recording, so a test can hold a
+    /// write-through in flight (e.g. to land it after a Reset()/EvictAsync and assert the resurrection
+    /// is undone). Null = complete synchronously.</summary>
+    public Func<Task>? SaveDelay { get; set; }
+
+    /// <summary>Invoked at the end of every EvictAsync (after EvictCount is bumped), so a test can
+    /// signal on the Nth evict — e.g. the continuation-driven re-evict after a resurrected write.</summary>
+    public Action? OnEvict { get; set; }
+
     public RecordingIdentityCache(Func<T, CacheIdentity>? seed = null) => _seed = seed;
 
-    public Task SaveAsync(T payload, CacheIdentity identity, CancellationToken ct)
+    public async Task SaveAsync(T payload, CacheIdentity identity, CancellationToken ct)
     {
+        if (SaveDelay is { } delay) await delay().ConfigureAwait(false);
         Saves.Enqueue((payload, identity));
         _last = (payload, identity);
-        return Task.CompletedTask;
     }
 
     public T? TryLoad(CacheIdentity identity) =>
@@ -26,7 +35,7 @@ public sealed class RecordingIdentityCache<T> : IIdentityKeyedFileCache<T> where
             && v.Identity.Host.Equals(identity.Host, StringComparison.OrdinalIgnoreCase)
             ? v.Payload : null;
 
-    public Task EvictAsync(CancellationToken ct) { EvictCount++; _last = null; return Task.CompletedTask; }
+    public Task EvictAsync(CancellationToken ct) { EvictCount++; _last = null; OnEvict?.Invoke(); return Task.CompletedTask; }
 }
 
 /// <summary>
