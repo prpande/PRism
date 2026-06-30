@@ -369,7 +369,7 @@ re-enrichment. (Do **not** add a separate storage DTO to carry Description — �
 | **Edit** DI | `PRism.Core/.../ServiceCollectionExtensions.cs` | two cache singletons; dual-register orchestrator; hosted-service order `ViewerLoginHydrator → InboxCacheRehydrator → InboxPoller` |
 | **Edit** wire DTOs | `PRism.Web/Endpoints/InboxDtos.cs`, the activity response | add `stale: bool` (§9) |
 | **Edit** identity-change evict | `IdentityChanged` subscriber (in `PRism.Core`) + the `/api/auth/replace`,`/connect` paths | **evict both cache files on swap** — the primary identity guarantee (§4) |
-| **Edit** FE types + inbox | `frontend/src/api/types.ts`, `pages/InboxPage.tsx`, `components/Inbox/InboxToolbar`/`filters/FilterBar`, `hooks/useInbox*.ts` | `stale`-driven LoadingBar + aria; "Updated <age>" label next to `RefreshButton`, gated >30 min; ~60s ticker (§9) |
+| **Edit** FE types + inbox | `frontend/src/api/types.ts`, `pages/InboxPage.tsx`, `components/Inbox/InboxToolbar`/`filters/FilterBar`, `hooks/useInbox*.ts` | `stale`-driven LoadingBar + aria; "Updated <age>" **pill** (chip tokens), gated >30 min, placement TBD at mockup; ~60s ticker (§9) |
 | **New** GitHub-unreachable snackbar | `frontend/src/components/…` (reuses `components/Snackbar/` like `StreamHealthSnackbar`) | non-blocking "Couldn't reach GitHub — retrying" pill on fetch failure, dismiss-on-edge (§9) |
 | **Edit** FE rail | `frontend/src/components/ActivityRail/*`, `hooks/useActivity.ts` | `stale`-driven immediate refetch + "last 24h" header swap (§9) |
 
@@ -413,14 +413,21 @@ no way to know a background refresh is in flight without a backend signal. So:
   refresh *completion*, so SR users otherwise get no signal that they've landed on stale content
   (§13 D2). When `stale` flips false (the forced first revalidation's `InboxUpdated` → refetch),
   the bar clears and a completion announcement fires.
-- **"Updated <age>" label — next to the Refresh button, only when older than 30 min (owner
-  directive).** Render an **"Updated <age>"** label adjacent to the `RefreshButton` in
-  `InboxToolbar`/`FilterBar`, driven by `data.lastRefreshedAt` + the existing `formatAge` util,
-  **shown only when `now − lastRefreshedAt > 30 min`** (a `STALE_LABEL_THRESHOLD` constant). A
-  fresh cold-start cache (a few minutes old) shows no label — the brief refreshing bar suffices and
-  the toolbar stays quiet; an aged cache ("Updated 2h ago", "Updated 3w ago") earns the explicit
-  cue. The threshold is independent of the `stale` flag: it also surfaces in a long-running session
-  whose data has aged past 30 min, not just at cold start.
+- **"Updated <age>" indicator — a pill, only when older than 30 min (owner directive).** Render
+  **"Updated <age>"** as a **pill / chip** (reusing the design-system chip tokens, e.g. a muted
+  `.chip`-style pill, not plain inline text), driven by `data.lastRefreshedAt` + the existing
+  `formatAge` util, **shown only when `now − lastRefreshedAt > 30 min`** (a `STALE_LABEL_THRESHOLD`
+  constant). A fresh cold-start cache (a few minutes old) shows no pill — the brief refreshing bar
+  suffices and the toolbar stays quiet; an aged cache ("Updated 2h ago", "Updated 3w ago") earns
+  the explicit cue. The threshold is independent of the `stale` flag: it also surfaces in a
+  long-running session whose data has aged past 30 min, not just at cold start.
+  - **Placement — to resolve at the visual mockup (owner wants to see how it changes the page).**
+    Candidates: **(a)** inline in the search toolbar next to the facet/sort dropdown selectors
+    (`FilterBar`); **(b)** a row *above* the search toolbar (its own thin band). The pill should
+    occupy reclaimable space without pushing the list down jarringly or crowding the filters; since
+    it only appears past 30 min, its layout impact must be designed so its appearance/disappearance
+    doesn't reflow the toolbar disruptively (reserve space or animate in). The final placement +
+    look is a **B1 visual decision** — see Visual sign-off.
 - **Age label ticker (§13 D4).** `formatAge` is render-time; without a periodic re-render the age
   freezes and the 30-min threshold never re-evaluates while idle. Drive it off a lightweight ~60s
   ticker so the label appears/updates honestly as time passes.
@@ -455,9 +462,12 @@ no way to know a background refresh is in flight without a backend signal. So:
   or replace** the "last 24h" header (e.g. "saved · refreshing") until live data lands; restore it
   when `stale` flips false.
 
-**Visual sign-off.** The exact treatment (label placement, copy, weight, the age-scaled
-escalation threshold) is validated with a **real-token mockup in both themes** before the B1
-visual-assert gate — prose here fixes the *approach* (A + the `stale` flag), not the pixels.
+**Visual sign-off (owner requires visual verification).** The exact treatment — the "Updated
+<age>" **pill** placement (toolbar-inline vs. above-toolbar band) and how it changes the page
+layout, the snackbar copy, the refreshing-bar weight, the age-scaled escalation threshold — is
+validated with a **real-token mockup in both themes** *and* **live Playwright screenshots of the
+running app** (cold start with a seeded aged cache, both placements) before the B1 visual-assert
+gate. The owner reviews these screenshots; prose here fixes the *approach*, not the pixels.
 
 **Deferral.**
 - **D1 — FE pre-GET cache (sessionStorage).** Out of scope; only meaningful layered on the
@@ -550,9 +560,9 @@ visual-assert gate — prose here fixes the *approach* (A + the `stale` flag), n
     skeleton/empty), shows it **once per failure episode** (a second failed retry does not re-pop;
     a fresh healthy→failing edge does), and hides it on the next successful fetch. The cold-load
     `ErrorModal` (`error && !data`) path is untouched (§9 / §13 D5).
-21b. "Updated <age>" label renders next to the Refresh button **only when `lastRefreshedAt`
-    is > 30 min old**; absent for a fresh (<30 min) cache; appears once the ~60s ticker crosses the
-    threshold (§9).
+21b. "Updated <age>" **pill** renders **only when `lastRefreshedAt` is > 30 min old**; absent for a
+    fresh (<30 min) cache; appears once the ~60s ticker crosses the threshold (§9). (Placement is a
+    visual-mockup decision; the test asserts the conditional render + copy, not pixel placement.)
 22. Activity rail: `stale` response triggers an immediate refetch and swaps the "last 24h" header
     for the stale treatment; restores it when `stale` flips false (§13 D3 + F1).
     *(Run the **full** FE suite after the `aria`/skeleton-branch change — skeleton/`aria`
