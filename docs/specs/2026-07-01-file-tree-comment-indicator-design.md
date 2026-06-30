@@ -46,9 +46,9 @@ Three small pieces, each independently understandable and testable.
 
 ### 1. `CommentGlyph` — shared presentational component
 
-New file `frontend/src/components/shared/CommentGlyph.tsx`. Renders the Octicon `comment-16` SVG at 12×12, `fill="currentColor"`, `aria-hidden`. Color comes from the consumer (the SVG inherits `currentColor`), so the glyph itself is state-agnostic.
+New file `frontend/src/components/shared/CommentGlyph.tsx`. Renders the Octicon `comment-16` SVG at 12×12, `fill="currentColor"`, `aria-hidden`. Color comes from the consumer (the SVG inherits `currentColor`), so the glyph itself is state-agnostic. It accepts an optional `className` prop forwarded to the `<svg>` so a consumer can attach layout/sizing classes.
 
-`InboxRow.tsx` is refactored to consume `CommentGlyph` in place of its inline `<svg>` (`InboxRow.tsx:250-260`), proving the reuse and removing the duplicated path. The inbox's count text and layout are unchanged — only the inline `<svg>` element is swapped for `<CommentGlyph />`.
+`InboxRow.tsx` is refactored to consume `CommentGlyph` in place of its inline `<svg>` (`InboxRow.tsx:250-260`), proving the reuse and removing the duplicated path. The inbox's count text and layout are unchanged. **The swap MUST pass the existing class through** — `<CommentGlyph className={styles.commentIcon} />` — because `.commentIcon` `composes: metricPillIcon` (`InboxRow.module.css`), which is load-bearing pill-icon sizing/alignment; dropping it would resize or misalign the inbox glyph. The file-tree consumer passes no such class (it sizes via the rail).
 
 ### 2. Per-file comment state — derived in `FilesTab`
 
@@ -59,14 +59,14 @@ A `useMemo` over `prDetail.reviewComments` produces a `Map<string, CommentIndica
 // else 'resolved' (the path has threads and every one is resolved).
 ```
 
-A path appears in the map iff it has ≥1 thread. `unresolved` wins over `resolved` when a file mixes both. This map is passed into `<FileTree>` as a new optional prop `commentStateByPath?: Map<string, CommentIndicatorState> | null`.
+A path appears in the map iff it has ≥1 thread. `unresolved` wins over `resolved` when a file mixes both. This map is passed into `<FileTree>` as a new optional prop `commentStateByPath?: Map<string, CommentIndicatorState> | null`. The prop is optional/nullable **only** so non-FilesTab callers (tests, any future embed) can omit it; FilesTab always passes a real Map (possibly empty). Inside `FileTree`, a missing/`null`/empty map coerces to the collapsed state — `data-has-comments='0'` and every slot blank — mirroring how `aiPreview` defaults `false`.
 
 ### 3. Fixed left rail in `FileTree`
 
-Mirror the established fixed-column pattern (`.file-tree-ai-col` / `.file-tree-check-col`), but on the **left**, as the first child of `.fileTreeBody` — *outside* `.fileTreeScroll`, so the glyph never scrolls off-screen when a long filename is scrolled horizontally (the exact failure #492 fixed for the AI dot).
+Mirror the established fixed-column pattern (`.file-tree-ai-col` / `.file-tree-check-col`), but on the **left**, as the first child of `.fileTreeBody` — *outside* `.fileTreeScroll`. This matters because `.fileTreeInner` is shifted by `translateX` from the synthetic scrollbar (#214); anything rendered *inside* the scroller slides off the **left** edge on horizontal scroll. Keeping the rail outside the scroller (exactly as the AI/check columns sit outside it on the right) pins it regardless of scroll position.
 
 - New `.fileTreeCommentCol` (flex column) + `.fileTreeCommentSlot` (row-height, centered), rendered from the **same flat `rows` list** as the other columns so row *i* lines up across all four columns. File rows render a `<CommentSlot>`; directory rows render a bare slot.
-- **No border** between the rail and the tree — single-surface look.
+- **No border/seam** between the rail and the tree — at rest the rail shares the tree's `--surface-1`, so with no divider it reads as one continuous surface. Like the existing AI/check columns, the rail is a **static gutter**: it does NOT repaint to the row's hover (`--surface-3`) or selected (`accent-soft` wash) background. This is deliberate parity with the right-side columns; the "one container" promise is the at-rest seamlessness the owner asked for, not per-row-state background tracking. (If we later want the gutters to track row state, that's a tree-wide change spanning all three fixed columns, out of scope here.)
 - **Width-collapse when empty:** like the AI column's `data-ai-on` gate, the rail collapses to `width: 0` when the PR has **zero** review threads, so PRs with no discussion lose no filename space. Driven by a `data-has-comments` attribute on the `.fileTree` root (set from `commentStateByPath?.size`).
 - Column width token `--comment-col-w: calc(12px + 2 * var(--s-1))` (glyph + symmetric padding), declared alongside `--ai-col-w` / `--check-col-w`.
 - **Synthetic-hscroll alignment (#214) — requires a matching LEFT spacer.** The `.fileTreeHScrollRow` mirrors `.fileTreeBody`'s column layout so the scrollbar thumb sits under `.fileTreeScroll`. Today that row is `[.fileTreeHScroll (flex:1)] [.fileTreeHScrollSpacerCol (right gutter)]`. Prepending the comment rail shifts `.fileTreeScroll` right by `--comment-col-w`, so the row needs a new **leading** spacer of `--comment-col-w` as its first child, or the bar misaligns left by the rail width. That leading spacer collapses to `0` in lockstep with the rail (same `data-has-comments` gate). The existing right-gutter `.fileTreeHScrollSpacerCol` is unchanged.
@@ -80,12 +80,16 @@ Glyph color is set on the slot via a state class:
 
 ## Accessibility
 
-The fixed rail is `aria-hidden="true"` (like `.file-tree-ai-col`) — it is a visual gutter, and the spoken signal belongs in reading order on the row itself. In `FileCell`, after the existing status-word and filename (and before/around the existing sr-only AI-focus text), add an sr-only span when the file has threads:
+The fixed rail is `aria-hidden="true"` (like `.file-tree-ai-col`) — it is a visual gutter, and the spoken signal belongs in reading order on the row itself. In `FileCell` (the file-row component inside `FileTree.tsx`), after the existing status-word and filename (and before/around the existing sr-only AI-focus text), add an sr-only span when the file has threads:
 
 - unresolved → `" has unresolved comments"`
 - resolved → `" comments resolved"`
 
 So screen-reader reading order stays: *status word → filename → AI focus → comment state*. The accent dim on the resolved glyph is decorative; the sr-only text carries the resolved/unresolved distinction non-visually (no color-only signal — WCAG 1.4.1). The unresolved glyph at solid `--accent` clears ≥3:1 against `--surface-1` in both themes (it is the same accent used for the AI dot, already gate-verified); the resolved glyph is supplementary, its meaning mirrored in text.
+
+**Resolved-glyph legibility on row backgrounds (verify at implementation).** The dimmed resolved glyph (`--accent` @ 0.45) was approved against the resting `--surface-1` only. Its worst case is a **selected** row, whose wash is `color-mix(in oklch, accent-soft 40%, surface-2)` — a same-hue accent tint that can swallow a low-opacity accent glyph and make *resolved* visually collapse into the *none* (blank) state, precisely when the reviewer has the row open. The hover background (`--surface-3`) is a milder case. Requirement: the resolved glyph must stay visibly distinguishable from a blank slot on **rest, hover, and selected** rows in **both** themes. Verify live during implementation; if 0.45 fails on the selected wash, raise the floor opacity (or swap the opacity dim for a hue/stroke cue) until it passes. The owner-approved *value* is the at-rest treatment; this requirement guards it, it does not override it.
+
+**Forced-colors / Windows High Contrast (deferred, app-wide).** The only visual difference between unresolved and resolved is opacity on one hue, which forced-colors mode can flatten — leaving sighted high-contrast users without a visual resolved/unresolved distinction (the sr-only text still serves SR users). No PRism component currently handles `forced-colors`, so this is a pre-existing app-wide gap, not unique to this feature; deferred here for a future codebase-wide pass rather than solved one-off.
 
 ## Edge cases
 
@@ -106,7 +110,7 @@ Unit (vitest + RTL):
 7. Reactivity: re-render with a thread flipped resolved→unresolved updates the class.
 8. Synthetic-hscroll (#214, extends `FileTree.scrollbar.test.tsx`): the `.fileTreeHScrollRow` carries a leading spacer of `--comment-col-w` when `data-has-comments='1'` and `0` when `'0'`, so the bar stays aligned under `.fileTreeScroll`.
 
-Playwright (B1 visual proof, both themes): a PR with all three states; screenshots in `## Proof`.
+Playwright (B1 visual proof, both themes): a PR with all three states; screenshots in `## Proof`. Include at least one frame with a **resolved** glyph on a **selected** row (and a hovered row) so the contrast requirement above is visually proven, not just asserted.
 
 ## Deviations from issue acceptance criteria
 
