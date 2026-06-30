@@ -8,6 +8,7 @@ import { FilterFacet } from './FilterFacet';
 import { FilterSummary } from './FilterSummary';
 import { RefreshButton } from '../../controls/RefreshButton';
 import { Select } from '../../controls/Select';
+import { StalePill } from '../StalePill/StalePill';
 import styles from './filters.module.css';
 
 const CI_VALUES: CiStatus[] = ['failing', 'pending'];
@@ -29,6 +30,8 @@ interface Props {
   refresh: () => void;
   isRefreshing: boolean;
   justRefreshed: boolean;
+  // #619 — "Updated <age>" pill, centered in the filter row.
+  lastRefreshedAt: string;
 }
 
 export function FilterBar({
@@ -39,6 +42,7 @@ export function FilterBar({
   refresh,
   isRefreshing,
   justRefreshed,
+  lastRefreshedAt,
 }: Props) {
   const f = useInboxFilters(sections, initialSort);
   // `onState` MUST be a stable reference (a useState setter like InboxPage's
@@ -63,7 +67,15 @@ export function FilterBar({
       <div className={styles.barRow}>
         <InboxQueryInput value={f.query} onChange={f.setQuery} />
       </div>
-      <div className={styles.barRow}>
+      <div className={`${styles.barRow} ${styles.barRowFilters}`}>
+        {/* #619 — "Updated <age>" pill, absolutely centered in this row so it sits in
+            the horizontal center of the (full-width) toolbar without consuming any
+            vertical space or shifting the facet chips / sort controls. Owner-chosen
+            placement (Task 14 visual sign-off). pointer-events:none so it never
+            intercepts clicks over the empty center gap. */}
+        <div className={styles.stalePillCenter}>
+          <StalePill lastRefreshedAt={lastRefreshedAt} />
+        </div>
         <FilterFacet
           name="CI"
           values={CI_VALUES}

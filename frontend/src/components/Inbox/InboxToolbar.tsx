@@ -11,6 +11,8 @@ interface Props {
   refresh: () => void;
   isRefreshing: boolean;
   justRefreshed: boolean;
+  // #619 — drives the "Updated <age>" pill, centered inside the filter row.
+  lastRefreshedAt: string;
 }
 
 // One merged input (filter + paste-to-open) lives inside FilterBar; the toolbar wraps it
@@ -23,6 +25,7 @@ export function InboxToolbar({
   refresh,
   isRefreshing,
   justRefreshed,
+  lastRefreshedAt,
 }: Props) {
   return (
     <div className={styles.toolbar}>
@@ -34,6 +37,7 @@ export function InboxToolbar({
         refresh={refresh}
         isRefreshing={isRefreshing}
         justRefreshed={justRefreshed}
+        lastRefreshedAt={lastRefreshedAt}
       />
     </div>
   );

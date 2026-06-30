@@ -13,7 +13,6 @@ import { useGitHubReachability } from '../hooks/useGitHubReachability';
 import { INBOX_RAIL_MIN_WIDTH } from '../components/Inbox/inboxLayout';
 import { orderInboxSections } from '../components/Inbox/sectionOrder';
 import { InboxToolbar } from '../components/Inbox/InboxToolbar';
-import { StalePill } from '../components/Inbox/StalePill/StalePill';
 import { InboxSection } from '../components/Inbox/InboxSection';
 import { InboxFooter } from '../components/Inbox/InboxFooter';
 import { EmptyAllSections } from '../components/Inbox/EmptyAllSections';
@@ -213,6 +212,8 @@ export function InboxPage({ active = true }: { active?: boolean } = {}) {
         <div className="sr-only" role="status" aria-live="polite" data-testid="inbox-stale-status">
           {staleAnnounce}
         </div>
+        {/* #619 — "Updated <age>" pill is rendered INSIDE InboxToolbar, centered in the
+            filter row (owner-chosen Task 14 placement); it consumes no vertical space. */}
         <InboxToolbar
           sections={sections}
           initialSort={initialSort}
@@ -221,11 +222,8 @@ export function InboxPage({ active = true }: { active?: boolean } = {}) {
           refresh={refresh}
           isRefreshing={isRefreshing}
           justRefreshed={justRefreshed}
+          lastRefreshedAt={data.lastRefreshedAt}
         />
-        {/* #619 — "Updated <age>" pill. Reserve-space slot always in DOM (min-height) so
-            show/hide does not reflow the toolbar. Exact placement finalized at Task 14
-            visual sign-off; toolbar-inline is the default (candidate a, §9). */}
-        <StalePill lastRefreshedAt={data.lastRefreshedAt} />
         <div className={styles.grid} data-has-rail={showRail || undefined}>
           <div className={styles.sections}>
             {!filterActive && allEmpty && <EmptyAllSections />}

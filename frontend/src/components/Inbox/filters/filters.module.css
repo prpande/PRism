@@ -18,6 +18,24 @@
   flex: 1;
 }
 
+/* #619 — positioning context for the centered "Updated <age>" pill overlay. */
+.barRowFilters {
+  position: relative;
+}
+
+/* #619 — center the StalePill in the horizontal middle of the filter row (≈ screen
+   center, the toolbar is full-width) with zero layout footprint. pointer-events:none
+   so the empty center stays click-through; the pill itself is non-interactive. Sits
+   below the facet popovers (z-index 100). */
+.stalePillCenter {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 1;
+  pointer-events: none;
+}
+
 /* Search input — leads the filter row at full width (search-led bar). The merged
    InboxQueryInput renders the error pill below the input, so allow the row to grow
    vertically (the pill is a flex child that wraps to the next line). */

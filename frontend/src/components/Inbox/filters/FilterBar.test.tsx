@@ -48,6 +48,7 @@ it('CI trigger shows the failing count when unselected', () => {
           refresh={vi.fn()}
           isRefreshing={false}
           justRefreshed={false}
+          lastRefreshedAt={new Date().toISOString()}
         />
       </OpenTabsProvider>
     </MemoryRouter>,
@@ -67,6 +68,7 @@ it('sort control is an accessible combobox named "Sort" with no visible "Sort:" 
           refresh={vi.fn()}
           isRefreshing={false}
           justRefreshed={false}
+          lastRefreshedAt={new Date().toISOString()}
         />
       </OpenTabsProvider>
     </MemoryRouter>,
@@ -88,6 +90,7 @@ it('selecting a sort option updates the control via the themed Select', async ()
           refresh={vi.fn()}
           isRefreshing={false}
           justRefreshed={false}
+          lastRefreshedAt={new Date().toISOString()}
         />
       </OpenTabsProvider>
     </MemoryRouter>,
