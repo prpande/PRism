@@ -107,11 +107,12 @@ public static class InboxOrchestratorTestHarness
         IIdentityKeyedFileCache<InboxSnapshot>? cache = null,
         string login = "octocat",
         string host = "github.com",
-        Func<string>? loginProvider = null)
+        Func<string>? loginProvider = null,
+        IPrBatchReader? batchReader = null)
     {
         var sections = new FakeSectionQueryRunner();
         var events = new FakeReviewEventBus();
-        var orch = CreateOrchestrator(sections, events, cache, login, host, loginProvider);
+        var orch = CreateOrchestrator(sections, events, cache, login, host, loginProvider, batchReader);
         return (orch, sections, events);
     }
 
@@ -194,7 +195,7 @@ public static class InboxOrchestratorTestHarness
     /// </summary>
     public static async Task<InboxSnapshot> BuildEquivalentSnapshotAsync(FakeSectionQueryRunner sections)
     {
-        using var orch = CreateOrchestrator(sections, new FakeReviewEventBus(), null, "octocat", "github.com", null);
+        using var orch = CreateOrchestrator(sections, new FakeReviewEventBus(), null, "octocat", "github.com", null, null);
         await orch.RefreshAsync(CancellationToken.None).ConfigureAwait(false);
         return orch.Current!;
     }
@@ -222,7 +223,8 @@ public static class InboxOrchestratorTestHarness
         IIdentityKeyedFileCache<InboxSnapshot>? cache,
         string login,
         string host,
-        Func<string>? loginProvider)
+        Func<string>? loginProvider,
+        IPrBatchReader? batchReader)
     {
         Func<string> viewerLogin = loginProvider ?? (() => login);
         // Use ConfigWith so _config.Current.Github.Host matches the provided host parameter,
@@ -232,7 +234,7 @@ public static class InboxOrchestratorTestHarness
         return new InboxRefreshOrchestrator(
             ConfigWith(login, host),
             sections,
-            new IdentityBatchReader(),
+            batchReader ?? new IdentityBatchReader(),
             new NullCiDetector(),
             new InboxDeduplicator(),
             new NullAiSeamSelector(),
@@ -267,11 +269,43 @@ public static class InboxOrchestratorTestHarness
     {
         public Task<IReadOnlyDictionary<PrReference, BatchPrData>> ReadAsync(
             IReadOnlyList<RawPrInboxItem> items, string viewerLogin, CancellationToken ct)
-            => Task.FromResult<IReadOnlyDictionary<PrReference, BatchPrData>>(
-                items.ToDictionary(i => i.Reference, i => new BatchPrData(
-                    i.HeadSha, i.Additions, i.Deletions, i.CommitCount, i.ChangedFiles,
-                    i.PushedAt, i.MergedAt, i.ClosedAt,
-                    ViewerLastReviewSha: i.HeadSha + "-prev")));
+            => Task.FromResult(Echo(items));
+
+        // Shared hydration projection so GatingBatchReader returns byte-identical batch data.
+        internal static IReadOnlyDictionary<PrReference, BatchPrData> Echo(IReadOnlyList<RawPrInboxItem> items)
+            => items.ToDictionary(i => i.Reference, i => new BatchPrData(
+                i.HeadSha, i.Additions, i.Deletions, i.CommitCount, i.ChangedFiles,
+                i.PushedAt, i.MergedAt, i.ClosedAt,
+                ViewerLastReviewSha: i.HeadSha + "-prev"));
+    }
+
+    /// <summary>
+    /// A batch reader that blocks inside <see cref="ReadAsync"/> until the test releases it, so a
+    /// test can run code at the exact moment the orchestrator is between line-175 (epoch captured)
+    /// and the batch read returning. Completes <see cref="ReadStarted"/> on entry; awaits
+    /// <see cref="Release"/> before returning the same echo projection as <see cref="IdentityBatchReader"/>.
+    /// Test-side only — production batch readers never block like this.
+    /// </summary>
+    public sealed class GatingBatchReader : IPrBatchReader
+    {
+        private readonly TaskCompletionSource _readStarted =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource _release =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        /// <summary>Completes when the orchestrator has entered <see cref="ReadAsync"/> (epoch already captured).</summary>
+        public Task ReadStarted => _readStarted.Task;
+
+        /// <summary>Unblocks the in-flight <see cref="ReadAsync"/> so the refresh can complete.</summary>
+        public void Release() => _release.TrySetResult();
+
+        public async Task<IReadOnlyDictionary<PrReference, BatchPrData>> ReadAsync(
+            IReadOnlyList<RawPrInboxItem> items, string viewerLogin, CancellationToken ct)
+        {
+            _readStarted.TrySetResult();
+            await _release.Task.ConfigureAwait(false);
+            return IdentityBatchReader.Echo(items);
+        }
     }
 
     // Returns CiStatus.None for every item, Complete=true.

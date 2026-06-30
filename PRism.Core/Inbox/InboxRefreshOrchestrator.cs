@@ -603,10 +603,6 @@ public sealed partial class InboxRefreshOrchestrator : IInboxRefreshOrchestrator
                 next = _queuedWrite.Value;
                 _queuedWrite = null;
             }
-            // Test-only hook: called after dequeue but before epoch check. Consumed once via
-            // Interlocked.Exchange so it never fires on a drainer re-loop. Tests use this to
-            // advance the epoch synchronously at exactly the right moment (deterministic 13b).
-            Interlocked.Exchange(ref TestAfterDequeueHook, null)?.Invoke();
             // Round-2 ADV-1: drop a write captured under a since-invalidated epoch (a token rotation
             // ran between this write's line-175 capture and now). Checked outside the lock so the
             // invalidate's Interlocked.Increment and this Volatile.Read are naturally ordered on x86/x64.
@@ -637,11 +633,6 @@ public sealed partial class InboxRefreshOrchestrator : IInboxRefreshOrchestrator
 
     // Test seam: true when no write is in-flight or queued (both _draining false and _queuedWrite null).
     internal bool IsCacheWriterIdle { get { lock (_cacheWriteGate) { return !_draining && _queuedWrite is null; } } }
-    // Test seam (13b): one-shot hook called inside the drainer after dequeue, before epoch check.
-    // Set by tests that need to advance the epoch at exactly the right moment; null in production.
-    internal Action? TestAfterDequeueHook;
-    // Test seam (13b): synchronously advance the cache write epoch without awaiting the drain loop.
-    internal void TestBumpEpoch() => Interlocked.Increment(ref _cacheWriteEpoch);
 
     // ── Test accessors (internal; not part of the public contract) ───────────────
     internal Task WaitForBurstIdle(TimeSpan timeout)

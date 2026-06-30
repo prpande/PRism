@@ -50,20 +50,34 @@ public sealed class InboxCacheWriteTests
     public async Task Invalidate_drops_a_write_captured_under_the_prior_epoch()
     {
         var cache = new RecordingIdentityCache<InboxSnapshot>();
-        var (orch, sections, _) = InboxOrchestratorTestHarness.Build(cache: cache, login: "octocat", host: "github.com");
-
-        // Arm the one-shot hook: immediately after the drainer dequeues the epoch=0 write (but BEFORE
-        // it reaches the epoch check), advance the epoch to 1. The drainer then sees `0 != 1` and drops
-        // the write — the exact R2-ADV-1 resurrection guard. Using the hook rather than a race against
-        // Task.Run startup guarantees the epoch bumps at the deterministic moment inside the drainer.
-        orch.TestAfterDequeueHook = () => orch.TestBumpEpoch();
+        // A gating batch reader lets us drive the precise interleaving WITHOUT any production
+        // test hook: the orchestrator captures the write-epoch at line-175 (epoch 0) BEFORE calling
+        // _batchReader.ReadAsync, so blocking the read parks the refresh right after the capture.
+        var gate = new InboxOrchestratorTestHarness.GatingBatchReader();
+        var (orch, sections, _) = InboxOrchestratorTestHarness.Build(
+            cache: cache, login: "octocat", host: "github.com", batchReader: gate);
 
         sections.Seed("mine", prNumber: 1);
-        await orch.RefreshAsync(CancellationToken.None);
+
+        // Start the refresh but do NOT await — it blocks inside ReadAsync, after epoch 0 was captured.
+        var refresh = orch.RefreshAsync(CancellationToken.None);
+        await gate.ReadStarted; // the read is now parked; the in-flight refresh holds epoch 0
+
+        // Call the REAL invalidate (the auth token-rotation seam): bumps epoch 0→1, clears the
+        // (still-empty) queue, awaits the idle loop, returns. This is what makes the test guard the
+        // ACTUAL Interlocked.Increment in InvalidateCacheWritesAsync, not a synthetic bump.
+        await orch.InvalidateCacheWritesAsync();
+
+        // Release the read → refresh completes, trigger (a) schedules the write stamped with the
+        // captured epoch 0. The drainer then sees 0 != 1 (current epoch) and drops it.
+        gate.Release();
+        await refresh;
         await InboxOrchestratorTestHarness.WaitForCacheWriteIdleAsync(orch);
 
-        // Without the drainer's `if (next.Epoch != Volatile.Read(ref _cacheWriteEpoch)) continue;` line this
-        // would record a save — the exact R2-ADV-1 resurrection. The gate must leave Saves empty.
+        // Falsification surface (the whole point of this test): delete the drainer's
+        // `if (next.Epoch != Volatile.Read(ref _cacheWriteEpoch)) continue;` line → the write lands.
+        // Delete the `Interlocked.Increment(ref _cacheWriteEpoch)` in InvalidateCacheWritesAsync →
+        // epoch stays 0, drainer sees 0 == 0 → the write lands. Either way this assertion fails.
         cache.Saves.Should().BeEmpty();
     }
 }
