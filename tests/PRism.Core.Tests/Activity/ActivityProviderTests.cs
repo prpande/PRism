@@ -142,7 +142,7 @@ public sealed class ActivityProviderTests
     {
         var reader = new SingleEventReceivedEventsReader(Review("1"));
         var sut = new ActivityProvider(reader, new EmptyNotifReader(), new EmptyWatchReader(), Timeline(),
-            Clock(), Config(), NullLogger<ActivityProvider>.Instance);
+            Clock(), Config(), NullLogger<ActivityProvider>.Instance, NullFileCache<ActivityResponse>.Instance, StubViewerLoginProvider.For(""));
 
         var resp = await sut.GetActivityAsync(default);
 
@@ -154,7 +154,7 @@ public sealed class ActivityProviderTests
     public async Task Propagates_degradation_with_empty_items()
     {
         var sut = new ActivityProvider(new DegradedReceivedEventsReader(), new EmptyNotifReader(),
-            new EmptyWatchReader(), Timeline(), Clock(), Config(), NullLogger<ActivityProvider>.Instance);
+            new EmptyWatchReader(), Timeline(), Clock(), Config(), NullLogger<ActivityProvider>.Instance, NullFileCache<ActivityResponse>.Instance, StubViewerLoginProvider.For(""));
 
         var resp = await sut.GetActivityAsync(default);
 
@@ -169,7 +169,7 @@ public sealed class ActivityProviderTests
         var clock = Clock();
         var ev = new CountingReceivedEventsReader();
         var p = new ActivityProvider(ev, new EmptyNotifReader(), new EmptyWatchReader(), Timeline(),
-            clock, Config(), NullLogger<ActivityProvider>.Instance);
+            clock, Config(), NullLogger<ActivityProvider>.Instance, NullFileCache<ActivityResponse>.Instance, StubViewerLoginProvider.For(""));
 
         await p.GetActivityAsync(default);
         await p.GetActivityAsync(default);
@@ -186,7 +186,7 @@ public sealed class ActivityProviderTests
         var clock = Clock();
         var ev = new CountingReceivedEventsReader();
         var p = new ActivityProvider(ev, new EmptyNotifReader(), new EmptyWatchReader(), Timeline(),
-            clock, Config(), NullLogger<ActivityProvider>.Instance);
+            clock, Config(), NullLogger<ActivityProvider>.Instance, NullFileCache<ActivityResponse>.Instance, StubViewerLoginProvider.For(""));
 
         await p.GetActivityAsync(default);
         p.Reset();
@@ -201,7 +201,7 @@ public sealed class ActivityProviderTests
         var release = new TaskCompletionSource();                  // gates the reader mid-fetch
         var ev = new GatedReceivedEventsReader(release.Task);
         var p = new ActivityProvider(ev, new EmptyNotifReader(), new EmptyWatchReader(), Timeline(),
-            clock, Config(), NullLogger<ActivityProvider>.Instance);
+            clock, Config(), NullLogger<ActivityProvider>.Instance, NullFileCache<ActivityResponse>.Instance, StubViewerLoginProvider.For(""));
 
         var inflight = p.GetActivityAsync(default);                // starts fetch #1, blocks on release
         await ev.Entered.Task;                                     // ensure fetch #1 is inside ReadAsync
@@ -222,7 +222,7 @@ public sealed class ActivityProviderTests
         var release = new TaskCompletionSource();
         var ev = new GatedReceivedEventsReader(release.Task);
         var p = new ActivityProvider(ev, new EmptyNotifReader(), new EmptyWatchReader(), Timeline(),
-            clock, Config(), NullLogger<ActivityProvider>.Instance);
+            clock, Config(), NullLogger<ActivityProvider>.Instance, NullFileCache<ActivityResponse>.Instance, StubViewerLoginProvider.For(""));
 
         var a = p.GetActivityAsync(default);                       // A: enters reader, holds the gate
         await ev.Entered.Task;                                     // A is inside ReadAsync
@@ -243,7 +243,7 @@ public sealed class ActivityProviderTests
     public async Task Aggregates_degradation_from_three_sources()
     {
         var p = new ActivityProvider(new DegradedReceivedEventsReader(), new DegradedNotifReader(),
-            new DegradedWatchReader(), Timeline(), Clock(), Config(), NullLogger<ActivityProvider>.Instance);
+            new DegradedWatchReader(), Timeline(), Clock(), Config(), NullLogger<ActivityProvider>.Instance, NullFileCache<ActivityResponse>.Instance, StubViewerLoginProvider.For(""));
 
         (await p.GetActivityAsync(default)).Degraded
             .Should().Be(new ActivityDegradation(true, true, true));
@@ -256,7 +256,7 @@ public sealed class ActivityProviderTests
     {
         var reader = new SingleEventReceivedEventsReader(Review("1", actor: "acme-ci"));
         var p = new ActivityProvider(reader, new EmptyNotifReader(), new EmptyWatchReader(), Timeline(),
-            Clock(), Config(knownBots: "acme-ci"), NullLogger<ActivityProvider>.Instance);
+            Clock(), Config(knownBots: "acme-ci"), NullLogger<ActivityProvider>.Instance, NullFileCache<ActivityResponse>.Instance, StubViewerLoginProvider.For(""));
 
         var resp = await p.GetActivityAsync(default);
 
@@ -277,7 +277,7 @@ public sealed class ActivityProviderTests
             [("acme/api", 7)] = new TimelineActor("dave", "https://avatar/dave", IsBot: false, ActivityVerb.Approved),
         });
         var p = new ActivityProvider(new CountingReceivedEventsReader(), new SingleNotifReader(notif),
-            new EmptyWatchReader(), timeline, clock, Config(), NullLogger<ActivityProvider>.Instance);
+            new EmptyWatchReader(), timeline, clock, Config(), NullLogger<ActivityProvider>.Instance, NullFileCache<ActivityResponse>.Instance, StubViewerLoginProvider.For(""));
 
         var resp = await p.GetActivityAsync(default);
 
