@@ -8,6 +8,8 @@ import { useAiGate } from '../hooks/useAiGate';
 import { usePreferences } from '../hooks/usePreferences';
 import { useMediaQuery } from '../hooks/useMediaQuery';
 import { useActivity } from '../hooks/useActivity';
+import { useStreamHealth } from '../hooks/useStreamHealth';
+import { useGitHubReachability } from '../hooks/useGitHubReachability';
 import { INBOX_RAIL_MIN_WIDTH } from '../components/Inbox/inboxLayout';
 import { orderInboxSections } from '../components/Inbox/sectionOrder';
 import { InboxToolbar } from '../components/Inbox/InboxToolbar';
@@ -21,6 +23,7 @@ import { InboxSkeleton } from '../components/Inbox/InboxSkeleton';
 import { LoadingBar } from '../components/LoadingBar';
 import { ErrorModal } from '../components/ErrorModal';
 import { NoFilterMatches } from '../components/Inbox/filters/NoFilterMatches';
+import { GitHubUnreachableSnackbar } from '../components/GitHubUnreachableSnackbar';
 import type { FilterBarState } from '../components/Inbox/filters/FilterBar';
 import styles from './InboxPage.module.css';
 
@@ -31,6 +34,8 @@ import styles from './InboxPage.module.css';
 // so direct mounts (tests, any non-host caller) behave exactly as before.
 export function InboxPage({ active = true }: { active?: boolean } = {}) {
   const { data, error, isLoading, isFetching, reload } = useInbox();
+  const { healthy } = useStreamHealth();
+  const { failing } = useGitHubReachability(!!data?.stale);
   // #563 — under keep-alive the Inbox is no longer remounted on return from a PR,
   // so its mount-effect GET /api/inbox doesn't re-fire. Refetch when the host
   // re-shows this page (active false→true) so freshness that does NOT ride an
@@ -163,6 +168,15 @@ export function InboxPage({ active = true }: { active?: boolean } = {}) {
     <>
       {/* #485 first-run onboarding overlay — renders over the loaded inbox. */}
       {onboarding}
+      {/* #619 — non-blocking "Couldn't reach GitHub" snackbar (Option C FE staleness watchdog).
+          Suppressed when the more-fundamental StreamHealthSnackbar is visible (shared fixed slot).
+          Only mounted here (loaded branch, data present) so it never co-fires with the cold-load
+          ErrorModal which shows at `error && !data`. */}
+      <GitHubUnreachableSnackbar
+        failing={failing}
+        onRetry={() => void reload()}
+        suppressed={!healthy}
+      />
       {/* Background reload (data present, fetch in-flight): the bar is the non-intrusive
           "refreshing" signal. Driven by `isFetching` (any reload() attempt in progress)
           OR the manual-refresh flag, NOT by `data.stale` — so an offline launch with a
