@@ -45,6 +45,7 @@ const inboxSnapshot = vi.hoisted(() => ({
     lastRefreshedAt: '',
     tokenScopeFooterEnabled: false,
     ciProbeComplete: true,
+    stale: false,
   },
   isLoading: false,
   error: null,

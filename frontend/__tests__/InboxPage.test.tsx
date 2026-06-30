@@ -157,6 +157,7 @@ const sampleData: InboxResponse = {
   tokenScopeFooterEnabled: true,
   ciProbeComplete: true,
   aiEnrichmentSettled: [],
+  stale: false,
 };
 
 const emptyData: InboxResponse = {
@@ -307,6 +308,7 @@ describe('InboxPage', () => {
         tokenScopeFooterEnabled: false,
         ciProbeComplete: true,
         aiEnrichmentSettled: [],
+        stale: false,
       },
       // awaiting-author is in the saved order but absent from `sections` — exercises
       // orderInboxSections' "saved id matching no live section is harmlessly ignored".
@@ -347,6 +349,7 @@ describe('InboxPage — useAiGate migrations', () => {
         tokenScopeFooterEnabled: false,
         ciProbeComplete: true,
         aiEnrichmentSettled: [],
+        stale: false,
       } as InboxResponse,
       isLoading: false,
       error: null,

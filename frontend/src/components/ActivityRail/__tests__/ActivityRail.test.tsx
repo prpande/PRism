@@ -17,6 +17,7 @@ function resp(partial: Partial<ActivityResponse> = {}): ActivityResponse {
     generatedAt: new Date().toISOString(),
     degraded: { receivedEvents: false, notifications: false, watching: false },
     watching: [],
+    stale: false,
     ...partial,
   };
 }

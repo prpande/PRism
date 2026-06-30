@@ -53,6 +53,7 @@ const sampleInbox = {
   lastRefreshedAt: new Date().toISOString(),
   ciProbeComplete: true,
   tokenScopeFooterEnabled: false,
+  stale: false,
 };
 
 async function setupMocks(page: import('@playwright/test').Page) {

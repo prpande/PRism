@@ -70,6 +70,7 @@ async function setupInvalidCredentialMocks(page: import('@playwright/test').Page
         lastRefreshedAt: '2025-01-01T00:00:00.000Z',
         tokenScopeFooterEnabled: false,
         ciProbeComplete: true,
+        stale: false,
       }),
     }),
   );
