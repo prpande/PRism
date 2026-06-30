@@ -1,6 +1,6 @@
 .slot {
-  position: relative; /* round-2 DES-2 — contain the global sr-only abspos region so it can't escape and scroll the page */
-  min-height: 24px; /* reserve space so show/hide never reflows the toolbar */
+  /* Wrapper for the pill, centered as a zero-footprint overlay by .stalePillCenter
+     (filters.module.css). Holds the pill when stale, nothing when fresh. */
   display: flex;
   align-items: center;
 }

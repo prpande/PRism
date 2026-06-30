@@ -66,6 +66,7 @@ fs.writeFileSync(
       },
       enrichments: {},
       'last-refreshed-at': ISO,
+      'ai-enrichment-settled': [],
     }),
   ),
 );
