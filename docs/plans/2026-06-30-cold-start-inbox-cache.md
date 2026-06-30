@@ -1937,79 +1937,79 @@ git commit -m "feat(#619): Updated-age pill (>30 min, ~60s ticker, reserve-space
 
 ## Task 11: GitHub-unreachable snackbar (StreamHealthSnackbar pattern)
 
-**Files (Option B):**
-- Create: `PRism.Core/Inbox/InboxRefreshStatus.cs` (`record InboxRefreshStatus(bool Ok) : IReviewEvent`)
-- Modify: `PRism.Core/Inbox/InboxPoller.cs` (inject `IReviewEventBus`; publish status per tick, NOT on rate-limit)
-- Modify: `PRism.Core/ServiceCollectionExtensions.cs` (the `InboxPoller` factory at ~125–135 — pass the new `IReviewEventBus` arg)
-- Modify: `PRism.Web/Sse/SseChannel.cs` (forward `InboxRefreshStatus` → `inbox-refresh-status`: Subscribe + handler + Dispose unsubscribe)
-- Modify: `frontend/src/api/events.ts` (register `inbox-refresh-status` in BOTH `EventPayloadByType` and `EVENT_TYPES`)
-- Create: `frontend/src/hooks/useInboxRefreshHealth.ts` (subscribe to the SSE event → debounced `failing`)
+**Files (Option C — chosen at the B1 gate; backend Option B deferred to follow-up #684):**
+- Create: `frontend/src/hooks/useGitHubReachability.ts` (FE-only staleness watchdog → `failing`)
+- Create: `frontend/src/hooks/useGitHubReachability.test.tsx`
 - Create: `frontend/src/components/GitHubUnreachableSnackbar/GitHubUnreachableSnackbar.tsx`
 - Create: `frontend/src/components/GitHubUnreachableSnackbar/__tests__/GitHubUnreachableSnackbar.test.tsx`
 - Modify: `frontend/src/pages/InboxPage.tsx` (mount it; suppress under `StreamHealthSnackbar`; mutual-exclusion with cold-load `ErrorModal`)
 
-> ### ⚠️ ROUND-1 BLOCKER — gate decision required before executing this task
->
-> **Three reviewers (product, feasibility, design) independently found that the originally-planned failure
-> source cannot observe GitHub-unreachability**, the snackbar's headline scenario. Verified against code:
-> `useInboxUpdates` is purely **SSE-event-driven** (`stream.on('inbox-updated', …)`), not a poller — and a
-> GitHub-unreachable `RefreshAsync` **throws before** publishing `inbox-updated`, so no event fires and the
-> hook's `catch` never runs. Separately, `GET /api/inbox` returns **HTTP 200 + the cached snapshot** when
-> GitHub is down (it serves `orch.Current`), so `useInbox.reload()` doesn't throw either. The only thing that
-> throws is a **backend**-down state — which is `StreamHealthSnackbar`'s domain, under which this snackbar is
-> explicitly *suppressed*. Net: as originally written, the snackbar **can never fire** for the offline-cold-launch
-> case (test 19b) or the degraded-live-session case (§9 13r-PROD1) it exists to cover.
->
-> The spec §12 decision 9 explicitly makes the snackbar **independently descope-able**. So this is a genuine
-> owner decision — resolved at the B1 gate (see the gate question). The three options:
-> - **(A) Descope the snackbar to a follow-up issue (de-risk).** Ship the core cache + refreshing bar + pill now;
->   the snackbar + its detection mechanism land as a tracked follow-up. Offline users still see cached data
->   (+ pill if aged); manual-refresh failures still toast. Spec-sanctioned, smallest PR.
-> - **(B) Add a backend refresh-status SSE signal (full coverage — specified below).** `InboxPoller` publishes a
->   refresh-outcome event the FE consumes to drive `failing` (debounced). Covers **both** offline-cold-launch
->   and mid-session degrade. **Round-2 raised B's real cost** beyond the round-1 scoping: a whole-contract backend
->   surface (new `IReviewEvent`; `SseChannel` 3-site forwarding; `InboxPoller` DI-factory change; `events.ts`
->   double-map registration — FEAS-1/2/3) **plus** signal-semantics leaks (a 429 must be excluded or it false-fires;
->   the binary `Ok` can't see partial degradation and a flap must cancel the armed timer — ADV-2/3). Scope-guardian
->   judged this surface **disproportionate** to a non-blocking pill on a local single-owner tool (SCOPE-1).
-> - **(C) FE-only staleness watchdog (partial).** A FE timer sets `failing` when `data.stale` persists past a
->   window. Covers offline-cold-launch only (mid-session degrade has `stale:false`, so it's NOT covered). Cheapest;
->   **none of B's FEAS-1/2/3 surface and none of B's ADV-2/3 signal leaks apply** (no backend contract, no binary
->   Ok). Doesn't meet the spec's mid-session intent — but round-2 product (PROD-1) notes mid-session isn't truly
->   "blind" without it: the StalePill is a slower fallback cue, and a sustained mid-session GitHub outage on a
->   local tool is rare.
->
-> **Round-2 recommendation: C (or A), not B.** The accumulated integration cost (FEAS-1/2/3), signal leakiness
-> (ADV-2/3), and disproportion (SCOPE-1) make B the most expensive option for the least-blocking surface in the
-> feature. C delivers the owner's headline ask — a non-blocking "data isn't refreshing" cue on an offline cold
-> launch, in the same visual family as the backend-connection snackbar — at a fraction of B's surface; A ships
-> the rest now and tracks the cue as a follow-up. **The steps below remain written for Option (B)** (corrected per
-> round-2 so B is executable if the owner still wants mid-session coverage). If the gate picks (A), delete this
-> task and file the follow-up; if (C), replace Step 1/1b's backend signal with the FE watchdog timer
-> (`failing := data.stale persisted > window`), keeping Steps 2–6 (the snackbar component + mount) unchanged.
+> **No backend changes in Option C.** The `InboxRefreshStatus` event, `SseChannel` forwarding, `InboxPoller` DI change, and `events.ts` registration are **NOT** part of this task — they belong to the deferred Option-B mechanism (follow-up #684). The Option-B steps are preserved at the bottom of this task under "Deferred: Option B" for the follow-up's reference.
 
-**Interfaces:**
-- Consumes: the generic `<Snackbar tone="warning" .../>`, `useStreamHealth().healthy`, and a new `inbox-refresh-status` SSE event (Option B).
-- Produces: `<GitHubUnreachableSnackbar failing={boolean} onRetry={() => void} suppressed={boolean} />`; a new backend `InboxRefreshStatus(bool Ok)` domain event + SSE forwarding.
+> ### Gate resolved (B1): Option C now, Option B deferred to follow-up #684
+>
+> **Why a gate was needed.** Three reviewers (product, feasibility, design) found the originally-planned failure
+> source cannot observe GitHub-unreachability. Verified against code: `useInboxUpdates` is purely **SSE-event-driven**
+> (`stream.on('inbox-updated', …)`), and a GitHub-unreachable `RefreshAsync` **throws before** publishing
+> `inbox-updated`, so no event fires; `GET /api/inbox` returns **HTTP 200 + the cached snapshot** (it serves
+> `orch.Current`), so `useInbox.reload()` doesn't throw either. The only thing that throws is a **backend**-down
+> state — `StreamHealthSnackbar`'s domain, under which this snackbar is suppressed. So GitHub-unreachability has no
+> clean FE-observable seam without new plumbing.
+>
+> **Owner's decision (B1 gate): Option C now; open a follow-up for Option B as the eventual mechanism.**
+> - **Option C (this task) — FE-only staleness watchdog.** `failing := data.stale has persisted past a window`.
+>   Covers the **offline-cold-launch** case (a rehydrated `stale:true` snapshot whose revalidation can't succeed
+>   stays stale → after the window the snackbar shows; connectivity returning publishes `inbox-updated` → reload →
+>   `stale:false` → snackbar clears). **No backend changes, no SSE contract, none of Option B's signal leaks.**
+>   Does **not** cover a **mid-session** GitHub outage (already-revalidated data is `stale:false`, so the watchdog
+>   never arms) — that gap is the follow-up's job; the "Updated <age>" pill is the slower fallback cue meanwhile.
+> - **Option B (deferred → #684) — backend `inbox-refresh-status` SSE signal.** Adds mid-session
+>   coverage. The corrected, executable Option-B steps are preserved under **"Deferred: Option B"** at the end of
+>   this task for the follow-up to pick up — including the round-2 fixes (`IReviewEvent`; `SseChannel` 3-site
+>   forwarding; `InboxPoller` DI factory; `events.ts` both-map registration; no `ok:false` on 429; flap cancels the
+>   armed timer; the binary-`Ok` partial-degradation limitation).
+
+**Interfaces (Option C):**
+- Consumes: the generic `<Snackbar tone="warning" .../>`, `useStreamHealth().healthy`, and `data.stale` (Task 8).
+- Produces: `useGitHubReachability(stale: boolean): { failing: boolean }`; `<GitHubUnreachableSnackbar failing={boolean} onRetry={() => void} suppressed={boolean} />`.
 
 > Mirrors `StreamHealthSnackbar` precisely (spec §9): steady-state (renders on the steady failing state, not only on the edge), ~30s debounce before showing (sustained failure), pinned through the episode until a fetch succeeds, dismiss-on-edge (once per episode), suppressed when `StreamHealthSnackbar` is visible (shared `position:fixed` slot), and mutually exclusive with the cold-load `ErrorModal` (`error && data` vs `error && !data`). Background-poll failure → this snackbar; manual-refresh failure keeps the existing `useInboxRefresh` toast (one path per failure).
 
-- [ ] **Step 1: Backend — publish a refresh-status SSE event the FE can observe (Option B)**
+- [ ] **Step 1: Frontend — staleness watchdog hook (Option C)**
 
-The FE has no way to observe a backend→GitHub refresh failure today (see the blocker callout). Add a backend signal. **Four exact seams (round-2 FEAS-2/3, ADV-2) — get these right or the event silently never reaches the FE:**
+Create `frontend/src/hooks/useGitHubReachability.ts`. It takes the current `data.stale` and exposes `failing: boolean`: when `stale` becomes true, arm a `STALE_FAILING_AFTER_MS` (~30s) timer; if `stale` is **still** true when it fires, set `failing=true`. When `stale` becomes false, clear `failing` **and cancel any armed timer** (so a brief stale→fresh revalidation never trips the snackbar). No backend signal, no SSE subscription — `data.stale` is the only input.
 
-1. **New domain event — MUST implement `IReviewEvent`.** `public sealed record InboxRefreshStatus(bool Ok) : IReviewEvent;` in `PRism.Core/Inbox/` (beside `InboxUpdated`, which also implements `IReviewEvent`). `IReviewEventBus.Publish<TEvent>` is constrained `where TEvent : IReviewEvent`; without the interface it will not compile (round-2 FEAS-2).
-2. **Publish from `InboxPoller` — and fix its DI registration.** Inject `IReviewEventBus` into `InboxPoller` (a new ctor param). **This breaks the dual `AddSingleton`/`AddHostedService` factory at `ServiceCollectionExtensions.cs:~125–135`, which `new InboxPoller(...)`s with the current 4 args** — update that factory to resolve and pass `IReviewEventBus` too, or the host fails to build (round-2 FEAS-3). In `ExecuteAsync`, publish each tick's outcome: after a successful `RefreshAsync`, `_events.Publish(new InboxRefreshStatus(true))`. In the generic `catch (Exception ex)` branch (line 69–72), after the existing log, `_events.Publish(new InboxRefreshStatus(false))`. **Do NOT publish `false` from the `catch (RateLimitExceededException)` branch (line 63–67)** — a 429 is a deliberate, expected backoff, not GitHub-unreachability; publishing `false` there would raise a spurious "Couldn't reach GitHub" snackbar during normal rate-limit pacing (round-2 ADV-2). Leave the rate-limit branch as-is (it already honors `Retry-After`); optionally publish `InboxRefreshStatus(true)` there is **wrong** too (it isn't a success) — publish nothing, so the FE state is simply held. Decoupling from the diff-gated `InboxUpdated` means a recovered-but-unchanged refresh still reports `Ok=true`.
-3. **Forward over SSE in `SseChannel.cs` (NOT an "endpoint").** `SseChannel` is where `InboxUpdated` → `inbox-updated` forwarding lives, across **three** sites that must all be touched (round-2 FEAS-2): (a) the ctor `Subscribe<InboxRefreshStatus>(OnInboxRefreshStatus)` next to the existing `Subscribe<InboxUpdated>` (~line 80); (b) a new `OnInboxRefreshStatus` handler that enqueues an `inbox-refresh-status` frame carrying `{ ok }` (mirror `OnInboxUpdated`, ~line 296–306); (c) the matching unsubscribe in `Dispose` (~line 425). Miss the Dispose site and you leak a subscription per SSE connection.
-4. **Register the FE event in `events.ts` — BOTH maps (round-2 FEAS-1/DES-1).** `inbox-refresh-status` must be added to **both** the `EventPayloadByType` map (typing the `{ ok: boolean }` payload, ~line 62–78) **and** the `EVENT_TYPES` array that the `addEventListener` loop iterates (~line 83–99). The array drives which SSE event names are actually subscribed; an entry in the payload map alone is silently never listened for. This is a frontend change but it's the other half of the backend signal — do it in this step so the contract is whole.
+```ts
+import { useEffect, useRef, useState } from 'react';
 
-Write backend tests first: `InboxPoller` publishes `InboxRefreshStatus(false)` on a throwing `RefreshAsync`, `InboxRefreshStatus(true)` on a successful one, and **publishes neither `true` nor `false` on a `RateLimitExceededException`** (fake orchestrator + recording bus, round-2 ADV-2); `SseChannel` emits an `inbox-refresh-status` frame on the event.
+export const STALE_FAILING_AFTER_MS = 30_000; // #619 — how long stale must persist before we call it "unreachable"
 
-- [ ] **Step 1b: Frontend — derive a debounced `failing` flag from the SSE signal**
+/**
+ * #619 (Option C) — FE-only GitHub-reachability heuristic. A rehydrated snapshot is `stale:true` until a
+ * revalidation succeeds; if GitHub is unreachable the revalidation can't succeed, so `stale` stays true.
+ * If it persists past STALE_FAILING_AFTER_MS we surface the snackbar. Clears the instant `stale` goes
+ * false (a successful revalidation). Does NOT cover mid-session outages (already-fresh data is stale:false)
+ * — that's deferred to the backend signal in #684.
+ */
+export function useGitHubReachability(stale: boolean): { failing: boolean } {
+  const [failing, setFailing] = useState(false);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    if (stale) {
+      if (timer.current === null && !failing) {
+        timer.current = setTimeout(() => { setFailing(true); timer.current = null; }, STALE_FAILING_AFTER_MS);
+      }
+    } else {
+      if (timer.current !== null) { clearTimeout(timer.current); timer.current = null; }
+      setFailing(false);
+    }
+    return () => { if (timer.current !== null) { clearTimeout(timer.current); timer.current = null; } };
+  }, [stale, failing]);
+  return { failing };
+}
+```
 
-Add a hook (e.g. `useInboxRefreshHealth`) that subscribes to the `inbox-refresh-status` SSE event via `useEventSource` (registered in `events.ts` per Step 1.4) and exposes `failing: boolean`: arm a ~30s timer (mirroring `UNHEALTHY_AFTER_MS`) on the first `ok:false`; set `failing=true` if it stays failing past the window (debounces a single blip). On **any** `ok:true`, clear `failing` **and cancel the armed arm-timer** — a flap (`false → true` before the window elapses) must disarm the pending timer, else it fires later and spuriously sets `failing` even though the latest signal was a success (round-2 ADV-3). Keep current data (no clear). Write focused tests: one `ok:false` does NOT set `failing` (debounce); sustained `ok:false` DOES; a subsequent `ok:true` clears it; and a `false → true` flap **within** the window leaves `failing` false (the armed timer was cancelled).
-
-> **Documented Option-B limitation (round-2 ADV-3) — surfaced at the gate.** `Ok` is binary. A *partial* GitHub degradation where `RefreshAsync` returns a degraded-but-non-throwing result reports `Ok=true`, so this signal does NOT cover partial outages — only a refresh that actually throws drives `Ok=false`. Whether a total outage reliably throws (vs. returning an empty/degraded snapshot) depends on `QueryAllAsync`'s failure mode, which the implementer must confirm at execution; if it swallows total-outage errors into a degraded result, Option B under-fires and Option C's staleness watchdog would be the more reliable detector. This leakiness is part of the A/B/C gate tradeoff.
+Write `frontend/src/hooks/useGitHubReachability.test.tsx` with vitest fake timers: `stale:false` → never failing; `stale:true` but < 30s → not failing; `stale:true` past 30s → failing; `stale:true`-then-`false` **before** 30s → stays false (timer cancelled); `failing` clears when `stale` goes false after having fired.
 
 - [ ] **Step 2: Write the failing snackbar tests**
 
@@ -2048,7 +2048,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Snackbar } from '../Snackbar';
 
 interface Props {
-  failing: boolean;   // sustained background-fetch failure (debounced upstream in useInboxUpdates)
+  failing: boolean;   // GitHub looks unreachable (Option C: stale persisted past the watchdog window)
   onRetry: () => void;
   suppressed: boolean; // true when StreamHealthSnackbar (FE↔backend down) is visible
 }
@@ -2084,7 +2084,7 @@ export function GitHubUnreachableSnackbar({ failing, onRetry, suppressed }: Prop
 
 - [ ] **Step 4: Mount it in `InboxPage` with suppression + mutual-exclusion**
 
-In `frontend/src/pages/InboxPage.tsx`: read `const { healthy } = useStreamHealth();` and `const { failing } = useInboxRefreshHealth();` (the new Option-B hook). Mount the snackbar in the loaded branch (where `data` is present — so it never co-fires with the cold-load `ErrorModal` at `error && !data`):
+In `frontend/src/pages/InboxPage.tsx`: read `const { healthy } = useStreamHealth();` and `const { failing } = useGitHubReachability(!!data?.stale);` (the Option-C watchdog). Mount the snackbar in the loaded branch (where `data` is present — so it never co-fires with the cold-load `ErrorModal` at `error && !data`):
 
 ```tsx
       <GitHubUnreachableSnackbar
@@ -2096,8 +2096,7 @@ In `frontend/src/pages/InboxPage.tsx`: read `const { healthy } = useStreamHealth
 
 - [ ] **Step 5: Run the tests + full suite**
 
-Run the backend tests (Option B): `dotnet.exe test tests/PRism.Web.Tests/PRism.Web.Tests.csproj --filter "FullyQualifiedName~InboxRefreshStatus"` and the poller test in `PRism.Core.Tests`.
-Run (from `frontend/`): `npm run test -- GitHubUnreachableSnackbar useInboxRefreshHealth InboxPage`
+Run (from `frontend/`): `npm run test -- GitHubUnreachableSnackbar useGitHubReachability InboxPage`
 Expected: PASS.
 Run the full suite: `npm run test`
 Expected: green.
@@ -2105,11 +2104,14 @@ Expected: green.
 - [ ] **Step 6: Commit**
 
 ```bash
-# SSE forwarding lives in PRism.Web/Sse/SseChannel.cs (3 sites); FE event registration in frontend/src/api/events.ts
-# (both maps); InboxPoller DI fix in PRism.Core/ServiceCollectionExtensions.cs (round-2 FEAS-1/2/3).
-git add PRism.Core/Inbox/InboxRefreshStatus.cs PRism.Core/Inbox/InboxPoller.cs PRism.Core/ServiceCollectionExtensions.cs PRism.Web/Sse/SseChannel.cs frontend/src/api/events.ts frontend/src/hooks/useInboxRefreshHealth.ts frontend/src/components/GitHubUnreachableSnackbar/ frontend/src/pages/InboxPage.tsx tests/
-git commit -m "feat(#619): GitHub-unreachable snackbar via inbox-refresh-status SSE signal (debounced, pinned, suppressed under StreamHealthSnackbar)"
+# Option C — frontend-only (no backend changes).
+git add frontend/src/hooks/useGitHubReachability.ts frontend/src/hooks/useGitHubReachability.test.tsx frontend/src/components/GitHubUnreachableSnackbar/ frontend/src/pages/InboxPage.tsx
+git commit -m "feat(#619): GitHub-unreachable snackbar (Option C — FE staleness watchdog, suppressed under StreamHealthSnackbar)"
 ```
+
+### Deferred: Option B (mid-session coverage) → [#684](https://github.com/prpande/PRism/issues/684)
+
+The backend `inbox-refresh-status` SSE signal that adds **mid-session** GitHub-outage coverage is deferred to **#684**. Its full corrected mechanism — the four seams (`InboxRefreshStatus : IReviewEvent`; `InboxPoller` publish + DI-factory fix with **no** publish on a 429; `SseChannel.cs` 3-site forwarding; `events.ts` both-map registration), the debounced FE hook with flap-cancel, and the binary-`Ok` partial-degradation limitation — is captured in that issue. When picked up, Option B's debounced `failing` **replaces** Option C's `useGitHubReachability`; the `GitHubUnreachableSnackbar` component and its mount/suppression here are reused unchanged.
 
 ---
 
@@ -2376,7 +2378,7 @@ Round 2 pressure-tested the round-1 revisions. Adjudicated with `receiving-code-
 | R2-DES-2 | design | StalePill's module `.sr` class (no `top:0;left:0`, `.slot` no `position:relative`) reproduces the #197 abspos-page-scroll bug — a regression introduced by the round-1 DES-2 fix. | P1/75 | **Applied** (safe_auto) — use the global `sr-only` utility + `position:relative` on `.slot` (matches Task 9). |
 | R2-COH-1 | coherence | Task 6 Step 8 stages `ServiceCollectionExtensions.cs` though Step 5 says it's registered in Task 4. | P1/100 | **Applied** (safe_auto) — removed from the Task 6 `git add`. |
 | R2-COH-2/3 | coherence | Harness helpers (`Build`/`ConfigWith`/`SnapshotWith`/`BuildEquivalentSnapshotAsync`/`WaitForCacheWriteIdleAsync`/`RaiseEnrichmentReady`) undefined + `Build()` signature inconsistent across tasks. | P2/75 | **Applied** — added a canonical "Test harness contract" section (one `Build` signature, all helper signatures); Tasks 2/3 reference it. |
-| R2-SCOPE-1 | scope | Option B's backend-contract surface is disproportionate to a non-blocking pill on a local single-owner tool. | (gate) | **Gate** — folded into the sharpened A/B/C recommendation (C or A over B). |
+| R2-SCOPE-1 | scope | Option B's backend-contract surface is disproportionate to a non-blocking pill on a local single-owner tool. | (gate) | **Resolved** — owner chose Option C; Option B deferred to #684. |
 | R2-PROD-1/2 | product | Mid-session degrade isn't truly "blind" without B (StalePill is a slower fallback); B's `failing` could cheaply close the PROD-2 fresh-window cue via a `stale && !failing` bar predicate; PROD-2 stays coupled to the A/B/C choice. | (gate) | **Gate** — reflected in the Task 11 recommendation + PROD-2 stays an accepted-residual deferred to the Task 14 mockup. |
 | R2-residual | feasibility | `_lastCaptureIdentity` defaults to `(null,null)`; trigger (b) could (unreachably) schedule a write with an empty login. | (residual) | **Applied** — cheap guard: trigger (b) skips when `_lastCaptureIdentity.Login` is empty. |
 | R2-residual | adversarial/scope | Earlier note over-claimed the activity self-heal rode on `/replace`'s `RequestImmediateRefresh()` (it's inbox-only + `identityChanged`-gated). | (residual) | **Applied** — corrected to "next `/api/activity` fetch (rail poll ≤90s)". |
@@ -2384,8 +2386,8 @@ Round 2 pressure-tested the round-1 revisions. Adjudicated with `receiving-code-
 
 **Security round-2 cleared (no finding):** host/login normalization (OrdinalIgnoreCase both, trailing-slash asymmetry internally consistent), envelope tamper/partial-write/corruption (atomic write + fail-closed `TryLoad`), eviction completeness (all 3 sites, both caches, awaited), on-disk plaintext exposure (no net gain over the already-persisted PAT on a local tool), startup rehydrate ordering (config identity can't be network-spoofed; empty/mismatch fail closed). `EvictAsync` DEBUG-level failure log confirmed intentional (identity gate is the backstop).
 
-**Gate decisions surfaced for the B1 human review (round-2-informed):**
-1. **Snackbar scope (FEAS-1/PROD-1/DES-3 + R2-FEAS-1/2/3, R2-ADV-2/3, R2-SCOPE-1):** Option A (descope to follow-up) / B (backend `inbox-refresh-status` SSE — corrected, executable, but now-known higher cost) / C (FE-only staleness watchdog). **Round-2 recommendation: C or A, not B** — B's backend-contract surface + signal-semantics leaks are disproportionate to a non-blocking pill on a local single-owner tool. See the Task 11 callout.
-2. **Rehydrator ordering (ADV-1):** accept the deviation from spec §4 (rehydrator runs first) — recommended; update the spec §4 ordering note to match.
+**Gate decisions — RESOLVED at the B1 human review (2026-06-30):**
+1. **Snackbar scope (FEAS-1/PROD-1/DES-3 + R2-FEAS-1/2/3, R2-ADV-2/3, R2-SCOPE-1):** ✅ **Owner chose Option C** (FE-only staleness watchdog) for this PR; **Option B** (backend `inbox-refresh-status` SSE, mid-session coverage) **deferred to follow-up [#684](https://github.com/prpande/PRism/issues/684)**. Task 11 rewritten to Option C; the corrected Option-B mechanism preserved in #684 and in the "Deferred: Option B" note.
+2. **Rehydrator ordering (ADV-1):** ✅ **Accepted** — rehydrator runs first (deviation from spec §4); update the spec §4 ordering note to match in the PR.
 3. **Inbox writer-race (R2-ADV-1):** the epoch gate fully closes the inbox resurrection; no residual to accept there.
-4. **Activity writer-race residual (ADV-3 + R2-SEC-1):** the cross-identity half is now **closed** (capture-before-fan-out); accept only the narrow **same-login** restart-window residual (self-heals on the next activity fetch), consistent with spec §4 "residual reduced, not zero".
+4. **Activity writer-race residual (ADV-3 + R2-SEC-1):** ✅ **Accepted** — the cross-identity half is now **closed** (capture-before-fan-out); only the narrow **same-login** restart-window residual remains (self-heals on the next activity fetch), consistent with spec §4 "residual reduced, not zero".
