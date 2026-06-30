@@ -146,24 +146,6 @@ public sealed partial class InboxRefreshOrchestrator : IInboxRefreshOrchestrator
         finally { _writerLock.Release(); }
     }
 
-    /// <summary>
-    /// Test-only: arms the rehydrated-stale state unconditionally, bypassing the _current-is-null
-    /// guard in <see cref="TryRehydrate"/>. Allows E2E tests to force the stale-inbox experience
-    /// even after the server has already committed a live snapshot. Never call from production code.
-    /// </summary>
-    internal void ForceRehydrateForTest(InboxSnapshot snapshot)
-    {
-        ArgumentNullException.ThrowIfNull(snapshot);
-        _writerLock.Wait();
-        try
-        {
-            Volatile.Write(ref _current, snapshot);
-            _rehydratedAwaitingRevalidate = true;
-            if (!_firstSnapshotTcs.Task.IsCompleted) _firstSnapshotTcs.TrySetResult();
-        }
-        finally { _writerLock.Release(); }
-    }
-
     /// <inheritdoc/>
     public void TryColdStartRefresh()
     {

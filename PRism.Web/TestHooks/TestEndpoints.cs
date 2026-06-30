@@ -1,6 +1,5 @@
 using Microsoft.AspNetCore.Mvc;
 
-using PRism.AI.Contracts.Dtos;
 using PRism.Core;
 using PRism.Core.Auth;
 using PRism.Core.Contracts;
@@ -567,53 +566,6 @@ internal static class TestEndpoints
                 fake.RegisterFileForceFailure(body.Path, body.Sha, body.ProblemType);
                 return Results.NoContent();
             });
-
-        // #619 E2e test hook: arms the rehydrated-stale state unconditionally via
-        // InboxRefreshOrchestrator.ForceRehydrateForTest so an E2E spec can exercise the
-        // cold-start cache path even though the server has been running (and has already
-        // committed a live snapshot) since boot. Mirrors what InboxCacheRehydrator.StartAsync
-        // does via TryRehydrate — but bypasses the _current-is-null guard so it works mid-run.
-        //
-        // The spec should call /test/seed-inbox (or otherwise trigger a RefreshAsync) AFTER
-        // navigating to / to drive the stale→live transition that clears the stale flag.
-        app.MapPost("/test/cold-start-rehydrate", (IServiceProvider sp) =>
-        {
-            // Resolve the concrete type — same pattern as InboxCacheRehydrator, which also
-            // takes InboxRefreshOrchestrator rather than the interface because ForceRehydrateForTest
-            // is internal to the concrete class (not on IInboxRefreshOrchestrator).
-            var orch = sp.GetRequiredService<InboxRefreshOrchestrator>();
-
-            // Minimal 1-section, 1-PR snapshot. Uses the canonical scenario PR reference
-            // (acme/api#123) so /test/seed-inbox's subsequent RefreshAsync (also using the
-            // same FakeSectionQueryRunner) produces a recognisable diff for the force-notify path.
-            var pr = new PrInboxItem(
-                Reference: FakeReviewBackingStore.Scenario,
-                Title: "Cold start cached PR",
-                Author: "e2e-user",
-                Repo: FakeReviewBackingStore.Scenario.Repo,
-                UpdatedAt: DateTimeOffset.UtcNow.AddMinutes(-10),
-                PushedAt: DateTimeOffset.UtcNow.AddMinutes(-10),
-                CommitCount: 1,
-                ChangedFiles: 1,
-                CommentCount: 0,
-                Additions: 10,
-                Deletions: 2,
-                HeadSha: "cache0000000000000000000000000000000000",
-                Ci: CiStatus.None,
-                LastViewedHeadSha: null,
-                LastSeenCommentId: null);
-            var sections = new Dictionary<string, IReadOnlyList<PrInboxItem>>
-            {
-                ["review-requested"] = new[] { pr },
-            };
-            var snapshot = new InboxSnapshot(
-                sections,
-                new Dictionary<string, InboxItemEnrichment>(),
-                DateTimeOffset.UtcNow.AddMinutes(-10));
-
-            orch.ForceRehydrateForTest(snapshot);
-            return Results.Ok(new { ok = true });
-        });
 
         return app;
     }
