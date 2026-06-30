@@ -20,6 +20,19 @@ namespace PRism.GitHub;
 // `partial` is required at the class level because of the nested source-gen `partial class Log`.
 internal static partial class GitHubGraphQL
 {
+    // Shared aliased-batch cap for the two sibling merge-readiness readers (GitHubPrBatchReader,
+    // GitHubActivePrBatchReader). Both request the same compute-forcing merge-readiness fields
+    // (mergeable / mergeStateStatus force per-PR server-side merge-state computation; plus
+    // reviewDecision / latestReviews / reviewRequests), so both must cap their alias batches the same.
+    // Lowered from 100 (#593): the FULL (open-PR) query was measured ≈7.2s at 50 aliases, ≈9.1s at 75,
+    // timeout (→502) near 100 — 50 keeps each chunk comfortably under GitHub's ~11s GraphQL execution
+    // limit. Holding it here (not a per-reader const) stops the cap from drifting between the two readers
+    // again: the active reader was left at 100 when only the inbox reader was lowered (#593) — the drift
+    // this single source of truth resolves, tracked as #667. The inbox
+    // reader's light (closed-PR) query omits the readiness fields and isn't really bounded by this cap,
+    // but reusing one constant for both its chunks is harmless (it stays well under 50 in practice).
+    internal const int MergeReadinessAliasCap = 50;
+
     // Raw GraphQL POST: resolves the host's GraphQL endpoint, sends apiVersion:false,
     // logs transport failures (EventId 5), throws HttpRequestException on non-2xx.
     // Returns the raw JSON body. MUST send via GitHubHttp.SendAsync so the same-host

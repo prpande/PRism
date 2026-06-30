@@ -18,12 +18,8 @@ namespace PRism.GitHub.Inbox;
 /// </summary>
 public sealed partial class GitHubPrBatchReader : IPrBatchReader
 {
-    // GitHub aliased-batch cap. Lowered from 100 (#593): the merge-readiness fields
-    // (mergeable / mergeStateStatus force per-PR server-side merge-state computation) make the FULL
-    // (open-PR) query expensive — measured ≈7.2s at 50 aliases, ≈9.1s at 75, timeout (→502) near 100.
-    // 50 keeps each full chunk comfortably under GitHub's ~11s GraphQL execution limit. The light
-    // (closed-PR) query omits those fields entirely, so this cap only really bounds the open query.
-    private const int MaxBatch = 50;
+    // Shared with GitHubActivePrBatchReader — rationale at GitHubGraphQL.MergeReadinessAliasCap (#667).
+    private const int MaxBatch = GitHubGraphQL.MergeReadinessAliasCap;
     private const int MaxReviewNodes = 100;  // reviews(last:100) page size — a full page signals possible truncation
     private readonly IHttpClientFactory _httpFactory;
     private readonly Func<Task<string?>> _readToken;
