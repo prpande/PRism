@@ -7,14 +7,14 @@ using PRism.Core.Contracts;
 using PRism.Core.Events;
 using PRism.Core.Inbox;
 using PRism.Core.State;
+using PRism.Core.Storage;
 using PRism.Core.Tests.Submit.Pipeline.Fakes;
 
 namespace PRism.Core.Tests.Inbox;
 
 /// <summary>
 /// Single canonical source of truth for InboxRefreshOrchestrator test construction.
-/// Used by InboxRehydrateTests (Task 2) and extended by Tasks 3–4 (cache param, wait
-/// helpers). In Task 2 this is PROVISIONAL: the ctor has no cache param yet.
+/// Used by InboxRehydrateTests (Task 2) and InboxCacheWriteTests (Task 3).
 /// </summary>
 public static class InboxOrchestratorTestHarness
 {
@@ -22,8 +22,9 @@ public static class InboxOrchestratorTestHarness
 
     /// <summary>
     /// Seedable section runner. Ignores the visible-section filter so tests can use
-    /// arbitrary section names (e.g. "mine"). Matches the existing test-file pattern
-    /// of <c>new FakeSectionQueryRunner(_ =&gt; AllSections(...))</c>.
+    /// arbitrary section names (e.g. "mine"). PRs are seeded as "octocat/hello#N" so
+    /// Task 3's enrichment-ready assertions (which use that PrId) resolve against the
+    /// live snapshot without requiring a separate seed step.
     /// </summary>
     public sealed class FakeSectionQueryRunner : ISectionQueryRunner
     {
@@ -36,8 +37,8 @@ public static class InboxOrchestratorTestHarness
             if (!_seed.TryGetValue(section, out var list))
                 _seed[section] = list = [];
             list.Add(new RawPrInboxItem(
-                new PrReference("harness", "repo", prNumber),
-                $"PR #{prNumber}", "author", "harness/repo",
+                new PrReference("octocat", "hello", prNumber),
+                $"PR #{prNumber}", "author", "octocat/hello",
                 DateTimeOffset.UtcNow, DateTimeOffset.UtcNow,
                 0, 0, 0, $"sha{prNumber}", 1, 0));
         }
@@ -63,17 +64,29 @@ public static class InboxOrchestratorTestHarness
 
     /// <summary>
     /// Recording event bus. Captures every published event; <see cref="Clear"/> resets
-    /// between phases (matches the existing RecordingEventBus in OrchestratorTests).
+    /// between phases. Subscribe stores handlers so orchestrator subscriptions (e.g.
+    /// OnInboxEnrichmentsReady) fire when Publish is called — required for trigger (b)
+    /// in Task 3's cache write path.
     /// </summary>
     public sealed class FakeReviewEventBus : IReviewEventBus
     {
         public List<IReviewEvent> Published { get; } = new();
+        private readonly List<(Type EventType, Action<IReviewEvent> Handler)> _subs = new();
 
         public void Publish<TEvent>(TEvent evt) where TEvent : IReviewEvent
-            => Published.Add(evt!);
+        {
+            Published.Add(evt!);
+            foreach (var (type, handler) in _subs)
+                if (type.IsInstanceOfType(evt)) handler(evt!);
+        }
 
         public IDisposable Subscribe<TEvent>(Action<TEvent> handler)
-            where TEvent : IReviewEvent => new NoopSub();
+            where TEvent : IReviewEvent
+        {
+            Action<IReviewEvent> wrapped = e => handler((TEvent)e);
+            _subs.Add((typeof(TEvent), wrapped));
+            return new NoopSub();
+        }
 
         /// <summary>Resets the capture list between test phases.</summary>
         public void Clear() => Published.Clear();
@@ -85,30 +98,69 @@ public static class InboxOrchestratorTestHarness
 
     /// <summary>
     /// Returns a live orchestrator plus the two fakes tests assert against.
+    /// <paramref name="cache"/> defaults to a fresh <see cref="RecordingIdentityCache{T}"/>.
     /// <paramref name="loginProvider"/>, when non-null, overrides <paramref name="login"/>
-    /// as the viewer-login source.
-    /// <para>
-    /// PROVISIONAL (Task 2): no <c>cache</c> parameter. Task 3 adds an optional
-    /// <c>IIdentityKeyedFileCache&lt;InboxSnapshot&gt; cache = null</c> parameter and
-    /// a <c>WaitForCacheWriteIdleAsync</c> / <c>RaiseEnrichmentReady</c> helper.
-    /// </para>
+    /// as the viewer-login source. All parameters are optional; call sites use named args so
+    /// this signature is backward-compatible with Task 2's <c>Build()</c> calls.
     /// </summary>
     public static (InboxRefreshOrchestrator Orch, FakeSectionQueryRunner Sections, FakeReviewEventBus Events) Build(
+        IIdentityKeyedFileCache<InboxSnapshot>? cache = null,
         string login = "octocat",
         string host = "github.com",
         Func<string>? loginProvider = null)
     {
         var sections = new FakeSectionQueryRunner();
         var events = new FakeReviewEventBus();
-        var orch = CreateOrchestrator(sections, events, login, host, loginProvider);
+        var orch = CreateOrchestrator(sections, events, cache, login, host, loginProvider);
         return (orch, sections, events);
     }
+
+    // ── Wait / raise helpers (Task 3) ───────────────────────────────────────────
+
+    /// <summary>
+    /// Deterministic write-drain await: polls until both the in-flight drain loop is complete
+    /// AND no new write is queued. Never uses a fixed Thread.Sleep (poll-condition-not-fixed-delay
+    /// CI discipline).
+    /// </summary>
+    public static async Task WaitForCacheWriteIdleAsync(InboxRefreshOrchestrator orch)
+    {
+        while (true)
+        {
+            await orch.CacheWriteIdleAsync().ConfigureAwait(false);
+            if (orch.IsCacheWriterIdle) return;
+            // A new write was enqueued while we were awaiting the previous loop; spin once
+            // more so the new loop's Task is captured and awaited in the next iteration.
+            await Task.Yield();
+        }
+    }
+
+    /// <summary>
+    /// Raises the enrichment-ready event that the orchestrator subscribes to (drives
+    /// OnInboxEnrichmentsReady), stamping <paramref name="prId"/> with <paramref name="chip"/>.
+    /// The ContentToken is computed from the title format that <see cref="FakeSectionQueryRunner.Seed"/>
+    /// uses (<c>$"PR #{num}"</c>, null description) so the orchestrator's token guard accepts it.
+    /// </summary>
+#pragma warning disable CA1030 // "Raise" prefix is a test-helper convention, not an event
+    public static void RaiseEnrichmentReady(FakeReviewEventBus events, string prId, string chip)
+    {
+        // Parse the PR number from prId (e.g. "octocat/hello#1" → 1) to recompute the title
+        // that FakeSectionQueryRunner.Seed uses: $"PR #{prNumber}". Description is always null.
+        var num = int.Parse(prId.Split('#')[1], System.Globalization.CultureInfo.InvariantCulture);
+        var token = InboxEnrichmentContent.Token($"PR #{num}", null);
+        events.Publish(new InboxEnrichmentsReady(new[]
+        {
+            new InboxEnrichmentResult(prId, chip, token)
+        }));
+    }
+#pragma warning restore CA1030
 
     // ── Snapshot helpers ─────────────────────────────────────────────────────────
 
     /// <summary>
     /// A snapshot containing one PR (<paramref name="prNumber"/>) in
     /// <paramref name="section"/>; seeds rehydrate/no-op tests (tests 9 and 10).
+    /// Uses "harness/repo" owner/repo (distinct from Seed's "octocat/hello") so
+    /// a rehydrated snapshot is distinguishable from a live-built one.
     /// </summary>
     public static InboxSnapshot SnapshotWith(string section, int prNumber)
     {
@@ -142,7 +194,7 @@ public static class InboxOrchestratorTestHarness
     /// </summary>
     public static async Task<InboxSnapshot> BuildEquivalentSnapshotAsync(FakeSectionQueryRunner sections)
     {
-        using var orch = CreateOrchestrator(sections, new FakeReviewEventBus(), "octocat", "github.com", null);
+        using var orch = CreateOrchestrator(sections, new FakeReviewEventBus(), null, "octocat", "github.com", null);
         await orch.RefreshAsync(CancellationToken.None).ConfigureAwait(false);
         return orch.Current!;
     }
@@ -167,14 +219,18 @@ public static class InboxOrchestratorTestHarness
     private static InboxRefreshOrchestrator CreateOrchestrator(
         FakeSectionQueryRunner sections,
         FakeReviewEventBus events,
+        IIdentityKeyedFileCache<InboxSnapshot>? cache,
         string login,
         string host,
         Func<string>? loginProvider)
     {
-        _ = host; // host is used by ConfigWith (Task 4); unused in Task 2 Build path
         Func<string> viewerLogin = loginProvider ?? (() => login);
+        // Use ConfigWith so _config.Current.Github.Host matches the provided host parameter,
+        // which is used when stamping the CacheIdentity in trigger (a). Without this, the
+        // orchestrator would use AppConfig.Default's "https://github.com" host, and the
+        // identity assertion (test 12) would fail.
         return new InboxRefreshOrchestrator(
-            new HarnessConfigStore(AppConfig.Default),
+            ConfigWith(login, host),
             sections,
             new IdentityBatchReader(),
             new NullCiDetector(),
@@ -182,6 +238,7 @@ public static class InboxOrchestratorTestHarness
             new NullAiSeamSelector(),
             events,
             new InMemoryAppStateStore(),
+            cache ?? new RecordingIdentityCache<InboxSnapshot>(),
             viewerLogin);
     }
 

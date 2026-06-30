@@ -9,6 +9,7 @@ using PRism.Core.Config;
 using PRism.Core.Contracts;
 using PRism.Core.Events;
 using PRism.Core.State;
+using PRism.Core.Storage;
 
 namespace PRism.Core.Inbox;
 
@@ -22,9 +23,18 @@ public sealed partial class InboxRefreshOrchestrator : IInboxRefreshOrchestrator
     private readonly IAiSeamSelector _aiSelector;
     private readonly IReviewEventBus _events;
     private readonly IAppStateStore _stateStore;
+    private readonly IIdentityKeyedFileCache<InboxSnapshot> _cache; // #619
     private readonly Func<string> _viewerLoginProvider;
     private readonly ILogger<InboxRefreshOrchestrator> _log;
     private readonly Func<TimeSpan, CancellationToken, Task> _burstDelay;
+
+    // #619 — the identity the last committed snapshot was FETCHED under (the line-175 viewerLogin, not a
+    // fresh read). Set under _writerLock at commit; reused by both cache-write triggers so a token swap
+    // racing a pending write can never re-attribute a snapshot to the new login. (Round-1 ADV-2.)
+    private CacheIdentity _lastCaptureIdentity;
+    // #619 round-2 ADV-1 — epoch read at line-175 for the last committed snapshot; paired with the login
+    // so a pre-rotation write is discarded even when the login is the same (same-login token rotation).
+    private int _lastCaptureEpoch;
 
     private InboxSnapshot? _current;
     // #619 — armed by TryRehydrate; consumed (cleared) by the first SUCCESSFUL revalidation's commit.
@@ -73,6 +83,7 @@ public sealed partial class InboxRefreshOrchestrator : IInboxRefreshOrchestrator
         IAiSeamSelector aiSelector,
         IReviewEventBus events,
         IAppStateStore stateStore,
+        IIdentityKeyedFileCache<InboxSnapshot> cache,   // #619 — inserted before viewerLoginProvider
         Func<string> viewerLoginProvider,
         ILogger<InboxRefreshOrchestrator>? log = null,
         Func<TimeSpan, CancellationToken, Task>? burstDelay = null)
@@ -85,6 +96,7 @@ public sealed partial class InboxRefreshOrchestrator : IInboxRefreshOrchestrator
         _aiSelector = aiSelector;
         _events = events;
         _stateStore = stateStore;
+        _cache = cache;
         _viewerLoginProvider = viewerLoginProvider;
         _log = log ?? NullLogger<InboxRefreshOrchestrator>.Instance;
         _burstDelay = burstDelay ?? Task.Delay;
@@ -198,6 +210,7 @@ public sealed partial class InboxRefreshOrchestrator : IInboxRefreshOrchestrator
                 .Concat(closedRaw.Select(r => r with { IsClosedHistory = true }))
                 .GroupBy(p => p.Reference).Select(g => g.First()).ToList();
             var viewerLogin = _viewerLoginProvider();
+            var writeEpoch = Volatile.Read(ref _cacheWriteEpoch); // #619 round-2 ADV-1 — capture WITH the fetch login, before network I/O
             var batch = await _batchReader.ReadAsync(allRawDistinct, viewerLogin, ct).ConfigureAwait(false);
             // Map batch hydration onto each raw item; refs the batch didn't resolve are absent →
             // they fall back to the raw item (empty HeadSha) → dropped by the Where filter below.
@@ -379,6 +392,16 @@ public sealed partial class InboxRefreshOrchestrator : IInboxRefreshOrchestrator
                 _rehydratedAwaitingRevalidate = false;
             }
 
+            // #619 — stamp with the login the snapshot's DATA was fetched under (the line-175
+            // `viewerLogin` local) and the epoch read at that same point. Stashed under _writerLock
+            // so both triggers reuse the same identity+epoch without a fresh provider read (ADV-2/ADV-1).
+            _lastCaptureIdentity = new CacheIdentity(viewerLogin, _config.Current.Github.Host);
+            _lastCaptureEpoch = writeEpoch;
+            // #619 trigger (a) — persist on a core change, carrying the captured epoch so the drainer
+            // can drop it if the epoch was bumped by an auth token change before the write executes.
+            if (diff.Changed)
+                ScheduleCacheWrite(newSnap, _lastCaptureIdentity, _lastCaptureEpoch);
+
             if (diff.Changed)
             {
                 _events.Publish(new InboxUpdated(
@@ -535,6 +558,90 @@ public sealed partial class InboxRefreshOrchestrator : IInboxRefreshOrchestrator
         cts?.Dispose();
         _writerLock.Dispose();
     }
+
+    // ── #619 cache writer: serialized, latest-wins coalescing (§5.1.3) ──────────────
+    // At most one in-flight SaveAsync. A newer (snapshot, identity) replaces any queued-but-unstarted
+    // write and starts AFTER the in-flight one completes — so an older slow write can never land after
+    // a newer one. Identity is captured by the caller (under _writerLock) and closed over here.
+    private readonly object _cacheWriteGate = new();
+    private (InboxSnapshot Snapshot, CacheIdentity Identity, int Epoch)? _queuedWrite;
+    private Task _cacheWriteLoop = Task.CompletedTask;
+    // Round-1 ADV-4 fix: gate the drainer relaunch on an explicit _draining flag, NOT on
+    // _cacheWriteLoop.IsCompleted. The loop releases _cacheWriteGate (Monitor.Exit) a moment before
+    // its Task transitions to IsCompleted; a ScheduleCacheWrite landing in that window would see
+    // IsCompleted==false and skip the relaunch, stranding the queued write. _draining is set/cleared
+    // strictly under the lock, closing the window.
+    private bool _draining;
+
+    // ── Round-2 ADV-1: epoch gate ───────────────────────────────────────────────
+    // Epoch is read at the line-175 data-fetch point; bumped by InvalidateCacheWritesAsync at each
+    // auth token change. The drainer drops any write whose epoch != the current epoch so a pre-rotation
+    // write cannot resurrect the evicted file even if ScheduleCacheWrite runs after the evict.
+    private int _cacheWriteEpoch;
+
+    private void ScheduleCacheWrite(InboxSnapshot snapshot, CacheIdentity identity, int epoch)
+    {
+        lock (_cacheWriteGate)
+        {
+            _queuedWrite = (snapshot, identity, epoch); // latest-wins: overwrites any not-yet-started write
+            if (!_draining)
+            {
+                _draining = true;
+                _cacheWriteLoop = Task.Run(DrainCacheWritesAsync);
+            }
+        }
+    }
+
+    private async Task DrainCacheWritesAsync()
+    {
+        while (true)
+        {
+            (InboxSnapshot Snapshot, CacheIdentity Identity, int Epoch) next;
+            lock (_cacheWriteGate)
+            {
+                if (_queuedWrite is null) { _draining = false; return; } // queue empty → idle
+                next = _queuedWrite.Value;
+                _queuedWrite = null;
+            }
+            // Test-only hook: called after dequeue but before epoch check. Consumed once via
+            // Interlocked.Exchange so it never fires on a drainer re-loop. Tests use this to
+            // advance the epoch synchronously at exactly the right moment (deterministic 13b).
+            Interlocked.Exchange(ref TestAfterDequeueHook, null)?.Invoke();
+            // Round-2 ADV-1: drop a write captured under a since-invalidated epoch (a token rotation
+            // ran between this write's line-175 capture and now). Checked outside the lock so the
+            // invalidate's Interlocked.Increment and this Volatile.Read are naturally ordered on x86/x64.
+            if (next.Epoch != Volatile.Read(ref _cacheWriteEpoch)) continue;
+            await _cache.SaveAsync(next.Snapshot, next.Identity, CancellationToken.None).ConfigureAwait(false);
+        }
+    }
+
+    // Called by the auth handlers BEFORE an awaited EvictAsync. (1) Interlocked-bump the epoch so
+    // every already-captured pre-rotation write is dropped by the drainer's gate — even one that
+    // ScheduleCacheWrites after this returns. (2) Clear the queue and await the in-flight loop so any
+    // SaveAsync that already passed the gate finishes before the caller's EvictAsync deletes the file.
+    internal async Task InvalidateCacheWritesAsync()
+    {
+        Task inFlight;
+        lock (_cacheWriteGate)
+        {
+            Interlocked.Increment(ref _cacheWriteEpoch); // fence: pre-rotation writes now fail the drainer gate
+            _queuedWrite = null;
+            inFlight = _cacheWriteLoop;
+        }
+        await inFlight.ConfigureAwait(false);
+    }
+
+    // Test seam: returns the current drain-loop Task (under the gate lock so the caller gets
+    // the task that was active at capture time, not a stale reference).
+    internal Task CacheWriteIdleAsync() { lock (_cacheWriteGate) { return _cacheWriteLoop; } }
+
+    // Test seam: true when no write is in-flight or queued (both _draining false and _queuedWrite null).
+    internal bool IsCacheWriterIdle { get { lock (_cacheWriteGate) { return !_draining && _queuedWrite is null; } } }
+    // Test seam (13b): one-shot hook called inside the drainer after dequeue, before epoch check.
+    // Set by tests that need to advance the epoch at exactly the right moment; null in production.
+    internal Action? TestAfterDequeueHook;
+    // Test seam (13b): synchronously advance the cache write epoch without awaiting the drain loop.
+    internal void TestBumpEpoch() => Interlocked.Increment(ref _cacheWriteEpoch);
 
     // ── Test accessors (internal; not part of the public contract) ───────────────
     internal Task WaitForBurstIdle(TimeSpan timeout)
@@ -762,8 +869,19 @@ public sealed partial class InboxRefreshOrchestrator : IInboxRefreshOrchestrator
             // still clear the FE's working markers. A no-op batch (all stale/gone) → both 0 → return.
             if (applied == 0 && newlySettled == 0) return;
 
-            Volatile.Write(ref _current, current with { Enrichments = merged, AiEnrichmentSettled = settled });
+            var settledSnapshot = current with { Enrichments = merged, AiEnrichmentSettled = settled };
+            Volatile.Write(ref _current, settledSnapshot);
             _events.Publish(new InboxUpdated(changedSections.ToArray(), applied)); // unconditional (ComputeDiff is enrichment-blind)
+            // #619 trigger (b) — flush the settled-AI snapshot so the persisted copy carries real chips
+            // (ComputeDiff is enrichment-blind, so trigger (a) alone would persist blank-chip snapshots).
+            // Reuse the captured fetch-identity + epoch from the last RefreshAsync — NOT fresh reads
+            // (round-1 ADV-2 / round-2 ADV-1). The settled snapshot belongs to the snapshot that was
+            // fetched under that login at that epoch.
+            // Round-2 FEAS-residual: skip if no refresh has committed yet (_lastCaptureIdentity.Login
+            // is null/empty by default) — enrichment-ready can't realistically precede the first
+            // refresh, but the guard is cheap and avoids writing a file stamped with an empty login.
+            if (!string.IsNullOrEmpty(_lastCaptureIdentity.Login))
+                ScheduleCacheWrite(settledSnapshot, _lastCaptureIdentity, _lastCaptureEpoch);
         }
         finally
         {

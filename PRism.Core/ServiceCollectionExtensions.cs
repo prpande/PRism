@@ -9,6 +9,7 @@ using PRism.Core.Inbox;
 using PRism.Core.Iterations;
 using PRism.Core.PrDetail;
 using PRism.Core.State;
+using PRism.Core.Storage;
 
 namespace PRism.Core;
 
@@ -108,6 +109,7 @@ public static class ServiceCollectionExtensions
                 sp.GetRequiredService<IAiSeamSelector>(),
                 sp.GetRequiredService<IReviewEventBus>(),
                 sp.GetRequiredService<IAppStateStore>(),
+                sp.GetRequiredService<IIdentityKeyedFileCache<InboxSnapshot>>(), // Task 4 registers this
                 loginCache.Get,
                 sp.GetRequiredService<ILogger<InboxRefreshOrchestrator>>());
         });
