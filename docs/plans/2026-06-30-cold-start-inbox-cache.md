@@ -27,7 +27,9 @@
 Two small refinements the spec's prose did not spell out; both are mechanical, surfaced at the gate:
 
 1. **`IIdentityKeyedFileCache<T>` interface seam.** The spec §3.1 shows a sealed concrete helper. To inject a recording double in the orchestrator / activity / rehydrator tests (spec tests 12, 13, 15, 16, 17) the consumers depend on an **interface** `IIdentityKeyedFileCache<T>`; the concrete sealed `IdentityKeyedFileCache<T>` implements it and is tested directly (tests 1–8). This preserves the "one shared helper" intent and is standard testability, not a scope change.
-2. **One additive interface getter on `IInboxRefreshOrchestrator`.** The spec §2 non-goal "no interface changes" was about not *restructuring* the interface. The `/api/inbox` GET endpoint consumes `IInboxRefreshOrchestrator` and must read the `stale` flag; the cleanest implementation adds one read-only `bool IsServingRehydratedSnapshot { get; }` getter (sibling to the existing `Current`) rather than coupling the endpoint to the concrete type. `TryRehydrate` stays concrete-only (called only by the rehydrator, which already resolves the concrete type via dual-registration).
+2. **One additive interface getter on `IInboxRefreshOrchestrator`, with a default implementation.** The spec §2 non-goal "no interface changes" was about not *restructuring* the interface. The `/api/inbox` GET endpoint consumes `IInboxRefreshOrchestrator` and must read the `stale` flag; the cleanest implementation adds one read-only `bool IsServingRehydratedSnapshot` getter (sibling to the existing `Current`) rather than coupling the endpoint to the concrete type. It ships as a **default interface member** (`=> false`) so existing test fakes that don't override it keep compiling — zero CS0535 blast radius (round-1 SCOPE-1). The concrete orchestrator overrides it with the real flag. `TryRehydrate` stays concrete-only (called only by the rehydrator, which already resolves the concrete type via dual-registration).
+
+3. **Hosted-service ordering: rehydrator runs FIRST, before `ViewerLoginHydrator` (refines spec §4).** The spec §4 placed the rehydrator after `ViewerLoginHydrator`. Round-1 review (ADV-1, cross-confirmed by feasibility) showed that `ViewerLoginHydrator.StartAsync` performs a **blocking network** `ValidateCredentialsAsync`, and with .NET's default sequential hosted-service startup that would gate the offline instant-paint — the feature's headline guarantee — behind that network timeout. The rehydrator depends only on on-disk config (loaded by `ConfigStore` at construction), so it can and must run first. **This is a deliberate deviation from the approved spec's stated ordering**, surfaced at the gate; the spec's §4 ordering note should be updated to match (or the deviation accepted in the PR's Proof section).
 
 ---
 
@@ -76,12 +78,18 @@ Create `tests/PRism.Core.Tests/Storage/IdentityKeyedFileCacheTests.cs`. These ex
 ```csharp
 using System.Text.Json;
 using FluentAssertions;
+using PRism.Core.Activity;
 using PRism.Core.Inbox;
 using PRism.Core.Storage;
 using PRism.Core.Contracts;
 using Xunit;
 
 namespace PRism.Core.Tests.Storage;
+
+// NOTE (round-1 feasibility residual): the SampleSnapshot helper below constructs PrInboxItem and
+// PrReference positionally. Match the REAL record signatures when implementing — PrInboxItem has 15
+// required positional params (Reference … LastSeenCommentId) then optional ones; PrReference is
+// (Owner, Repo, Number) with a computed PrId. The compiler will flag any mismatch at TDD Step 4.
 
 public sealed class IdentityKeyedFileCacheTests : IDisposable
 {
@@ -123,6 +131,30 @@ public sealed class IdentityKeyedFileCacheTests : IDisposable
         loaded.Enrichments.Values.Single().CategoryChip.Should().Be("needs-review");
         loaded.AiEnrichmentSettled.Should().ContainSingle();
         loaded.Sections["mine"][0].Ci.Should().Be(CiStatus.Passing);
+    }
+
+    [Fact] // test 1 (activity half, round-1 SCOPE-2) — ActivityResponse round-trip incl. kebab ActivitySource/ActivityVerb
+    public async Task SaveAsync_then_TryLoad_round_trips_ActivityResponse_with_kebab_enums()
+    {
+        var cache = new IdentityKeyedFileCache<ActivityResponse>(
+            Path.Combine(_dir, "activity.json"), schemaVersion: 1, isStructurallyValid: r => r.Items is not null);
+        var resp = new ActivityResponse(
+            new[]
+            {
+                new ActivityItem("alice", null, ActorIsBot: false, ActivityVerb.ReviewRequested,
+                    "octocat/hello", 7, "Title", "https://github.com/octocat/hello/pull/7",
+                    DateTimeOffset.UnixEpoch, ActivitySource.Notification),
+            },
+            DateTimeOffset.UnixEpoch,
+            new ActivityDegradation(false, false, false),
+            Array.Empty<WatchedRepoActivity>());
+        await cache.SaveAsync(resp, Id(), CancellationToken.None);
+
+        var loaded = cache.TryLoad(Id());
+        loaded.Should().NotBeNull();
+        loaded!.Items.Should().ContainSingle();
+        loaded.Items[0].Verb.Should().Be(ActivityVerb.ReviewRequested);   // kebab "review-requested" round-trips
+        loaded.Items[0].Source.Should().Be(ActivitySource.Notification);  // kebab "notification" round-trips
     }
 
     [Fact] // test 2 — login mismatch, host mismatch, both-match (login OrdinalIgnoreCase)
@@ -391,7 +423,12 @@ public sealed class InboxRehydrateTests
 
         await orch2.RefreshAsync(CancellationToken.None);
 
-        events2.Published.OfType<InboxUpdated>().Should().ContainSingle(); // force-notified despite no change
+        // Round-1 ADV-5: assert the publish came from the FORCE-NOTIFY branch, not a diff.Changed branch
+        // (both publish exactly one InboxUpdated, so ContainSingle alone can't distinguish them). The
+        // force-notify payload is NewOrUpdatedPrCount==0 over the full Sections.Keys set.
+        var published = events2.Published.OfType<InboxUpdated>().Should().ContainSingle().Subject;
+        published.NewOrUpdatedPrCount.Should().Be(0);                      // no real delta → proves force-notify
+        published.ChangedSectionIds.Should().BeEquivalentTo(rehydrated.Sections.Keys);
         orch2.IsServingRehydratedSnapshot.Should().BeFalse();              // flag cleared
 
         events2.Clear();
@@ -440,7 +477,10 @@ public interface IInboxRefreshOrchestrator
     /// (drives the <c>stale</c> wire flag, #619). Flips false once the first refresh since launch
     /// commits. A failed (network) revalidation does NOT clear it — the data is still stale.
     /// </summary>
-    bool IsServingRehydratedSnapshot { get; }
+    // Round-1 SCOPE-1: a DEFAULT interface implementation (=> false) so existing IInboxRefreshOrchestrator
+    // test fakes (which don't override it) keep compiling — no CS0535 blast radius. The concrete
+    // InboxRefreshOrchestrator overrides it with the real flag (Step 4).
+    bool IsServingRehydratedSnapshot => false;
 
     Task<bool> WaitForFirstSnapshotAsync(TimeSpan timeout, CancellationToken ct);
     // ... unchanged ...
@@ -552,7 +592,7 @@ git commit -m "feat(#619): inbox orchestrator TryRehydrate + stale flag + force-
 - Consumes: `IIdentityKeyedFileCache<InboxSnapshot>` (Task 1), `CacheIdentity`.
 - Produces: orchestrator ctor gains a positional `IIdentityKeyedFileCache<InboxSnapshot> cache` parameter (inserted **before** `Func<string> viewerLoginProvider`); a private coalescing writer.
 
-> **Blast radius:** inserting a ctor param breaks every direct `new InboxRefreshOrchestrator(...)` call site (the DI registration — fixed in Task 4 — and any test harness). The Task 2 `InboxOrchestratorTestHarness.Build()` must pass a `RecordingIdentityCache<InboxSnapshot>` (created here). Update the harness in this task.
+> **Blast radius (round-1 COH-2):** inserting a ctor param breaks every direct `new InboxRefreshOrchestrator(...)` call site (the DI registration — fixed in Task 4 — and any test harness). This task changes `InboxOrchestratorTestHarness.Build()` to construct the orchestrator with a `RecordingIdentityCache<InboxSnapshot>` (a `cache:` parameter, defaulting to a fresh recording cache so Task 2's `Build()` / `Build(login:…, host:…)` call sites keep working). **Re-run Task 2's `InboxRehydrateTests` after this task** — they exercise the same harness and must stay green through the signature change. Also add the `ConfigWith(login, host)` and `SnapshotWith`/`BuildEquivalentSnapshotAsync` helpers the Task 2/Task 4 tests reference (round-1 COH-4) if not already present.
 
 - [ ] **Step 1: Write the recording cache + failing tests**
 
@@ -644,7 +684,7 @@ public sealed class InboxCacheWriteTests
 }
 ```
 
-> `MutableLogin` is a tiny test helper (a `Func<string> Get` whose first invocation runs `OnNextRead`); add it beside the test if not present. The intent: the capture-time read returns `"alice"`, and any later read returns `"bob"`, proving the write closed over the capture-time identity.
+> `MutableLogin` is a tiny test helper (a `Func<string> Get` whose **first** invocation returns `"alice"` then runs `OnNextRead` to flip the backing value to `"bob"` for all subsequent reads); add it beside the test if not present. The first `Get()` in `RefreshAsync` is the line-175 `viewerLogin` read, so the snapshot's data is fetched under `"alice"` and `_lastCaptureIdentity` is stamped `"alice"` — proving the write closed over the **fetch** identity, not a later commit-time read. (This test is precisely what catches the ADV-2 regression: a fresh `_viewerLoginProvider()` read at commit time would return `"bob"` and fail the `Identity.Login.Should().Be("alice")` assertion.)
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
@@ -699,14 +739,23 @@ Add the coalescing-writer state + methods (place near the bottom of the class, b
     private readonly object _cacheWriteGate = new();
     private (InboxSnapshot Snapshot, CacheIdentity Identity)? _queuedWrite;
     private Task _cacheWriteLoop = Task.CompletedTask;
+    // Round-1 ADV-4 fix: gate the drainer relaunch on an explicit _draining flag, NOT on
+    // _cacheWriteLoop.IsCompleted. The loop releases _cacheWriteGate (Monitor.Exit) a moment before
+    // its Task transitions to IsCompleted; a ScheduleCacheWrite landing in that window would see
+    // IsCompleted==false and skip the relaunch, stranding the queued write. _draining is set/cleared
+    // strictly under the lock, closing the window.
+    private bool _draining;
 
     private void ScheduleCacheWrite(InboxSnapshot snapshot, CacheIdentity identity)
     {
         lock (_cacheWriteGate)
         {
             _queuedWrite = (snapshot, identity); // latest-wins: overwrites any not-yet-started write
-            if (_cacheWriteLoop.IsCompleted)
+            if (!_draining)
+            {
+                _draining = true;
                 _cacheWriteLoop = Task.Run(DrainCacheWritesAsync);
+            }
         }
     }
 
@@ -717,7 +766,7 @@ Add the coalescing-writer state + methods (place near the bottom of the class, b
             (InboxSnapshot Snapshot, CacheIdentity Identity) next;
             lock (_cacheWriteGate)
             {
-                if (_queuedWrite is null) return;
+                if (_queuedWrite is null) { _draining = false; return; } // cleared under the lock
                 next = _queuedWrite.Value;
                 _queuedWrite = null;
             }
@@ -725,19 +774,51 @@ Add the coalescing-writer state + methods (place near the bottom of the class, b
         }
     }
 
-    // Identity captured at snapshot-commit time so a later token swap can't re-attribute the snapshot.
-    private CacheIdentity CaptureIdentity() => new(_viewerLoginProvider(), _config.Current.Github.Host);
-```
+    // Round-1 ADV-3 fix: quiesce the writer before an auth-site eviction so no in-flight/queued write
+    // can re-create the cache file AFTER the awaited EvictAsync. Clears the queue and awaits the
+    // in-flight loop. Subsequent refreshes resume writing normally (they carry new-token data).
+    internal async Task QuiesceCacheWritesAsync()
+    {
+        Task inFlight;
+        lock (_cacheWriteGate) { _queuedWrite = null; inFlight = _cacheWriteLoop; }
+        await inFlight.ConfigureAwait(false);
+    }
 
-Wire **trigger (a)** in `RefreshAsync` — schedule the write on a core change, identity captured under the lock. Add it right after the `_rehydratedAwaitingRevalidate` consume block (still inside the `try`, under `_writerLock`):
+    // Test seam: awaits the in-flight cache-write loop so write-path assertions are deterministic.
+    internal Task CacheWriteIdleAsync() { lock (_cacheWriteGate) { return _cacheWriteLoop; } }
+
+**Capture identity from the data-fetch login, NOT a fresh read (round-1 ADV-2 — load-bearing).** `RefreshAsync`
+already reads the login once at the top (`var viewerLogin = _viewerLoginProvider();`, ~line 175) and passes it
+to `_batchReader.ReadAsync(...)` — that is the login the snapshot's **data** was fetched under. A fresh
+`_viewerLoginProvider()` read at commit time would return a *different* login if a token swap interleaved
+between line 175 and the commit, stamping login A's data as B (the exact cross-identity leak the capture
+mechanism exists to prevent). So stash the line-175 value under the lock and reuse it for both triggers; the
+enrichment-ready trigger (which has no fetch login of its own) reuses the same stashed identity, since the
+settled-AI snapshot it persists belongs to the snapshot that was fetched under that login.
+
+Add a field:
 
 ```csharp
-            // #619 trigger (a) — persist on a core change. Identity captured HERE (under the lock).
-            if (diff.Changed)
-                ScheduleCacheWrite(newSnap, CaptureIdentity());
+    // #619 — the identity the last committed snapshot was FETCHED under (the line-175 viewerLogin, not a
+    // fresh read). Set under _writerLock at commit; reused by both cache-write triggers so a token swap
+    // racing a pending write can never re-attribute a snapshot to the new login. (Round-1 ADV-2.)
+    private CacheIdentity _lastCaptureIdentity;
 ```
 
-Wire **trigger (b)** in `OnInboxEnrichmentsReady`, right after its commit (`Volatile.Write(ref _current, current with { ... });` then `_events.Publish(...)`):
+Wire **trigger (a)** in `RefreshAsync` — at the commit, stash the identity from the line-175 `viewerLogin`
+local and schedule on a core change. Add it right after the `_rehydratedAwaitingRevalidate` consume block
+(still inside the `try`, under `_writerLock`; `viewerLogin` is the local already in scope from ~line 175):
+
+```csharp
+            // #619 — stamp with the login the snapshot's DATA was fetched under (the line-175 `viewerLogin`
+            // local), captured under the lock. NOT a fresh _viewerLoginProvider() read (round-1 ADV-2).
+            _lastCaptureIdentity = new CacheIdentity(viewerLogin, _config.Current.Github.Host);
+            // #619 trigger (a) — persist on a core change.
+            if (diff.Changed)
+                ScheduleCacheWrite(newSnap, _lastCaptureIdentity);
+```
+
+Wire **trigger (b)** in `OnInboxEnrichmentsReady`, right after its commit (`Volatile.Write(ref _current, current with { ... });` then `_events.Publish(...)`). It reuses `_lastCaptureIdentity` (the snapshot it patches was built by the last `RefreshAsync` under that login):
 
 ```csharp
             var settledSnapshot = current with { Enrichments = merged, AiEnrichmentSettled = settled };
@@ -745,19 +826,13 @@ Wire **trigger (b)** in `OnInboxEnrichmentsReady`, right after its commit (`Vola
             _events.Publish(new InboxUpdated(changedSections.ToArray(), applied));
             // #619 trigger (b) — flush the settled-AI snapshot so the persisted copy carries real chips
             // (ComputeDiff is enrichment-blind, so trigger (a) alone would persist blank-chip snapshots).
-            ScheduleCacheWrite(settledSnapshot, CaptureIdentity());
+            // Reuse the captured fetch-identity, NOT a fresh read (round-1 ADV-2).
+            ScheduleCacheWrite(settledSnapshot, _lastCaptureIdentity);
 ```
 
 (Refactor the existing inline `current with { ... }` into the named `settledSnapshot` local so both the `Volatile.Write` and the schedule use the same reference.)
 
-Expose a drain-idle hook **for tests only** (internal, surfaced via `InternalsVisibleTo` which the test project already has):
-
-```csharp
-    // Test seam: awaits the in-flight cache-write loop so write-path assertions are deterministic.
-    internal Task CacheWriteIdleAsync() { lock (_cacheWriteGate) { return _cacheWriteLoop; } }
-```
-
-`InboxOrchestratorTestHarness.WaitForCacheWriteIdleAsync(orch)` calls `await orch.CacheWriteIdleAsync()` then re-checks `_queuedWrite is null` by awaiting once more (loop until the returned task is the completed sentinel and nothing is queued).
+The `CacheWriteIdleAsync` / `QuiesceCacheWritesAsync` test seams are already defined in the writer block above. `InboxOrchestratorTestHarness.WaitForCacheWriteIdleAsync(orch)` must **poll the condition, not fixed-delay** (per the `poll-condition-not-fixed-delay` CI discipline): `await orch.CacheWriteIdleAsync()`, then re-enter the lock to confirm `_queuedWrite is null`; if a new write was enqueued during the await, loop. No `Thread.Sleep`.
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
@@ -782,7 +857,7 @@ git commit -m "feat(#619): inbox cache write path — capture-identity, change+e
 
 **Interfaces:**
 - Consumes: `InboxRefreshOrchestrator` (concrete, for `TryRehydrate`), `IIdentityKeyedFileCache<InboxSnapshot>`, `IConfigStore`.
-- Produces: `public sealed class InboxCacheRehydrator : IHostedService`. New DI: a const `InboxSnapshotCacheVersion = 1`, the inbox cache singleton, dual-registered orchestrator, and the rehydrator hosted-service inserted after `ViewerLoginHydrator` and before `InboxPoller`.
+- Produces: `public sealed class InboxCacheRehydrator : IHostedService`. New DI: consts `InboxSnapshotCacheVersion = 1` + `ActivityFeedCacheVersion = 1`, **both** cache singletons (inbox + activity — the activity one is moved up from Task 6 per round-1 FEAS-2), dual-registered orchestrator, and the rehydrator hosted-service inserted **before** `ViewerLoginHydrator` (round-1 ADV-1).
 
 - [ ] **Step 1: Write the failing test**
 
@@ -871,8 +946,11 @@ namespace PRism.Core.Inbox;
 /// <summary>
 /// #619 — On startup, rehydrates the last-known-good inbox snapshot from disk into the orchestrator
 /// BEFORE the first poll, so /api/inbox paints real prior data instantly (offline-capable: reads only
-/// config + the cache file, never the network). Registered as an IHostedService AFTER ViewerLoginHydrator
-/// (which persists the config identity) and BEFORE InboxPoller (StartAsync runs in registration order).
+/// config + the cache file, never the network). Registered FIRST among hosted services — BEFORE
+/// ViewerLoginHydrator (whose StartAsync does a BLOCKING network credential validation, round-1 ADV-1) and
+/// before InboxPoller, so the offline paint is never gated behind a network timeout. The last-validated
+/// identity is read from on-disk config (loaded by ConfigStore at construction), so no upstream hosted
+/// service need run first. (StartAsync runs in registration order.)
 /// Fails closed: rehydrates only against a NON-EMPTY config identity matching the cache envelope (§4).
 /// </summary>
 public sealed class InboxCacheRehydrator : IHostedService
@@ -916,11 +994,12 @@ public sealed class InboxCacheRehydrator : IHostedService
 
 In `PRism.Core/ServiceCollectionExtensions.cs`:
 
-(a) Add the cache singleton near the other store registrations (e.g. after the `IAppStateStore` line), plus a version const at the top of the class:
+(a) Add **both** cache singletons near the other store registrations (e.g. after the `IAppStateStore` line), plus version consts at the top of the class. **Both are registered here, in Task 4 — not Task 6 (round-1 FEAS-2):** Task 5's auth handlers take `IIdentityKeyedFileCache<ActivityResponse>` as a delegate parameter, so it must be resolvable from DI *before* Task 5, or production + every existing auth-endpoint test would throw "Unable to resolve service" between the Task 5 and Task 6 commits.
 
 ```csharp
-    // #619 — schema version for the cold-start inbox snapshot cache. Bump on any InboxSnapshot shape change.
+    // #619 — schema versions for the cold-start caches. Bump on any InboxSnapshot/ActivityResponse shape change.
     private const int InboxSnapshotCacheVersion = 1;
+    private const int ActivityFeedCacheVersion = 1;
 ```
 
 ```csharp
@@ -929,7 +1008,14 @@ In `PRism.Core/ServiceCollectionExtensions.cs`:
                 Path.Combine(dataDir, "inbox-snapshot.json"),
                 InboxSnapshotCacheVersion,
                 isStructurallyValid: s => s.Sections is not null && s.Enrichments is not null));
+        services.AddSingleton<IIdentityKeyedFileCache<ActivityResponse>>(_ =>
+            new IdentityKeyedFileCache<ActivityResponse>(
+                Path.Combine(dataDir, "activity-feed.json"),
+                ActivityFeedCacheVersion,
+                isStructurallyValid: r => r.Items is not null));
 ```
+
+(`ActivityResponse` is in `PRism.Core.Activity` — add the `using`. The `ActivityProvider` registration at `Program.cs:119` resolves this singleton from DI once Task 6 adds the ctor dependency; no `Program.cs` change is needed.)
 
 (b) Replace the interface-only orchestrator registration (the `services.AddSingleton<IInboxRefreshOrchestrator>(sp => { ... })` block) with a dual-registration that also passes the cache:
 
@@ -953,17 +1039,21 @@ In `PRism.Core/ServiceCollectionExtensions.cs`:
         services.AddSingleton<IInboxRefreshOrchestrator>(sp => sp.GetRequiredService<InboxRefreshOrchestrator>());
 ```
 
-(c) Insert the rehydrator hosted service **between** the `ViewerLoginHydrator` registration and the `InboxPoller` block (registration order = `StartAsync` order):
+(c) Insert the rehydrator hosted service **before** the `ViewerLoginHydrator` registration (round-1 ADV-1 — registration order = `StartAsync` order, and `ViewerLoginHydrator.StartAsync` performs a **blocking network** `ValidateCredentialsAsync`; ordering the rehydrator after it would gate the offline instant-paint behind that network timeout). The rehydrator depends only on **on-disk config**, which `ConfigStore` loads synchronously at construction (`CreateConfigStore` → `InitAsync(...).GetAwaiter().GetResult()`), so the last-validated identity is already available before any hosted service runs — the rehydrator does **not** need `ViewerLoginHydrator` to run first:
 
 ```csharp
-        // #619 — rehydrate the persisted inbox snapshot AFTER ViewerLoginHydrator persists the config
-        // identity and BEFORE InboxPoller's first refresh, so _current is set before the first poll.
+        // #619 — rehydrate the persisted inbox snapshot FIRST (before ViewerLoginHydrator's blocking
+        // network ValidateCredentialsAsync, round-1 ADV-1), so _current is set instantly and the offline
+        // paint is not gated behind a credential-validation timeout. Reads only on-disk config (loaded by
+        // ConfigStore at construction) + the cache file — no network. Still before InboxPoller's first poll.
         services.AddHostedService(sp => new InboxCacheRehydrator(
             sp.GetRequiredService<InboxRefreshOrchestrator>(),
             sp.GetRequiredService<IIdentityKeyedFileCache<InboxSnapshot>>(),
             sp.GetRequiredService<IConfigStore>(),
             sp.GetRequiredService<ILogger<InboxCacheRehydrator>>()));
 ```
+
+Resulting hosted-service start order: **`InboxCacheRehydrator` → `ViewerLoginHydrator` → `InboxPoller`**. (This refines the spec §4 ordering, which placed the rehydrator after `ViewerLoginHydrator`; see Plan-vs-spec refinement #3.)
 
 - [ ] **Step 5: Run the tests + a build to verify the DI graph resolves**
 
@@ -1006,14 +1096,14 @@ public async Task Replace_same_login_rotation_evicts_both_caches()
     using var f = FactoryWithCaches(inboxCache, activityCache, validatedLogin: "octocat", priorLogin: "octocat");
     var client = f.CreateAuthenticatedClient();
 
-    var resp = await client.PostAsJsonAsync("/api/auth/replace", new { token = "ghp_new" });
+    var resp = await client.PostAsJsonAsync("/api/auth/replace", new { pat = "ghp_new" });
     resp.EnsureSuccessStatusCode();
 
     inboxCache.EvictCount.Should().BeGreaterThan(0);
     activityCache.EvictCount.Should().BeGreaterThan(0);
 }
 
-[Fact] // test 15b — /connect evicts both caches
+[Fact] // test 15b — /connect (no-warning) evicts both caches
 public async Task Connect_evicts_both_caches()
 {
     var inboxCache = new RecordingIdentityCache<InboxSnapshot>();
@@ -1021,10 +1111,30 @@ public async Task Connect_evicts_both_caches()
     using var f = FactoryWithCaches(inboxCache, activityCache, validatedLogin: "octocat");
     var client = f.CreateAuthenticatedClient();
 
-    var resp = await client.PostAsJsonAsync("/api/auth/connect", new { token = "ghp_x", host = "github.com" });
+    var resp = await client.PostAsJsonAsync("/api/auth/connect", new { pat = "ghp_x" });
     resp.EnsureSuccessStatusCode();
 
     inboxCache.EvictCount.Should().BeGreaterThan(0);
+    activityCache.EvictCount.Should().BeGreaterThan(0);
+}
+
+[Fact] // test 15b — /connect/commit (post-warning commit) evicts both caches (round-1 SEC-2)
+public async Task Connect_commit_after_warning_evicts_both_caches()
+{
+    var inboxCache = new RecordingIdentityCache<InboxSnapshot>();
+    var activityCache = new RecordingIdentityCache<ActivityResponse>();
+    // Validator returns a soft warning (NoReposSelected) so /connect does NOT commit; the commit
+    // (and thus the eviction) happens at /connect/commit. Mirrors the existing
+    // Connect_commit_after_warning_persists_token_and_sets_host test's two-step flow.
+    using var f = FactoryWithCaches(inboxCache, activityCache, validatedLogin: "octocat",
+        validationWarning: AuthValidationWarning.NoReposSelected);
+    var client = f.CreateAuthenticatedClient();
+
+    (await client.PostAsJsonAsync("/api/auth/connect", new { pat = "ghp_warn" })).EnsureSuccessStatusCode();
+    inboxCache.EvictCount.Should().Be(0); // not yet — connect returned a warning, no commit
+
+    (await client.PostAsJsonAsync("/api/auth/connect/commit", new { })).EnsureSuccessStatusCode();
+    inboxCache.EvictCount.Should().BeGreaterThan(0);   // evicted at commit
     activityCache.EvictCount.Should().BeGreaterThan(0);
 }
 
@@ -1037,14 +1147,16 @@ public async Task Token_change_still_evicts_when_config_write_throws()
         configWriteThrows: true);
     var client = f.CreateAuthenticatedClient();
 
-    var resp = await client.PostAsJsonAsync("/api/auth/connect", new { token = "ghp_x", host = "github.com" });
+    var resp = await client.PostAsJsonAsync("/api/auth/connect", new { pat = "ghp_x" });
     resp.EnsureSuccessStatusCode();
 
     inboxCache.EvictCount.Should().BeGreaterThan(0); // evict precedes/decoupled from the config write
 }
 ```
 
-> `FactoryWithCaches(...)` mirrors the existing `AuthEndpointsTests` harness: `RemoveAll<IIdentityKeyedFileCache<InboxSnapshot>>()` + `AddSingleton(...)` the recording caches, a `StubReviewAuth` returning `validatedLogin`, and (for `configWriteThrows`) a `IConfigStore` decorator whose `SetDefaultAccountLoginAsync` throws. Reuse the existing `StubReviewAuth`/spy plumbing in that file.
+> **Request-body field is `pat`, not `token` (round-1 SEC-1):** all three endpoints read `doc.RootElement.TryGetProperty("pat", …)` and 400 before any commit/eviction if it's missing — mirror the existing `AuthEndpointsTests`/`AuthReplaceEndpointTests`, which post `new { pat }`.
+>
+> `FactoryWithCaches(...)` mirrors the existing `AuthEndpointsTests` harness: `RemoveAll<IIdentityKeyedFileCache<InboxSnapshot>>()`/`<ActivityResponse>` + `AddSingleton(...)` the recording caches; a `StubReviewAuth` whose `ValidateCredentialsAsync` returns `validatedLogin` with **`AuthValidationError.None`** and the given `validationWarning` (default none — a no-warning result so `/connect` reaches the commit branch; `NoReposSelected` to drive the two-step `/connect/commit` flow); and (for `configWriteThrows`) an `IConfigStore` decorator whose `SetDefaultAccountLoginAsync` throws. Reuse the existing `StubReviewAuth`/spy plumbing and `CreateAuthenticatedClient()` (which sets the session + Origin headers the endpoints require). Confirm the auth handlers in this harness see the Origin header — the existing tests set it via `CreateAuthenticatedClient`/`AddPrismSessionHeaders`.
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
@@ -1061,10 +1173,13 @@ In `PRism.Web/Endpoints/AuthEndpoints.cs`, add the two cache interfaces as deleg
             IGitHubCredentialHealth credentialHealth, IActivityProvider activityProvider,
             IIdentityKeyedFileCache<PRism.Core.Inbox.InboxSnapshot> inboxCache,
             IIdentityKeyedFileCache<PRism.Core.Activity.ActivityResponse> activityCache,
+            InboxRefreshOrchestrator orchestrator,   // #619 concrete (dual-registered) — for QuiesceCacheWritesAsync
             ILogger<Category> log, CancellationToken ct) =>
 ```
 
-In `/connect`'s commit branch, **after** `viewerLogin.Set(result.Login ?? "")`, persist the config login (mirroring `/replace:298`) and evict both caches (awaited) alongside the existing `Reset()`:
+Each handler also takes the concrete `InboxRefreshOrchestrator orchestrator` as a delegate parameter (it's dual-registered per Task 4, and `/replace` already injects the concrete `InboxPoller inboxPoller`, so this is consistent) so it can **quiesce the inbox cache writer before evicting** (round-1 ADV-3).
+
+In `/connect`'s commit branch, **after** `viewerLogin.Set(result.Login ?? "")`, persist the config login (mirroring `/replace:298`), quiesce the writer, and evict both caches (awaited) alongside the existing `Reset()`:
 
 ```csharp
             viewerLogin.Set(result.Login ?? "");
@@ -1080,22 +1195,29 @@ In `/connect`'s commit branch, **after** `viewerLogin.Set(result.Login ?? "")`, 
             activityProvider.Reset();
             // #619 — a token change behaves exactly like a first load: drop both caches (awaited) so the
             // prior identity's data is gone before the response returns. Fail-closed: runs even if the
-            // config write above threw.
+            // config write above threw. Quiesce the inbox writer FIRST (round-1 ADV-3) so no in-flight/
+            // queued coalesced write can re-create inbox-snapshot.json after the delete — which on a
+            // same-login rotation the captured-identity stamp + config backstop would both wrongly accept.
+            await orchestrator.QuiesceCacheWritesAsync().ConfigureAwait(false);
             await inboxCache.EvictAsync(ct).ConfigureAwait(false);
             await activityCache.EvictAsync(ct).ConfigureAwait(false);
 ```
 
-In `/connect/commit`, apply the same pattern after `viewerLogin.Set(login ?? "")`: add the `SetDefaultAccountLoginAsync` best-effort call, then the two awaited `EvictAsync` calls next to `activityProvider.Reset()`.
+In `/connect/commit`, apply the same pattern after `viewerLogin.Set(login ?? "")`: add the `SetDefaultAccountLoginAsync` best-effort call, then the quiesce + two awaited `EvictAsync` calls next to `activityProvider.Reset()`.
 
-In `/replace`, the `SetDefaultAccountLoginAsync` call already exists (line ~298). Add the two awaited `EvictAsync` calls next to the unconditional `activityProvider.Reset()` (the one OUTSIDE `if (identityChanged)`, line ~393):
+In `/replace`, the `SetDefaultAccountLoginAsync` call already exists (line ~298). Add the quiesce + two awaited `EvictAsync` calls next to the unconditional `activityProvider.Reset()` (the one OUTSIDE `if (identityChanged)`, line ~393):
 
 ```csharp
             activityProvider.Reset();
             // #619 — evict both cold-start caches on EVERY successful replace (incl. same-login rotation,
-            // where IdentityChanged does not fire), alongside Reset(). Awaited: gone before the response.
+            // where IdentityChanged does not fire), alongside Reset(). Quiesce the inbox writer first
+            // (round-1 ADV-3); awaited evict — gone before the response.
+            await orchestrator.QuiesceCacheWritesAsync().ConfigureAwait(false);
             await inboxCache.EvictAsync(ct).ConfigureAwait(false);
             await activityCache.EvictAsync(ct).ConfigureAwait(false);
 ```
+
+> **Activity-side residual (round-1 ADV-3, documented).** `ActivityProvider.Reset()` must stay **non-blocking** (its contract — it runs on the auth request thread and must not wait on an in-flight fetch), so its write-through `SaveAsync` is fire-and-forget and a save dispatched just before `Reset()` can still land after the awaited `activityCache.EvictAsync`. On a same-login rotation this re-creates `activity-feed.json` under the unchanged identity, which the backstop accepts until the first post-rotation refresh overwrites it (self-heals; `/replace` calls `RequestImmediateRefresh()`). This is a narrow restart-timing window, accepted as a residual consistent with the spec §4 "residual reduced, not zero" — surfaced at the gate. (Fully closing it would require the activity write-through to be generation-checked at the moment of the file write, which the generic cache cannot see; deferred.)
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
@@ -1124,6 +1246,8 @@ git commit -m "feat(#619): evict cold-start caches (awaited) + persist config lo
 - Produces: `ActivityResponse` gains a trailing `bool Stale = false`; `ActivityProvider` ctor gains the two deps; write-through (gen-gated), rehydrate-once (expired `At`), evict-on-`Reset`.
 
 > **Blast radius:** the `ActivityProvider` ctor gains two params and `ActivityResponse` gains a positional. Update every direct `new ActivityResponse(...)` and `new ActivityProvider(...)` call site (test factories in `ActivityProviderTests.cs`, the `RESP`/`resp`/`OneReviewed` builders, and the `Program.cs:119` registration resolves the two new deps from DI automatically — no change there since both are registered).
+>
+> **Login-provider type asymmetry is intentional (round-1 COH-1).** `ActivityProvider` injects the `IViewerLoginProvider` **interface** (`_viewerLogin.Get()`), while `InboxRefreshOrchestrator` injects a `Func<string>` (`loginCache.Get`, bound at its DI registration). This mirrors each class's existing constructor convention — the orchestrator already took a `Func<string>` before #619; the activity provider takes the interface directly. Not a mistake; no need to unify.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -1201,6 +1325,9 @@ In `PRism.Core/Activity/ActivityProvider.cs`, add fields + rehydrate-once guard:
     private readonly IIdentityKeyedFileCache<ActivityResponse> _fileCache; // #619
     private readonly IViewerLoginProvider _viewerLogin;                    // #619
     private bool _rehydrateAttempted;                                      // #619 — disk read once, on the cold miss
+    // ^ Touched ONLY inside the `_gate`-held section of GetActivityAsync (the rehydrate block runs after
+    //   `await _gate.WaitAsync()`), so concurrent first-misses serialize on the gate — no double-read race,
+    //   no `volatile` needed. (Round-1 scope-guardian residual: gate-protected, not a data race.)
 ```
 
 Extend the ctor (add the two params at the end and assign):
@@ -1251,6 +1378,8 @@ At the cache-set site (the gen-gated `if (Volatile.Read(ref _generation) == gen)
                 _cache = new CacheEntry(resp, now, gen);
                 // #619 — persist last-known-good (gen-gated by this if). resp.Stale is false here (live);
                 // CancellationToken.None so a request-abort doesn't surface an unobserved task exception.
+                // `host` is the local ALREADY computed in GetActivityAsync (`var host = cfg.Github.Host.TrimEnd('/')`,
+                // ~line 108) — reuse it; the rehydrate TryLoad above uses the same TrimEnd form so the identity matches.
                 _ = _fileCache.SaveAsync(resp, new CacheIdentity(_viewerLogin.Get(), host), CancellationToken.None);
             }
 ```
@@ -1266,24 +1395,9 @@ In `Reset()`, add the evict (fire-and-forget, non-blocking — `Reset()` must st
     }
 ```
 
-- [ ] **Step 5: Register the activity cache singleton**
+- [ ] **Step 5: (Activity cache singleton already registered in Task 4)**
 
-In `PRism.Core/ServiceCollectionExtensions.cs`, beside the inbox cache singleton (Task 4):
-
-```csharp
-    // #619 — schema version for the cold-start activity feed cache.
-    private const int ActivityFeedCacheVersion = 1;
-```
-
-```csharp
-        services.AddSingleton<IIdentityKeyedFileCache<ActivityResponse>>(_ =>
-            new IdentityKeyedFileCache<ActivityResponse>(
-                Path.Combine(dataDir, "activity-feed.json"),
-                ActivityFeedCacheVersion,
-                isStructurallyValid: r => r.Items is not null));
-```
-
-(`ActivityResponse` is in `PRism.Core.Activity`; add the `using` if needed. The `Program.cs:119` `AddSingleton<IActivityProvider, ActivityProvider>()` now resolves both new ctor deps from DI — no Program.cs change required.)
+The `IIdentityKeyedFileCache<ActivityResponse>` singleton is registered in **Task 4 Step 4(a)** (moved up per round-1 FEAS-2 so Task 5's auth handlers can resolve it). Nothing to register here. The `Program.cs:119` `AddSingleton<IActivityProvider, ActivityProvider>()` now resolves both new ctor deps (`IIdentityKeyedFileCache<ActivityResponse>` + `IViewerLoginProvider`) from DI — no `Program.cs` change required. Verify the build resolves the graph: `dotnet.exe build PRism.Web/PRism.Web.csproj`.
 
 - [ ] **Step 6: Update existing `ActivityResponse` / `ActivityProvider` construction call sites**
 
@@ -1627,20 +1741,23 @@ export function StalePill({ lastRefreshedAt }: StalePillProps) {
   const ageMs = Date.now() - new Date(lastRefreshedAt).getTime();
   const show = Number.isFinite(ageMs) && ageMs > STALE_LABEL_THRESHOLD_MS;
 
-  // Announce once on the hidden→shown edge (mid-session threshold crossing has no stale-onset aria).
+  // Round-1 DES-2: announce via a PERSISTENTLY-MOUNTED live region whose text is set in an EFFECT on
+  // the hidden→shown edge — NOT by toggling aria-live on a conditionally-mounted span or mutating a ref
+  // during render (both fail under React strict-mode double-invoke and across AT engines). Mirrors the
+  // InboxPage stale-onset pattern (Task 9).
+  const [announceText, setAnnounceText] = useState('');
   const wasShown = useRef(false);
-  const announce = show && !wasShown.current;
-  wasShown.current = show;
+  useEffect(() => {
+    if (show && !wasShown.current) setAnnounceText(`Inbox last updated ${formatAge(lastRefreshedAt)}`);
+    wasShown.current = show;
+  }, [show, lastRefreshedAt]);
 
   return (
     <div className={styles.slot} data-reserved="true">
+      {/* Always-mounted sr-only live region — the announcement channel, separate from the visible pill. */}
+      <span className={styles.sr} role="status" aria-live="polite">{announceText}</span>
       {show && (
-        <span
-          className={styles.pill}
-          data-testid="inbox-stale-pill"
-          role="status"
-          aria-live={announce ? 'polite' : 'off'}
-        >
+        <span className={styles.pill} data-testid="inbox-stale-pill">
           Updated {formatAge(lastRefreshedAt)}
         </span>
       )}
@@ -1648,6 +1765,8 @@ export function StalePill({ lastRefreshedAt }: StalePillProps) {
   );
 }
 ```
+
+> Add a `.sr` class to `StalePill.module.css` reusing the global `sr-only` pattern (absolute, 1px clip) so the live region is visually hidden but announced.
 
 Create `frontend/src/components/Inbox/StalePill/StalePill.module.css` (chip-token styling; reserve-space constant height):
 
@@ -1664,14 +1783,25 @@ Create `frontend/src/components/Inbox/StalePill/StalePill.module.css` (chip-toke
   padding: 0 10px;
   border-radius: 11px;
   font-size: 0.75rem;
-  color: var(--text-muted);
-  background: var(--surface-2);
-  border: 1px solid var(--border-subtle);
+  color: var(--text-3);
+  background: var(--surface-3);
+  border: 1px solid var(--border-1);
   white-space: nowrap;
+}
+.sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 ```
 
-> Token names (`--text-muted`, `--surface-2`, `--border-subtle`) must match the design-system tokens actually in use — confirm against an existing `.chip`-style component (e.g. the inbox category chip) before finalizing; both themes verified at the visual mockup (oklch surface scales are theme-asymmetric — `reference_oklch_surface_scale_asymmetry...`).
+> **Tokens corrected (round-1 DES-1):** `--text-muted` and `--border-subtle` do **not** exist in `tokens.css` (CSS custom props fail silently → wrong inherited color + no border); `--surface-2` exists but is the panel surface, not the chip surface. Use `--text-3` (the global `.muted` mapping), `--surface-3` (the `.chip` base surface), and `--border-1` (lightest border in the scale) — the tokens the existing category chip actually uses. Verify both themes at the visual mockup (oklch surface scales are theme-asymmetric — `reference_oklch_surface_scale_asymmetry...`).
 
 - [ ] **Step 4: Mount the pill in the toolbar (default placement; finalized at mockup)**
 
@@ -1693,28 +1823,62 @@ git commit -m "feat(#619): Updated-age pill (>30 min, ~60s ticker, reserve-space
 
 ## Task 11: GitHub-unreachable snackbar (StreamHealthSnackbar pattern)
 
-**Files:**
+**Files (Option B):**
+- Create: `PRism.Core/Inbox/InboxRefreshStatus.cs` (`record InboxRefreshStatus(bool Ok)`)
+- Modify: `PRism.Core/Inbox/InboxPoller.cs` (inject `IReviewEventBus`; publish status per tick)
+- Modify: the events SSE endpoint (forward `InboxRefreshStatus` → `inbox-refresh-status`)
+- Create: `frontend/src/hooks/useInboxRefreshHealth.ts` (subscribe to the SSE event → debounced `failing`)
 - Create: `frontend/src/components/GitHubUnreachableSnackbar/GitHubUnreachableSnackbar.tsx`
 - Create: `frontend/src/components/GitHubUnreachableSnackbar/__tests__/GitHubUnreachableSnackbar.test.tsx`
-- Modify: `frontend/src/hooks/useInboxUpdates.ts` (surface a sustained-failure signal instead of silently swallowing)
 - Modify: `frontend/src/pages/InboxPage.tsx` (mount it; suppress under `StreamHealthSnackbar`; mutual-exclusion with cold-load `ErrorModal`)
 
+> ### ⚠️ ROUND-1 BLOCKER — gate decision required before executing this task
+>
+> **Three reviewers (product, feasibility, design) independently found that the originally-planned failure
+> source cannot observe GitHub-unreachability**, the snackbar's headline scenario. Verified against code:
+> `useInboxUpdates` is purely **SSE-event-driven** (`stream.on('inbox-updated', …)`), not a poller — and a
+> GitHub-unreachable `RefreshAsync` **throws before** publishing `inbox-updated`, so no event fires and the
+> hook's `catch` never runs. Separately, `GET /api/inbox` returns **HTTP 200 + the cached snapshot** when
+> GitHub is down (it serves `orch.Current`), so `useInbox.reload()` doesn't throw either. The only thing that
+> throws is a **backend**-down state — which is `StreamHealthSnackbar`'s domain, under which this snackbar is
+> explicitly *suppressed*. Net: as originally written, the snackbar **can never fire** for the offline-cold-launch
+> case (test 19b) or the degraded-live-session case (§9 13r-PROD1) it exists to cover.
+>
+> The spec §12 decision 9 explicitly makes the snackbar **independently descope-able**. So this is a genuine
+> owner decision — resolved at the B1 gate (see the gate question). The three options:
+> - **(A) Descope the snackbar to a follow-up issue (de-risk).** Ship the core cache + refreshing bar + pill now;
+>   the snackbar + its detection mechanism land as a tracked follow-up. Offline users still see cached data
+>   (+ pill if aged); manual-refresh failures still toast. Spec-sanctioned, smallest PR.
+> - **(B) Add a backend refresh-status SSE signal (full coverage — specified below).** `InboxPoller` publishes a
+>   refresh-outcome event the FE consumes to drive `failing` (debounced). Covers **both** offline-cold-launch
+>   and mid-session degrade. Adds a backend SSE-contract surface + tests to this PR.
+> - **(C) FE-only staleness watchdog (partial).** A FE timer sets `failing` when `data.stale` persists past a
+>   window. Covers offline-cold-launch only (mid-session degrade has `stale:false`, so it's NOT covered). Cheapest,
+>   but doesn't meet the spec's mid-session intent.
+>
+> **The steps below are written for Option (B)** (the most faithful to the owner's explicit "surface GitHub-fetch
+> failures like a lost backend connection" request). If the gate picks (A), delete this task and file the
+> follow-up; if (C), replace Step 1's backend signal with the FE watchdog timer.
+
 **Interfaces:**
-- Consumes: the generic `<Snackbar tone="warning" .../>`, `useStreamHealth().healthy`, a new sustained-failure flag from `useInboxUpdates`.
-- Produces: `<GitHubUnreachableSnackbar failing={boolean} onRetry={() => void} suppressed={boolean} />`.
+- Consumes: the generic `<Snackbar tone="warning" .../>`, `useStreamHealth().healthy`, and a new `inbox-refresh-status` SSE event (Option B).
+- Produces: `<GitHubUnreachableSnackbar failing={boolean} onRetry={() => void} suppressed={boolean} />`; a new backend `InboxRefreshStatus(bool Ok)` domain event + SSE forwarding.
 
 > Mirrors `StreamHealthSnackbar` precisely (spec §9): steady-state (renders on the steady failing state, not only on the edge), ~30s debounce before showing (sustained failure), pinned through the episode until a fetch succeeds, dismiss-on-edge (once per episode), suppressed when `StreamHealthSnackbar` is visible (shared `position:fixed` slot), and mutually exclusive with the cold-load `ErrorModal` (`error && data` vs `error && !data`). Background-poll failure → this snackbar; manual-refresh failure keeps the existing `useInboxRefresh` toast (one path per failure).
 
-- [ ] **Step 1: Surface a sustained-failure signal from `useInboxUpdates`**
+- [ ] **Step 1: Backend — publish a refresh-status SSE event the FE can observe (Option B)**
 
-In `frontend/src/hooks/useInboxUpdates.ts`, replace the silent `catch {}` swallow with a debounced failing flag: track consecutive background-poll failures; expose `failing: boolean` that becomes true after a sustained window (~30s, mirroring `UNHEALTHY_AFTER_MS`) of consecutive failures and resets to false on the next success. Keep retaining current data (no data clear).
+The FE has no way to observe a backend→GitHub refresh failure today (see the blocker callout). Add a backend signal:
 
-```ts
-  // ...inside run()'s catch: record the failure + arm/extend a ~30s timer; on success, clear it.
-  return { announce, failing };
-```
+1. **New domain event.** `public sealed record InboxRefreshStatus(bool Ok);` in `PRism.Core/Inbox/` (beside `InboxUpdated`).
+2. **Publish from `InboxPoller`.** Inject `IReviewEventBus` into `InboxPoller`. In `ExecuteAsync`, publish the outcome of each tick: after a successful `RefreshAsync`, `bus.Publish(new InboxRefreshStatus(true))`; in the `catch (Exception ex)` (line 69–72) and the `catch (RateLimitExceededException)` branch, `bus.Publish(new InboxRefreshStatus(false))` (after the existing log). This is decoupled from the diff-gated `InboxUpdated`, so a recovered-but-unchanged refresh still reports `Ok=true`.
+3. **Forward over SSE.** In the events endpoint that already forwards `InboxUpdated` as the `inbox-updated` SSE event, subscribe to `InboxRefreshStatus` and forward it as a new `inbox-refresh-status` SSE event carrying `{ ok }`. (Mirror the existing `InboxUpdated` → `inbox-updated` forwarding exactly.)
 
-Write a focused test first (`useInboxUpdates.test.tsx`): a single failed poll does NOT set `failing` (debounce); sustained failures past the window DO; a subsequent success clears it.
+Write backend tests first: `InboxPoller` publishes `InboxRefreshStatus(false)` on a throwing `RefreshAsync` and `InboxRefreshStatus(true)` on a successful one (fake orchestrator + recording bus); the SSE endpoint emits an `inbox-refresh-status` frame.
+
+- [ ] **Step 1b: Frontend — derive a debounced `failing` flag from the SSE signal**
+
+Add a hook (e.g. `useInboxRefreshHealth`) that subscribes to the `inbox-refresh-status` SSE event via `useEventSource` and exposes `failing: boolean`: arm a ~30s timer (mirroring `UNHEALTHY_AFTER_MS`) on the first `ok:false`; set `failing=true` if it stays failing past the window (debounces a single blip); clear immediately on any `ok:true`. Keep current data (no clear). Write a focused test: one `ok:false` does NOT set `failing` (debounce); sustained `ok:false` DOES; a subsequent `ok:true` clears it.
 
 - [ ] **Step 2: Write the failing snackbar tests**
 
@@ -1789,7 +1953,7 @@ export function GitHubUnreachableSnackbar({ failing, onRetry, suppressed }: Prop
 
 - [ ] **Step 4: Mount it in `InboxPage` with suppression + mutual-exclusion**
 
-In `frontend/src/pages/InboxPage.tsx`: read `const { healthy } = useStreamHealth();` and `const { failing } = autoRefresh;` (from the updated `useInboxUpdates`). Mount the snackbar in the loaded branch (where `data` is present — so it never co-fires with the cold-load `ErrorModal` at `error && !data`):
+In `frontend/src/pages/InboxPage.tsx`: read `const { healthy } = useStreamHealth();` and `const { failing } = useInboxRefreshHealth();` (the new Option-B hook). Mount the snackbar in the loaded branch (where `data` is present — so it never co-fires with the cold-load `ErrorModal` at `error && !data`):
 
 ```tsx
       <GitHubUnreachableSnackbar
@@ -1801,16 +1965,17 @@ In `frontend/src/pages/InboxPage.tsx`: read `const { healthy } = useStreamHealth
 
 - [ ] **Step 5: Run the tests + full suite**
 
-Run (from `frontend/`): `npm run test -- GitHubUnreachableSnackbar useInboxUpdates InboxPage`
+Run the backend tests (Option B): `dotnet.exe test tests/PRism.Web.Tests/PRism.Web.Tests.csproj --filter "FullyQualifiedName~InboxRefreshStatus"` and the poller test in `PRism.Core.Tests`.
+Run (from `frontend/`): `npm run test -- GitHubUnreachableSnackbar useInboxRefreshHealth InboxPage`
 Expected: PASS.
-Run the full suite (background-error behavior changed — tests asserting silent swallow need updating): `npm run test`
+Run the full suite: `npm run test`
 Expected: green.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add frontend/src/components/GitHubUnreachableSnackbar/ frontend/src/hooks/useInboxUpdates.ts frontend/src/pages/InboxPage.tsx
-git commit -m "feat(#619): GitHub-unreachable snackbar (debounced, pinned, suppressed under StreamHealthSnackbar)"
+git add PRism.Core/Inbox/InboxRefreshStatus.cs PRism.Core/Inbox/InboxPoller.cs PRism.Web/Endpoints frontend/src/hooks/useInboxRefreshHealth.ts frontend/src/components/GitHubUnreachableSnackbar/ frontend/src/pages/InboxPage.tsx tests/
+git commit -m "feat(#619): GitHub-unreachable snackbar via inbox-refresh-status SSE signal (debounced, pinned, suppressed under StreamHealthSnackbar)"
 ```
 
 ---
@@ -1865,7 +2030,7 @@ Expected: FAIL.
 
 - [ ] **Step 3: Add the immediate refetch in `useActivity`**
 
-In `frontend/src/hooks/useActivity.ts`, after `setData(next)` in `poll()`, if `next.stale` schedule an immediate re-poll (microtask / `setTimeout(…, 0)`), guarded so it fires once per stale response (not a loop if the backend keeps returning stale):
+In `frontend/src/hooks/useActivity.ts`, declare `let immediateRefetchFired = false;` at the top of the polling `useEffect` body (next to the existing `let cancelled = false;`, so it resets on each mount). Then, after `setData(next)` in `poll()`, if `next.stale` schedule an immediate re-poll (microtask), guarded by that flag so it fires at most once per mount (not a loop if the backend keeps returning stale):
 
 ```ts
         const next = await getActivity();
@@ -1873,10 +2038,13 @@ In `frontend/src/hooks/useActivity.ts`, after `setData(next)` in `poll()`, if `n
         cachedActivity = next;
         setData(next);
         setError(null);
-        if (next.stale) {
+        if (next.stale && !immediateRefetchFired) {
           // #619 — the rehydrated feed is stale; nudge an immediate live fetch rather than waiting ~90s.
-          // The backend seeds an expired TTL so this refetch is a real GitHub read. One-shot: the live
-          // response is stale:false, so this does not loop.
+          // The backend seeds an expired TTL so this refetch is a real GitHub read. Round-1 DES-4: gate
+          // on an explicit one-shot flag (scoped to this effect closure) so a backend that returns
+          // stale:true twice cannot trigger an unbounded fetch loop — don't rely on backend behavior
+          // as the loop terminator.
+          immediateRefetchFired = true;
           queueMicrotask(() => { if (!cancelled) void poll(); });
         }
 ```
@@ -2017,8 +2185,47 @@ git commit -m "chore(#619): cross-tier consumer checks, full-suite gate, final p
 **Spec coverage:**
 - §3.1 `IdentityKeyedFileCache<T>` → Task 1. §3.2 inbox integration → Tasks 2–4. §3.3 activity integration → Task 6.
 - §4 identity/eviction/backstop/persist-config-on-connect → Tasks 4 (backstop), 5 (evict + persist). §5.1 write path → Task 3. §5.2 rehydrate + force-notify + failed-revalidation → Tasks 2 (mechanism) + 9 (FE failed-revalidation presentation). §5.3 persist-everything → Tasks 1/3 (settled-AI flush).
-- §6 single-writer/disposable → Task 1 (disposable) + DI single-writer (Task 4). §7 inventory → all tasks. §9 affordance (stale flag, bar, pill, snackbar, rail) → Tasks 7–12. §10 consumer checks → Task 14. §11 test plan → tests embedded per task (1–8 → T1; 9–14 → T2/T3; 15/15b/15c → T4/T5; 16–18 → T6; 19–22 → T9–T12; 23 → T13). §12 decisions → realized across tasks. Visual sign-off → Task 14.
+- §6 single-writer/disposable → Task 1 (disposable) + DI single-writer (Task 4). §7 inventory → all tasks. §9 affordance (stale flag, bar, pill, snackbar, rail) → Tasks 7–12. §10 consumer checks → Task 14. §11 test plan → tests embedded per task (1–8 → T1; 9–11,14 → T2; 12–13 → T3; 15 → T4; 15b/15c → T5; 16–18 → T6; 19–22 → T9–T12; 23 → T13). §12 decisions → realized across tasks. Visual sign-off → Task 14.
 
 **Placeholder scan:** No "TBD/TODO" in production code. The only deferred decision is the **pill placement**, which is an owner visual choice (Task 14) with a concrete default (toolbar-inline, reserve-space) shipped in Task 10 — not a placeholder.
 
 **Type consistency:** `IIdentityKeyedFileCache<T>` / `CacheIdentity` (T1) used identically in T3/T4/T5/T6. `TryRehydrate` / `IsServingRehydratedSnapshot` (T2) consumed in T4/T7. `stale` wire field (T7/T8) consumed in T9–T12. `STALE_LABEL_THRESHOLD_MS` defined once (T10). `isFetching` (T9) drives the bar consistently. Orchestrator ctor cache-param order (T3) matches the DI registration (T4). `ActivityResponse.Stale` trailing-optional (T6) keeps existing positional constructions compiling.
+
+---
+
+## Round-1 `ce-doc-review` dispositions (7 personas)
+
+Adjudicated with `receiving-code-review` rigor — each verified against the codebase before applying; advisory/FYI items judged on merit. **Disposition** = Applied (plan revised) / Gate (owner decision surfaced at B1) / Accepted-residual / Deferred.
+
+| # | Reviewer | Finding | Sev/Conf | Disposition |
+|---|----------|---------|----------|-------------|
+| FEAS-1 / PROD-1 / DES-3 | feasibility + product + design (3×) | The snackbar's `failing` source (`useInboxUpdates`) is SSE-driven, not a poller, and GET `/api/inbox` returns 200+cache — so it **cannot observe GitHub-unreachability** (the headline case). | P1/75 | **Gate** — Task 11 rewritten around a backend `inbox-refresh-status` SSE signal (Option B); A/B/C scope decision surfaced at the B1 gate (spec §12 decision 9 sanctions descope). |
+| ADV-1 / FEAS-res | adversarial + feasibility | Rehydrator ordered **after** `ViewerLoginHydrator`, whose `StartAsync` blocks on a network credential validation — sequential startup gates the offline instant-paint behind that timeout. | P1/75 | **Applied** — reorder rehydrator **first** (reads on-disk config only); documented as a deliberate spec §4 deviation (refinement #3); surfaced at gate. |
+| ADV-2 | adversarial | `CaptureIdentity()` re-reads the login fresh at commit time instead of the line-175 fetch login — reintroduces the A-data-stamped-as-B leak and breaks test 13. | P1/75 | **Applied** — stash `_lastCaptureIdentity` from the line-175 `viewerLogin`; reuse in both triggers; test 13 note corrected. |
+| DES-1 | design | `StalePill.module.css` uses non-existent tokens (`--text-muted`, `--border-subtle`) → silent wrong color + no border. | P1/100 | **Applied** (safe_auto) — `--text-3` / `--surface-3` / `--border-1`. |
+| DES-2 | design | StalePill announce-once is unreliable — conditionally-mounted live region + ref-mutation-during-render breaks under React strict mode. | P1/75 | **Applied** — always-mounted sr-only live region + `useEffect` (mirrors the Task 9 pattern). |
+| COH-2 | coherence | Task 2's `Build()` test calls break after Task 3 evolves the harness signature; no re-verify note. | P1/100 | **Applied** — `cache:` param defaults to a recording cache; explicit "re-run Task 2 tests after Task 3" note. |
+| FEAS-2 | feasibility | Activity cache singleton consumed in Task 5 but not registered until Task 6 → DI resolve failure between commits. | P2/75 | **Applied** — both cache singletons registered together in Task 4. |
+| ADV-3 / SEC-res | adversarial + security | Awaited `EvictAsync` races the background coalescing writer; a post-evict flush re-creates the file, accepted on same-login rotation. | P2/75 | **Applied (inbox)** — `QuiesceCacheWritesAsync()` before evict. **Accepted-residual (activity)** — fire-and-forget `SaveAsync` after non-blocking `Reset()`; self-heals on first refresh; documented + gate-noted. |
+| SEC-1 | security | Eviction-test bodies use `token` not the endpoint's required `pat` → 400 before eviction. | P2/100 | **Applied** (safe_auto) — `pat` + validator-stub note. |
+| SEC-2 | security | No `/connect/commit` eviction test despite spec test 15b requiring all three endpoints. | P2/75 | **Applied** — added the two-step warning→commit eviction test. |
+| SCOPE-1 | scope | `IsServingRehydratedSnapshot` interface addition would break existing fakes (CS0535); spec said "no interface changes". | P2/75 | **Applied** — ships as a **default interface member** (`=> false`); zero fake blast radius; deviation documented (refinement #2). |
+| SCOPE-2 | scope | Task 1 omits the `ActivityResponse` round-trip from spec §11 test 1 → kebab `ActivitySource`/`ActivityVerb` file serialization untested. | P2/75 | **Applied** (safe_auto) — added the activity round-trip `[Fact]`. |
+| ADV-4 | adversarial | Coalescing-writer drain-exit handshake can strand the latest queued write (`IsCompleted` gate races the lock release). | P3/50 | **Applied** — explicit `_draining` flag set/cleared under the lock. |
+| ADV-5 | adversarial | Force-notify test 11 can pass via the `diff.Changed` branch without exercising force-notify. | P3/50 | **Applied** — assert `NewOrUpdatedPrCount==0` + full `Sections.Keys` payload shape. |
+| DES-4 | design | Activity stale-refetch has no loop guard despite the plan claiming one. | P2/50 | **Applied** — explicit `immediateRefetchFired` one-shot flag. |
+| PROD-2 | product | For a fresh (<30 min) cache, the cold-start revalidation window is cue-less for sighted users (bar is off while the FE idles waiting on SSE; pill suppressed; stale-onset aria is sr-only). | P2/50 | **Accepted-residual** — data is seconds-old and about to refresh; a sustained sighted cue is a visual-polish call deferred to the Task 14 mockup. |
+| COH-1 | coherence | `Func<string>` (inbox) vs `IViewerLoginProvider` (activity) login-provider asymmetry unexplained. | P2/75 | **Applied** — note: intentional, mirrors each class's existing ctor convention. |
+| COH-3 | coherence | Activity write-through `host` local scope not shown. | P2/50 | **Applied** — clarified it reuses the existing `GetActivityAsync` `host` local (~line 108). |
+| COH-4 | coherence | `InboxOrchestratorTestHarness.ConfigWith` referenced but never defined. | P2/50 | **Applied** — harness-helper definition folded into the Task 3 blast-radius note. |
+| COH-5 | coherence | Self-review test-mapping "9–14 → T2/T3" imprecise (tests 12–13 are T3-only). | P1/100 | **Applied** (safe_auto) — "9–11,14 → T2; 12–13 → T3". |
+| SCOPE-res | scope | `_rehydrateAttempted` not volatile → claimed double-read race. | (residual) | **Clarified (not a bug)** — the rehydrate block runs under `_gate`; serialized, no race. Note added. |
+| SCOPE-res | scope | `WaitForCacheWriteIdleAsync` must poll the condition, not fixed-delay. | (residual) | **Applied** — explicit poll-the-condition note (CI-flake discipline). |
+| SEC-res / DES-res | security + design | Rehydrator-before-Poller relies on sequential hosted-service startup with no runtime guard. | (residual) | **Deferred** — documented assumption (spec §13r-SECres); a startup assertion is reasonable but gold-plating for v1. Reordering to rehydrator-first (ADV-1) makes the dependency even looser. |
+| FEAS-res | feasibility | `SampleSnapshot` `PrInboxItem`/`PrReference` positional arg lists must match the real records. | (residual) | **Applied** — caution note added to Task 1. |
+| DES-res | design | `--text-muted` is a pre-existing undefined token in `PrActionsPanel`. | (residual) | **Noted, out of scope** — pre-existing; StalePill no longer uses it. |
+
+**Gate decisions surfaced for the B1 human review:**
+1. **Snackbar scope (FEAS-1/PROD-1/DES-3):** Option A (descope to follow-up) / **B (backend `inbox-refresh-status` SSE — currently in the plan)** / C (FE-only staleness watchdog, partial). See the Task 11 blocker callout.
+2. **Rehydrator ordering (ADV-1):** accept the deviation from spec §4 (rehydrator runs first) — recommended; the spec §4 ordering note should be updated to match.
+3. **Activity writer-race residual (ADV-3):** accept the narrow same-login-rotation restart-window residual (self-heals on first refresh), consistent with spec §4 "residual reduced, not zero".
