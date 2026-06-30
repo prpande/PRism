@@ -27,7 +27,8 @@ internal static partial class GitHubGraphQL
     // Lowered from 100 (#593): the FULL (open-PR) query was measured ≈7.2s at 50 aliases, ≈9.1s at 75,
     // timeout (→502) near 100 — 50 keeps each chunk comfortably under GitHub's ~11s GraphQL execution
     // limit. Holding it here (not a per-reader const) stops the cap from drifting between the two readers
-    // again: the active reader was left at 100 when only the inbox reader was lowered (#667). The inbox
+    // again: the active reader was left at 100 when only the inbox reader was lowered (#593) — the drift
+    // this single source of truth resolves, tracked as #667. The inbox
     // reader's light (closed-PR) query omits the readiness fields and isn't really bounded by this cap,
     // but reusing one constant for both its chunks is harmless (it stays well under 50 in practice).
     internal const int MergeReadinessAliasCap = 50;

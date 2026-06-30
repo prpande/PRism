@@ -78,7 +78,7 @@ public sealed class GitHubActivePrBatchReaderTests
         static (GitHubActivePrBatchReader Reader, RecordingHttpMessageHandler Handler) NewRecording()
         {
             var handler = new RecordingHttpMessageHandler(
-                Enumerable.Repeat((HttpStatusCode.OK, """{"data":{}}"""), 8));
+                Enumerable.Repeat((HttpStatusCode.OK, """{"data":{}}"""), 8));   // ceiling — each sub-test needs ≤2 POSTs
             var reader = new GitHubActivePrBatchReader(
                 new FakeHttpClientFactory(handler, new Uri("https://api.github.com/")),
                 () => Task.FromResult<string?>("token"), () => "https://github.com");
