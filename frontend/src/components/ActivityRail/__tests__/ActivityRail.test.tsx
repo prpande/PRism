@@ -433,3 +433,21 @@ describe('ActivityRail (P2) — server order + external routing', () => {
     expect(internal).not.toHaveAttribute('target');
   });
 });
+
+describe('ActivityRail (P2) — stale header', () => {
+  // #619 — when the rehydrated feed is stale, both "last 24h" headers swap to "saved"
+  // to signal that the data is from the on-disk cache, not a live GitHub read.
+  test('shows "saved" instead of "last 24h" when the feed is stale', () => {
+    railProps = { data: resp({ items: [], stale: true }), isLoading: false, error: null };
+    renderRail();
+    expect(screen.queryByText('last 24h')).not.toBeInTheDocument();
+    expect(screen.getAllByText('saved').length).toBeGreaterThan(0);
+  });
+
+  test('restores "last 24h" when not stale', () => {
+    railProps = { data: resp({ items: [], stale: false }), isLoading: false, error: null };
+    renderRail();
+    expect(screen.getAllByText('last 24h').length).toBeGreaterThan(0);
+    expect(screen.queryByText('saved')).not.toBeInTheDocument();
+  });
+});
