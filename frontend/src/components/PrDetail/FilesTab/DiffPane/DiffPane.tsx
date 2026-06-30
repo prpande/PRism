@@ -109,10 +109,11 @@ const MergedPairedContent = memo(function MergedPairedContent({
       />
     );
   }
-  // PERF (PoC-deferred): diffWordsWithSpace runs once per paired line per render
-  // (e.g. on theme toggle). Paired lines are a small subset, so this is fine at
-  // PoC scale; if large modify-heavy diffs become a hot path, memoize parts /
-  // wrap MergedPairedContent in React.memo. Tracked as a future optimization.
+  // #670: the React.memo wrapper above means this word-diff runs only when this
+  // line's inputs change, not on every render. One residual case remains: a theme
+  // toggle changes `syntax` identity, so the memo re-runs diffWordsWithSpace on
+  // toggle (theme-independent work). Caching across themes is a deferred non-goal —
+  // see docs/specs/2026-07-01-diffpane-render-perf-design.md.
   const parts = diffWordsWithSpace(normalizeEol(oldText), normalizeEol(newText));
   const spans = mergeWordDiffWithTokens(sideText, toks, parts, side);
   return <HighlightedLine spans={spans} fallback={sideText} />;
