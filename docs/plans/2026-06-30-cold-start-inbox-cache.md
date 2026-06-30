@@ -2249,22 +2249,24 @@ git commit -m "feat(#619): activity rail stale refetch + 'saved' header swap"
 
 ## Task 13: E2E — seed both caches, assert instant paint + reconcile
 
-> **DEVIATION (2026-06-30): DEFERRED to #685 — not implemented in this PR.**
-> The Playwright harness (`frontend/playwright.config.ts`) boots **one shared backend**
-> per run against a single `mkdtempSync` data dir that is **empty at boot** (`webServer`
-> starts before `globalSetup`). There is no per-spec "boot against a pre-seeded data dir"
-> hook, so a true boot-time-rehydrate e2e needs a **second dedicated `webServer`** with its
-> data dir seeded (kebab `config.json` + real `IdentityKeyedFileCache` envelopes) before the
-> process starts — infra scope this plan did not budget. Two implementer agents instead
-> reached for a production shim (`ForceRehydrateForTest` + inject endpoint) that bypassed the
-> rehydrate chain under test; both were reverted (`90647343`).
+> **DONE (2026-06-30) — implemented as a dedicated cold-start config; commit `bc1ef1c3`.**
+> An earlier deferral commit (`b78cc156`) wrongly claimed this needed unbudgeted infra
+> because the default harness boots an empty-at-boot data dir with "no pre-seeded-boot
+> hook." That was incorrect: `frontend/playwright.real.config.ts` already seeds a data dir
+> at **config-parse time** (before the webServer boots), and `SessionTokenMiddleware`
+> accepts a hand-authored cookie/token cache with no runtime connect. The implementation
+> follows that precedent — `frontend/playwright.coldstart.config.ts` boots its own backend
+> on `:5210` with a DataDir pre-seeded with a kebab `config.json` + `PRism.tokens.cache` +
+> a real `IdentityKeyedFileCache` `inbox-snapshot.json` envelope, then `cold-start-cache.spec.ts`
+> asserts the FIRST `GET /api/inbox` is `stale:true` with the cached row (the real
+> `InboxCacheRehydrator.StartAsync → TryRehydrate` boot path, **no production shim**), then
+> reconcile clears stale. Green on first run.
 >
-> **Coverage that stands in:** `InboxCacheRehydratorTests` (StartAsync rehydrate + all
-> fail-closed branches), `IdentityKeyedFileCacheTests` (envelope round-trip + identity/version/
-> host gating), 2622 vitest tests for the FE affordances, and Task 14's **live** visual
-> verification (real composed chain in a browser). The only gap is a durable *automated*
-> regression guard for the composed boot path — tracked in **#685**. No production test-hooks
-> were left behind.
+> **Inbox-only fidelity note:** under `PRISM_E2E_FAKE_REVIEW=1`, `Program.cs` swaps the real
+> `ActivityProvider` for the fake, so the activity *rehydrate* path is not reachable by a
+> hermetic fake-mode e2e (the rail paints the fake feed). That half stays covered by
+> `IdentityKeyedFileCacheTests` + unit tests + Task 14 live visual; an automated activity-rail
+> cold-start e2e is tracked in **#685**.
 
 **Files:**
 - Create/Modify: `frontend/e2e/cold-start-cache.spec.ts` (new, prod project)
