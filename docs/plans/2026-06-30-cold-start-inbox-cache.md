@@ -880,6 +880,7 @@ Add the coalescing-writer state + methods (place near the bottom of the class, b
 
     // Test seam: awaits the in-flight cache-write loop so write-path assertions are deterministic.
     internal Task CacheWriteIdleAsync() { lock (_cacheWriteGate) { return _cacheWriteLoop; } }
+```
 
 **Capture identity AND epoch from the data-fetch point, NOT a fresh read (round-1 ADV-2 + round-2 ADV-1 — load-bearing).** `RefreshAsync`
 already reads the login once at the top (`var viewerLogin = _viewerLoginProvider();`, ~line 175) and passes it
