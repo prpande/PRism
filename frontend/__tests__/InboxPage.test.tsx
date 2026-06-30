@@ -21,6 +21,15 @@ vi.mock('../src/hooks/useAiGate', () => ({
   useAiGate: vi.fn(),
   useIsSampleMode: vi.fn().mockReturnValue(false),
 }));
+// FilterBar reads useAuth (#619: suppress the stale pill while the credential is
+// invalid). These tests exercise a valid credential, so a static mock suffices.
+vi.mock('../src/hooks/useAuth', () => ({
+  useAuth: () => ({
+    authState: { hasToken: true, githubCredentialInvalid: false },
+    error: null,
+    refetch: vi.fn(),
+  }),
+}));
 
 import { useInbox } from '../src/hooks/useInbox';
 import { useInboxUpdates } from '../src/hooks/useInboxUpdates';

@@ -9,6 +9,7 @@ import { FilterSummary } from './FilterSummary';
 import { RefreshButton } from '../../controls/RefreshButton';
 import { Select } from '../../controls/Select';
 import { StalePill } from '../StalePill/StalePill';
+import { useAuth } from '../../../hooks/useAuth';
 import styles from './filters.module.css';
 
 const CI_VALUES: CiStatus[] = ['failing', 'pending'];
@@ -45,6 +46,14 @@ export function FilterBar({
   lastRefreshedAt,
 }: Props) {
   const f = useInboxFilters(sections, initialSort);
+  const { authState } = useAuth();
+  // #619 — suppress the centered "Updated <age>" pill while the GitHub credential is
+  // invalid. The re-auth banner (GitHubAuthBanner) is a danger Snackbar that also sits
+  // dead-center over this toolbar row and is the dominant, actionable signal; an invalid
+  // credential is precisely WHY the data is stale, so the age pill both visually collides
+  // with the banner and restates its meaning. Same predicate the banner uses.
+  const credentialInvalid =
+    authState?.hasToken === true && authState?.githubCredentialInvalid === true;
   // `onState` MUST be a stable reference (a useState setter like InboxPage's
   // `setFilterState`, or a useCallback) — an inline arrow would re-fire this effect
   // every render. f.clear is a []-dep useCallback; f.result only changes with the data.
@@ -73,9 +82,11 @@ export function FilterBar({
             vertical space or shifting the facet chips / sort controls. Owner-chosen
             placement (Task 14 visual sign-off). pointer-events:none so it never
             intercepts clicks over the empty center gap. */}
-        <div className={styles.stalePillCenter}>
-          <StalePill lastRefreshedAt={lastRefreshedAt} />
-        </div>
+        {!credentialInvalid && (
+          <div className={styles.stalePillCenter}>
+            <StalePill lastRefreshedAt={lastRefreshedAt} />
+          </div>
+        )}
         <FilterFacet
           name="CI"
           values={CI_VALUES}
