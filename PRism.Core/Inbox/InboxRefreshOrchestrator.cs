@@ -27,6 +27,9 @@ public sealed partial class InboxRefreshOrchestrator : IInboxRefreshOrchestrator
     private readonly Func<TimeSpan, CancellationToken, Task> _burstDelay;
 
     private InboxSnapshot? _current;
+    // #619 — armed by TryRehydrate; consumed (cleared) by the first SUCCESSFUL revalidation's commit.
+    // Drives both the force-notify-once behavior and the `stale` wire flag.
+    private volatile bool _rehydratedAwaitingRevalidate;
     private readonly TaskCompletionSource _firstSnapshotTcs = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly SemaphoreSlim _writerLock = new(1, 1);
     private int _coldStartKicked;
@@ -92,6 +95,8 @@ public sealed partial class InboxRefreshOrchestrator : IInboxRefreshOrchestrator
 
     public InboxSnapshot? Current => Volatile.Read(ref _current);
 
+    public bool IsServingRehydratedSnapshot => _rehydratedAwaitingRevalidate;
+
     public async Task<bool> WaitForFirstSnapshotAsync(TimeSpan timeout, CancellationToken ct)
     {
         if (Volatile.Read(ref _current) != null) return true;
@@ -107,6 +112,26 @@ public sealed partial class InboxRefreshOrchestrator : IInboxRefreshOrchestrator
             return false;
         }
         // ct cancellation propagates as OperationCanceledException (request abort → client-disconnect).
+    }
+
+    /// <summary>
+    /// #619 — Called once, by InboxCacheRehydrator, before the poller's first RefreshAsync.
+    /// Sets the rehydrated snapshot as _current, completes the first-snapshot gate so GET /api/inbox
+    /// returns immediately, and arms force-notify-once so the stale flag always clears on the first
+    /// successful revalidation. No-op if a refresh already committed (loses harmlessly).
+    /// </summary>
+    public void TryRehydrate(InboxSnapshot snapshot)
+    {
+        ArgumentNullException.ThrowIfNull(snapshot);
+        _writerLock.Wait();
+        try
+        {
+            if (_current is not null) return; // a refresh beat us — keep live data
+            Volatile.Write(ref _current, snapshot);
+            _rehydratedAwaitingRevalidate = true;
+            if (!_firstSnapshotTcs.Task.IsCompleted) _firstSnapshotTcs.TrySetResult();
+        }
+        finally { _writerLock.Release(); }
     }
 
     /// <inheritdoc/>
@@ -343,13 +368,24 @@ public sealed partial class InboxRefreshOrchestrator : IInboxRefreshOrchestrator
             sw.Stop();
             Log.SnapshotBuilt(_log, postDedupeTotal, sectionsFinal.Count, diff.Changed, diff.NewOrUpdatedPrCount, sw.ElapsedMilliseconds);
 
+            // #619 — the first SUCCESSFUL revalidation after a rehydrate force-notifies so the FE
+            // always refetches and clears `stale`, even when the rehydrated snapshot already equals
+            // live (diff.Changed == false). Consumed here, after the commit: a network-failed refresh
+            // throws before reaching this line and leaves the flag armed (the data is still stale).
+            var effectiveForceNotify = forceNotify;
+            if (_rehydratedAwaitingRevalidate)
+            {
+                effectiveForceNotify = true;
+                _rehydratedAwaitingRevalidate = false;
+            }
+
             if (diff.Changed)
             {
                 _events.Publish(new InboxUpdated(
                     diff.ChangedSectionIds.ToArray(),
                     diff.NewOrUpdatedPrCount));
             }
-            else if (forceNotify)
+            else if (effectiveForceNotify)
             {
                 // An AI-mode-change refresh re-populates the enrichments/settled set without
                 // touching the PR set, so ComputeDiff (enrichment-blind) sees no change. Publish
@@ -357,7 +393,9 @@ public sealed partial class InboxRefreshOrchestrator : IInboxRefreshOrchestrator
                 // keys, count 0 (no chip "landed" via this path); same shape as the mode-change
                 // clear publish in OnConfigChanged. On Preview→Live this fires one extra
                 // InboxUpdated(empty settled) before OnInboxEnrichmentsReady streams the real
-                // results — a harmless, intentional intermediate refetch.
+                // results — a harmless, intentional intermediate refetch. When triggered by
+                // _rehydratedAwaitingRevalidate (#619), this notifies the FE to refetch and
+                // clear `stale`.
                 _events.Publish(new InboxUpdated(newSnap.Sections.Keys.ToArray(), 0));
             }
 
