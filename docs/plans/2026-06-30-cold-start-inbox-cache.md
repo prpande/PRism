@@ -63,7 +63,7 @@ Two small refinements the spec's prose did not spell out; both are mechanical, s
 
 `tests/PRism.Core.Tests/Inbox/InboxOrchestratorTestHarness.cs` is the **single** source of truth for inbox-orchestrator test construction. It is created in **Task 2 Step 1** (provisionally, against the pre-cache ctor) and reaches its **final** form in **Task 3 Step 3** (the `cache`/`loginProvider` params land when the ctor gains its cache dependency). Every task below calls these exact signatures — do not invent per-task variants. The bodies wrap the existing fakes from `InboxRefreshOrchestratorTests.cs` (`FakeSectionQueryRunner`, `FakePrBatchReader`, `FakeCiFailingDetector`, the in-memory `FakeReviewEventBus`, a temp `IAppStateStore`/`IConfigStore`); match those real type names when implementing.
 
-**One canonical `Build` signature** (all optional params; covers every call site — `Build()`, `Build(cache:…)`, `Build(cache:…, login:…, host:…)`, `Build(cache:…, loginProvider:…, host:…)`):
+**One canonical `Build` signature** — this is the **Task 3 final form**; the **Task 2 provisional** harness omits the `cache` param (the ctor has no cache yet), i.e. `Build(login:…, host:…, loginProvider:…)` only, until Task 3 adds `cache` as a new optional, backward-compatible param (round-3 COH-3). All optional params; the final form covers every call site — `Build()`, `Build(cache:…)`, `Build(cache:…, login:…, host:…)`, `Build(cache:…, loginProvider:…, host:…)`:
 
 ```csharp
 // Returns the orchestrator + the two fakes tests assert against. `cache` defaults to a fresh
@@ -639,7 +639,7 @@ git commit -m "feat(#619): inbox orchestrator TryRehydrate + stale flag + force-
 - Consumes: `IIdentityKeyedFileCache<InboxSnapshot>` (Task 1), `CacheIdentity`.
 - Produces: orchestrator ctor gains a positional `IIdentityKeyedFileCache<InboxSnapshot> cache` parameter (inserted **before** `Func<string> viewerLoginProvider`); a private coalescing writer.
 
-> **Blast radius (round-1 COH-2):** inserting a ctor param breaks every direct `new InboxRefreshOrchestrator(...)` call site (the DI registration — fixed in Task 4 — and any test harness). This task brings `InboxOrchestratorTestHarness` to its **final** form per the canonical Test harness contract above: add the optional `cache:` parameter (defaulting to a fresh `RecordingIdentityCache<InboxSnapshot>` so Task 2's `Build()` / `Build(login:…, host:…)` call sites keep compiling), the `loginProvider:` override param, and the `WaitForCacheWriteIdleAsync`/`RaiseEnrichmentReady` helpers (the latter two land with the writer in Step 3). **Re-run Task 2's `InboxRehydrateTests` after this task** — they exercise the same harness and must stay green through the signature change. If `ConfigWith`/`SnapshotWith`/`BuildEquivalentSnapshotAsync` were not already added in Task 2, add them now (round-1 COH-4).
+> **Blast radius (round-1 COH-2):** inserting a ctor param breaks every direct `new InboxRefreshOrchestrator(...)` call site (the DI registration — fixed in Task 4 — and any test harness). This task brings `InboxOrchestratorTestHarness` to its **final** form per the canonical Test harness contract above: add the optional `cache:` parameter (defaulting to a fresh `RecordingIdentityCache<InboxSnapshot>` so Task 2's `Build()` / `Build(login:…, host:…)` call sites keep compiling), the `loginProvider:` override param, and the `WaitForCacheWriteIdleAsync`/`RaiseEnrichmentReady` helpers (the latter two land with the writer in Step 3). **Re-run Task 2's `InboxRehydrateTests` after this task** — they exercise the same harness and must stay green through the signature change. If `ConfigWith`/`SnapshotWith`/`BuildEquivalentSnapshotAsync` were not already added in Task 2, add them now (round-1 COH-4). **Specific existing sites (round-3 feasibility residual):** `tests/PRism.Core.Tests/Inbox/InboxRefreshOrchestratorTests.cs` has direct `new InboxRefreshOrchestrator(...)` constructions (~L1506 and ~L1694, inside its own `Build`/`BuildSut`/`BuildOrchestrator` helpers) — these break with CS7036 when the ctor gains the `cache` param. They're compiler-caught at the Task 3 Step 4 build; thread the recording cache through them (or route them via the canonical harness) the same way the ActivityProvider call-site fix (Task 6 Step 6) is enumerated.
 
 - [ ] **Step 1: Write the recording cache + failing tests**
 
@@ -728,8 +728,30 @@ public sealed class InboxCacheWriteTests
         cache.Saves.Single().Identity.Login.Should().Be("alice"); // stamped with the capture-time login, NOT bob
         cache.TryLoad(new CacheIdentity("bob", "github.com")).Should().BeNull();
     }
+
+    [Fact] // test 13b (round-3 SCOPE-1/SEC-1) — the epoch gate DROPS a pre-invalidate write so evict can't be resurrected
+    public async Task Invalidate_drops_a_write_captured_under_the_prior_epoch()
+    {
+        var cache = new RecordingIdentityCache<InboxSnapshot>();
+        var (orch, sections, _) = InboxOrchestratorTestHarness.Build(cache: cache, login: "octocat", host: "github.com");
+
+        // Commit a snapshot so a change-triggered write is enqueued under the CURRENT epoch...
+        sections.Seed("mine", prNumber: 1);
+        var refresh = orch.RefreshAsync(CancellationToken.None);
+        // ...then bump the epoch (as an auth token-change site does) BEFORE that write drains. The drainer
+        // must discard the now-stale-epoch write rather than persist (and thus resurrect) the file.
+        await orch.InvalidateCacheWritesAsync();      // Interlocked-bumps _cacheWriteEpoch + awaits in-flight loop
+        await refresh;
+        await InboxOrchestratorTestHarness.WaitForCacheWriteIdleAsync(orch);
+
+        // Without the drainer's `if (next.Epoch != Volatile.Read(ref _cacheWriteEpoch)) continue;` line this
+        // would record a save — the exact R2-ADV-1 resurrection. The gate must leave Saves empty.
+        cache.Saves.Should().BeEmpty();
+    }
 }
 ```
+
+> **Why this test exists (round-3 SCOPE-1, reinforced by SEC-1):** the epoch gate is the plan's headline round-2 safety fix, but tests 12/13 never invalidate mid-write — so deleting the single drainer line `if (next.Epoch != Volatile.Read(ref _cacheWriteEpoch)) continue;` leaves the whole suite green. Task 5's auth-eviction tests assert only `EvictCount > 0`, which **cannot** distinguish the epoch-gating path from a drain-only one either. This `[Fact]` is the regression guard for the drainer's epoch drop; it depends only on Task 3 infrastructure (`RecordingIdentityCache`, `InvalidateCacheWritesAsync`, `WaitForCacheWriteIdleAsync`). (Note: the exact `RefreshAsync`/invalidate interleaving may need a deterministic seam — e.g., a fetch-delay hook so the bump lands before the drain — model it on whatever timing seam the harness exposes; the assertion `Saves.Should().BeEmpty()` is the invariant.)
 
 > `MutableLogin` is a tiny test helper (a `Func<string> Get` whose **first** invocation returns `"alice"` then runs `OnNextRead` to flip the backing value to `"bob"` for all subsequent reads); add it beside the test if not present. The first `Get()` in `RefreshAsync` is the line-175 `viewerLogin` read, so the snapshot's data is fetched under `"alice"` and `_lastCaptureIdentity` is stamped `"alice"` — proving the write closed over the **fetch** identity, not a later commit-time read. (This test is precisely what catches the ADV-2 regression: a fresh `_viewerLoginProvider()` read at commit time would return `"bob"` and fail the `Identity.Login.Should().Be("alice")` assertion.)
 
@@ -1176,6 +1198,8 @@ git commit -m "feat(#619): InboxCacheRehydrator hosted service + DI (cache singl
 
 Create `tests/PRism.Web.Tests/Endpoints/AuthCacheEvictionTests.cs` (spec tests 15b, 15c). Use the existing `AuthEndpointsTests` factory pattern (inject spies via `WithWebHostBuilder` + `RemoveAll`/`AddSingleton`). Inject a `RecordingIdentityCache<InboxSnapshot>` and `RecordingIdentityCache<ActivityResponse>` as the registered `IIdentityKeyedFileCache<…>` singletons and assert `EvictCount` increments.
 
+> **`EvictCount > 0` is necessary but not sufficient (round-3 SEC-1).** It proves the file is dropped, but it does **not** prove the writer epoch was bumped — a drain-only `Quiesce` and the epoch-gating `Invalidate` both yield `EvictCount > 0` while differing on whether a pre-rotation in-flight write can resurrect the file. The drainer's epoch drop is regression-guarded at the unit level by **Task 3 test 13b** (`Invalidate_drops_a_write_captured_under_the_prior_epoch`). The auth handler's *call* into `InvalidateCacheWritesAsync` (vs. the old name) is now load-bearing for that guarantee; keep the call name correct (round-3, five reviewers). An integration-level resurrection assertion here is optional belt-and-suspenders for a single-owner local tool — test 13b covers the mechanism.
+
 ```csharp
 [Fact] // test 15b — /replace SAME-LOGIN rotation evicts both caches (IdentityChanged does NOT fire here)
 public async Task Replace_same_login_rotation_evicts_both_caches()
@@ -1266,9 +1290,9 @@ In `PRism.Web/Endpoints/AuthEndpoints.cs`, add the two cache interfaces as deleg
             ILogger<Category> log, CancellationToken ct) =>
 ```
 
-Each handler also takes the concrete `InboxRefreshOrchestrator orchestrator` as a delegate parameter (it's dual-registered per Task 4, and `/replace` already injects the concrete `InboxPoller inboxPoller`, so this is consistent) so it can **quiesce the inbox cache writer before evicting** (round-1 ADV-3).
+Each handler also takes the concrete `InboxRefreshOrchestrator orchestrator` as a delegate parameter (it's dual-registered per Task 4, and `/replace` already injects the concrete `InboxPoller inboxPoller`, so this is consistent) so it can **invalidate the inbox cache writer (epoch-bump + drain) before evicting** (round-2 ADV-1 — `InvalidateCacheWritesAsync`, which supersedes the round-1 quiesce-only method).
 
-In `/connect`'s commit branch, **after** `viewerLogin.Set(result.Login ?? "")`, persist the config login (mirroring `/replace:298`), quiesce the writer, and evict both caches (awaited) alongside the existing `Reset()`:
+In `/connect`'s commit branch, **after** `viewerLogin.Set(result.Login ?? "")`, persist the config login (mirroring `/replace:298`), invalidate the writer epoch, and evict both caches (awaited) alongside the existing `Reset()`:
 
 ```csharp
             viewerLogin.Set(result.Login ?? "");
@@ -1284,24 +1308,29 @@ In `/connect`'s commit branch, **after** `viewerLogin.Set(result.Login ?? "")`, 
             activityProvider.Reset();
             // #619 — a token change behaves exactly like a first load: drop both caches (awaited) so the
             // prior identity's data is gone before the response returns. Fail-closed: runs even if the
-            // config write above threw. Quiesce the inbox writer FIRST (round-1 ADV-3) so no in-flight/
-            // queued coalesced write can re-create inbox-snapshot.json after the delete — which on a
-            // same-login rotation the captured-identity stamp + config backstop would both wrongly accept.
-            await orchestrator.QuiesceCacheWritesAsync().ConfigureAwait(false);
+            // config write above threw. Invalidate the inbox writer epoch FIRST (round-2 ADV-1) so every
+            // already-captured pre-rotation write is dropped by the drainer's epoch gate — even one that
+            // ScheduleCacheWrites AFTER this returns (an in-flight RefreshAsync holding _writerLock across
+            // I/O, or a ~53s-late OnInboxEnrichmentsReady). A plain drain alone would NOT stop those, and on
+            // a same-login rotation the captured-identity stamp + config backstop would both wrongly accept
+            // the resurrected inbox-snapshot.json. InvalidateCacheWritesAsync bumps the epoch AND awaits the
+            // in-flight loop, so any SaveAsync already past the gate finishes before the EvictAsync below.
+            await orchestrator.InvalidateCacheWritesAsync().ConfigureAwait(false);
             await inboxCache.EvictAsync(ct).ConfigureAwait(false);
             await activityCache.EvictAsync(ct).ConfigureAwait(false);
 ```
 
-In `/connect/commit`, apply the same pattern after `viewerLogin.Set(login ?? "")`: add the `SetDefaultAccountLoginAsync` best-effort call, then the quiesce + two awaited `EvictAsync` calls next to `activityProvider.Reset()`.
+In `/connect/commit`, apply the same pattern after `viewerLogin.Set(login ?? "")`: add the `SetDefaultAccountLoginAsync` best-effort call, then the `InvalidateCacheWritesAsync` (epoch-bump + drain) + two awaited `EvictAsync` calls next to `activityProvider.Reset()`.
 
-In `/replace`, the `SetDefaultAccountLoginAsync` call already exists (line ~298). Add the quiesce + two awaited `EvictAsync` calls next to the unconditional `activityProvider.Reset()` (the one OUTSIDE `if (identityChanged)`, line ~393):
+In `/replace`, the `SetDefaultAccountLoginAsync` call already exists (line ~298). Add the `InvalidateCacheWritesAsync` (epoch-bump + drain) + two awaited `EvictAsync` calls next to the unconditional `activityProvider.Reset()` (the one OUTSIDE `if (identityChanged)`, line ~393):
 
 ```csharp
             activityProvider.Reset();
             // #619 — evict both cold-start caches on EVERY successful replace (incl. same-login rotation,
-            // where IdentityChanged does not fire), alongside Reset(). Quiesce the inbox writer first
-            // (round-1 ADV-3); awaited evict — gone before the response.
-            await orchestrator.QuiesceCacheWritesAsync().ConfigureAwait(false);
+            // where IdentityChanged does not fire), alongside Reset(). Invalidate the inbox writer epoch
+            // first (round-2 ADV-1: bump the epoch so the drainer drops every pre-rotation write, then await
+            // the in-flight loop); awaited evict — gone before the response.
+            await orchestrator.InvalidateCacheWritesAsync().ConfigureAwait(false);
             await inboxCache.EvictAsync(ct).ConfigureAwait(false);
             await activityCache.EvictAsync(ct).ConfigureAwait(false);
 ```
@@ -1327,8 +1356,8 @@ git commit -m "feat(#619): evict cold-start caches (awaited) + persist config lo
 **Files:**
 - Modify: `PRism.Core/Activity/ActivityContracts.cs`
 - Modify: `PRism.Core/Activity/ActivityProvider.cs`
-- Modify: `PRism.Core/ServiceCollectionExtensions.cs` (activity cache singleton)
 - Test: `tests/PRism.Core.Tests/Activity/ActivityCacheTests.cs` (new)
+- (`PRism.Core/ServiceCollectionExtensions.cs` — the activity cache singleton is registered in **Task 4** per round-1 FEAS-2; this task does **not** modify it. Round-3 COH-2.)
 
 **Interfaces:**
 - Consumes: `IIdentityKeyedFileCache<ActivityResponse>`, `IViewerLoginProvider`.
@@ -1459,16 +1488,19 @@ Extend the ctor (add the two params at the end and assign):
     }
 ```
 
-**Capture the login BEFORE the fan-out (round-2 SEC-1 — load-bearing, mirrors the inbox ADV-2 fix).** Right where `host` is computed (`var host = cfg.Github.Host.TrimEnd('/');`, ~line 108) — **before** the GitHub fan-out — also snapshot the login into a local:
+**Capture the login BEFORE the fan-out (round-2 SEC-1 — load-bearing, mirrors the inbox ADV-2 fix).** ⚠ **This is a code MOVE, not an in-place addition (round-3 FEAS-1/SEC-1 — verified against `ActivityProvider.cs`).** In the real provider the fan-out (`var evT = _events.ReadAsync(ct);`) is at **line 80**, but `var cfg = _config.Current; var host = cfg.Github.Host.TrimEnd('/');` are at **lines 102–103 — AFTER `await Task.WhenAll(...)` (line 83)**. So you cannot "snapshot the login where `host` is computed" and still be before the fan-out — `host` is computed *post*-fan-out today. **Hoist** the `cfg`/`host` read and add `loginSnapshot` **above** the fan-out: insert, between the under-gate TTL re-check (line ~78) and the fan-out (`var evT = …`, line 80):
 
 ```csharp
-            var host = cfg.Github.Host.TrimEnd('/');
-            var loginSnapshot = _viewerLogin.Get(); // #619 round-2 SEC-1 — capture BEFORE fan-out, like inbox line-175
+            var cfg = _config.Current;                  // #619 — HOISTED above the fan-out (was at line ~102)
+            var host = cfg.Github.Host.TrimEnd('/');    // #619 — HOISTED (was at line ~103)
+            var loginSnapshot = _viewerLogin.Get();     // #619 round-2 SEC-1 — capture BEFORE fan-out, like inbox line-175
 ```
 
-Why: a `_viewerLogin.Get()` re-read at the write-through (post-fan-out) commit can observe a login that `/api/auth/connect` already `Set("bob")` while it was awaiting `SetDefaultAccountLoginAsync` (a real disk-I/O yield) but **before** its `activityProvider.Reset()` ran — so an in-flight poll still passes the generation gate (gen not yet bumped) and stamps alice's feed under bob's identity, which bob then sees on the next cold start. The generation gate alone does not close this (it only catches `Reset()` firing *during* the fan-out, not in the gen-check→commit window). Capturing the login before the fan-out makes the stamp track the data's true owner regardless of a mid-call `Set`. Use `loginSnapshot` (not a fresh `Get()`) in **both** identity constructions below.
+Then **delete the now-duplicate** `var cfg = _config.Current; var host = cfg.Github.Host.TrimEnd('/');` at lines ~102–103, leaving `var extraBots = ParseExtraBots(cfg.Inbox.KnownBots);` in place (it reuses the hoisted `cfg`). This single hoist makes BOTH the pre-fan-out rehydrate block (below) and the post-fan-out write-through reference the same `host`/`loginSnapshot` locals — without it, the rehydrate block references undeclared variables (CS0103) and any in-place patch at line 103 captures the login *post*-fan-out, silently defeating SEC-1.
 
-In `GetActivityAsync`, inside the gated section, **after** the under-gate TTL re-check and **before** the GitHub fan-out (`var evT = _events.ReadAsync(ct);`), add the one-shot rehydrate:
+Why before the fan-out matters: a `_viewerLogin.Get()` re-read at the write-through (post-fan-out) commit can observe a login that `/api/auth/connect` already `Set("bob")` while it was awaiting `SetDefaultAccountLoginAsync` (a real disk-I/O yield) but **before** its `activityProvider.Reset()` ran — so an in-flight poll still passes the generation gate (gen not yet bumped) and stamps alice's feed under bob's identity, which bob then sees on the next cold start. The generation gate alone does not close this (it only catches `Reset()` firing *during* the fan-out, not in the gen-check→commit window). Capturing the login before the fan-out (line 80) makes the stamp track the data's true owner regardless of a mid-call `Set` — at that point `Set("bob")` cannot have fired yet. Use `loginSnapshot` (not a fresh `Get()`) in **both** identity constructions below.
+
+In `GetActivityAsync`, inside the gated section, **after** the hoisted `cfg`/`host`/`loginSnapshot` locals (above) and **before** the GitHub fan-out (`var evT = _events.ReadAsync(ct);`), add the one-shot rehydrate (it reads `loginSnapshot` + `host`, so it must follow the hoist and precede the fan-out):
 
 ```csharp
             // #619 — one-shot cold rehydrate: on the genuine first miss, seed _cache from disk with an
@@ -1813,7 +1845,11 @@ describe('StalePill', () => {
     render(<StalePill lastRefreshedAt={minsAgo(125)} />);
     const pill = screen.getByTestId('inbox-stale-pill');
     expect(pill).toHaveTextContent(/Updated 2h ago/);
-    expect(pill).toHaveAttribute('role', 'status');
+    // Round-3 DES-1: role="status" lives on the always-mounted sr-only LIVE REGION, NOT the visible
+    // pill — asserting it on `pill` fails, and adding role to the visible pill would make the ~60s
+    // ticker re-announce every tick (defeating the round-2 aria-once design). Assert the live region
+    // separately (there is exactly one role="status" element in StalePill — the sr-only span).
+    expect(screen.getByRole('status')).toBeInTheDocument();
   });
 
   it('appears once the ~60s ticker crosses the 30-min threshold', () => {
@@ -2305,6 +2341,7 @@ Per the owner's explicit request and `feedback_validate_layout_bugs_in_running_a
 3. Capture **live Playwright screenshots** of the cold-start inbox in **both themes**, for **both** candidate pill placements (toolbar-inline vs. above-toolbar band), plus the refreshing bar and the snackbar.
 4. Post the PNGs to a throwaway `review-assets/pr-N` branch (raw URLs) in a PR comment for the owner to choose placement.
 5. The owner picks the final placement; apply it (it's a CSS/JSX placement change in `InboxPage` + `StalePill` slot — no logic change).
+6. **Accessibility check — double live-region announcement (round-3 DES-2).** On a cold-start with an aged (>30 min) rehydrated cache, **two** `role="status" aria-live="polite"` regions fire in the same render cycle: Task 9's page region ("Showing saved inbox", on the `stale` false→true edge) and Task 10's pill region ("Inbox last updated <age>", on the 30-min-threshold edge). AT vendors handle same-tick polite updates inconsistently (NVDA/JAWS queue both; VoiceOver may drop one), so the user can hear two messages for one condition. **Recommended resolution:** keep the page-level "Showing saved inbox" as the authoritative onset cue and **drop the StalePill's separate `aria-live` announcement** (the pill stays a purely visual affordance — its age is conveyed on screen, and the page region already covers the audible onset). Confirm with a screen reader during this step; if the owner prefers the pill to keep its own announcement, suppress the page-level one while the pill is shown instead. Either way, land a single coherent announcement.
 
 - [ ] **Step 6: Commit any check-driven fixes + the chosen placement**
 
@@ -2391,3 +2428,26 @@ Round 2 pressure-tested the round-1 revisions. Adjudicated with `receiving-code-
 2. **Rehydrator ordering (ADV-1):** ✅ **Accepted** — rehydrator runs first (deviation from spec §4); update the spec §4 ordering note to match in the PR.
 3. **Inbox writer-race (R2-ADV-1):** the epoch gate fully closes the inbox resurrection; no residual to accept there.
 4. **Activity writer-race residual (ADV-3 + R2-SEC-1):** ✅ **Accepted** — the cross-identity half is now **closed** (capture-before-fan-out); only the narrow **same-login** restart-window residual remains (self-heals on the next activity fetch), consistent with spec §4 "residual reduced, not zero".
+
+---
+
+## Round-3 `ce-doc-review` dispositions (7 personas)
+
+Round 3 (owner-requested, post-gate) pressure-tested the round-2 revisions against the **real source** (`ActivityProvider.cs`, `InboxRefreshOrchestrator.cs`, `AuthEndpoints.cs`). Adjudicated with `receiving-code-review` rigor. Two P1 implementation-breakers surfaced (both introduced or left latent by round-2 edits); the rest are tightening. **Disposition** = Applied / Surfaced / FYI / Accepted-residual.
+
+| # | Reviewer(s) | Finding | Sev/Conf | Disposition |
+|---|-------------|---------|----------|-------------|
+| R3-1 | coherence + adversarial + scope + feasibility + security (**5×**) | Task 5 calls `orchestrator.QuiesceCacheWritesAsync()` at all three auth sites, but round-2 renamed it to `InvalidateCacheWritesAsync` (the only method Task 3 defines). Verbatim → CS1061; "fix" by re-adding a drain-only method → the epoch is **never bumped at any auth site** → the drainer gate is always-false → the R2-ADV-1 resurrection reopens (the headline round-2 fix becomes inert dead code). Task 5's `EvictCount`-only tests wouldn't catch it. | P1/100 | **Applied** (safe_auto) — renamed both call sites to `InvalidateCacheWritesAsync`; rewrote the two stale "Quiesce the inbox writer FIRST (round-1 ADV-3)" rationale comments + the prose to epoch-bump semantics (round-2 ADV-1). |
+| R3-2 | feasibility + security (2×, both verified vs. source) | The round-2 SEC-1 capture-before-fan-out fix is broken as written: it says add `loginSnapshot` "where `host` is computed (~line 108) — before the fan-out", but in real `ActivityProvider.cs` the fan-out is at **L80** and `host` at **L103 (post-fan-out)**. Verbatim → the pre-fan-out rehydrate block references undeclared `loginSnapshot`/`host` (CS0103); patched in place → login captured post-fan-out, silently defeating the cross-identity guarantee (test 17b fails). | P1/75 | **Applied** (gated_auto) — rewrote Task 6 Step 4 to **hoist** `cfg`/`host`/`loginSnapshot` above the fan-out (between the TTL re-check and L80) and delete the duplicate L102–103 reads; verified the L80/L103 ordering against source myself. |
+| R3-3 | design | StalePill test asserts `expect(pill).toHaveAttribute('role','status')`, but `role="status"` lives on the sr-only live region, not the visible pill (which has the testid). The test fails at Step 5; moving `role` onto the visible pill would make the ~60s ticker re-announce every tick (defeating the round-2 aria-once design). | P1/100 | **Applied** (safe_auto) — assert `screen.getByRole('status')` separately; keep the pill text assertion. |
+| R3-4 | scope (reinforced by security) | The epoch gate (`if (next.Epoch != Volatile.Read(ref _cacheWriteEpoch)) continue;`) — the plan's headline safety fix — has **no test**: tests 12/13 never invalidate mid-write, so deleting the line leaves the suite green. Task 5's `EvictCount`-only tests can't distinguish epoch-gate from drain-only either. | P2/75 | **Applied** (gated_auto) — added Task 3 **test 13b** (`Invalidate_drops_a_write_captured_under_the_prior_epoch`, asserts `Saves` empty after a mid-write `InvalidateCacheWritesAsync`); added a Task 5 note on the `EvictCount` limitation. |
+| R3-5 | coherence | Task 6 files-list includes `ServiceCollectionExtensions.cs`, but Step 5 + the commit step (round-2 COH-1) exclude it (registered in Task 4). | P1/100 | **Applied** (safe_auto) — removed from the Task 6 files list with a pointer to Task 4. |
+| R3-6 | design | Double live-region announcement at cold-start with a >30-min cache: Task 9's page region ("Showing saved inbox") and Task 10's pill region ("Inbox last updated <age>") both fire same-tick; AT vendors handle this inconsistently. | P2/75 | **Surfaced** — added a Task 14 Step 6 a11y check with a recommended resolution (page-level region authoritative; drop the pill's separate `aria-live`), final call at the owner's live a11y verification. |
+| R3-7 | coherence | "One canonical `Build` signature" header could read as applying to Task 2, whose provisional harness omits `cache`. | P2/75 | **Applied** — clarified the header is the Task 3 final form; Task 2 omits `cache`. (Doc already explained provisional-vs-final at the section top; this removes the residual ambiguity.) |
+| R3-8 | feasibility (residual) | Two existing `new InboxRefreshOrchestrator(...)` sites in `InboxRefreshOrchestratorTests.cs` (~L1506/L1694) break with CS7036 on the ctor change but weren't enumerated. | (residual) | **Applied** — named both sites in the Task 3 blast-radius note (compiler-caught; thread the recording cache through). |
+| R3-FYI-1 | design | `LoadingBar` (refreshing) + `StalePill` (data is <age> old) coexist at aged-cache cold-start — could read as competing signals. | P3/50 | **FYI** — already in scope for the Task 14 visual mockup; no plan change. |
+| R3-FYI-2 | design | `GitHubUnreachableSnackbar` uses conditional-render (returns null until failing) rather than the always-mounted-region pattern applied to StalePill (DES-2). | P2/50 | **FYI** — it mirrors the shipped `StreamHealthSnackbar` precisely (the `Snackbar` component owns role/aria-live); verify the existing pattern announces during the Task 14 a11y check. No change unless verification fails. |
+| R3-res-1 | product + security + design | Mid-session GitHub outage is cue-less until the 30-min pill (Option C can't arm on already-`stale:false` data). | (residual) | **Accepted** — owner-decided at the B1 gate; tracked as [#684](https://github.com/prpande/PRism/issues/684). Not re-litigated (product returned 0 findings on this basis). |
+| R3-res-2 | adversarial | After a post-rotation refresh B commits, a late-settling enrichment from pre-rotation snapshot A could merge into B's `_current` and persist under B's identity/epoch — a stale-chip merge, not a cross-identity leak (payload is B's own). | (residual) | **Accepted** — pre-existing enrichment-merge semantics, not introduced by this cache; no identity exposure. |
+
+**Round-3 clearances (verified, no finding):** the epoch-gate interleavings (read→bump+drain→stale `ScheduleCacheWrite`; the ~53s enrichment path; the `_draining` relaunch window; `InvalidateCacheWritesAsync` awaiting the in-flight loop before evict) all correctly drop/order the stale write — adversarial + feasibility confirmed race-free, *provided the auth site calls the right method* (R3-1). `InternalsVisibleTo PRism.Web` makes `internal InvalidateCacheWritesAsync` callable from `AuthEndpoints` (feasibility-verified). The inbox line-175 epoch/login capture point is correct. The default-interface-member (`IsServingRehydratedSnapshot => false`) is viable with zero CS0535. Option-C snackbar props + `useStreamHealth(): { healthy }` match real signatures — wireable. `loginSnapshot` (once hoisted) is used for **both** the rehydrate identity and the write-through with no residual post-fan-out `_viewerLogin.Get()`.
