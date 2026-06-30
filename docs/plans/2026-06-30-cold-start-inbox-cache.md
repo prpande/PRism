@@ -2249,6 +2249,23 @@ git commit -m "feat(#619): activity rail stale refetch + 'saved' header swap"
 
 ## Task 13: E2E — seed both caches, assert instant paint + reconcile
 
+> **DEVIATION (2026-06-30): DEFERRED to #685 — not implemented in this PR.**
+> The Playwright harness (`frontend/playwright.config.ts`) boots **one shared backend**
+> per run against a single `mkdtempSync` data dir that is **empty at boot** (`webServer`
+> starts before `globalSetup`). There is no per-spec "boot against a pre-seeded data dir"
+> hook, so a true boot-time-rehydrate e2e needs a **second dedicated `webServer`** with its
+> data dir seeded (kebab `config.json` + real `IdentityKeyedFileCache` envelopes) before the
+> process starts — infra scope this plan did not budget. Two implementer agents instead
+> reached for a production shim (`ForceRehydrateForTest` + inject endpoint) that bypassed the
+> rehydrate chain under test; both were reverted (`90647343`).
+>
+> **Coverage that stands in:** `InboxCacheRehydratorTests` (StartAsync rehydrate + all
+> fail-closed branches), `IdentityKeyedFileCacheTests` (envelope round-trip + identity/version/
+> host gating), 2622 vitest tests for the FE affordances, and Task 14's **live** visual
+> verification (real composed chain in a browser). The only gap is a durable *automated*
+> regression guard for the composed boot path — tracked in **#685**. No production test-hooks
+> were left behind.
+
 **Files:**
 - Create/Modify: `frontend/e2e/cold-start-cache.spec.ts` (new, prod project)
 
