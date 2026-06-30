@@ -10,6 +10,7 @@ using PRism.Core.Events;
 using PRism.Core.Inbox;
 using PRism.Core.PrDetail;
 using PRism.Core.State;
+using PRism.Core.Storage;
 using PRism.Web.Submit;
 
 namespace PRism.Web.Endpoints;
@@ -39,7 +40,11 @@ internal static partial class AuthEndpoints
             return Results.Ok(new AuthStateResponse(hasToken, host, mismatch, credentialHealth.IsInvalid));
         });
 
-        app.MapPost("/api/auth/connect", async (HttpContext ctx, ITokenStore tokens, IReviewAuth review, IAppStateStore stateStore, IConfigStore config, IViewerLoginProvider viewerLogin, IGitHubCredentialHealth credentialHealth, IActivityProvider activityProvider, ILogger<Category> log, CancellationToken ct) =>
+        app.MapPost("/api/auth/connect", async (HttpContext ctx, ITokenStore tokens, IReviewAuth review, IAppStateStore stateStore, IConfigStore config, IViewerLoginProvider viewerLogin, IGitHubCredentialHealth credentialHealth, IActivityProvider activityProvider,
+            IIdentityKeyedFileCache<InboxSnapshot> inboxCache,
+            IIdentityKeyedFileCache<ActivityResponse> activityCache,
+            InboxRefreshOrchestrator orchestrator,   // #619 concrete (dual-registered) — for InvalidateCacheWritesAsync
+            ILogger<Category> log, CancellationToken ct) =>
         {
             JsonDocument doc;
             try
@@ -92,15 +97,40 @@ internal static partial class AuthEndpoints
             var state = await stateStore.LoadAsync(ct).ConfigureAwait(false);
             await stateStore.SaveAsync(state.WithDefaultLastConfiguredGithubHost(config.Current.Github.Host), ct).ConfigureAwait(false);
             viewerLogin.Set(result.Login ?? "");
+            // #619 — persist the config login from the FIRST connect so the rehydrate backstop has a
+            // non-empty config identity (today connect only sets the in-memory viewerLogin). Best-effort.
+            try
+            {
+                await config.SetDefaultAccountLoginAsync(result.Login ?? "", ct).ConfigureAwait(false);
+            }
+#pragma warning disable CA1031 // best-effort; eviction below is fail-closed regardless
+            catch (Exception ex) { Log.SetDefaultAccountLoginFailed(log, ex); }
+#pragma warning restore CA1031
             // Token-commit path: invalidate any activity feed cached under a prior token
             // (#137 Task 8). The soft-warning early return above commits no token and so
             // does NOT reset — resetting there would needlessly evict a still-valid cache.
             activityProvider.Reset();
+            // #619 — a token change behaves exactly like a first load: drop both caches (awaited) so the
+            // prior identity's data is gone before the response returns. Fail-closed: runs even if the
+            // config write above threw. Invalidate the inbox writer epoch FIRST (round-2 ADV-1) so every
+            // already-captured pre-rotation write is dropped by the drainer's epoch gate — even one that
+            // ScheduleCacheWrites AFTER this returns (an in-flight RefreshAsync holding _writerLock across
+            // I/O, or a ~53s-late OnInboxEnrichmentsReady). A plain drain alone would NOT stop those, and on
+            // a same-login rotation the captured-identity stamp + config backstop would both wrongly accept
+            // the resurrected inbox-snapshot.json. InvalidateCacheWritesAsync bumps the epoch AND awaits the
+            // in-flight loop, so any SaveAsync already past the gate finishes before the EvictAsync below.
+            await orchestrator.InvalidateCacheWritesAsync().ConfigureAwait(false);
+            await inboxCache.EvictAsync(ct).ConfigureAwait(false);
+            await activityCache.EvictAsync(ct).ConfigureAwait(false);
             Log.ConnectCommitted(log, result.Login ?? "(empty)");
             return Results.Ok(new AuthConnectSuccess(Ok: true, Login: result.Login, Host: config.Current.Github.Host));
         });
 
-        app.MapPost("/api/auth/connect/commit", async (ITokenStore tokens, IAppStateStore stateStore, IConfigStore config, IViewerLoginProvider viewerLogin, IGitHubCredentialHealth credentialHealth, IActivityProvider activityProvider, ILogger<Category> log, CancellationToken ct) =>
+        app.MapPost("/api/auth/connect/commit", async (ITokenStore tokens, IAppStateStore stateStore, IConfigStore config, IViewerLoginProvider viewerLogin, IGitHubCredentialHealth credentialHealth, IActivityProvider activityProvider,
+            IIdentityKeyedFileCache<InboxSnapshot> inboxCache,
+            IIdentityKeyedFileCache<ActivityResponse> activityCache,
+            InboxRefreshOrchestrator orchestrator,   // #619 concrete (dual-registered) — for InvalidateCacheWritesAsync
+            ILogger<Category> log, CancellationToken ct) =>
         {
             // Read the validated login BEFORE CommitAsync clears it.
             var login = await tokens.ReadTransientLoginAsync(ct).ConfigureAwait(false);
@@ -123,8 +153,22 @@ internal static partial class AuthEndpoints
             // Mirror the connect-path Set to keep the cache in lockstep — empty string here
             // overwrites any stale login from a prior session rather than leaving it intact.
             viewerLogin.Set(login ?? "");
+            // #619 — persist the config login so the rehydrate backstop has a non-empty identity
+            // (mirrors the connect-path SetDefaultAccountLoginAsync added in this task). Best-effort.
+            try
+            {
+                await config.SetDefaultAccountLoginAsync(login ?? "", ct).ConfigureAwait(false);
+            }
+#pragma warning disable CA1031 // best-effort; eviction below is fail-closed regardless
+            catch (Exception ex) { Log.SetDefaultAccountLoginFailed(log, ex); }
+#pragma warning restore CA1031
             // Token-commit path: invalidate any activity feed cached under a prior token (#137 Task 8).
             activityProvider.Reset();
+            // #619 — evict both cold-start caches (awaited) so the prior identity's data is gone
+            // before the response returns. Invalidate the inbox writer epoch FIRST (round-2 ADV-1).
+            await orchestrator.InvalidateCacheWritesAsync().ConfigureAwait(false);
+            await inboxCache.EvictAsync(ct).ConfigureAwait(false);
+            await activityCache.EvictAsync(ct).ConfigureAwait(false);
             Log.CommitSucceeded(log, login ?? "(empty)");
             return Results.Ok(new AuthCommitSuccess(Ok: true, Host: config.Current.Github.Host));
         });
@@ -180,6 +224,9 @@ internal static partial class AuthEndpoints
             InboxPoller inboxPoller,
             IGitHubCredentialHealth credentialHealth,
             IActivityProvider activityProvider,
+            IIdentityKeyedFileCache<InboxSnapshot> inboxCache,
+            IIdentityKeyedFileCache<ActivityResponse> activityCache,
+            InboxRefreshOrchestrator orchestrator,   // #619 concrete (dual-registered) — for InvalidateCacheWritesAsync
             ILogger<Category> log,
             CancellationToken ct) =>
         {
@@ -391,6 +438,13 @@ internal static partial class AuthEndpoints
             // block, so subscribing to it would reproduce the same-login-rotation gap; an
             // unconditional imperative Reset() here closes it.
             activityProvider.Reset();
+            // #619 — evict both cold-start caches on EVERY successful replace (incl. same-login rotation,
+            // where IdentityChanged does not fire), alongside Reset(). Invalidate the inbox writer epoch
+            // first (round-2 ADV-1: bump the epoch so the drainer drops every pre-rotation write, then await
+            // the in-flight loop); awaited evict — gone before the response.
+            await orchestrator.InvalidateCacheWritesAsync().ConfigureAwait(false);
+            await inboxCache.EvictAsync(ct).ConfigureAwait(false);
+            await activityCache.EvictAsync(ct).ConfigureAwait(false);
 
             return Results.Ok(new AuthReplaceResponse(
                 Ok: true,
