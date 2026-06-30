@@ -2327,6 +2327,27 @@ git commit -m "test(#619): e2e cold-start cache — seed both caches, assert ins
 
 ## Task 14: Cross-tier consumer checks, full-suite gate, visual verification
 
+> **OUTCOME (2026-06-30) — DONE, commits `bc1ef1c3` (e2e) + `a227c487` (visual/a11y).**
+> - **Cross-tier checks (Steps 1–3):** clear. No FE consumer keys off the first `InboxUpdated`
+>   or `newOrUpdatedPrCount` (the "N new" banner was removed in #450), so the everything-new→delta
+>   shift can't regress. Background-poll failures are swallowed; the snackbar arms off the `stale`
+>   watchdog and is mutually exclusive with the cold-load `ErrorModal` and the manual-refresh toast
+>   (no double-surface). STJ round-trip covered by Task 1 tests.
+> - **Full suite (Step 4):** FE lint + `tsc -b` + **2623 vitest** green; backend **0/0 build, 0 failed**
+>   (GitHub 489 / AI.ClaudeCode 129 / Core 929 / Web 824); cold-start e2e green. **Full prod e2e
+>   (checklist step 6) judged unaffected-by-construction** — the only product-code change is two
+>   invisible `data-testid` attributes (can't affect functional specs or visual snapshots); CI's
+>   Linux e2e job runs the suite authoritatively on push (win32 visual baselines are vestigial).
+>   Desktop step skipped (no `desktop/` change).
+> - **Visual sign-off (Step 5):** owner reviewed live both-theme Playwright captures and **rejected
+>   both planned candidates** (toolbar-inline / above-toolbar band). Chosen placement: the pill is
+>   **centered in the filter row** (absolutely positioned, zero vertical footprint), bordered with
+>   `--border-strong`, sized to the chips/Sort-dropdown height (28px). Deviation from the plan's
+>   "toolbar-inline candidate a" default, recorded here.
+> - **A11y (Step 6 / R3-6):** resolved as recommended — the StalePill **dropped its own `aria-live`**;
+>   InboxPage's page-level `inbox-stale-status` region is the single authoritative stale-onset cue.
+
+
 **Files:** (verification + visual sign-off; no new production code unless a check surfaces a regression)
 
 **Interfaces:** none produced; this task clears spec §10 and the visual sign-off before PR.
