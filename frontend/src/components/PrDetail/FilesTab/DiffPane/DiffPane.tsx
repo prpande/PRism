@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import type {
   FileChange,
   ReviewThreadDto,
@@ -59,7 +59,16 @@ function tokensFor(
 // background-only word-diff. When tokens are not yet available (highlighter
 // warming, or large-file suppression), falls back to the legacy WordDiffOverlay
 // so the changed-region emphasis never regresses to plaintext.
-function MergedPairedContent({
+//
+// #670: memoized so the per-paired-line `diffWordsWithSpace` runs only when this
+// line's inputs actually change. All props are referentially stable across an
+// unrelated re-render — `syntax` is a `useMemo`'d object (stable `EMPTY` sentinel
+// until tokens change); `side`/`lineNum`/`oldText`/`newText` derive from memoized
+// `allLines`. Memoizing the component (rather than an internal `useMemo`) caches
+// the fallback branches too and avoids a rules-of-hooks hazard with the two early
+// returns below. Default shallow compare is correct: the output is a pure function
+// of these props.
+const MergedPairedContent = memo(function MergedPairedContent({
   syntax,
   side,
   lineNum,
@@ -107,7 +116,7 @@ function MergedPairedContent({
   const parts = diffWordsWithSpace(normalizeEol(oldText), normalizeEol(newText));
   const spans = mergeWordDiffWithTokens(sideText, toks, parts, side);
   return <HighlightedLine spans={spans} fallback={sideText} />;
-}
+});
 
 export interface DiffPaneProps {
   prRef: PrReference;
@@ -453,6 +462,24 @@ export function DiffPane({
     return () => document.removeEventListener('keydown', onKey);
   }, []);
 
+  // #670: review threads for the open file, indexed by line. Memoized like every
+  // other derived structure here (allLines, changes, the boundary maps) so it is
+  // not rebuilt every render — and, critically, so each row receives a stable
+  // `threadsAtLine` reference, the precondition for the row React.memo below to
+  // bail on an unrelated re-render. Keyed on [reviewThreads, selectedPath]; both
+  // are available before the early-return guards, and a null selectedPath simply
+  // yields an empty map (the !selectedPath guard returns before it is read).
+  const threadsByLine = useMemo(() => {
+    const map = new Map<number, ReviewThreadDto[]>();
+    for (const t of reviewThreads) {
+      if (t.filePath !== selectedPath) continue;
+      const existing = map.get(t.lineNumber);
+      if (existing) existing.push(t);
+      else map.set(t.lineNumber, [t]);
+    }
+    return map;
+  }, [reviewThreads, selectedPath]);
+
   // ---- Early-return guards (all hooks must be above here) ----
 
   if (!selectedPath) {
@@ -491,14 +518,6 @@ export function DiffPane({
         </div>
       </div>
     );
-  }
-
-  const fileThreads = reviewThreads.filter((t) => t.filePath === selectedPath);
-  const threadsByLine = new Map<number, ReviewThreadDto[]>();
-  for (const t of fileThreads) {
-    const existing = threadsByLine.get(t.lineNumber) ?? [];
-    existing.push(t);
-    threadsByLine.set(t.lineNumber, existing);
   }
 
   const colSpan = isSplit ? 4 : 3;
@@ -900,7 +919,12 @@ interface DiffLineRowProps {
   collapse?: ThreadCollapseControl;
 }
 
-function DiffLineRow({
+// #670: memoized so an unrelated DiffPane re-render (e.g. a change-nav scroll, which
+// re-renders DiffPane but not its FilesTab parent — leaving the callback props
+// referentially stable) does not reconcile every <tr>. Default shallow compare is
+// correct: the row is a pure function of its props (handleClick/renderContent close
+// only over props; threadsAtLine is stabilized by the threadsByLine useMemo above).
+const DiffLineRow = memo(function DiffLineRow({
   line,
   pair,
   threadsAtLine,
@@ -1021,7 +1045,7 @@ function DiffLineRow({
       )}
     </>
   );
-}
+});
 
 type SplitRowKind = 'header' | 'paired' | 'context' | 'solo-delete' | 'solo-insert';
 
@@ -1041,7 +1065,10 @@ interface SplitDiffLineRowProps {
   onLineClick?: (anchor: InlineAnchor) => void;
 }
 
-function SplitDiffLineRow({
+// #670: memoized alongside DiffLineRow (see its note). Split mode is the default
+// review mode, and SplitDiffLineRow takes no render-prop callback, so all its props
+// are referentially stable across a scroll re-render and it bails cleanly.
+const SplitDiffLineRow = memo(function SplitDiffLineRow({
   kind,
   oldLineNum,
   newLineNum,
@@ -1249,7 +1276,7 @@ function SplitDiffLineRow({
   }
 
   return null;
-}
+});
 
 // A row that renders the composer iff the parent's renderComposerForLine
 // returns non-null for the given line. Avoids putting `if (active)` logic
