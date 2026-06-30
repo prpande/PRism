@@ -59,6 +59,53 @@ Two small refinements the spec's prose did not spell out; both are mechanical, s
 
 ---
 
+## Test harness contract (canonical — round-2 COH-2/3)
+
+`tests/PRism.Core.Tests/Inbox/InboxOrchestratorTestHarness.cs` is the **single** source of truth for inbox-orchestrator test construction. It is created in **Task 2 Step 1** (provisionally, against the pre-cache ctor) and reaches its **final** form in **Task 3 Step 3** (the `cache`/`loginProvider` params land when the ctor gains its cache dependency). Every task below calls these exact signatures — do not invent per-task variants. The bodies wrap the existing fakes from `InboxRefreshOrchestratorTests.cs` (`FakeSectionQueryRunner`, `FakePrBatchReader`, `FakeCiFailingDetector`, the in-memory `FakeReviewEventBus`, a temp `IAppStateStore`/`IConfigStore`); match those real type names when implementing.
+
+**One canonical `Build` signature** (all optional params; covers every call site — `Build()`, `Build(cache:…)`, `Build(cache:…, login:…, host:…)`, `Build(cache:…, loginProvider:…, host:…)`):
+
+```csharp
+// Returns the orchestrator + the two fakes tests assert against. `cache` defaults to a fresh
+// RecordingIdentityCache<InboxSnapshot>. `loginProvider`, when non-null, OVERRIDES `login` (used by
+// the capture-identity test 13 to flip the login mid-refresh). The `cache` param is absent in the
+// Task 2 provisional harness (the ctor has no cache yet) and added in Task 3 — see each task.
+public static (InboxRefreshOrchestrator Orch, FakeSectionQueryRunner Sections, FakeReviewEventBus Events) Build(
+    IIdentityKeyedFileCache<InboxSnapshot>? cache = null,
+    string login = "octocat",
+    string host = "github.com",
+    Func<string>? loginProvider = null);
+```
+
+**Helper signatures** (defined once, in the harness; referenced by Tasks 2–4):
+
+```csharp
+// A snapshot containing one PR (prNumber) in `section`; used to seed rehydrate/no-op tests.
+public static InboxSnapshot SnapshotWith(string section, int prNumber);
+
+// The snapshot a live RefreshAsync WOULD produce from the given seeded sections — built by running a
+// throwaway orchestrator's RefreshAsync over the same seed and returning its Current. Used so a
+// rehydrate-then-refresh test yields diff.Changed == false (the force-notify path, tests 11/14).
+public static Task<InboxSnapshot> BuildEquivalentSnapshotAsync(FakeSectionQueryRunner sections);
+
+// An IConfigStore whose Github.Accounts[0].Login == login (or an empty Accounts list when login is null)
+// and Github.Host == host. Drives the rehydrator's fail-closed config-identity backstop (Task 4).
+public static IConfigStore ConfigWith(string? login, string host);
+
+// Deterministic write-drain await: `await orch.CacheWriteIdleAsync()` then re-enter the gate to confirm
+// `_queuedWrite is null`; if a new write enqueued during the await, loop. POLLS the condition, never a
+// fixed delay (poll-condition-not-fixed-delay CI discipline). Added in Task 3 with the writer.
+public static Task WaitForCacheWriteIdleAsync(InboxRefreshOrchestrator orch);
+
+// Raises the enrichment-ready event the orchestrator subscribes to (drives OnInboxEnrichmentsReady),
+// stamping `prId` with `chip`. Mirrors how InboxRefreshOrchestratorTests fires enrichment events today.
+public static void RaiseEnrichmentReady(FakeReviewEventBus events, string prId, string chip);
+```
+
+`MutableLogin` (Task 3 test 13) is a small sibling helper: a `Func<string> Get` whose first call returns its seed login then runs `OnNextRead` to flip the backing value for subsequent reads. Defined beside the harness.
+
+---
+
 ## Task 1: `IdentityKeyedFileCache<T>` — the shared on-disk cache
 
 **Files:**
@@ -456,7 +503,7 @@ public sealed class InboxRehydrateTests
 }
 ```
 
-> If a reusable `InboxOrchestratorTestHarness` does not exist, create it in this step under `tests/PRism.Core.Tests/Inbox/InboxOrchestratorTestHarness.cs` wrapping the existing fakes (`FakeSectionQueryRunner`, `FakePrBatchReader`, `FakeCiFailingDetector`, the in-memory event bus, a temp `IAppStateStore`/`IConfigStore`). Model it on the construction block already present in `InboxRefreshOrchestratorTests.cs`.
+> Create `tests/PRism.Core.Tests/Inbox/InboxOrchestratorTestHarness.cs` in this step per the **canonical Test harness contract** above (the single source of truth for every signature). In THIS task it is provisional: the orchestrator ctor has no cache param yet, so `Build`'s `cache` parameter is **not** present — `Build(login, host, loginProvider)` only. Task 3 adds the `cache` param (a new optional, backward-compatible) + the `WaitForCacheWriteIdleAsync`/`RaiseEnrichmentReady` helpers when the writer lands. Implement `SnapshotWith`, `BuildEquivalentSnapshotAsync`, and `ConfigWith` here, wrapping the existing fakes; model construction on the block already in `InboxRefreshOrchestratorTests.cs`.
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
@@ -592,7 +639,7 @@ git commit -m "feat(#619): inbox orchestrator TryRehydrate + stale flag + force-
 - Consumes: `IIdentityKeyedFileCache<InboxSnapshot>` (Task 1), `CacheIdentity`.
 - Produces: orchestrator ctor gains a positional `IIdentityKeyedFileCache<InboxSnapshot> cache` parameter (inserted **before** `Func<string> viewerLoginProvider`); a private coalescing writer.
 
-> **Blast radius (round-1 COH-2):** inserting a ctor param breaks every direct `new InboxRefreshOrchestrator(...)` call site (the DI registration — fixed in Task 4 — and any test harness). This task changes `InboxOrchestratorTestHarness.Build()` to construct the orchestrator with a `RecordingIdentityCache<InboxSnapshot>` (a `cache:` parameter, defaulting to a fresh recording cache so Task 2's `Build()` / `Build(login:…, host:…)` call sites keep working). **Re-run Task 2's `InboxRehydrateTests` after this task** — they exercise the same harness and must stay green through the signature change. Also add the `ConfigWith(login, host)` and `SnapshotWith`/`BuildEquivalentSnapshotAsync` helpers the Task 2/Task 4 tests reference (round-1 COH-4) if not already present.
+> **Blast radius (round-1 COH-2):** inserting a ctor param breaks every direct `new InboxRefreshOrchestrator(...)` call site (the DI registration — fixed in Task 4 — and any test harness). This task brings `InboxOrchestratorTestHarness` to its **final** form per the canonical Test harness contract above: add the optional `cache:` parameter (defaulting to a fresh `RecordingIdentityCache<InboxSnapshot>` so Task 2's `Build()` / `Build(login:…, host:…)` call sites keep compiling), the `loginProvider:` override param, and the `WaitForCacheWriteIdleAsync`/`RaiseEnrichmentReady` helpers (the latter two land with the writer in Step 3). **Re-run Task 2's `InboxRehydrateTests` after this task** — they exercise the same harness and must stay green through the signature change. If `ConfigWith`/`SnapshotWith`/`BuildEquivalentSnapshotAsync` were not already added in Task 2, add them now (round-1 COH-4).
 
 - [ ] **Step 1: Write the recording cache + failing tests**
 
@@ -737,7 +784,7 @@ Add the coalescing-writer state + methods (place near the bottom of the class, b
     // write and starts AFTER the in-flight one completes — so an older slow write can never land after
     // a newer one. Identity is captured by the caller (under _writerLock) and closed over here.
     private readonly object _cacheWriteGate = new();
-    private (InboxSnapshot Snapshot, CacheIdentity Identity)? _queuedWrite;
+    private (InboxSnapshot Snapshot, CacheIdentity Identity, int Epoch)? _queuedWrite;
     private Task _cacheWriteLoop = Task.CompletedTask;
     // Round-1 ADV-4 fix: gate the drainer relaunch on an explicit _draining flag, NOT on
     // _cacheWriteLoop.IsCompleted. The loop releases _cacheWriteGate (Monitor.Exit) a moment before
@@ -746,11 +793,24 @@ Add the coalescing-writer state + methods (place near the bottom of the class, b
     // strictly under the lock, closing the window.
     private bool _draining;
 
-    private void ScheduleCacheWrite(InboxSnapshot snapshot, CacheIdentity identity)
+    // ── Round-2 ADV-1: epoch gate (supersedes the round-1 quiesce-only invalidation) ───────────────
+    // QuiesceCacheWrites alone could NOT stop a write scheduled AFTER an auth-site evict: an in-flight
+    // RefreshAsync (holding _writerLock across network I/O) or a slow OnInboxEnrichmentsReady (AI settles
+    // ~53s later) can call ScheduleCacheWrite after the drain+evict returned, re-creating the file. On a
+    // SAME-LOGIN token rotation _lastCaptureIdentity.Login is unchanged, so the identity gate accepts the
+    // resurrected file — defeating evict-on-swap. The fix mirrors ActivityProvider._generation: every
+    // write carries the epoch captured WHEN ITS SNAPSHOT'S DATA WAS FETCHED (the line-175 read); the
+    // auth-site invalidate bumps the epoch; the drainer DROPS any write whose epoch != the current epoch.
+    // A pre-rotation write (old epoch) is discarded even if it schedules after evict; a genuinely new
+    // post-rotation refresh captures the new epoch and persists normally.
+    private int _cacheWriteEpoch;        // bumped by InvalidateCacheWritesAsync at each auth token change
+    private int _lastCaptureEpoch;       // the epoch READ at line-175 for the last committed snapshot
+
+    private void ScheduleCacheWrite(InboxSnapshot snapshot, CacheIdentity identity, int epoch)
     {
         lock (_cacheWriteGate)
         {
-            _queuedWrite = (snapshot, identity); // latest-wins: overwrites any not-yet-started write
+            _queuedWrite = (snapshot, identity, epoch); // latest-wins: overwrites any not-yet-started write
             if (!_draining)
             {
                 _draining = true;
@@ -763,62 +823,87 @@ Add the coalescing-writer state + methods (place near the bottom of the class, b
     {
         while (true)
         {
-            (InboxSnapshot Snapshot, CacheIdentity Identity) next;
+            (InboxSnapshot Snapshot, CacheIdentity Identity, int Epoch) next;
             lock (_cacheWriteGate)
             {
                 if (_queuedWrite is null) { _draining = false; return; } // cleared under the lock
                 next = _queuedWrite.Value;
                 _queuedWrite = null;
             }
+            // Round-2 ADV-1: drop a write captured under a since-invalidated epoch (a token rotation ran
+            // between this write's line-175 capture and now). Checked at write time, not schedule time, so
+            // a write that schedules AFTER the auth-site bump+evict is discarded rather than resurrecting
+            // the evicted file. Re-read the live epoch each iteration.
+            if (next.Epoch != Volatile.Read(ref _cacheWriteEpoch)) continue;
             await _cache.SaveAsync(next.Snapshot, next.Identity, CancellationToken.None).ConfigureAwait(false);
         }
     }
 
-    // Round-1 ADV-3 fix: quiesce the writer before an auth-site eviction so no in-flight/queued write
-    // can re-create the cache file AFTER the awaited EvictAsync. Clears the queue and awaits the
-    // in-flight loop. Subsequent refreshes resume writing normally (they carry new-token data).
-    internal async Task QuiesceCacheWritesAsync()
+    // Round-2 ADV-1 (supersedes round-1 QuiesceCacheWritesAsync): called by the auth handlers BEFORE an
+    // awaited EvictAsync. (1) Interlocked-bump the epoch so every already-captured pre-rotation write is
+    // dropped by the drainer's gate — even one that ScheduleCacheWrites after this returns. (2) Clear the
+    // queue and await the in-flight loop so any SaveAsync that already passed the gate finishes before the
+    // caller's EvictAsync deletes the file. Post-rotation refreshes capture the new epoch and write normally.
+    internal async Task InvalidateCacheWritesAsync()
     {
         Task inFlight;
-        lock (_cacheWriteGate) { _queuedWrite = null; inFlight = _cacheWriteLoop; }
+        lock (_cacheWriteGate)
+        {
+            Interlocked.Increment(ref _cacheWriteEpoch); // fence: pre-rotation writes now fail the drainer gate
+            _queuedWrite = null;
+            inFlight = _cacheWriteLoop;
+        }
         await inFlight.ConfigureAwait(false);
     }
 
     // Test seam: awaits the in-flight cache-write loop so write-path assertions are deterministic.
     internal Task CacheWriteIdleAsync() { lock (_cacheWriteGate) { return _cacheWriteLoop; } }
 
-**Capture identity from the data-fetch login, NOT a fresh read (round-1 ADV-2 — load-bearing).** `RefreshAsync`
+**Capture identity AND epoch from the data-fetch point, NOT a fresh read (round-1 ADV-2 + round-2 ADV-1 — load-bearing).** `RefreshAsync`
 already reads the login once at the top (`var viewerLogin = _viewerLoginProvider();`, ~line 175) and passes it
 to `_batchReader.ReadAsync(...)` — that is the login the snapshot's **data** was fetched under. A fresh
 `_viewerLoginProvider()` read at commit time would return a *different* login if a token swap interleaved
 between line 175 and the commit, stamping login A's data as B (the exact cross-identity leak the capture
-mechanism exists to prevent). So stash the line-175 value under the lock and reuse it for both triggers; the
-enrichment-ready trigger (which has no fetch login of its own) reuses the same stashed identity, since the
-settled-AI snapshot it persists belongs to the snapshot that was fetched under that login.
+mechanism exists to prevent). At the **same line-175 point**, also snapshot the write epoch
+(`var writeEpoch = Volatile.Read(ref _cacheWriteEpoch);`) — read it BEFORE the network fetch so a token
+rotation that bumps the epoch mid-refresh marks this snapshot's eventual write as stale (round-2 ADV-1; an
+epoch read at commit time would see the post-bump value and wrongly persist pre-rotation data). Stash both the
+line-175 login and the line-175 epoch under the lock at commit, and reuse them for both triggers; the
+enrichment-ready trigger (which has no fetch of its own) reuses the same stashed identity+epoch, since the
+settled-AI snapshot it persists belongs to the snapshot that was fetched under that login at that epoch.
 
-Add a field:
+At line ~175, alongside `var viewerLogin = _viewerLoginProvider();`, add the epoch capture:
+
+```csharp
+            var viewerLogin = _viewerLoginProvider();
+            var writeEpoch = Volatile.Read(ref _cacheWriteEpoch); // #619 round-2 ADV-1 — capture WITH the fetch login
+```
+
+Add fields:
 
 ```csharp
     // #619 — the identity the last committed snapshot was FETCHED under (the line-175 viewerLogin, not a
     // fresh read). Set under _writerLock at commit; reused by both cache-write triggers so a token swap
     // racing a pending write can never re-attribute a snapshot to the new login. (Round-1 ADV-2.)
     private CacheIdentity _lastCaptureIdentity;
+    // (_lastCaptureEpoch is declared with the writer block above — the epoch read at line-175 for this snapshot.)
 ```
 
-Wire **trigger (a)** in `RefreshAsync` — at the commit, stash the identity from the line-175 `viewerLogin`
-local and schedule on a core change. Add it right after the `_rehydratedAwaitingRevalidate` consume block
-(still inside the `try`, under `_writerLock`; `viewerLogin` is the local already in scope from ~line 175):
+Wire **trigger (a)** in `RefreshAsync` — at the commit, stash the identity+epoch from the line-175 locals
+and schedule on a core change. Add it right after the `_rehydratedAwaitingRevalidate` consume block
+(still inside the `try`, under `_writerLock`; `viewerLogin` and `writeEpoch` are the locals already in scope from ~line 175):
 
 ```csharp
             // #619 — stamp with the login the snapshot's DATA was fetched under (the line-175 `viewerLogin`
-            // local), captured under the lock. NOT a fresh _viewerLoginProvider() read (round-1 ADV-2).
+            // local) and the epoch read at that same point, captured under the lock. NOT fresh reads (ADV-2/ADV-1).
             _lastCaptureIdentity = new CacheIdentity(viewerLogin, _config.Current.Github.Host);
-            // #619 trigger (a) — persist on a core change.
+            _lastCaptureEpoch = writeEpoch;
+            // #619 trigger (a) — persist on a core change, carrying the captured epoch.
             if (diff.Changed)
-                ScheduleCacheWrite(newSnap, _lastCaptureIdentity);
+                ScheduleCacheWrite(newSnap, _lastCaptureIdentity, _lastCaptureEpoch);
 ```
 
-Wire **trigger (b)** in `OnInboxEnrichmentsReady`, right after its commit (`Volatile.Write(ref _current, current with { ... });` then `_events.Publish(...)`). It reuses `_lastCaptureIdentity` (the snapshot it patches was built by the last `RefreshAsync` under that login):
+Wire **trigger (b)** in `OnInboxEnrichmentsReady`, right after its commit (`Volatile.Write(ref _current, current with { ... });` then `_events.Publish(...)`). It reuses `_lastCaptureIdentity`/`_lastCaptureEpoch` (the snapshot it patches was built by the last `RefreshAsync` under that login at that epoch):
 
 ```csharp
             var settledSnapshot = current with { Enrichments = merged, AiEnrichmentSettled = settled };
@@ -826,13 +911,17 @@ Wire **trigger (b)** in `OnInboxEnrichmentsReady`, right after its commit (`Vola
             _events.Publish(new InboxUpdated(changedSections.ToArray(), applied));
             // #619 trigger (b) — flush the settled-AI snapshot so the persisted copy carries real chips
             // (ComputeDiff is enrichment-blind, so trigger (a) alone would persist blank-chip snapshots).
-            // Reuse the captured fetch-identity, NOT a fresh read (round-1 ADV-2).
-            ScheduleCacheWrite(settledSnapshot, _lastCaptureIdentity);
+            // Reuse the captured fetch-identity + epoch, NOT fresh reads (round-1 ADV-2 / round-2 ADV-1).
+            // Round-2 FEAS-residual: skip if no refresh has committed yet (_lastCaptureIdentity defaults to
+            // (null,null)) — enrichment-ready can't realistically precede the first refresh, but the guard is
+            // cheap and avoids ever scheduling a write stamped with an empty login.
+            if (!string.IsNullOrEmpty(_lastCaptureIdentity.Login))
+                ScheduleCacheWrite(settledSnapshot, _lastCaptureIdentity, _lastCaptureEpoch);
 ```
 
 (Refactor the existing inline `current with { ... }` into the named `settledSnapshot` local so both the `Volatile.Write` and the schedule use the same reference.)
 
-The `CacheWriteIdleAsync` / `QuiesceCacheWritesAsync` test seams are already defined in the writer block above. `InboxOrchestratorTestHarness.WaitForCacheWriteIdleAsync(orch)` must **poll the condition, not fixed-delay** (per the `poll-condition-not-fixed-delay` CI discipline): `await orch.CacheWriteIdleAsync()`, then re-enter the lock to confirm `_queuedWrite is null`; if a new write was enqueued during the await, loop. No `Thread.Sleep`.
+The `CacheWriteIdleAsync` / `InvalidateCacheWritesAsync` seams are already defined in the writer block above. `InboxOrchestratorTestHarness.WaitForCacheWriteIdleAsync(orch)` must **poll the condition, not fixed-delay** (per the `poll-condition-not-fixed-delay` CI discipline): `await orch.CacheWriteIdleAsync()`, then re-enter the lock to confirm `_queuedWrite is null`; if a new write was enqueued during the await, loop. No `Thread.Sleep`.
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
@@ -1173,7 +1262,7 @@ In `PRism.Web/Endpoints/AuthEndpoints.cs`, add the two cache interfaces as deleg
             IGitHubCredentialHealth credentialHealth, IActivityProvider activityProvider,
             IIdentityKeyedFileCache<PRism.Core.Inbox.InboxSnapshot> inboxCache,
             IIdentityKeyedFileCache<PRism.Core.Activity.ActivityResponse> activityCache,
-            InboxRefreshOrchestrator orchestrator,   // #619 concrete (dual-registered) — for QuiesceCacheWritesAsync
+            InboxRefreshOrchestrator orchestrator,   // #619 concrete (dual-registered) — for InvalidateCacheWritesAsync
             ILogger<Category> log, CancellationToken ct) =>
 ```
 
@@ -1217,7 +1306,7 @@ In `/replace`, the `SetDefaultAccountLoginAsync` call already exists (line ~298)
             await activityCache.EvictAsync(ct).ConfigureAwait(false);
 ```
 
-> **Activity-side residual (round-1 ADV-3, documented).** `ActivityProvider.Reset()` must stay **non-blocking** (its contract — it runs on the auth request thread and must not wait on an in-flight fetch), so its write-through `SaveAsync` is fire-and-forget and a save dispatched just before `Reset()` can still land after the awaited `activityCache.EvictAsync`. On a same-login rotation this re-creates `activity-feed.json` under the unchanged identity, which the backstop accepts until the first post-rotation refresh overwrites it (self-heals; `/replace` calls `RequestImmediateRefresh()`). This is a narrow restart-timing window, accepted as a residual consistent with the spec §4 "residual reduced, not zero" — surfaced at the gate. (Fully closing it would require the activity write-through to be generation-checked at the moment of the file write, which the generic cache cannot see; deferred.)
+> **Activity-side residual (round-1 ADV-3, corrected round-2; cross-identity case closed by round-2 SEC-1).** `ActivityProvider.Reset()` must stay **non-blocking** (its contract — it runs on the auth request thread and must not wait on an in-flight fetch), so its write-through `SaveAsync` is fire-and-forget and a save dispatched just before `Reset()` can still land after the awaited `activityCache.EvictAsync`. **The cross-identity half of this is now closed:** with the round-2 SEC-1 fix, that late write is stamped with the login captured **before** the fan-out (the data's true owner), so on an account switch the resurrected file carries the PRIOR owner's identity and the next cold start (under the new owner's config identity) rejects it at the gate — the new account never sees it. What remains is only a **same-login token rotation**, where the resurrected `activity-feed.json` carries the unchanged identity and the backstop accepts it until the next activity fetch overwrites it. **Self-heal path corrected:** this does NOT ride on `inboxPoller.RequestImmediateRefresh()` — that nudges the *inbox* poller, and in `/replace` it's called only inside the `if (identityChanged)` block (which does **not** fire on a same-login rotation), so it neither runs here nor touches the activity feed. The activity file instead self-heals on the **next `/api/activity` fetch** — the rail's ~90s `useActivity` poll, or sooner when the rail is next viewed — which runs under the current identity and rewrites the file (and `Reset()` already incremented the generation, so the in-flight gen-gated write that caused the residual won't itself re-persist). Narrow restart-timing window, accepted as a residual consistent with spec §4 "residual reduced, not zero" — surfaced at the gate. (Fully closing it would require the activity write-through to be generation-checked at the moment of the file write, which the generic cache cannot see; deferred.)
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
@@ -1251,7 +1340,7 @@ git commit -m "feat(#619): evict cold-start caches (awaited) + persist config lo
 
 - [ ] **Step 1: Write the failing tests**
 
-Create `tests/PRism.Core.Tests/Activity/ActivityCacheTests.cs` (spec tests 16, 17, 18). Reuse the existing `ActivityProviderTests` fakes (the three readers + timeline + `TimeProvider` + `IConfigStore`); add a `RecordingIdentityCache<ActivityResponse>` and a stub `IViewerLoginProvider`.
+Create `tests/PRism.Core.Tests/Activity/ActivityCacheTests.cs` (spec tests 16, 17, 17b, 18). Reuse the existing `ActivityProviderTests` fakes (the three readers + timeline + `TimeProvider` + `IConfigStore`); add a `RecordingIdentityCache<ActivityResponse>` and a stub `IViewerLoginProvider`. Test 17b (round-2 SEC-1) additionally needs: a `loginProvider:` overload of the `ActivityTestData.Provider(...)` factory (a `Func<string>` backing the stub `IViewerLoginProvider`, alongside the existing `login:` string form), the `MutableLogin` helper shared from Task 3, and `SpyReaders.OnFanOutStarted` (the same hook test 17 uses) to flip the login at fan-out start.
 
 ```csharp
 [Fact] // test 16 — first cold miss with a matching cache rehydrates with an EXPIRED At; next call fetches live
@@ -1285,6 +1374,26 @@ public async Task Write_through_is_generation_gated()
     await sut.GetActivityAsync(CancellationToken.None);
 
     fileCache.Saves.Should().BeEmpty(); // discarded — not persisted under the stale generation
+}
+
+[Fact] // test 17b (round-2 SEC-1) — write-through stamps the login captured BEFORE the fan-out, not a flipped one
+public async Task Write_through_stamps_login_captured_before_fanout()
+{
+    var fileCache = new RecordingIdentityCache<ActivityResponse>();
+    var login = new MutableLogin("alice");
+    var readers = new SpyReaders();
+    var sut = ActivityTestData.Provider(fileCache, readers, loginProvider: login.Get, host: "github.com");
+    // Flip the login to "bob" the instant the fan-out starts (simulates /connect's Set("bob") landing
+    // during the auth handler's SetDefaultAccountLoginAsync await, before activityProvider.Reset() runs).
+    // The generation is NOT rotated here, so the write-through's gen gate passes — only the captured-login
+    // stamp prevents the cross-identity leak.
+    readers.OnFanOutStarted = () => login.Value = "bob";
+
+    await sut.GetActivityAsync(CancellationToken.None);
+
+    fileCache.Saves.Should().ContainSingle();
+    fileCache.Saves.Single().Identity.Login.Should().Be("alice"); // stamped pre-fan-out, NOT bob
+    fileCache.TryLoad(new CacheIdentity("bob", "github.com")).Should().BeNull();
 }
 
 [Fact] // test 18 — Reset evicts the persisted feed
@@ -1350,6 +1459,15 @@ Extend the ctor (add the two params at the end and assign):
     }
 ```
 
+**Capture the login BEFORE the fan-out (round-2 SEC-1 — load-bearing, mirrors the inbox ADV-2 fix).** Right where `host` is computed (`var host = cfg.Github.Host.TrimEnd('/');`, ~line 108) — **before** the GitHub fan-out — also snapshot the login into a local:
+
+```csharp
+            var host = cfg.Github.Host.TrimEnd('/');
+            var loginSnapshot = _viewerLogin.Get(); // #619 round-2 SEC-1 — capture BEFORE fan-out, like inbox line-175
+```
+
+Why: a `_viewerLogin.Get()` re-read at the write-through (post-fan-out) commit can observe a login that `/api/auth/connect` already `Set("bob")` while it was awaiting `SetDefaultAccountLoginAsync` (a real disk-I/O yield) but **before** its `activityProvider.Reset()` ran — so an in-flight poll still passes the generation gate (gen not yet bumped) and stamps alice's feed under bob's identity, which bob then sees on the next cold start. The generation gate alone does not close this (it only catches `Reset()` firing *during* the fan-out, not in the gen-check→commit window). Capturing the login before the fan-out makes the stamp track the data's true owner regardless of a mid-call `Set`. Use `loginSnapshot` (not a fresh `Get()`) in **both** identity constructions below.
+
 In `GetActivityAsync`, inside the gated section, **after** the under-gate TTL re-check and **before** the GitHub fan-out (`var evT = _events.ReadAsync(ct);`), add the one-shot rehydrate:
 
 ```csharp
@@ -1359,7 +1477,7 @@ In `GetActivityAsync`, inside the gated section, **after** the under-gate TTL re
             if (!_rehydrateAttempted)
             {
                 _rehydrateAttempted = true;
-                var rid = new CacheIdentity(_viewerLogin.Get(), _config.Current.Github.Host.TrimEnd('/'));
+                var rid = new CacheIdentity(loginSnapshot, host); // captured-before-fan-out login + trimmed host
                 var loaded = _fileCache.TryLoad(rid);
                 if (loaded is not null)
                 {
@@ -1370,7 +1488,7 @@ In `GetActivityAsync`, inside the gated section, **after** the under-gate TTL re
             }
 ```
 
-At the cache-set site (the gen-gated `if (Volatile.Read(ref _generation) == gen) _cache = new CacheEntry(resp, now, gen);`), add the fire-and-forget write-through inside the same generation gate (so a feed built under an about-to-rotate identity is not persisted), using the already-computed `host`:
+At the cache-set site (the gen-gated `if (Volatile.Read(ref _generation) == gen) _cache = new CacheEntry(resp, now, gen);`), add the fire-and-forget write-through inside the same generation gate (so a feed built under an about-to-rotate identity is not persisted), using the captured `loginSnapshot` + `host`:
 
 ```csharp
             if (Volatile.Read(ref _generation) == gen)
@@ -1378,9 +1496,9 @@ At the cache-set site (the gen-gated `if (Volatile.Read(ref _generation) == gen)
                 _cache = new CacheEntry(resp, now, gen);
                 // #619 — persist last-known-good (gen-gated by this if). resp.Stale is false here (live);
                 // CancellationToken.None so a request-abort doesn't surface an unobserved task exception.
-                // `host` is the local ALREADY computed in GetActivityAsync (`var host = cfg.Github.Host.TrimEnd('/')`,
-                // ~line 108) — reuse it; the rehydrate TryLoad above uses the same TrimEnd form so the identity matches.
-                _ = _fileCache.SaveAsync(resp, new CacheIdentity(_viewerLogin.Get(), host), CancellationToken.None);
+                // Stamp with `loginSnapshot` (captured BEFORE the fan-out, round-2 SEC-1) + the `host` local,
+                // NOT a fresh _viewerLogin.Get() — a mid-call token swap must not re-attribute alice's feed to bob.
+                _ = _fileCache.SaveAsync(resp, new CacheIdentity(loginSnapshot, host), CancellationToken.None);
             }
 ```
 
@@ -1414,7 +1532,9 @@ Expected: PASS.
 - [ ] **Step 8: Commit**
 
 ```bash
-git add PRism.Core/Activity/ActivityContracts.cs PRism.Core/Activity/ActivityProvider.cs PRism.Core/ServiceCollectionExtensions.cs tests/PRism.Core.Tests/Activity/
+# Round-2 COH-1: ServiceCollectionExtensions.cs is NOT staged here — the activity cache singleton was
+# registered in Task 4 (round-1 FEAS-2). This task changes only contracts + provider + tests.
+git add PRism.Core/Activity/ActivityContracts.cs PRism.Core/Activity/ActivityProvider.cs tests/PRism.Core.Tests/Activity/
 git commit -m "feat(#619): activity provider cold-start cache — write-through, rehydrate-with-expired-TTL, evict-on-Reset, stale flag"
 ```
 
@@ -1754,8 +1874,12 @@ export function StalePill({ lastRefreshedAt }: StalePillProps) {
 
   return (
     <div className={styles.slot} data-reserved="true">
-      {/* Always-mounted sr-only live region — the announcement channel, separate from the visible pill. */}
-      <span className={styles.sr} role="status" aria-live="polite">{announceText}</span>
+      {/* Always-mounted sr-only live region — the announcement channel, separate from the visible pill.
+          Uses the GLOBAL `sr-only` utility (which pins top:0;left:0), NOT a module class, and the .slot
+          below sets position:relative — together they keep the abspos region clipped INSIDE the slot
+          instead of escaping to the page and extending scroll height (round-2 DES-2; #197 /
+          reference_sr_only_abspos_page_scroll). Mirrors Task 9's `className="sr-only"`. */}
+      <span className="sr-only" role="status" aria-live="polite">{announceText}</span>
       {show && (
         <span className={styles.pill} data-testid="inbox-stale-pill">
           Updated {formatAge(lastRefreshedAt)}
@@ -1766,13 +1890,14 @@ export function StalePill({ lastRefreshedAt }: StalePillProps) {
 }
 ```
 
-> Add a `.sr` class to `StalePill.module.css` reusing the global `sr-only` pattern (absolute, 1px clip) so the live region is visually hidden but announced.
+> The sr-only live region uses the **global** `sr-only` utility class (`className="sr-only"`, as in Task 9) — do NOT add a module `.sr` class. The global utility already pins `top:0; left:0`; combined with `position: relative` on `.slot` below, the absolutely-positioned region stays clipped inside the slot. A module `.sr` that omitted those pins reproduced the page-scroll bug (round-2 DES-2; #197 / `reference_sr_only_abspos_page_scroll`: an abspos `.sr-only` with no positioned ancestor escapes its pane and extends page scroll height).
 
 Create `frontend/src/components/Inbox/StalePill/StalePill.module.css` (chip-token styling; reserve-space constant height):
 
 ```css
 .slot {
-  min-height: 24px; /* reserve space so show/hide never reflows the toolbar */
+  position: relative; /* round-2 DES-2 — contain the global sr-only abspos region so it can't escape and scroll the page */
+  min-height: 24px;   /* reserve space so show/hide never reflows the toolbar */
   display: flex;
   align-items: center;
 }
@@ -1787,17 +1912,6 @@ Create `frontend/src/components/Inbox/StalePill/StalePill.module.css` (chip-toke
   background: var(--surface-3);
   border: 1px solid var(--border-1);
   white-space: nowrap;
-}
-.sr {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  padding: 0;
-  margin: -1px;
-  overflow: hidden;
-  clip: rect(0, 0, 0, 0);
-  white-space: nowrap;
-  border: 0;
 }
 ```
 
@@ -1824,9 +1938,11 @@ git commit -m "feat(#619): Updated-age pill (>30 min, ~60s ticker, reserve-space
 ## Task 11: GitHub-unreachable snackbar (StreamHealthSnackbar pattern)
 
 **Files (Option B):**
-- Create: `PRism.Core/Inbox/InboxRefreshStatus.cs` (`record InboxRefreshStatus(bool Ok)`)
-- Modify: `PRism.Core/Inbox/InboxPoller.cs` (inject `IReviewEventBus`; publish status per tick)
-- Modify: the events SSE endpoint (forward `InboxRefreshStatus` → `inbox-refresh-status`)
+- Create: `PRism.Core/Inbox/InboxRefreshStatus.cs` (`record InboxRefreshStatus(bool Ok) : IReviewEvent`)
+- Modify: `PRism.Core/Inbox/InboxPoller.cs` (inject `IReviewEventBus`; publish status per tick, NOT on rate-limit)
+- Modify: `PRism.Core/ServiceCollectionExtensions.cs` (the `InboxPoller` factory at ~125–135 — pass the new `IReviewEventBus` arg)
+- Modify: `PRism.Web/Sse/SseChannel.cs` (forward `InboxRefreshStatus` → `inbox-refresh-status`: Subscribe + handler + Dispose unsubscribe)
+- Modify: `frontend/src/api/events.ts` (register `inbox-refresh-status` in BOTH `EventPayloadByType` and `EVENT_TYPES`)
 - Create: `frontend/src/hooks/useInboxRefreshHealth.ts` (subscribe to the SSE event → debounced `failing`)
 - Create: `frontend/src/components/GitHubUnreachableSnackbar/GitHubUnreachableSnackbar.tsx`
 - Create: `frontend/src/components/GitHubUnreachableSnackbar/__tests__/GitHubUnreachableSnackbar.test.tsx`
@@ -1851,14 +1967,26 @@ git commit -m "feat(#619): Updated-age pill (>30 min, ~60s ticker, reserve-space
 >   (+ pill if aged); manual-refresh failures still toast. Spec-sanctioned, smallest PR.
 > - **(B) Add a backend refresh-status SSE signal (full coverage — specified below).** `InboxPoller` publishes a
 >   refresh-outcome event the FE consumes to drive `failing` (debounced). Covers **both** offline-cold-launch
->   and mid-session degrade. Adds a backend SSE-contract surface + tests to this PR.
+>   and mid-session degrade. **Round-2 raised B's real cost** beyond the round-1 scoping: a whole-contract backend
+>   surface (new `IReviewEvent`; `SseChannel` 3-site forwarding; `InboxPoller` DI-factory change; `events.ts`
+>   double-map registration — FEAS-1/2/3) **plus** signal-semantics leaks (a 429 must be excluded or it false-fires;
+>   the binary `Ok` can't see partial degradation and a flap must cancel the armed timer — ADV-2/3). Scope-guardian
+>   judged this surface **disproportionate** to a non-blocking pill on a local single-owner tool (SCOPE-1).
 > - **(C) FE-only staleness watchdog (partial).** A FE timer sets `failing` when `data.stale` persists past a
->   window. Covers offline-cold-launch only (mid-session degrade has `stale:false`, so it's NOT covered). Cheapest,
->   but doesn't meet the spec's mid-session intent.
+>   window. Covers offline-cold-launch only (mid-session degrade has `stale:false`, so it's NOT covered). Cheapest;
+>   **none of B's FEAS-1/2/3 surface and none of B's ADV-2/3 signal leaks apply** (no backend contract, no binary
+>   Ok). Doesn't meet the spec's mid-session intent — but round-2 product (PROD-1) notes mid-session isn't truly
+>   "blind" without it: the StalePill is a slower fallback cue, and a sustained mid-session GitHub outage on a
+>   local tool is rare.
 >
-> **The steps below are written for Option (B)** (the most faithful to the owner's explicit "surface GitHub-fetch
-> failures like a lost backend connection" request). If the gate picks (A), delete this task and file the
-> follow-up; if (C), replace Step 1's backend signal with the FE watchdog timer.
+> **Round-2 recommendation: C (or A), not B.** The accumulated integration cost (FEAS-1/2/3), signal leakiness
+> (ADV-2/3), and disproportion (SCOPE-1) make B the most expensive option for the least-blocking surface in the
+> feature. C delivers the owner's headline ask — a non-blocking "data isn't refreshing" cue on an offline cold
+> launch, in the same visual family as the backend-connection snackbar — at a fraction of B's surface; A ships
+> the rest now and tracks the cue as a follow-up. **The steps below remain written for Option (B)** (corrected per
+> round-2 so B is executable if the owner still wants mid-session coverage). If the gate picks (A), delete this
+> task and file the follow-up; if (C), replace Step 1/1b's backend signal with the FE watchdog timer
+> (`failing := data.stale persisted > window`), keeping Steps 2–6 (the snackbar component + mount) unchanged.
 
 **Interfaces:**
 - Consumes: the generic `<Snackbar tone="warning" .../>`, `useStreamHealth().healthy`, and a new `inbox-refresh-status` SSE event (Option B).
@@ -1868,17 +1996,20 @@ git commit -m "feat(#619): Updated-age pill (>30 min, ~60s ticker, reserve-space
 
 - [ ] **Step 1: Backend — publish a refresh-status SSE event the FE can observe (Option B)**
 
-The FE has no way to observe a backend→GitHub refresh failure today (see the blocker callout). Add a backend signal:
+The FE has no way to observe a backend→GitHub refresh failure today (see the blocker callout). Add a backend signal. **Four exact seams (round-2 FEAS-2/3, ADV-2) — get these right or the event silently never reaches the FE:**
 
-1. **New domain event.** `public sealed record InboxRefreshStatus(bool Ok);` in `PRism.Core/Inbox/` (beside `InboxUpdated`).
-2. **Publish from `InboxPoller`.** Inject `IReviewEventBus` into `InboxPoller`. In `ExecuteAsync`, publish the outcome of each tick: after a successful `RefreshAsync`, `bus.Publish(new InboxRefreshStatus(true))`; in the `catch (Exception ex)` (line 69–72) and the `catch (RateLimitExceededException)` branch, `bus.Publish(new InboxRefreshStatus(false))` (after the existing log). This is decoupled from the diff-gated `InboxUpdated`, so a recovered-but-unchanged refresh still reports `Ok=true`.
-3. **Forward over SSE.** In the events endpoint that already forwards `InboxUpdated` as the `inbox-updated` SSE event, subscribe to `InboxRefreshStatus` and forward it as a new `inbox-refresh-status` SSE event carrying `{ ok }`. (Mirror the existing `InboxUpdated` → `inbox-updated` forwarding exactly.)
+1. **New domain event — MUST implement `IReviewEvent`.** `public sealed record InboxRefreshStatus(bool Ok) : IReviewEvent;` in `PRism.Core/Inbox/` (beside `InboxUpdated`, which also implements `IReviewEvent`). `IReviewEventBus.Publish<TEvent>` is constrained `where TEvent : IReviewEvent`; without the interface it will not compile (round-2 FEAS-2).
+2. **Publish from `InboxPoller` — and fix its DI registration.** Inject `IReviewEventBus` into `InboxPoller` (a new ctor param). **This breaks the dual `AddSingleton`/`AddHostedService` factory at `ServiceCollectionExtensions.cs:~125–135`, which `new InboxPoller(...)`s with the current 4 args** — update that factory to resolve and pass `IReviewEventBus` too, or the host fails to build (round-2 FEAS-3). In `ExecuteAsync`, publish each tick's outcome: after a successful `RefreshAsync`, `_events.Publish(new InboxRefreshStatus(true))`. In the generic `catch (Exception ex)` branch (line 69–72), after the existing log, `_events.Publish(new InboxRefreshStatus(false))`. **Do NOT publish `false` from the `catch (RateLimitExceededException)` branch (line 63–67)** — a 429 is a deliberate, expected backoff, not GitHub-unreachability; publishing `false` there would raise a spurious "Couldn't reach GitHub" snackbar during normal rate-limit pacing (round-2 ADV-2). Leave the rate-limit branch as-is (it already honors `Retry-After`); optionally publish `InboxRefreshStatus(true)` there is **wrong** too (it isn't a success) — publish nothing, so the FE state is simply held. Decoupling from the diff-gated `InboxUpdated` means a recovered-but-unchanged refresh still reports `Ok=true`.
+3. **Forward over SSE in `SseChannel.cs` (NOT an "endpoint").** `SseChannel` is where `InboxUpdated` → `inbox-updated` forwarding lives, across **three** sites that must all be touched (round-2 FEAS-2): (a) the ctor `Subscribe<InboxRefreshStatus>(OnInboxRefreshStatus)` next to the existing `Subscribe<InboxUpdated>` (~line 80); (b) a new `OnInboxRefreshStatus` handler that enqueues an `inbox-refresh-status` frame carrying `{ ok }` (mirror `OnInboxUpdated`, ~line 296–306); (c) the matching unsubscribe in `Dispose` (~line 425). Miss the Dispose site and you leak a subscription per SSE connection.
+4. **Register the FE event in `events.ts` — BOTH maps (round-2 FEAS-1/DES-1).** `inbox-refresh-status` must be added to **both** the `EventPayloadByType` map (typing the `{ ok: boolean }` payload, ~line 62–78) **and** the `EVENT_TYPES` array that the `addEventListener` loop iterates (~line 83–99). The array drives which SSE event names are actually subscribed; an entry in the payload map alone is silently never listened for. This is a frontend change but it's the other half of the backend signal — do it in this step so the contract is whole.
 
-Write backend tests first: `InboxPoller` publishes `InboxRefreshStatus(false)` on a throwing `RefreshAsync` and `InboxRefreshStatus(true)` on a successful one (fake orchestrator + recording bus); the SSE endpoint emits an `inbox-refresh-status` frame.
+Write backend tests first: `InboxPoller` publishes `InboxRefreshStatus(false)` on a throwing `RefreshAsync`, `InboxRefreshStatus(true)` on a successful one, and **publishes neither `true` nor `false` on a `RateLimitExceededException`** (fake orchestrator + recording bus, round-2 ADV-2); `SseChannel` emits an `inbox-refresh-status` frame on the event.
 
 - [ ] **Step 1b: Frontend — derive a debounced `failing` flag from the SSE signal**
 
-Add a hook (e.g. `useInboxRefreshHealth`) that subscribes to the `inbox-refresh-status` SSE event via `useEventSource` and exposes `failing: boolean`: arm a ~30s timer (mirroring `UNHEALTHY_AFTER_MS`) on the first `ok:false`; set `failing=true` if it stays failing past the window (debounces a single blip); clear immediately on any `ok:true`. Keep current data (no clear). Write a focused test: one `ok:false` does NOT set `failing` (debounce); sustained `ok:false` DOES; a subsequent `ok:true` clears it.
+Add a hook (e.g. `useInboxRefreshHealth`) that subscribes to the `inbox-refresh-status` SSE event via `useEventSource` (registered in `events.ts` per Step 1.4) and exposes `failing: boolean`: arm a ~30s timer (mirroring `UNHEALTHY_AFTER_MS`) on the first `ok:false`; set `failing=true` if it stays failing past the window (debounces a single blip). On **any** `ok:true`, clear `failing` **and cancel the armed arm-timer** — a flap (`false → true` before the window elapses) must disarm the pending timer, else it fires later and spuriously sets `failing` even though the latest signal was a success (round-2 ADV-3). Keep current data (no clear). Write focused tests: one `ok:false` does NOT set `failing` (debounce); sustained `ok:false` DOES; a subsequent `ok:true` clears it; and a `false → true` flap **within** the window leaves `failing` false (the armed timer was cancelled).
+
+> **Documented Option-B limitation (round-2 ADV-3) — surfaced at the gate.** `Ok` is binary. A *partial* GitHub degradation where `RefreshAsync` returns a degraded-but-non-throwing result reports `Ok=true`, so this signal does NOT cover partial outages — only a refresh that actually throws drives `Ok=false`. Whether a total outage reliably throws (vs. returning an empty/degraded snapshot) depends on `QueryAllAsync`'s failure mode, which the implementer must confirm at execution; if it swallows total-outage errors into a degraded result, Option B under-fires and Option C's staleness watchdog would be the more reliable detector. This leakiness is part of the A/B/C gate tradeoff.
 
 - [ ] **Step 2: Write the failing snackbar tests**
 
@@ -1974,7 +2105,9 @@ Expected: green.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add PRism.Core/Inbox/InboxRefreshStatus.cs PRism.Core/Inbox/InboxPoller.cs PRism.Web/Endpoints frontend/src/hooks/useInboxRefreshHealth.ts frontend/src/components/GitHubUnreachableSnackbar/ frontend/src/pages/InboxPage.tsx tests/
+# SSE forwarding lives in PRism.Web/Sse/SseChannel.cs (3 sites); FE event registration in frontend/src/api/events.ts
+# (both maps); InboxPoller DI fix in PRism.Core/ServiceCollectionExtensions.cs (round-2 FEAS-1/2/3).
+git add PRism.Core/Inbox/InboxRefreshStatus.cs PRism.Core/Inbox/InboxPoller.cs PRism.Core/ServiceCollectionExtensions.cs PRism.Web/Sse/SseChannel.cs frontend/src/api/events.ts frontend/src/hooks/useInboxRefreshHealth.ts frontend/src/components/GitHubUnreachableSnackbar/ frontend/src/pages/InboxPage.tsx tests/
 git commit -m "feat(#619): GitHub-unreachable snackbar via inbox-refresh-status SSE signal (debounced, pinned, suppressed under StreamHealthSnackbar)"
 ```
 
@@ -2185,7 +2318,7 @@ git commit -m "chore(#619): cross-tier consumer checks, full-suite gate, final p
 **Spec coverage:**
 - §3.1 `IdentityKeyedFileCache<T>` → Task 1. §3.2 inbox integration → Tasks 2–4. §3.3 activity integration → Task 6.
 - §4 identity/eviction/backstop/persist-config-on-connect → Tasks 4 (backstop), 5 (evict + persist). §5.1 write path → Task 3. §5.2 rehydrate + force-notify + failed-revalidation → Tasks 2 (mechanism) + 9 (FE failed-revalidation presentation). §5.3 persist-everything → Tasks 1/3 (settled-AI flush).
-- §6 single-writer/disposable → Task 1 (disposable) + DI single-writer (Task 4). §7 inventory → all tasks. §9 affordance (stale flag, bar, pill, snackbar, rail) → Tasks 7–12. §10 consumer checks → Task 14. §11 test plan → tests embedded per task (1–8 → T1; 9–11,14 → T2; 12–13 → T3; 15 → T4; 15b/15c → T5; 16–18 → T6; 19–22 → T9–T12; 23 → T13). §12 decisions → realized across tasks. Visual sign-off → Task 14.
+- §6 single-writer/disposable → Task 1 (disposable) + DI single-writer (Task 4). §7 inventory → all tasks. §9 affordance (stale flag, bar, pill, snackbar, rail) → Tasks 7–12. §10 consumer checks → Task 14. §11 test plan → tests embedded per task (1–8 → T1; 9–11,14 → T2; 12–13 → T3; 15 → T4; 15b/15c → T5; 16–18 + 17b (round-2 SEC-1) → T6; 19–22 → T9–T12; 23 → T13). §12 decisions → realized across tasks. Visual sign-off → Task 14.
 
 **Placeholder scan:** No "TBD/TODO" in production code. The only deferred decision is the **pill placement**, which is an owner visual choice (Task 14) with a concrete default (toolbar-inline, reserve-space) shipped in Task 10 — not a placeholder.
 
@@ -2206,7 +2339,7 @@ Adjudicated with `receiving-code-review` rigor — each verified against the cod
 | DES-2 | design | StalePill announce-once is unreliable — conditionally-mounted live region + ref-mutation-during-render breaks under React strict mode. | P1/75 | **Applied** — always-mounted sr-only live region + `useEffect` (mirrors the Task 9 pattern). |
 | COH-2 | coherence | Task 2's `Build()` test calls break after Task 3 evolves the harness signature; no re-verify note. | P1/100 | **Applied** — `cache:` param defaults to a recording cache; explicit "re-run Task 2 tests after Task 3" note. |
 | FEAS-2 | feasibility | Activity cache singleton consumed in Task 5 but not registered until Task 6 → DI resolve failure between commits. | P2/75 | **Applied** — both cache singletons registered together in Task 4. |
-| ADV-3 / SEC-res | adversarial + security | Awaited `EvictAsync` races the background coalescing writer; a post-evict flush re-creates the file, accepted on same-login rotation. | P2/75 | **Applied (inbox)** — `QuiesceCacheWritesAsync()` before evict. **Accepted-residual (activity)** — fire-and-forget `SaveAsync` after non-blocking `Reset()`; self-heals on first refresh; documented + gate-noted. |
+| ADV-3 / SEC-res | adversarial + security | Awaited `EvictAsync` races the background coalescing writer; a post-evict flush re-creates the file, accepted on same-login rotation. | P2/75 | **Applied (inbox)** — `QuiesceCacheWritesAsync()` before evict. **⚠ Superseded in round 2** — quiesce-only proved insufficient; replaced by the epoch gate / `InvalidateCacheWritesAsync` (see R2-ADV-1). **Accepted-residual (activity)** — see R2-SEC-1 (cross-identity half later closed). |
 | SEC-1 | security | Eviction-test bodies use `token` not the endpoint's required `pat` → 400 before eviction. | P2/100 | **Applied** (safe_auto) — `pat` + validator-stub note. |
 | SEC-2 | security | No `/connect/commit` eviction test despite spec test 15b requiring all three endpoints. | P2/75 | **Applied** — added the two-step warning→commit eviction test. |
 | SCOPE-1 | scope | `IsServingRehydratedSnapshot` interface addition would break existing fakes (CS0535); spec said "no interface changes". | P2/75 | **Applied** — ships as a **default interface member** (`=> false`); zero fake blast radius; deviation documented (refinement #2). |
@@ -2225,7 +2358,34 @@ Adjudicated with `receiving-code-review` rigor — each verified against the cod
 | FEAS-res | feasibility | `SampleSnapshot` `PrInboxItem`/`PrReference` positional arg lists must match the real records. | (residual) | **Applied** — caution note added to Task 1. |
 | DES-res | design | `--text-muted` is a pre-existing undefined token in `PrActionsPanel`. | (residual) | **Noted, out of scope** — pre-existing; StalePill no longer uses it. |
 
-**Gate decisions surfaced for the B1 human review:**
-1. **Snackbar scope (FEAS-1/PROD-1/DES-3):** Option A (descope to follow-up) / **B (backend `inbox-refresh-status` SSE — currently in the plan)** / C (FE-only staleness watchdog, partial). See the Task 11 blocker callout.
-2. **Rehydrator ordering (ADV-1):** accept the deviation from spec §4 (rehydrator runs first) — recommended; the spec §4 ordering note should be updated to match.
-3. **Activity writer-race residual (ADV-3):** accept the narrow same-login-rotation restart-window residual (self-heals on first refresh), consistent with spec §4 "residual reduced, not zero".
+---
+
+## Round-2 `ce-doc-review` dispositions (7 personas)
+
+Round 2 pressure-tested the round-1 revisions. Adjudicated with `receiving-code-review` rigor. **Disposition** = Applied / Gate / Accepted-residual / Deferred. (Security round-2 was re-dispatched after the first run died on a process exit; it returned one new finding, SEC-1.)
+
+| # | Reviewer | Finding | Sev/Conf | Disposition |
+|---|----------|---------|----------|-------------|
+| R2-ADV-1 | adversarial | `QuiesceCacheWritesAsync` (drain-then-evict) is insufficient: an in-flight `RefreshAsync` (lock held across I/O) or a slow `OnInboxEnrichmentsReady` (~53s) can `ScheduleCacheWrite` **after** evict; on a same-login rotation `_lastCaptureIdentity.Login` is unchanged so the gate accepts the resurrected file — defeating evict-on-swap. | P1/75 | **Applied** — **epoch gate** (supersedes quiesce-only): `_cacheWriteEpoch` captured at line-175 with the login, dropped by the drainer on mismatch, bumped by `InvalidateCacheWritesAsync` at each auth site. |
+| R2-SEC-1 | security (re-run) | Activity write-through re-reads `_viewerLogin.Get()` at commit (post-fan-out), lacking the inbox ADV-2 capture; the `await SetDefaultAccountLoginAsync` in `/connect` opens a real window where `Set("bob")` has fired but `Reset()` hasn't → alice's feed stamped under bob, served to bob next cold start. | P2/75 | **Applied** — capture `loginSnapshot` **before** the fan-out (mirrors inbox line-175); use in both rehydrate + write-through identities; added test 17b. Narrows the activity residual to the benign same-login case. |
+| R2-FEAS-1 / R2-DES-1 | feasibility + design (2×) | Option B's `inbox-refresh-status` event must be registered in **both** `events.ts` maps (`EventPayloadByType` **and** `EVENT_TYPES`) or it's silently never subscribed. | P1/75 | **Applied** — Step 1.4 makes both-map registration explicit (Option B). |
+| R2-FEAS-2 | feasibility | Option B's `InboxRefreshStatus` must implement `: IReviewEvent` (the bus is constrained); SSE forwarding lives in `SseChannel.cs` at **three** sites (Subscribe + handler + Dispose), not a vague "endpoint". | P2/75 | **Applied** — Step 1.1/1.3 corrected with the interface + the 3 `SseChannel` sites (Option B). |
+| R2-FEAS-3 | feasibility | Injecting `IReviewEventBus` into `InboxPoller` breaks its DI factory at `ServiceCollectionExtensions.cs:~125–135` (4-arg `new InboxPoller`). | P2/75 | **Applied** — Step 1.2 names the factory fix (Option B). |
+| R2-ADV-2 | adversarial | Publishing `Ok=false` from the `RateLimitExceededException` branch raises a spurious "Couldn't reach GitHub" snackbar during normal 429 backoff. | P3/50 | **Applied** — Step 1.2 publishes nothing on rate-limit; backend test asserts neither true nor false (Option B). |
+| R2-ADV-3 | adversarial | Binary `Ok` can't see partial degradation; an `ok:false→true` flap within the debounce window doesn't cancel the armed timer (spurious `failing`). | P2/50 | **Applied** (flap) — Step 1b cancels the armed timer on `ok:true` + adds a flap test. **Documented limitation** (partial degradation) — surfaced as part of the A/B/C tradeoff (Option B). |
+| R2-DES-2 | design | StalePill's module `.sr` class (no `top:0;left:0`, `.slot` no `position:relative`) reproduces the #197 abspos-page-scroll bug — a regression introduced by the round-1 DES-2 fix. | P1/75 | **Applied** (safe_auto) — use the global `sr-only` utility + `position:relative` on `.slot` (matches Task 9). |
+| R2-COH-1 | coherence | Task 6 Step 8 stages `ServiceCollectionExtensions.cs` though Step 5 says it's registered in Task 4. | P1/100 | **Applied** (safe_auto) — removed from the Task 6 `git add`. |
+| R2-COH-2/3 | coherence | Harness helpers (`Build`/`ConfigWith`/`SnapshotWith`/`BuildEquivalentSnapshotAsync`/`WaitForCacheWriteIdleAsync`/`RaiseEnrichmentReady`) undefined + `Build()` signature inconsistent across tasks. | P2/75 | **Applied** — added a canonical "Test harness contract" section (one `Build` signature, all helper signatures); Tasks 2/3 reference it. |
+| R2-SCOPE-1 | scope | Option B's backend-contract surface is disproportionate to a non-blocking pill on a local single-owner tool. | (gate) | **Gate** — folded into the sharpened A/B/C recommendation (C or A over B). |
+| R2-PROD-1/2 | product | Mid-session degrade isn't truly "blind" without B (StalePill is a slower fallback); B's `failing` could cheaply close the PROD-2 fresh-window cue via a `stale && !failing` bar predicate; PROD-2 stays coupled to the A/B/C choice. | (gate) | **Gate** — reflected in the Task 11 recommendation + PROD-2 stays an accepted-residual deferred to the Task 14 mockup. |
+| R2-residual | feasibility | `_lastCaptureIdentity` defaults to `(null,null)`; trigger (b) could (unreachably) schedule a write with an empty login. | (residual) | **Applied** — cheap guard: trigger (b) skips when `_lastCaptureIdentity.Login` is empty. |
+| R2-residual | adversarial/scope | Earlier note over-claimed the activity self-heal rode on `/replace`'s `RequestImmediateRefresh()` (it's inbox-only + `identityChanged`-gated). | (residual) | **Applied** — corrected to "next `/api/activity` fetch (rail poll ≤90s)". |
+| R2-residual | adversarial | Rehydrator-first slightly weakens the fail-closed backstop for out-of-band token replacement (not a supported flow). | (residual) | **Documented** — not a supported path; the envelope identity gate remains the defense. |
+
+**Security round-2 cleared (no finding):** host/login normalization (OrdinalIgnoreCase both, trailing-slash asymmetry internally consistent), envelope tamper/partial-write/corruption (atomic write + fail-closed `TryLoad`), eviction completeness (all 3 sites, both caches, awaited), on-disk plaintext exposure (no net gain over the already-persisted PAT on a local tool), startup rehydrate ordering (config identity can't be network-spoofed; empty/mismatch fail closed). `EvictAsync` DEBUG-level failure log confirmed intentional (identity gate is the backstop).
+
+**Gate decisions surfaced for the B1 human review (round-2-informed):**
+1. **Snackbar scope (FEAS-1/PROD-1/DES-3 + R2-FEAS-1/2/3, R2-ADV-2/3, R2-SCOPE-1):** Option A (descope to follow-up) / B (backend `inbox-refresh-status` SSE — corrected, executable, but now-known higher cost) / C (FE-only staleness watchdog). **Round-2 recommendation: C or A, not B** — B's backend-contract surface + signal-semantics leaks are disproportionate to a non-blocking pill on a local single-owner tool. See the Task 11 callout.
+2. **Rehydrator ordering (ADV-1):** accept the deviation from spec §4 (rehydrator runs first) — recommended; update the spec §4 ordering note to match.
+3. **Inbox writer-race (R2-ADV-1):** the epoch gate fully closes the inbox resurrection; no residual to accept there.
+4. **Activity writer-race residual (ADV-3 + R2-SEC-1):** the cross-identity half is now **closed** (capture-before-fan-out); accept only the narrow **same-login** restart-window residual (self-heals on the next activity fetch), consistent with spec §4 "residual reduced, not zero".
