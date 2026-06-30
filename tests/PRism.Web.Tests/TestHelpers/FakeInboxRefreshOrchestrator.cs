@@ -6,6 +6,13 @@ namespace PRism.Web.Tests.TestHelpers;
 public sealed class FakeInboxRefreshOrchestrator : IInboxRefreshOrchestrator
 {
     public InboxSnapshot? Current { get; set; }
+
+    /// <summary>
+    /// Controls the <see cref="IInboxRefreshOrchestrator.IsServingRehydratedSnapshot"/> flag
+    /// returned to the endpoint. Default false (not rehydrated). #619.
+    /// </summary>
+    public bool IsServingRehydratedSnapshot { get; set; }
+
     public Func<TimeSpan, CancellationToken, Task<bool>>? WaitOverride { get; set; }
 
     /// <summary>

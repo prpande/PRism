@@ -36,6 +36,8 @@ public static class JsonSerializerOptionsFactory
             PropertyNameCaseInsensitive = false,
         };
         options.Converters.Add(new JsonStringEnumConverter(new KebabCaseJsonNamingPolicy()));
+        // IReadOnlySet<T> has no built-in STJ support; InboxSnapshot.AiEnrichmentSettled needs it.
+        options.Converters.Add(new ReadOnlySetConverterFactory());
         return options;
     }
 

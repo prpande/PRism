@@ -84,6 +84,7 @@ function makeInboxResponse(
     tokenScopeFooterEnabled: false,
     ciProbeComplete: true,
     aiEnrichmentSettled: [],
+    stale: false,
   };
 }
 

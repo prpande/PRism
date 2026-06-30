@@ -53,6 +53,10 @@ export function useActivity(enabled = true): UseActivityResult {
       return;
     }
     let cancelled = false;
+    // #619 — one-shot flag: scoped to this effect closure so it resets on each mount.
+    // Prevents an unbounded fetch loop when the backend keeps returning stale:true —
+    // we do NOT rely on the backend flipping stale→false as the terminator (DES-4).
+    let immediateRefetchFired = false;
     // Show the skeleton only when there's no cached data to render under it;
     // otherwise this is a background revalidate and the rail keeps last-good.
     if (cachedActivity === null) setIsLoading(true);
@@ -64,6 +68,18 @@ export function useActivity(enabled = true): UseActivityResult {
         cachedActivity = next;
         setData(next);
         setError(null);
+        if (next.stale && !immediateRefetchFired) {
+          // #619 — the rehydrated feed is stale; nudge an immediate live fetch rather
+          // than waiting ~90s. The backend seeds an expired TTL so this refetch is a
+          // real GitHub read. Round-1 DES-4: gate on an explicit one-shot flag (scoped
+          // to this effect closure) so a backend that returns stale:true twice cannot
+          // trigger an unbounded fetch loop — don't rely on backend behavior as the
+          // loop terminator.
+          immediateRefetchFired = true;
+          queueMicrotask(() => {
+            if (!cancelled) void poll();
+          });
+        }
       } catch (e) {
         if (cancelled) return;
         // Do NOT call setData — preserve last-good state on error.

@@ -4,7 +4,9 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
+using PRism.Core.Auth;
 using PRism.Core.Config;
+using PRism.Core.Storage;
 
 namespace PRism.Core.Activity;
 
@@ -19,6 +21,11 @@ public sealed partial class ActivityProvider : IActivityProvider, IDisposable
     private readonly IConfigStore _config;
     private readonly ILogger<ActivityProvider> _log;
     private readonly SemaphoreSlim _gate = new(1, 1);
+    private readonly IIdentityKeyedFileCache<ActivityResponse> _fileCache; // #619
+    private readonly IViewerLoginProvider _viewerLogin;                    // #619
+    private bool _rehydrateAttempted;                                      // #619 — disk read once; touched ONLY
+    // inside the _gate-held section of GetActivityAsync (concurrent first-misses serialize on the gate —
+    // no double-read race, no volatile needed). Round-1 scope-guardian residual: gate-protected.
 
     private static readonly IReadOnlyDictionary<(string Repo, int PrNumber), TimelineActor> NoEnrichment =
         new Dictionary<(string, int), TimelineActor>();
@@ -37,7 +44,9 @@ public sealed partial class ActivityProvider : IActivityProvider, IDisposable
         IPrTimelineReader timeline,
         TimeProvider clock,
         IConfigStore config,
-        ILogger<ActivityProvider> log)
+        ILogger<ActivityProvider> log,
+        IIdentityKeyedFileCache<ActivityResponse> fileCache,   // #619
+        IViewerLoginProvider viewerLogin)                      // #619
     {
         _events = events;
         _notifs = notifs;
@@ -46,6 +55,8 @@ public sealed partial class ActivityProvider : IActivityProvider, IDisposable
         _clock = clock;
         _config = config;
         _log = log;
+        _fileCache = fileCache;
+        _viewerLogin = viewerLogin;
     }
 
     private static string[] ParseExtraBots(string csv) =>
@@ -77,6 +88,26 @@ public sealed partial class ActivityProvider : IActivityProvider, IDisposable
             if (_cache is { } c && c.Generation == gen && now - c.At < Ttl)
                 return c.Response;
 
+            var cfg = _config.Current;                  // #619 — HOISTED above the fan-out (was post-fan-out)
+            var host = cfg.Github.Host.TrimEnd('/');    // #619 — HOISTED
+            var loginSnapshot = _viewerLogin.Get();     // #619 round-2 SEC-1 — capture BEFORE fan-out
+
+            // #619 — one-shot cold rehydrate: on the genuine first miss, seed _cache from disk with an
+            // already-EXPIRED At so THIS call serves the stale rows immediately while the NEXT call is a
+            // miss that fetches live (seeding At=now would defer the live fetch up to ~90s).
+            if (!_rehydrateAttempted)
+            {
+                _rehydrateAttempted = true;
+                var rid = new CacheIdentity(loginSnapshot, host); // captured-before-fan-out login + trimmed host
+                var loaded = _fileCache.TryLoad(rid);
+                if (loaded is not null)
+                {
+                    var stale = loaded with { Stale = true };
+                    _cache = new CacheEntry(stale, now - Ttl, gen); // expired At → next GetActivityAsync misses
+                    return stale;
+                }
+            }
+
             var evT = _events.ReadAsync(ct);
             var nfT = _notifs.ReadAsync(now.AddHours(-24), ct);
             var wtT = _watched.ReadAsync(ct);
@@ -99,9 +130,7 @@ public sealed partial class ActivityProvider : IActivityProvider, IDisposable
                 ? await _timeline.ReadLatestAsync(enrichTargets, ct).ConfigureAwait(false)
                 : NoEnrichment;
 
-            var cfg = _config.Current;                             // read host + bots fresh per fetch
-            var host = cfg.Github.Host.TrimEnd('/');
-            var extraBots = ParseExtraBots(cfg.Inbox.KnownBots);
+            var extraBots = ParseExtraBots(cfg.Inbox.KnownBots); // reuses the hoisted cfg
             var built = ActivityFeedBuilder.Build(ev.Events, nf.Notifications, wt.Repos, host, extraBots, now, enrichment);
 
             if (built.DroppedRecognized > 0)
@@ -114,7 +143,33 @@ public sealed partial class ActivityProvider : IActivityProvider, IDisposable
 
             // Discard (don't cache) if a Reset() bumped the generation mid-fetch.
             if (Volatile.Read(ref _generation) == gen)
+            {
                 _cache = new CacheEntry(resp, now, gen);
+                // #619 — persist last-known-good (gen-gated by this if). resp.Stale is false here (live fetch).
+                // CancellationToken.None so a request-abort doesn't surface an unobserved task exception.
+                // Stamp with `loginSnapshot` (captured BEFORE the fan-out, round-2 SEC-1) + the `host` local,
+                // NOT a fresh _viewerLogin.Get() — a mid-call token swap must not re-attribute alice's feed to bob.
+                //
+                // The write is detached (best-effort). The continuation re-checks the generation: this
+                // gen-gate (line above) only guards the CHECK POINT, not the detached write's COMPLETION —
+                // a Reset()+awaited EvictAsync on the auth path can land BETWEEN the check and the file
+                // write, resurrecting an evicted feed. Cross-identity is already safe (the next read is
+                // identity-gated → miss for the new login), but a SAME-LOGIN rotation would otherwise leave
+                // a stale own-feed served on the next cold boot. So: if the generation moved while our
+                // write was in flight, evict the just-written file (parity with the inbox epoch-gate's
+                // awaited drain — whole-branch review).
+                var writeGen = gen;
+                _ = _fileCache.SaveAsync(resp, new CacheIdentity(loginSnapshot, host), CancellationToken.None)
+                    .ContinueWith(
+                        _ =>
+                        {
+                            if (Volatile.Read(ref _generation) != writeGen)
+                                _ = _fileCache.EvictAsync(CancellationToken.None);
+                        },
+                        CancellationToken.None,
+                        TaskContinuationOptions.None,
+                        TaskScheduler.Default);
+            }
 
             return resp;
         }
@@ -131,6 +186,7 @@ public sealed partial class ActivityProvider : IActivityProvider, IDisposable
     {
         Interlocked.Increment(ref _generation);
         _cache = null;
+        _ = _fileCache.EvictAsync(CancellationToken.None); // #619 — drop the persisted feed on rotation
     }
 
     public void Dispose() => _gate.Dispose();

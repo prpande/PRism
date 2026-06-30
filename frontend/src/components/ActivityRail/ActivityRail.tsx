@@ -111,7 +111,7 @@ function Row({ item }: { item: ActivityItem }) {
   );
 
   return (
-    <li className={styles.item}>
+    <li className={styles.item} data-testid="activity-row">
       {path ? (
         <Link to={path} className={styles.rowLink} aria-label={label} title={tip}>
           {inner}
@@ -196,7 +196,7 @@ export function ActivityRail({ data, isLoading, error }: UseActivityResult) {
           <span className={styles.titleGroup}>
             <span className={styles.title}>Activity</span>
           </span>
-          <span className={styles.muted}>last 24h</span>
+          <span className={styles.muted}>{data?.stale ? 'saved' : 'last 24h'}</span>
           <button
             type="button"
             className={styles.botToggle}
@@ -239,7 +239,7 @@ export function ActivityRail({ data, isLoading, error }: UseActivityResult) {
           {watching.length > 0 && (
             <header className={styles.head}>
               <span className={styles.watchTitle}>Watching</span>
-              <span className={styles.muted}>last 24h</span>
+              <span className={styles.muted}>{data?.stale ? 'saved' : 'last 24h'}</span>
             </header>
           )}
           {watching.length > 0 && (

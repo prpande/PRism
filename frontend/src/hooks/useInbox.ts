@@ -9,6 +9,14 @@ export function useInbox() {
   const [data, setData] = useState<InboxResponse | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [isLoading, setIsLoading] = useState(true);
+  // Tracks any reload() attempt in-flight (true while the retry loop is running),
+  // regardless of whether `data` already exists. Distinct from the cold `isLoading`
+  // flag that the skeleton uses: `isLoading && !data` → skeleton; `isFetching` →
+  // loaded-branch loading bar. This lets a stale rehydrated inbox (data present,
+  // stale:true) show its content while a revalidation request is in flight, and lets
+  // the bar turn OFF once the retry loop exits — even if the network is down and the
+  // data stays stale. Keyed to reload(), NOT to the `stale` flag.
+  const [isFetching, setIsFetching] = useState(false);
   // Monotonic generation guard. Sibling data hooks (usePrDetail/useActivity/
   // useFileDiff) use an effect-scoped `cancelled` boolean; this hook needs a ref-keyed
   // generation instead because `reload` is ALSO called imperatively (banner retry /
@@ -23,6 +31,7 @@ export function useInbox() {
     const generation = ++generationRef.current;
     const isCurrent = () => generation === generationRef.current;
     setIsLoading(true);
+    setIsFetching(true);
     let lastError: unknown = null;
     for (const delay of RETRY_DELAYS_MS) {
       if (delay > 0) {
@@ -34,6 +43,7 @@ export function useInbox() {
         if (!isCurrent()) return;
         setData(next);
         setError(null);
+        setIsFetching(false);
         setIsLoading(false);
         return;
       } catch (e) {
@@ -45,6 +55,7 @@ export function useInbox() {
     }
     if (!isCurrent()) return;
     setError(lastError);
+    setIsFetching(false);
     setIsLoading(false);
   }, []);
 
@@ -59,5 +70,5 @@ export function useInbox() {
       generationRef.current++;
     };
   }, [reload]);
-  return { data, error, isLoading, reload };
+  return { data, error, isLoading, isFetching, reload };
 }

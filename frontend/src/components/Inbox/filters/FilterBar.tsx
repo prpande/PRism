@@ -8,6 +8,8 @@ import { FilterFacet } from './FilterFacet';
 import { FilterSummary } from './FilterSummary';
 import { RefreshButton } from '../../controls/RefreshButton';
 import { Select } from '../../controls/Select';
+import { StalePill } from '../StalePill/StalePill';
+import { useAuth } from '../../../hooks/useAuth';
 import styles from './filters.module.css';
 
 const CI_VALUES: CiStatus[] = ['failing', 'pending'];
@@ -29,6 +31,8 @@ interface Props {
   refresh: () => void;
   isRefreshing: boolean;
   justRefreshed: boolean;
+  // #619 — "Updated <age>" pill, centered in the filter row.
+  lastRefreshedAt: string;
 }
 
 export function FilterBar({
@@ -39,8 +43,17 @@ export function FilterBar({
   refresh,
   isRefreshing,
   justRefreshed,
+  lastRefreshedAt,
 }: Props) {
   const f = useInboxFilters(sections, initialSort);
+  const { authState } = useAuth();
+  // #619 — suppress the centered "Updated <age>" pill while the GitHub credential is
+  // invalid. The re-auth banner (GitHubAuthBanner) is a danger Snackbar that also sits
+  // dead-center over this toolbar row and is the dominant, actionable signal; an invalid
+  // credential is precisely WHY the data is stale, so the age pill both visually collides
+  // with the banner and restates its meaning. Same predicate the banner uses.
+  const credentialInvalid =
+    authState?.hasToken === true && authState?.githubCredentialInvalid === true;
   // `onState` MUST be a stable reference (a useState setter like InboxPage's
   // `setFilterState`, or a useCallback) — an inline arrow would re-fire this effect
   // every render. f.clear is a []-dep useCallback; f.result only changes with the data.
@@ -63,7 +76,17 @@ export function FilterBar({
       <div className={styles.barRow}>
         <InboxQueryInput value={f.query} onChange={f.setQuery} />
       </div>
-      <div className={styles.barRow}>
+      <div className={`${styles.barRow} ${styles.barRowFilters}`}>
+        {/* #619 — "Updated <age>" pill, absolutely centered in this row so it sits in
+            the horizontal center of the (full-width) toolbar without consuming any
+            vertical space or shifting the facet chips / sort controls. Owner-chosen
+            placement (Task 14 visual sign-off). pointer-events:none so it never
+            intercepts clicks over the empty center gap. */}
+        {!credentialInvalid && (
+          <div className={styles.stalePillCenter}>
+            <StalePill lastRefreshedAt={lastRefreshedAt} />
+          </div>
+        )}
         <FilterFacet
           name="CI"
           values={CI_VALUES}

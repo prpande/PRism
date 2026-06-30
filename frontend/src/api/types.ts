@@ -239,6 +239,7 @@ export interface InboxResponse {
   tokenScopeFooterEnabled: boolean;
   ciProbeComplete: boolean;
   aiEnrichmentSettled: string[];
+  stale: boolean; // #619 — true while serving a rehydrated, not-yet-revalidated snapshot
 }
 
 export interface ParsePrUrlResponse {
@@ -752,6 +753,7 @@ export interface ActivityResponse {
   generatedAt: string;
   degraded: ActivityDegradation;
   watching: WatchedRepoActivity[];
+  stale: boolean; // #619
 }
 
 // #517 — AI usage & spend. Mirrors PRism.Web/Ai/AiUsageReport.cs (camelCase wire shape).

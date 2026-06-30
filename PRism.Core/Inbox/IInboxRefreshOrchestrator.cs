@@ -3,6 +3,17 @@ namespace PRism.Core.Inbox;
 public interface IInboxRefreshOrchestrator
 {
     InboxSnapshot? Current { get; }
+
+    /// <summary>
+    /// True while the served snapshot is a rehydrated, not-yet-successfully-revalidated cache
+    /// (drives the <c>stale</c> wire flag, #619). Flips false once the first refresh since launch
+    /// commits. A failed (network) revalidation does NOT clear it — the data is still stale.
+    /// Default implementation returns false so existing fakes that don't override it keep
+    /// compiling — no CS0535 blast radius. The concrete <see cref="InboxRefreshOrchestrator"/>
+    /// overrides it with the real flag.
+    /// </summary>
+    bool IsServingRehydratedSnapshot => false;
+
     Task<bool> WaitForFirstSnapshotAsync(TimeSpan timeout, CancellationToken ct);
 
     /// <summary>

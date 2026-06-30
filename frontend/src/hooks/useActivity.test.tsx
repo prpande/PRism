@@ -24,6 +24,7 @@ const RESP = (n: number): ActivityResponse => ({
   generatedAt: new Date().toISOString(),
   degraded: { receivedEvents: false, notifications: false, watching: false },
   watching: [],
+  stale: false,
 });
 
 beforeEach(() => {
@@ -125,5 +126,18 @@ describe('useActivity', () => {
     const { result } = renderHook(() => useActivity());
     expect(result.current.isLoading).toBe(true);
     expect(result.current.data).toBeNull();
+  });
+
+  // #619 — stale feed: the backend seeds an expired TTL and returns stale:true so the
+  // immediate refetch (via queueMicrotask) is a real GitHub read, not a no-op cache hit.
+  test('immediately refetches when the response is stale', async () => {
+    getActivityMock
+      .mockResolvedValueOnce({ ...RESP(1), stale: true })
+      .mockResolvedValueOnce({ ...RESP(2), stale: false });
+    const { result } = renderHook(() => useActivity());
+    // Resolves to prNumber 2 WITHOUT advancing the 90s timer — the refetch was triggered
+    // by the stale flag, not the poll interval.
+    await waitFor(() => expect(result.current.data?.items[0].prNumber).toBe(2));
+    expect(getActivityMock).toHaveBeenCalledTimes(2);
   });
 });

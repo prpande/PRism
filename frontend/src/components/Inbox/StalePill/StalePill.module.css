@@ -1,0 +1,21 @@
+.slot {
+  /* Wrapper for the pill, centered as a zero-footprint overlay by .stalePillCenter
+     (filters.module.css). Holds the pill when stale, nothing when fresh. */
+  display: flex;
+  align-items: center;
+}
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  /* #619 — match the facet chips / Sort dropdown height (28px) and font so the pill
+     sits flush with the rest of the toolbar row. Rounded ends keep the pill shape. */
+  height: 28px;
+  padding: 0 var(--s-3);
+  border-radius: 14px;
+  font-size: var(--text-sm);
+  color: var(--text-3);
+  background: var(--surface-3);
+  border: 1px solid var(--border-strong); /* stronger than --border-1 so the pill stands out */
+  white-space: nowrap;
+}

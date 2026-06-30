@@ -10,7 +10,8 @@ internal sealed record InboxResponse(
     DateTimeOffset LastRefreshedAt,
     bool TokenScopeFooterEnabled,
     bool CiProbeComplete,
-    IReadOnlyCollection<string> AiEnrichmentSettled);
+    IReadOnlyCollection<string> AiEnrichmentSettled,
+    bool Stale);   // #619 — true while the orchestrator is serving a rehydrated (not-yet-revalidated) snapshot
 
 internal sealed record InboxSectionDto(
     string Id,

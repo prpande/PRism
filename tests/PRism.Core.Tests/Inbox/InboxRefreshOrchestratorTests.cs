@@ -9,6 +9,7 @@ using PRism.Core.Contracts;
 using PRism.Core.Events;
 using PRism.Core.Inbox;
 using PRism.Core.State;
+using PRism.Core.Storage;
 using PRism.Core.Tests.PrDetail;
 using PRism.Core.Tests.Submit.Pipeline.Fakes;
 
@@ -188,6 +189,7 @@ public sealed class InboxRefreshOrchestratorTests
         IAiSeamSelector? aiSelector = null,
         IReviewEventBus? events = null,
         IAppStateStore? stateStore = null,
+        IIdentityKeyedFileCache<InboxSnapshot>? cache = null, // #619
         Func<string>? viewerLogin = null)
         => new(
             config ?? ConfigStoreFake(),
@@ -199,6 +201,7 @@ public sealed class InboxRefreshOrchestratorTests
             aiSelector ?? new FakeAiSeamSelector(new NoopInboxItemEnricher()),
             events ?? new RecordingEventBus(),
             stateStore ?? StateStoreFake(),
+            cache ?? new RecordingIdentityCache<InboxSnapshot>(), // #619
             viewerLogin ?? (() => "testuser"));
 
     // Convenience overload that wraps a section factory into FakeSectionQueryRunner and
@@ -1512,6 +1515,7 @@ public sealed class InboxRefreshOrchestratorTests
             new FakeAiSeamSelector(new NoopInboxItemEnricher()),
             bus,
             StateStoreFake(),
+            new RecordingIdentityCache<InboxSnapshot>(), // #619 cache param
             () => "testuser",
             burstDelay: burstDelay);
         return (orch, reader, bus);
@@ -1695,7 +1699,9 @@ public sealed class InboxRefreshOrchestratorTests
             configFake, sections, reader,
             new FakeCiDetector(), new InboxDeduplicator(),
             new FakeAiSeamSelector(new NoopInboxItemEnricher()),
-            bus, StateStoreFake(), () => "testuser",
+            bus, StateStoreFake(),
+            new RecordingIdentityCache<InboxSnapshot>(), // #619 cache param
+            () => "testuser",
             burstDelay: controllableDelay);
 
         // ONE open non-draft None row so AnyTargetUnderCap() is true and burst A starts.

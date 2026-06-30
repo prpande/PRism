@@ -117,7 +117,10 @@ export default defineConfig({
   // default config (fake-mode, port 5180) must not pick these up — they would fail with
   // connect ECONNREFUSED against /test/real-inject. Run real-flow via
   // `npm run test:e2e:real` (which uses playwright.real.config.ts) instead.
-  testIgnore: '**/real/**',
+  // cold-start-cache.spec.ts runs ONLY under playwright.coldstart.config.ts (its own
+  // pre-seeded backend on :5210). The default fake-mode backend boots an EMPTY data dir,
+  // so the cold-start rehydrate the spec asserts can't happen here — exclude it.
+  testIgnore: ['**/real/**', '**/cold-start-cache.spec.ts'],
   fullyParallel: false,
   // Serialize across files, not just within them. The .NET backend is a single
   // long-running process with global fake state (FakeReviewSubmitter +

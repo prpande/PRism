@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useInbox } from '../hooks/useInbox';
 import { useInboxUpdates } from '../hooks/useInboxUpdates';
 import { useActivationTransition } from '../hooks/useActivationTransition';
@@ -8,6 +8,8 @@ import { useAiGate } from '../hooks/useAiGate';
 import { usePreferences } from '../hooks/usePreferences';
 import { useMediaQuery } from '../hooks/useMediaQuery';
 import { useActivity } from '../hooks/useActivity';
+import { useStreamHealth } from '../hooks/useStreamHealth';
+import { useGitHubReachability } from '../hooks/useGitHubReachability';
 import { INBOX_RAIL_MIN_WIDTH } from '../components/Inbox/inboxLayout';
 import { orderInboxSections } from '../components/Inbox/sectionOrder';
 import { InboxToolbar } from '../components/Inbox/InboxToolbar';
@@ -20,6 +22,7 @@ import { InboxSkeleton } from '../components/Inbox/InboxSkeleton';
 import { LoadingBar } from '../components/LoadingBar';
 import { ErrorModal } from '../components/ErrorModal';
 import { NoFilterMatches } from '../components/Inbox/filters/NoFilterMatches';
+import { GitHubUnreachableSnackbar } from '../components/GitHubUnreachableSnackbar';
 import type { FilterBarState } from '../components/Inbox/filters/FilterBar';
 import styles from './InboxPage.module.css';
 
@@ -29,7 +32,9 @@ import styles from './InboxPage.module.css';
 // Escape/Tab on `document` keyed on `open`, not on CSS visibility). Defaults true
 // so direct mounts (tests, any non-host caller) behave exactly as before.
 export function InboxPage({ active = true }: { active?: boolean } = {}) {
-  const { data, error, isLoading, reload } = useInbox();
+  const { data, error, isLoading, isFetching, reload } = useInbox();
+  const { healthy } = useStreamHealth();
+  const { failing } = useGitHubReachability(!!data?.stale);
   // #563 — under keep-alive the Inbox is no longer remounted on return from a PR,
   // so its mount-effect GET /api/inbox doesn't re-fire. Refetch when the host
   // re-shows this page (active false→true) so freshness that does NOT ride an
@@ -112,6 +117,21 @@ export function InboxPage({ active = true }: { active?: boolean } = {}) {
     return m;
   }, [sections]);
 
+  // #619 — one-shot stale-onset announcement. Fires 'Showing saved inbox' on the
+  // false→true edge (rehydrated data arrived before revalidation finished) and
+  // 'Inbox updated' on the true→false edge (fresh data resolved). A ref guards
+  // the previous value so the effect only sets text when the edge actually flips —
+  // identical to the always-mounted sr-only pattern used by the auto-refresh region.
+  // This is a third independent live region so it never masks the other two (#450).
+  const [staleAnnounce, setStaleAnnounce] = useState('');
+  const wasStale = useRef(false);
+  useEffect(() => {
+    const stale = !!data?.stale;
+    if (stale && !wasStale.current) setStaleAnnounce('Showing saved inbox');
+    if (!stale && wasStale.current) setStaleAnnounce('Inbox updated');
+    wasStale.current = stale;
+  }, [data?.stale]);
+
   if (isLoading && !data)
     return (
       <>
@@ -147,11 +167,23 @@ export function InboxPage({ active = true }: { active?: boolean } = {}) {
     <>
       {/* #485 first-run onboarding overlay — renders over the loaded inbox. */}
       {onboarding}
-      {/* Background reload (data present, isLoading): the bar is the non-intrusive
-          "refreshing" signal. Kept a sibling ABOVE <main> (not inside it) so it
-          spans the same full width as the cold-load bar above <InboxSkeleton> —
-          no width/position jump when the skeleton is replaced by content. */}
-      <LoadingBar active={isLoading || isRefreshing} data-testid="inbox-loading-bar" />
+      {/* #619 — non-blocking "Couldn't reach GitHub" snackbar (Option C FE staleness watchdog).
+          Suppressed when the more-fundamental StreamHealthSnackbar is visible (shared fixed slot).
+          Only mounted here (loaded branch, data present) so it never co-fires with the cold-load
+          ErrorModal which shows at `error && !data`. */}
+      <GitHubUnreachableSnackbar
+        failing={failing}
+        onRetry={() => void reload()}
+        suppressed={!healthy}
+      />
+      {/* Background reload (data present, fetch in-flight): the bar is the non-intrusive
+          "refreshing" signal. Driven by `isFetching` (any reload() attempt in progress)
+          OR the manual-refresh flag, NOT by `data.stale` — so an offline launch with a
+          failing revalidation does not spin the bar forever once the retry loop exits.
+          Kept a sibling ABOVE <main> (not inside it) so it spans the same full width as
+          the cold-load bar above <InboxSkeleton> — no width/position jump when the
+          skeleton is replaced by content. */}
+      <LoadingBar active={isFetching || isRefreshing} data-testid="inbox-loading-bar" />
       <main className={styles.page} data-testid="inbox-page" tabIndex={-1}>
         {/* Two independent live regions. The manual-refresh announce is sticky
             ('Inbox refreshed' until the next error), so OR-ing the two into one
@@ -173,6 +205,15 @@ export function InboxPage({ active = true }: { active?: boolean } = {}) {
         >
           {autoRefresh.announce}
         </div>
+        {/* #619 — stale-onset / stale-cleared announcement. A third independent
+            live region so the one-shot edge announcement is never masked by the
+            sticky manual-refresh or auto-refresh regions. Always mounted so the
+            AT change-event fires on text update, not on node insertion. */}
+        <div className="sr-only" role="status" aria-live="polite" data-testid="inbox-stale-status">
+          {staleAnnounce}
+        </div>
+        {/* #619 — "Updated <age>" pill is rendered INSIDE InboxToolbar, centered in the
+            filter row (owner-chosen Task 14 placement); it consumes no vertical space. */}
         <InboxToolbar
           sections={sections}
           initialSort={initialSort}
@@ -181,6 +222,7 @@ export function InboxPage({ active = true }: { active?: boolean } = {}) {
           refresh={refresh}
           isRefreshing={isRefreshing}
           justRefreshed={justRefreshed}
+          lastRefreshedAt={data.lastRefreshedAt}
         />
         <div className={styles.grid} data-has-rail={showRail || undefined}>
           <div className={styles.sections}>

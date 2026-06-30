@@ -1,6 +1,7 @@
 using System.Diagnostics.CodeAnalysis;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using PRism.Core.Activity;
 using PRism.Core.Ai;
 using PRism.Core.Auth;
 using PRism.Core.Config;
@@ -9,11 +10,16 @@ using PRism.Core.Inbox;
 using PRism.Core.Iterations;
 using PRism.Core.PrDetail;
 using PRism.Core.State;
+using PRism.Core.Storage;
 
 namespace PRism.Core;
 
 public static class ServiceCollectionExtensions
 {
+    // #619 — schema versions for the cold-start caches. Bump on any InboxSnapshot/ActivityResponse shape change.
+    private const int InboxSnapshotCacheVersion = 1;
+    private const int ActivityFeedCacheVersion = 1;
+
     /// <summary>
     /// Registers the PRism.Core services that are independent of the GitHub adapter and the AI
     /// seam selection: persistent stores (config, app state, tokens), the inbox refresh
@@ -78,6 +84,16 @@ public static class ServiceCollectionExtensions
             return state;
         });
         services.AddSingleton<IAppStateStore>(_ => new AppStateStore(dataDir));
+        services.AddSingleton<IIdentityKeyedFileCache<InboxSnapshot>>(_ =>
+            new IdentityKeyedFileCache<InboxSnapshot>(
+                Path.Combine(dataDir, "inbox-snapshot.json"),
+                InboxSnapshotCacheVersion,
+                isStructurallyValid: s => s.Sections is not null && s.Enrichments is not null));
+        services.AddSingleton<IIdentityKeyedFileCache<ActivityResponse>>(_ =>
+            new IdentityKeyedFileCache<ActivityResponse>(
+                Path.Combine(dataDir, "activity-feed.json"),
+                ActivityFeedCacheVersion,
+                isStructurallyValid: r => r.Items is not null));
         // In the e2e Test backend, persist tokens to an unprotected file instead
         // of the OS keyring. The browser e2e runs in a headless Linux container
         // which has no D-Bus/X11, so MSAL's Linux keyring throws "Cannot
@@ -96,7 +112,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IReviewEventBus, ReviewEventBus>();
         services.AddSingleton<InboxSubscriberCount>();
         services.AddSingleton<IInboxDeduplicator, InboxDeduplicator>();
-        services.AddSingleton<IInboxRefreshOrchestrator>(sp =>
+        services.AddSingleton<InboxRefreshOrchestrator>(sp =>
         {
             var loginCache = sp.GetRequiredService<IViewerLoginProvider>();
             return new InboxRefreshOrchestrator(
@@ -108,9 +124,21 @@ public static class ServiceCollectionExtensions
                 sp.GetRequiredService<IAiSeamSelector>(),
                 sp.GetRequiredService<IReviewEventBus>(),
                 sp.GetRequiredService<IAppStateStore>(),
+                sp.GetRequiredService<IIdentityKeyedFileCache<InboxSnapshot>>(),
                 loginCache.Get,
                 sp.GetRequiredService<ILogger<InboxRefreshOrchestrator>>());
         });
+        services.AddSingleton<IInboxRefreshOrchestrator>(sp => sp.GetRequiredService<InboxRefreshOrchestrator>());
+
+        // #619 — rehydrate the persisted inbox snapshot FIRST (before ViewerLoginHydrator's blocking
+        // network ValidateCredentialsAsync, round-1 ADV-1), so _current is set instantly and the offline
+        // paint is not gated behind a credential-validation timeout. Reads only on-disk config (loaded by
+        // ConfigStore at construction) + the cache file — no network. Still before InboxPoller's first poll.
+        services.AddHostedService(sp => new InboxCacheRehydrator(
+            sp.GetRequiredService<InboxRefreshOrchestrator>(),
+            sp.GetRequiredService<IIdentityKeyedFileCache<InboxSnapshot>>(),
+            sp.GetRequiredService<IConfigStore>(),
+            sp.GetRequiredService<ILogger<InboxCacheRehydrator>>()));
 
         // Hydrate viewer-login from a previously stored token before InboxPoller starts.
         // IHostedService.StartAsync runs in registration order — this MUST come before the poller.

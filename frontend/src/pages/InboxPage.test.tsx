@@ -26,6 +26,15 @@ vi.mock('../hooks/useAiGate', () => ({
   useAiGate: vi.fn(),
   useIsSampleMode: () => false,
 }));
+// FilterBar reads useAuth (#619: suppress the stale pill while the credential is
+// invalid). These tests exercise a valid credential, so a static mock suffices.
+vi.mock('../hooks/useAuth', () => ({
+  useAuth: () => ({
+    authState: { hasToken: true, githubCredentialInvalid: false },
+    error: null,
+    refetch: vi.fn(),
+  }),
+}));
 
 import { useInbox } from '../hooks/useInbox';
 import { useInboxUpdates } from '../hooks/useInboxUpdates';
@@ -56,6 +65,10 @@ function setHooks(
   opts: {
     data?: InboxResponse | null;
     isLoading?: boolean;
+    // #619 in-flight flag distinct from cold isLoading. Defaults to the same value as
+    // isLoading so existing tests that only set isLoading remain correct (in production
+    // the two are always set together inside reload()).
+    isFetching?: boolean;
     error?: unknown;
     aiPreview?: boolean;
     inboxEnrichment?: boolean;
@@ -69,6 +82,7 @@ function setHooks(
   vi.mocked(useInbox).mockReturnValue({
     data: opts.data ?? null,
     isLoading: opts.isLoading ?? false,
+    isFetching: opts.isFetching ?? opts.isLoading ?? false,
     error: opts.error ?? null,
     reload,
   });
@@ -164,12 +178,18 @@ const sampleData: InboxResponse = {
   tokenScopeFooterEnabled: true,
   ciProbeComplete: true,
   aiEnrichmentSettled: [],
+  stale: false,
 };
 
 const emptyData: InboxResponse = {
   ...sampleData,
   sections: [{ id: 'review-requested', label: 'Review requested', items: [] }],
 };
+
+// #619 — stale fixture: rehydrated snapshot served before fresh revalidation arrived.
+function staleInbox(): InboxResponse {
+  return { ...sampleData, stale: true };
+}
 
 function renderPage() {
   return render(
@@ -406,6 +426,7 @@ describe('InboxPage', () => {
         tokenScopeFooterEnabled: false,
         ciProbeComplete: true,
         aiEnrichmentSettled: [],
+        stale: false,
       },
       // awaiting-author is in the saved order but absent from `sections` — exercises
       // orderInboxSections' "saved id matching no live section is harmlessly ignored".
@@ -432,6 +453,32 @@ describe('InboxPage', () => {
     expect(order[2]).toMatch(/Review requested/);
     expect(order.at(-1)).toMatch(/Recently closed/);
   });
+
+  // #619 — stale inbox affordance: content-not-skeleton, in-flight bar, stale aria
+  it('renders content (not skeleton) when stale data is present', () => {
+    // The rehydrator returns data immediately with stale:true, then a revalidation
+    // fires. The inbox must show its content right away, not a skeleton.
+    setHooks({ data: staleInbox(), isLoading: false });
+    renderPage();
+    expect(screen.getByTestId('inbox-page')).toBeInTheDocument();
+    expect(screen.queryByTestId('inbox-skeleton')).not.toBeInTheDocument();
+  });
+
+  it('announces "Showing saved inbox" once when stale first becomes true', () => {
+    // The stale-onset useEffect fires inside act() during render, so the
+    // inbox-stale-status live region already holds the announcement text.
+    setHooks({ data: staleInbox(), isLoading: false });
+    renderPage();
+    expect(screen.getByTestId('inbox-stale-status')).toHaveTextContent('Showing saved inbox');
+  });
+
+  it('does not pin the LoadingBar on while stale (offline failing revalidation)', () => {
+    // isFetching:false simulates the retry loop having finished with no fresh data.
+    // The bar must be OFF even though stale:true is still set — it must not spin forever.
+    setHooks({ data: staleInbox(), isLoading: false, isFetching: false });
+    renderPage();
+    expect(screen.getByTestId('inbox-loading-bar')).toHaveAttribute('data-active', 'false');
+  });
 });
 
 describe('InboxPage — useAiGate migrations', () => {
@@ -446,8 +493,10 @@ describe('InboxPage — useAiGate migrations', () => {
         tokenScopeFooterEnabled: false,
         ciProbeComplete: true,
         aiEnrichmentSettled: [],
+        stale: false,
       } as InboxResponse,
       isLoading: false,
+      isFetching: false,
       error: null,
       reload: vi.fn().mockResolvedValue(undefined),
     });
@@ -643,8 +692,10 @@ describe('InboxPage — onboarding overlay gate (#485)', () => {
         lastRefreshedAt: new Date().toISOString(),
         tokenScopeFooterEnabled: false,
         ciProbeComplete: true,
+        stale: false,
       } as InboxResponse,
       isLoading: false,
+      isFetching: false,
       error: null,
       reload: vi.fn().mockResolvedValue(undefined),
     });
@@ -746,6 +797,7 @@ describe('InboxPage — onboarding overlay gate (#485)', () => {
     vi.mocked(useInbox).mockReturnValue({
       data: null,
       isLoading: true,
+      isFetching: true,
       error: null,
       reload: vi.fn().mockResolvedValue(undefined),
     });
@@ -766,6 +818,7 @@ describe('InboxPage — onboarding overlay gate (#485)', () => {
     vi.mocked(useInbox).mockReturnValue({
       data: null,
       isLoading: false,
+      isFetching: false,
       error: new Error('boom'),
       reload: vi.fn().mockResolvedValue(undefined),
     });

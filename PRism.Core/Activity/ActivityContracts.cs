@@ -65,4 +65,5 @@ public sealed record ActivityResponse(
     IReadOnlyList<ActivityItem> Items,
     System.DateTimeOffset GeneratedAt,
     ActivityDegradation Degraded,
-    IReadOnlyList<WatchedRepoActivity> Watching);
+    IReadOnlyList<WatchedRepoActivity> Watching,
+    bool Stale = false);   // #619 — true only when serving a rehydrated, not-yet-revalidated feed

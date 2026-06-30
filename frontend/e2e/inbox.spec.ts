@@ -35,6 +35,7 @@ const sampleInbox = {
   enrichments: {},
   lastRefreshedAt: new Date().toISOString(),
   tokenScopeFooterEnabled: true,
+  stale: false,
 };
 
 // The canonical mocked-mode preferences shape (#332). It mirrors the real
