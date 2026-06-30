@@ -65,6 +65,35 @@ public sealed class GitHubActivePrBatchReaderTests
             $"query{{a0: repository(owner:{ser}, name:{serName}){{ pullRequest(number:9){{ headRefOid");
     }
 
+    // #667: this reader requests the SAME compute-forcing merge-readiness fields as the inbox reader
+    // (mergeable / mergeStateStatus / reviewDecision / latestReviews / reviewRequests), so it must
+    // share the inbox reader's 50-alias cap. It had drifted at 100 after #593 lowered the inbox reader
+    // to 50 — a >75-PR keep-alive tick (#161) batches every subscribed PR into ONE query and would push
+    // it past GitHub's ~11s GraphQL execution limit (→502), aborting the whole tick for every open PR
+    // at once. Pin the chunk boundary at exactly 50: the 50th alias fits one POST; the 51st forces a 2nd.
+    [Fact]
+    public async Task Chunks_merge_readiness_query_at_fifty_aliases_not_one_hundred()
+    {
+        static PrReference[] Refs(int n) => Enumerable.Range(1, n).Select(i => new PrReference("o", "r", i)).ToArray();
+        static (GitHubActivePrBatchReader Reader, RecordingHttpMessageHandler Handler) NewRecording()
+        {
+            var handler = new RecordingHttpMessageHandler(
+                Enumerable.Repeat((HttpStatusCode.OK, """{"data":{}}"""), 8));
+            var reader = new GitHubActivePrBatchReader(
+                new FakeHttpClientFactory(handler, new Uri("https://api.github.com/")),
+                () => Task.FromResult<string?>("token"), () => "https://github.com");
+            return (reader, handler);
+        }
+
+        var (atCap, h50) = NewRecording();
+        await atCap.PollBatchAsync(Refs(50), CancellationToken.None);
+        h50.RequestCount.Should().Be(1, "50 aliases fit a single chunk");
+
+        var (overCap, h51) = NewRecording();
+        await overCap.PollBatchAsync(Refs(51), CancellationToken.None);
+        h51.RequestCount.Should().Be(2, "the 51st alias forces a second chunk — the cap is 50, not 100");
+    }
+
     [Fact]
     public async Task Batches_all_refs_and_derives_readiness_per_alias()
     {

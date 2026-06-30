@@ -13,10 +13,12 @@ namespace PRism.GitHub.ActivePr;
 // headRepository{pushedAt} / diff-stat / viewer-last-review-SHA; needs reviewDecision +
 // mergeStateStatus + counts), so it is a separate class. The SHARED parts — HTTP transport
 // (GitHubGraphQL.PostAsync), the 429 + 200/RATE_LIMITED model (GitHubGraphQL.ThrowIfRateLimited),
-// the 100-alias cap, per-alias null isolation, CountLatestReviews — are reused, not forked.
+// the merge-readiness alias cap (GitHubGraphQL.MergeReadinessAliasCap), per-alias null isolation,
+// CountLatestReviews — are reused, not forked.
 public sealed class GitHubActivePrBatchReader : IActivePrBatchReader
 {
-    private const int MaxBatch = 100;
+    // Shared with the inbox reader — rationale at GitHubGraphQL.MergeReadinessAliasCap (#667).
+    private const int MaxBatch = GitHubGraphQL.MergeReadinessAliasCap;
     private readonly IHttpClientFactory _httpFactory;
     private readonly Func<Task<string?>> _readToken;
     private readonly Func<string> _readHost;
