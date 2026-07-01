@@ -176,14 +176,22 @@ export function InboxPage({ active = true }: { active?: boolean } = {}) {
         onRetry={() => void reload()}
         suppressed={!healthy}
       />
-      {/* Background reload (data present, fetch in-flight): the bar is the non-intrusive
-          "refreshing" signal. Driven by `isFetching` (any reload() attempt in progress)
-          OR the manual-refresh flag, NOT by `data.stale` — so an offline launch with a
-          failing revalidation does not spin the bar forever once the retry loop exits.
+      {/* Background reload: the bar is the non-intrusive "refreshing" signal. Three drivers:
+          `isFetching` (any client reload() attempt in progress), the manual-refresh flag, and
+          `data.stale` — a rehydrated cold-start snapshot whose background revalidation the SERVER
+          is still running. The client's own fetch resolves immediately against that stale snapshot
+          (isFetching drops to false), so without the `stale` term the bar would vanish during the
+          real pull — the regression this restores. `stale` is bounded by `!failing`: the #619
+          reachability watchdog flips `failing` once the snapshot stays stale past its threshold
+          (offline launch, revalidation never succeeds), turning the bar OFF and handing the signal
+          to the "Couldn't reach GitHub" snackbar — so it can never spin forever.
           Kept a sibling ABOVE <main> (not inside it) so it spans the same full width as
           the cold-load bar above <InboxSkeleton> — no width/position jump when the
           skeleton is replaced by content. */}
-      <LoadingBar active={isFetching || isRefreshing} data-testid="inbox-loading-bar" />
+      <LoadingBar
+        active={isFetching || isRefreshing || (data.stale && !failing)}
+        data-testid="inbox-loading-bar"
+      />
       <main className={styles.page} data-testid="inbox-page" tabIndex={-1}>
         {/* Two independent live regions. The manual-refresh announce is sticky
             ('Inbox refreshed' until the next error), so OR-ing the two into one
