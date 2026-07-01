@@ -28,7 +28,7 @@ public sealed class GitHubPrTimelineFeedReaderTests
           "timelineItems":{
             "pageInfo":{"hasPreviousPage":true,"startCursor":"CUR"},
             "nodes":[
-              {"__typename":"PullRequestCommit","commit":{"oid":"deadbeef","committedDate":"2021-01-01T00:00:00Z","author":{"user":{"login":"bob","avatarUrl":"https://a/bob","__typename":"User"}}}},
+              {"__typename":"PullRequestCommit","commit":{"oid":"deadbeef","messageHeadline":"fix: guard the reader","committedDate":"2021-01-01T00:00:00Z","author":{"user":{"login":"bob","avatarUrl":"https://a/bob","__typename":"User"}}}},
               {"__typename":"PullRequestReview","state":"APPROVED","body":"","submittedAt":"2021-01-02T00:00:00Z","author":{"login":"alice","avatarUrl":"https://a/alice","__typename":"User"}}
             ]}}}}}
         """;
@@ -41,6 +41,7 @@ public sealed class GitHubPrTimelineFeedReaderTests
         page.Events[0].Actor.Login.Should().Be("alice");
         page.Events[1].Verb.Should().Be(ActivityVerb.Pushed);
         page.Events[1].CommitCount.Should().Be(1);
+        page.Events[1].Subject.Should().Be("fix: guard the reader");   // commit title → Subject
     }
 
     [Fact]
@@ -188,6 +189,6 @@ public sealed class GitHubPrTimelineFeedReaderTests
         await reader.ReadPageAsync(Pr, cursor: null, pageSize: 30, CancellationToken.None);
 
         GraphQlRequest.QueryOf(handler.LastRequestBody).Should().Be(
-            """query{ repository(owner:"acme", name:"api"){ pullRequest(number:7){ createdAt author{ login avatarUrl __typename } timelineItems(last:30, itemTypes:[ISSUE_COMMENT,PULL_REQUEST_REVIEW,PULL_REQUEST_COMMIT,REVIEW_REQUESTED_EVENT,READY_FOR_REVIEW_EVENT,REOPENED_EVENT,CLOSED_EVENT,MERGED_EVENT]){ pageInfo{ hasPreviousPage startCursor } nodes{ __typename ... on IssueComment{ databaseId createdAt body author{ login avatarUrl __typename } } ... on PullRequestReview{ databaseId submittedAt state body author{ login avatarUrl __typename } } ... on PullRequestCommit{ commit{ oid committedDate author{ user{ login avatarUrl __typename } } } } ... on ReviewRequestedEvent{ createdAt actor{ login avatarUrl __typename } requestedReviewer{ ... on User{ login } ... on Team{ name } } } ... on ReadyForReviewEvent{ createdAt actor{ login avatarUrl __typename } } ... on ReopenedEvent{ createdAt actor{ login avatarUrl __typename } } ... on ClosedEvent{ createdAt actor{ login avatarUrl __typename } } ... on MergedEvent{ createdAt actor{ login avatarUrl __typename } } } } } } }""");
+            """query{ repository(owner:"acme", name:"api"){ pullRequest(number:7){ createdAt author{ login avatarUrl __typename } timelineItems(last:30, itemTypes:[ISSUE_COMMENT,PULL_REQUEST_REVIEW,PULL_REQUEST_COMMIT,REVIEW_REQUESTED_EVENT,READY_FOR_REVIEW_EVENT,REOPENED_EVENT,CLOSED_EVENT,MERGED_EVENT]){ pageInfo{ hasPreviousPage startCursor } nodes{ __typename ... on IssueComment{ databaseId createdAt body author{ login avatarUrl __typename } } ... on PullRequestReview{ databaseId submittedAt state body author{ login avatarUrl __typename } } ... on PullRequestCommit{ commit{ oid messageHeadline committedDate author{ user{ login avatarUrl __typename } } } } ... on ReviewRequestedEvent{ createdAt actor{ login avatarUrl __typename } requestedReviewer{ ... on User{ login } ... on Team{ name } } } ... on ReadyForReviewEvent{ createdAt actor{ login avatarUrl __typename } } ... on ReopenedEvent{ createdAt actor{ login avatarUrl __typename } } ... on ClosedEvent{ createdAt actor{ login avatarUrl __typename } } ... on MergedEvent{ createdAt actor{ login avatarUrl __typename } } } } } } }""");
     }
 }

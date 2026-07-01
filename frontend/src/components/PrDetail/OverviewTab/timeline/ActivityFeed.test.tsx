@@ -36,9 +36,9 @@ describe('ActivityFeed', () => {
     expect(screen.getByTestId('timeline-marker')).toHaveTextContent('approved');
   });
 
-  it('collapses a >5 commit run into an expandable accordion', async () => {
+  it('groups a >5 commit run to the newest 5 with a show-older control', async () => {
     const commits = Array.from({ length: 6 }, (_, i) =>
-      ev(`p${i}`, { verb: 'pushed', commitCount: 1 }),
+      ev(`p${i}`, { verb: 'pushed', commitCount: 1, subject: `commit ${i}` }),
     );
     vi.spyOn(api, 'getTimelinePage').mockResolvedValue({
       events: commits,
@@ -46,8 +46,12 @@ describe('ActivityFeed', () => {
       hasOlder: false,
     });
     render(<ActivityFeed prRef={pr} prUpdatedSignal={0} composerSlot={null} />);
-    const acc = await screen.findByRole('button', { name: /6 commits/i });
-    expect(acc).toHaveAttribute('aria-expanded', 'false');
+    expect(await screen.findByTestId('timeline-commit-group')).toHaveTextContent(
+      'pushed 6 commits',
+    );
+    // newest 5 shown, the 6th collapsed behind a show-older control
+    expect(screen.getByRole('button', { name: /1 older commit/i })).toBeInTheDocument();
+    expect(screen.queryByText('commit 5')).not.toBeInTheDocument();
   });
 
   it('shows an empty-state placeholder, not a blank card', async () => {
@@ -133,9 +137,9 @@ describe('ActivityFeed', () => {
     expect(marker).not.toHaveTextContent('requested review from');
   });
 
-  it('the commit-run accordion is an operable button that toggles on activation', async () => {
+  it('the show-older control reveals the remaining commits', async () => {
     const commits = Array.from({ length: 6 }, (_, i) =>
-      ev(`p${i}`, { verb: 'pushed', commitCount: 1 }),
+      ev(`p${i}`, { verb: 'pushed', commitCount: 1, subject: `commit ${i}` }),
     );
     vi.spyOn(api, 'getTimelinePage').mockResolvedValue({
       events: commits,
@@ -143,9 +147,9 @@ describe('ActivityFeed', () => {
       hasOlder: false,
     });
     render(<ActivityFeed prRef={pr} prUpdatedSignal={0} composerSlot={null} />);
-    const acc = await screen.findByRole('button', { name: /6 commits/i }); // a real <button> ⇒ keyboard-operable
-    expect(acc).toHaveAttribute('aria-expanded', 'false');
-    fireEvent.click(acc);
-    expect(acc).toHaveAttribute('aria-expanded', 'true'); // expands to reveal the per-commit list
+    const btn = await screen.findByRole('button', { name: /1 older commit/i }); // a real <button> ⇒ keyboard-operable
+    expect(screen.queryByText('commit 5')).not.toBeInTheDocument();
+    fireEvent.click(btn);
+    expect(screen.getByText('commit 5')).toBeInTheDocument(); // the collapsed 6th commit is revealed
   });
 });

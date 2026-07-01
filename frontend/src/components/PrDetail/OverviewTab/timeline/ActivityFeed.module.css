@@ -9,6 +9,12 @@
   white-space: nowrap;
 }
 
+/* Separator AFTER the composer: composer is the first element of the card; the timeline follows. */
+.composerDivider {
+  border-top: 1px solid var(--border-1);
+  margin: var(--s-3) 0 0;
+}
+
 .toolbar {
   display: flex;
   justify-content: flex-end;
@@ -17,84 +23,184 @@
 
 .toolbar button {
   font-size: var(--text-xs);
-  color: var(--text-2);
-  background: none;
+  color: var(--text-3);
+  background: transparent;
   border: 1px solid var(--border-1);
-  border-radius: var(--radius-2);
-  padding: 2px 8px;
+  border-radius: 999px;
+  padding: 2px 10px;
   cursor: pointer;
 }
+.toolbar button[aria-pressed='true'] {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
 
+/* ---------- the rail ---------- */
 .rail {
-  display: flex;
-  flex-direction: column;
-  gap: var(--s-3);
+  position: relative;
+  list-style: none;
   margin: 0;
   padding: 0;
-  list-style: none;
+}
+/* the accent spine, threaded behind the node badges */
+.rail::before {
+  content: '';
+  position: absolute;
+  left: 15px;
+  top: 14px;
+  bottom: 14px;
+  width: 2px;
+  background: var(--accent);
 }
 
-.marker {
+.node {
+  position: relative;
+  display: grid;
+  grid-template-columns: 32px 1fr;
+  gap: var(--s-3);
+  align-items: start;
+  padding-bottom: var(--s-6);
+}
+.node:last-child {
+  padding-bottom: 0;
+}
+
+/* circular type-glyph node badge — the ring masks the spine so the badge sits ON the rail */
+.badge {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
   display: flex;
-  align-items: baseline;
-  gap: var(--s-2);
-  font-size: var(--text-sm);
+  align-items: center;
+  justify-content: center;
+  border: 3px solid var(--surface-1);
+  box-sizing: border-box;
+  position: relative;
+  z-index: 1;
+}
+.badge[data-tone='neutral'] {
+  background: var(--surface-3);
   color: var(--text-2);
 }
+.badge[data-tone='success'] {
+  background: var(--success-soft);
+  color: var(--success-fg);
+}
+.badge[data-tone='warning'] {
+  background: var(--warning-soft);
+  color: var(--warning-fg);
+}
+.badge[data-tone='danger'] {
+  background: var(--danger-soft);
+  color: var(--danger-fg);
+}
+.badge[data-tone='merged'] {
+  background: color-mix(in oklch, var(--merged) 18%, var(--surface-1));
+  color: var(--merged-fg);
+}
+.badge[data-tone='accent'] {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
 
-.lead {
-  flex: 1;
+/* single-line node body (markers + inline single-commit): a centred flex row so the small inline
+   identity avatar aligns with the name, and the text (actor + verb + age) flows in one run. */
+.line {
+  align-self: center;
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  min-width: 0;
+  font-size: var(--text-sm);
+  color: var(--text-2);
+  line-height: 1.5;
+}
+.lineText {
+  min-width: 0;
 }
 
 .actor {
   font-weight: 600;
   color: var(--text-1);
 }
-
 .verb {
   color: var(--text-2);
 }
-
 .when {
   color: var(--text-3);
   font-size: var(--text-xs);
 }
 
-.card {
-  list-style: none;
+/* comment card seated on the rail */
+.cardWrap {
+  min-width: 0;
 }
 
-.accordion {
+/* ---------- commit group ---------- */
+.commitGroup {
+  min-width: 0;
+}
+.commitHead {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  min-width: 0;
   font-size: var(--text-sm);
   color: var(--text-2);
-  background: none;
-  border: none;
-  padding: 0;
-  cursor: pointer;
-  text-align: left;
+  margin-bottom: var(--s-2);
 }
-
-.commitList {
-  margin: var(--s-2) 0 0 var(--s-5);
-  padding: 0;
+.commits {
   list-style: none;
-  display: flex;
-  flex-direction: column;
-  gap: var(--s-1);
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-2);
+  overflow: hidden;
+  background: var(--surface-1);
 }
-
 .commitRow {
   display: flex;
-  gap: var(--s-2);
+  align-items: baseline;
+  gap: var(--s-3);
+  padding: 6px var(--s-3);
+  font-size: var(--text-sm);
+}
+.commitRow + .commitRow {
+  border-top: 1px solid var(--border-1);
+}
+.sha {
+  font-family: var(--font-mono);
   font-size: var(--text-xs);
-  color: var(--text-3);
+  color: var(--accent);
+  text-decoration: none;
+  flex-shrink: 0;
+}
+.sha:hover {
+  text-decoration: underline;
+}
+.commitTitle {
+  color: var(--text-1);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.showOlder {
+  margin-top: var(--s-2);
+  font-size: var(--text-xs);
+  color: var(--text-2);
+  background: none;
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-2);
+  padding: 3px 10px;
+  cursor: pointer;
 }
 
+/* ---------- states ---------- */
 .error {
   font-size: var(--text-sm);
   color: var(--text-2);
 }
-
 .error button {
   color: var(--text-1);
   text-decoration: underline;
@@ -103,13 +209,11 @@
   cursor: pointer;
   padding: 0;
 }
-
 .empty {
   font-size: var(--text-sm);
   color: var(--text-3);
   margin: 0;
 }
-
 .older {
   margin-top: var(--s-3);
   font-size: var(--text-sm);

@@ -105,7 +105,7 @@ public sealed class GitHubPrTimelineFeedReader : IPrTimelineFeedReader
           .Append("){ createdAt author{ login avatarUrl __typename } timelineItems(last:")
           .Append(pageSize.ToString(CultureInfo.InvariantCulture))
           .Append(before)
-          .Append(", itemTypes:[ISSUE_COMMENT,PULL_REQUEST_REVIEW,PULL_REQUEST_COMMIT,REVIEW_REQUESTED_EVENT,READY_FOR_REVIEW_EVENT,REOPENED_EVENT,CLOSED_EVENT,MERGED_EVENT]){ pageInfo{ hasPreviousPage startCursor } nodes{ __typename ... on IssueComment{ databaseId createdAt body author{ login avatarUrl __typename } } ... on PullRequestReview{ databaseId submittedAt state body author{ login avatarUrl __typename } } ... on PullRequestCommit{ commit{ oid committedDate author{ user{ login avatarUrl __typename } } } } ... on ReviewRequestedEvent{ createdAt actor{ login avatarUrl __typename } requestedReviewer{ ... on User{ login } ... on Team{ name } } } ... on ReadyForReviewEvent{ createdAt actor{ login avatarUrl __typename } } ... on ReopenedEvent{ createdAt actor{ login avatarUrl __typename } } ... on ClosedEvent{ createdAt actor{ login avatarUrl __typename } } ... on MergedEvent{ createdAt actor{ login avatarUrl __typename } } } } } } }");
+          .Append(", itemTypes:[ISSUE_COMMENT,PULL_REQUEST_REVIEW,PULL_REQUEST_COMMIT,REVIEW_REQUESTED_EVENT,READY_FOR_REVIEW_EVENT,REOPENED_EVENT,CLOSED_EVENT,MERGED_EVENT]){ pageInfo{ hasPreviousPage startCursor } nodes{ __typename ... on IssueComment{ databaseId createdAt body author{ login avatarUrl __typename } } ... on PullRequestReview{ databaseId submittedAt state body author{ login avatarUrl __typename } } ... on PullRequestCommit{ commit{ oid messageHeadline committedDate author{ user{ login avatarUrl __typename } } } } ... on ReviewRequestedEvent{ createdAt actor{ login avatarUrl __typename } requestedReviewer{ ... on User{ login } ... on Team{ name } } } ... on ReadyForReviewEvent{ createdAt actor{ login avatarUrl __typename } } ... on ReopenedEvent{ createdAt actor{ login avatarUrl __typename } } ... on ClosedEvent{ createdAt actor{ login avatarUrl __typename } } ... on MergedEvent{ createdAt actor{ login avatarUrl __typename } } } } } } }");
         return sb.ToString();
     }
 
@@ -152,7 +152,11 @@ public sealed class GitHubPrTimelineFeedReader : IPrTimelineFeedReader
         var ts = ParseTs(commit, "committedDate");
         var user = commit.TryGetProperty("author", out var a) && a.TryGetProperty("user", out var u) ? u : default;
         var actor = user.ValueKind == JsonValueKind.Object ? ActorOf(user) : new TimelineActorRef(null, null, false);
-        return new TimelineEvent(oid, ActivityVerb.Pushed, actor, ts, Body: null, CommitCount: 1, Subject: null);
+        // Subject carries the commit's first message line so the feed can show a title next to the SHA
+        // (the FE builds the commit's GitHub URL from oid + the PR html_url — no url is fetched here).
+        var title = commit.TryGetProperty("messageHeadline", out var mh) ? mh.GetString() : null;
+        return new TimelineEvent(oid, ActivityVerb.Pushed, actor, ts,
+            Body: null, CommitCount: 1, Subject: string.IsNullOrEmpty(title) ? null : title);
     }
 
     private static TimelineEvent Requested(JsonElement node)

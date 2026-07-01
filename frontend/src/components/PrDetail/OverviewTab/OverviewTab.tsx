@@ -146,6 +146,7 @@ export function OverviewTab() {
         <ActivityFeed
           prRef={prRef}
           prUpdatedSignal={prUpdatedSignal}
+          prHtmlUrl={prDetail.pr.htmlUrl}
           onRegisterRefetch={handleRegisterRefetch}
           // replyContext is always defined in OverviewTab (built unconditionally above); no
           // null guard needed here.

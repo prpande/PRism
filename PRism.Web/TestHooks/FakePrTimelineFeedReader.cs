@@ -49,9 +49,11 @@ internal sealed class FakePrTimelineFeedReader : IPrTimelineFeedReader
                 null, null, null),
 
             // Three pushes reusing the scenario shas/messages → one timeline-commit-group.
-            new TimelineEvent($"push:{sha3}", ActivityVerb.Pushed, e2eUser, now.AddMinutes(-30), null, 1, null),
-            new TimelineEvent($"push:{sha2}", ActivityVerb.Pushed, e2eUser, now.AddMinutes(-40), null, 1, null),
-            new TimelineEvent($"push:{sha1}", ActivityVerb.Pushed, e2eUser, now.AddMinutes(-50), null, 1, null),
+            // Id is the raw oid (mirrors the real reader) so the FE builds the commit URL from it;
+            // Subject carries the commit title the group rows render next to the short SHA.
+            new TimelineEvent(sha3, ActivityVerb.Pushed, e2eUser, now.AddMinutes(-30), null, 1, "Add Div + Mod"),
+            new TimelineEvent(sha2, ActivityVerb.Pushed, e2eUser, now.AddMinutes(-40), null, 1, "Add Sub + Mul"),
+            new TimelineEvent(sha1, ActivityVerb.Pushed, e2eUser, now.AddMinutes(-50), null, 1, "Add Calc.Add"),
 
             // Oldest: synthesized Opened, mirroring the real reader's SynthesizeOpened
             // (only emitted because HasOlder is false below).
