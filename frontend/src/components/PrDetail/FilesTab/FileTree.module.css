@@ -212,8 +212,13 @@
   color: var(--accent);
 }
 .fileTreeCommentSlotResolved {
-  color: var(--accent);
-  opacity: 0.45;
+  /* Dim the GLYPH only via a 45%-alpha accent fill (the SVG uses currentColor) — NOT
+     element `opacity`, which would also fade this slot's portion of the hover/selected
+     highlight wash, making the comment column lighter than the rest of the row (#513
+     live visual gate). At rest over --surface-1 this is visually identical to the
+     owner-approved opacity:0.45; over the wash the background now stays full-strength
+     so the four-column highlight bar reads continuous. */
+  color: color-mix(in oklch, var(--accent) 45%, transparent);
 }
 
 .fileTreeCheckCol {
