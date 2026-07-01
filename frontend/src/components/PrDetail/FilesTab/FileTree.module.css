@@ -70,6 +70,18 @@
 .fileTreeBody {
   display: flex;
 }
+
+/* #513 — full-row highlight. Painted on EVERY column's per-row slot (comment, name,
+   ai, check) from lifted state, so a hovered/selected row is one continuous bar with
+   no step at a column boundary. Source order = precedence: the selected rule follows
+   the hovered rule, so a row that is both keeps its selected wash (hover adds nothing
+   on an already-open file). */
+.fileTreeBody [data-row-hovered='true'] {
+  background: var(--surface-3);
+}
+.fileTreeBody [data-row-selected='true'] {
+  background: color-mix(in oklch, var(--accent-soft) 40%, var(--surface-2));
+}
 .fileTreeScroll {
   flex: 1 1 auto;
   min-width: 0;
@@ -228,11 +240,7 @@
   cursor: pointer;
   transition: background var(--t-fast);
 }
-.fileTreeFile:hover {
-  background: var(--surface-3);
-}
 .fileTreeFileSelected {
-  background: color-mix(in oklch, var(--accent-soft) 40%, var(--surface-2));
   color: var(--text-1);
 }
 
@@ -340,9 +348,6 @@
   box-sizing: border-box;
   padding-right: var(--s-3);
   transition: background var(--t-fast);
-}
-.fileTreeDirHeader:hover {
-  background: var(--surface-3);
 }
 .fileTreeDirToggle {
   display: inline-flex;

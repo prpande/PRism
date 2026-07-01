@@ -786,3 +786,90 @@ describe('FileTree comment rail (#513)', () => {
     expect(row.textContent).not.toContain('comment');
   });
 });
+
+describe('FileTree full-row highlight (#513)', () => {
+  const f = (path: string): FileChange => ({ path, status: 'modified', hunks: [] });
+
+  function renderTree(selectedPath: string | null) {
+    return render(
+      <FileTree
+        files={[f('a.ts'), f('b.ts')]}
+        selectedPath={selectedPath}
+        onSelectFile={() => {}}
+        viewedPaths={new Set()}
+        onToggleViewed={() => {}}
+        focusEntries={null}
+        focusStatus="no-changes"
+        aiPreview
+        commentStateByPath={new Map([['a.ts', 'unresolved']])}
+      />,
+    );
+  }
+
+  const slots = (container: HTMLElement, path: string) =>
+    Array.from(container.querySelectorAll(`[data-row-path="${path}"]`));
+
+  it('marks all four column slots selected for the selected file (not just the name cell)', () => {
+    const { container } = renderTree('a.ts');
+    const marked = slots(container, 'a.ts').filter(
+      (el) => el.getAttribute('data-row-selected') === 'true',
+    );
+    expect(marked.length).toBe(4); // comment, name, ai, check
+    expect(
+      slots(container, 'b.ts').some((el) => el.getAttribute('data-row-selected') === 'true'),
+    ).toBe(false);
+  });
+
+  it('sets hovered on all four slots when a row is hovered, and clears on leave', () => {
+    const { container } = renderTree(null);
+    // The body div carries only the hashed CSS-module class (styles.fileTreeBody);
+    // target it by class-substring. It owns the delegated handlers, so it is the
+    // correct mouseLeave target for the clear-on-leave assertion.
+    const body = container.querySelector('[class*="fileTreeBody"]')! as HTMLElement;
+    // hover via the AI gutter slot to prove gutter-hover resolution
+    const aiSlot = slots(container, 'b.ts').find((el) => el.className.includes('fileTreeAiSlot'))!;
+    fireEvent.mouseOver(aiSlot);
+    expect(
+      slots(container, 'b.ts').filter((el) => el.getAttribute('data-row-hovered') === 'true')
+        .length,
+    ).toBe(4);
+    fireEvent.mouseLeave(body);
+    expect(
+      slots(container, 'b.ts').some((el) => el.getAttribute('data-row-hovered') === 'true'),
+    ).toBe(false);
+  });
+
+  it('selected wins: hovering the selected row keeps selected and adds hover flag without dropping selected', () => {
+    const { container } = renderTree('a.ts');
+    const nameCell = slots(container, 'a.ts').find(
+      (el) => el.getAttribute('data-testid') === 'files-tab-tree-row',
+    )!;
+    fireEvent.mouseOver(nameCell);
+    const sel = slots(container, 'a.ts');
+    expect(sel.every((el) => el.getAttribute('data-row-selected') === 'true')).toBe(true);
+    // hover flag may also be present; CSS precedence (selected after hover) keeps the wash.
+  });
+
+  it('directory rows hover across their empty gutter slots and never enter selected', () => {
+    const { container } = render(
+      <FileTree
+        files={[f('dir/a.ts')]}
+        selectedPath="dir/a.ts"
+        onSelectFile={() => {}}
+        viewedPaths={new Set()}
+        onToggleViewed={() => {}}
+        focusEntries={null}
+        focusStatus="no-changes"
+        aiPreview
+        commentStateByPath={new Map()}
+      />,
+    );
+    const dirSlots = Array.from(container.querySelectorAll('[data-row-key]'));
+    expect(dirSlots.length).toBeGreaterThanOrEqual(1);
+    fireEvent.mouseOver(dirSlots[0]);
+    const dirKey = dirSlots[0].getAttribute('data-row-key')!;
+    const marked = Array.from(container.querySelectorAll(`[data-row-key="${dirKey}"]`));
+    expect(marked.every((el) => el.getAttribute('data-row-selected') !== 'true')).toBe(true);
+    expect(marked.some((el) => el.getAttribute('data-row-hovered') === 'true')).toBe(true);
+  });
+});

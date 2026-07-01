@@ -1,3 +1,4 @@
+import type React from 'react';
 import { useState, useCallback, useMemo, useRef } from 'react';
 import type {
   FileChange,
@@ -174,6 +175,19 @@ export function FileTree({
 
   const hasComments = (commentStateByPath?.size ?? 0) > 0;
 
+  // #513 — full-row highlight. The four columns are separate DOM siblings, so a
+  // per-row background must be painted on each column's slot from lifted state, not
+  // via :hover on one column. hoveredPath holds a file path (slash-joined) or a dir
+  // key (NUL-joined) — the two spaces never collide, so one string is unambiguous.
+  const [hoveredPath, setHoveredPath] = useState<string | null>(null);
+  const handleBodyMouseOver = useCallback((e: React.MouseEvent) => {
+    const el = (e.target as HTMLElement).closest('[data-row-path],[data-row-key]');
+    if (!el) return; // pointer over a gap — keep the current highlight (only leave clears)
+    const id = el.getAttribute('data-row-path') ?? el.getAttribute('data-row-key');
+    setHoveredPath((prev) => (prev === id ? prev : id));
+  }, []);
+  const handleBodyMouseLeave = useCallback(() => setHoveredPath(null), []);
+
   // One header cue for the whole tree (spec §3 — never per-row). Working while EITHER
   // AI pass is in flight — the shared file-focus fetch OR the PR-wide hunk-annotation
   // fetch — so the cue spans the whole "AI working" window instead of dropping to idle
@@ -250,7 +264,11 @@ export function FileTree({
           </span>
         )}
       </div>
-      <div className={styles.fileTreeBody}>
+      <div
+        className={styles.fileTreeBody}
+        onMouseOver={handleBodyMouseOver}
+        onMouseLeave={handleBodyMouseLeave}
+      >
         {/* #513 — fixed comment rail. First child of the body, OUTSIDE .fileTreeScroll
             (like the AI/check columns on the right) so it never rides off on horizontal
             scroll. Rendered from the same flat `rows` list so row i lines up across all
@@ -263,9 +281,16 @@ export function FileTree({
                 key={row.key}
                 path={row.node.path}
                 state={commentStateByPath?.get(row.node.path) ?? null}
+                selected={row.node.path === selectedPath}
+                hovered={hoveredPath === row.node.path}
               />
             ) : (
-              <div key={row.key} className={styles.fileTreeCommentSlot} data-row-key={row.dirKey} />
+              <div
+                key={row.key}
+                className={styles.fileTreeCommentSlot}
+                data-row-key={row.dirKey}
+                data-row-hovered={hoveredPath === row.dirKey ? 'true' : undefined}
+              />
             ),
           )}
         </div>
@@ -278,13 +303,19 @@ export function FileTree({
           <div className={`file-tree-inner ${styles.fileTreeInner}`}>
             {rows.map((row) =>
               row.kind === 'dir' ? (
-                <DirCell key={row.key} row={row} onToggle={toggleDir} />
+                <DirCell
+                  key={row.key}
+                  row={row}
+                  onToggle={toggleDir}
+                  isHovered={hoveredPath === row.dirKey}
+                />
               ) : (
                 <FileCell
                   key={row.key}
                   row={row}
                   isSelected={selectedPath === row.node.path}
                   isViewed={viewedPaths.has(row.node.path)}
+                  isHovered={hoveredPath === row.node.path}
                   onSelectFile={onSelectFile}
                   focusLevel={focusByPath?.get(row.node.path) ?? null}
                   commentState={commentStateByPath?.get(row.node.path) ?? null}
@@ -306,9 +337,17 @@ export function FileTree({
                 key={row.key}
                 focusLevel={focusByPath?.get(row.node.path) ?? null}
                 aiPreview={aiPreview}
+                path={row.node.path}
+                selected={row.node.path === selectedPath}
+                hovered={hoveredPath === row.node.path}
               />
             ) : (
-              <div key={row.key} className={styles.fileTreeAiSlot} />
+              <div
+                key={row.key}
+                className={styles.fileTreeAiSlot}
+                data-row-key={row.dirKey}
+                data-row-hovered={hoveredPath === row.dirKey ? 'true' : undefined}
+              />
             ),
           )}
         </div>
@@ -328,9 +367,17 @@ export function FileTree({
                 node={row.node}
                 isViewed={viewedPaths.has(row.node.path)}
                 onToggleViewed={onToggleViewed}
+                selected={row.node.path === selectedPath}
+                hovered={hoveredPath === row.node.path}
               />
             ) : (
-              <div key={row.key} className={styles.fileTreeCheckSlot} aria-hidden="true" />
+              <div
+                key={row.key}
+                className={styles.fileTreeCheckSlot}
+                aria-hidden="true"
+                data-row-key={row.dirKey}
+                data-row-hovered={hoveredPath === row.dirKey ? 'true' : undefined}
+              />
             ),
           )}
         </div>
@@ -364,6 +411,7 @@ function FileCell({
   row,
   isSelected,
   isViewed,
+  isHovered,
   onSelectFile,
   focusLevel,
   commentState,
@@ -371,6 +419,7 @@ function FileCell({
   row: FileRow;
   isSelected: boolean;
   isViewed: boolean;
+  isHovered: boolean;
   onSelectFile: (path: string) => void;
   focusLevel: FocusLevel | null;
   commentState: CommentIndicatorState | null;
@@ -391,6 +440,9 @@ function FileCell({
       data-testid="files-tab-tree-row"
       data-selected={isSelected}
       data-path={node.path}
+      data-row-path={node.path}
+      data-row-selected={isSelected ? 'true' : undefined}
+      data-row-hovered={isHovered ? 'true' : undefined}
       style={{ paddingLeft: `${(row.depth + 1) * INDENT_PER_LEVEL}px` }}
       onClick={() => onSelectFile(node.path)}
       tabIndex={isSelected ? 0 : -1}
@@ -439,9 +491,26 @@ function FileCell({
 // column is already width-0, so the per-span collapse isn't visible — `aiPreview` is
 // still threaded here only to preserve that pre-existing gate verbatim, not because
 // the slot needs it to hide.
-function AiSlot({ focusLevel, aiPreview }: { focusLevel: FocusLevel | null; aiPreview: boolean }) {
+function AiSlot({
+  focusLevel,
+  aiPreview,
+  path,
+  selected,
+  hovered,
+}: {
+  focusLevel: FocusLevel | null;
+  aiPreview: boolean;
+  path: string;
+  selected: boolean;
+  hovered: boolean;
+}) {
   return (
-    <div className={styles.fileTreeAiSlot}>
+    <div
+      className={styles.fileTreeAiSlot}
+      data-row-path={path}
+      data-row-selected={selected ? 'true' : undefined}
+      data-row-hovered={hovered ? 'true' : undefined}
+    >
       <span
         className={`file-tree-ai ${styles.fileTreeAi}`}
         data-on={aiPreview ? '1' : '0'}
@@ -462,7 +531,17 @@ function AiSlot({ focusLevel, aiPreview }: { focusLevel: FocusLevel | null; aiPr
 // suppressed); the state class sets the accent colour the glyph inherits via currentColor.
 // data-row-path is the hover/selected resolution key (Task 5) — present on EVERY column's
 // per-row slot so a pointer anywhere on the row resolves to it.
-function CommentSlot({ path, state }: { path: string; state: CommentIndicatorState | null }) {
+function CommentSlot({
+  path,
+  state,
+  selected,
+  hovered,
+}: {
+  path: string;
+  state: CommentIndicatorState | null;
+  selected: boolean;
+  hovered: boolean;
+}) {
   const stateClass =
     state === 'unresolved'
       ? styles.fileTreeCommentSlotUnresolved
@@ -474,6 +553,8 @@ function CommentSlot({ path, state }: { path: string; state: CommentIndicatorSta
       className={`${styles.fileTreeCommentSlot}${stateClass ? ` ${stateClass}` : ''}`}
       data-row-path={path}
       data-comment-state={state ?? 'none'}
+      data-row-selected={selected ? 'true' : undefined}
+      data-row-hovered={hovered ? 'true' : undefined}
     >
       {state && <CommentGlyph />}
     </div>
@@ -484,10 +565,14 @@ function CheckSlot({
   node,
   isViewed,
   onToggleViewed,
+  selected,
+  hovered,
 }: {
   node: FileTreeNode;
   isViewed: boolean;
   onToggleViewed: (path: string) => void;
+  selected: boolean;
+  hovered: boolean;
 }) {
   // onChange (not onClick + readOnly) so Space-key activation toggles consistently
   // across browsers. The checkbox lives in its own column, so no row-level click to
@@ -497,7 +582,12 @@ function CheckSlot({
   }, [onToggleViewed, node.path]);
 
   return (
-    <div className={styles.fileTreeCheckSlot}>
+    <div
+      className={styles.fileTreeCheckSlot}
+      data-row-path={node.path}
+      data-row-selected={selected ? 'true' : undefined}
+      data-row-hovered={hovered ? 'true' : undefined}
+    >
       <input
         type="checkbox"
         checked={isViewed}
@@ -509,7 +599,15 @@ function CheckSlot({
   );
 }
 
-function DirCell({ row, onToggle }: { row: DirRow; onToggle: (dirKey: string) => void }) {
+function DirCell({
+  row,
+  onToggle,
+  isHovered,
+}: {
+  row: DirRow;
+  onToggle: (dirKey: string) => void;
+  isHovered: boolean;
+}) {
   const node = row.node;
   const { expanded } = row;
   return (
@@ -520,6 +618,8 @@ function DirCell({ row, onToggle }: { row: DirRow; onToggle: (dirKey: string) =>
       aria-setsize={row.setSize}
       aria-posinset={row.posInSet}
       aria-expanded={expanded}
+      data-row-key={row.dirKey}
+      data-row-hovered={isHovered ? 'true' : undefined}
       style={{ paddingLeft: `${row.depth * INDENT_PER_LEVEL}px` }}
     >
       <button
