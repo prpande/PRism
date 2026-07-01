@@ -3,6 +3,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { FileTree } from './FileTree';
 import { AI_TREE_ANALYZED_LABEL } from '../../Ai/aiStrings';
 import type { FileChange, FileFocus, FileFocusStatus } from '../../../api/types';
+import type { CommentIndicatorState } from './commentIndicatorState';
 
 function file(path: string, overrides: Partial<FileChange> = {}): FileChange {
   return { path, status: 'modified', hunks: [], ...overrides };
@@ -695,5 +696,65 @@ describe('FileTree — header AI marker (Task 5 / #508)', () => {
     renderTree({ aiPreview: true, focusStatus: 'loading' });
     const progress = screen.getByTestId('file-tree-ai-progress');
     expect(within(progress).queryByText(AI_TREE_ANALYZED_LABEL)).not.toBeInTheDocument();
+  });
+});
+
+function renderWithComments(
+  files: FileChange[],
+  commentStateByPath: Map<string, CommentIndicatorState> | null,
+) {
+  return render(
+    <FileTree
+      files={files}
+      selectedPath={null}
+      onSelectFile={() => {}}
+      viewedPaths={new Set()}
+      onToggleViewed={() => {}}
+      focusEntries={null}
+      focusStatus="no-changes"
+      aiPreview={false}
+      commentStateByPath={commentStateByPath}
+    />,
+  );
+}
+
+describe('FileTree comment rail (#513)', () => {
+  const f = (path: string): FileChange => ({ path, status: 'modified', hunks: [] });
+
+  it('collapses the rail (data-has-comments=0) when there are no threads', () => {
+    const { getByTestId } = renderWithComments([f('a.ts')], new Map());
+    expect(getByTestId('file-tree').getAttribute('data-has-comments')).toBe('0');
+  });
+
+  it('expands the rail (data-has-comments=1) when a file has threads', () => {
+    const { getByTestId } = renderWithComments([f('a.ts')], new Map([['a.ts', 'unresolved']]));
+    expect(getByTestId('file-tree').getAttribute('data-has-comments')).toBe('1');
+  });
+
+  it('renders the correct comment-state per file row and blank otherwise', () => {
+    const map = new Map<string, CommentIndicatorState>([
+      ['a.ts', 'unresolved'],
+      ['b.ts', 'resolved'],
+    ]);
+    const { container } = renderWithComments([f('a.ts'), f('b.ts'), f('c.ts')], map);
+    const slots = container.querySelectorAll('[data-comment-state]');
+    expect(slots.length).toBe(3); // one per file row
+    const byPath = (p: string) =>
+      container.querySelector(`[data-row-path="${p}"][data-comment-state]`)!;
+    expect(byPath('a.ts').getAttribute('data-comment-state')).toBe('unresolved');
+    expect(byPath('b.ts').getAttribute('data-comment-state')).toBe('resolved');
+    expect(byPath('c.ts').getAttribute('data-comment-state')).toBe('none');
+    // glyph present only for the two stateful rows
+    expect(byPath('a.ts').querySelector('svg')).not.toBeNull();
+    expect(byPath('c.ts').querySelector('svg')).toBeNull();
+  });
+
+  it('keeps the four columns row-aligned: one comment slot per file, dirs get a bare slot', () => {
+    const { container } = renderWithComments([f('dir/a.ts'), f('dir/b.ts')], new Map());
+    // 2 file comment slots (data-comment-state) + 1 dir bare slot in the comment column
+    const col = container.querySelector('.file-tree-comment-col')!;
+    expect(col.querySelectorAll('[data-comment-state]').length).toBe(2); // one per file row
+    expect(col.querySelectorAll('[data-row-key]').length).toBe(1); // the parent dir's bare slot
+    expect(col.children.length).toBe(3); // dir + 2 files, row-aligned with the other columns
   });
 });

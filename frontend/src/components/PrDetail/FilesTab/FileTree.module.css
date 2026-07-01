@@ -12,6 +12,10 @@
      synthetic-hscroll spacer reserves it by reference (below) instead of re-spelling
      the literal — keep this in sync with .fileTreeCheckSlot / .fileTreeViewedCheckbox. */
   --check-col-w: calc(14px + 2 * var(--s-1));
+  /* #513 — occupied width of the fixed comment rail when the PR has threads:
+     the 12px glyph + var(--s-1) padding each side. Collapses to 0 via
+     [data-has-comments='0']. Keep in sync with .fileTreeCommentSlot padding. */
+  --comment-col-w: calc(12px + 2 * var(--s-1));
   display: flex;
   flex-direction: column;
   background: var(--surface-1);
@@ -154,6 +158,40 @@
   height: var(--tree-row-h);
   flex: none;
 }
+
+/* #513 — fixed comment rail, first (left-most) child of .fileTreeBody, OUTSIDE
+   .fileTreeScroll so the glyph never scrolls off. Collapses to 0 width when the PR
+   has no threads (data-has-comments on the root), so no-discussion PRs lose no
+   filename space. No border/seam — reads as one surface with the tree. */
+.fileTreeCommentCol {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  width: 0;
+  overflow: hidden;
+}
+.fileTree[data-has-comments='1'] .fileTreeCommentCol {
+  width: var(--comment-col-w);
+  overflow: visible;
+}
+.fileTreeCommentSlot {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: var(--tree-row-h);
+  padding: 0 var(--s-1);
+  flex: none;
+}
+/* Glyph colour via the slot (SVG inherits currentColor). Solid accent = actionable;
+   dimmed accent = all resolved (supplementary; the sr-only text carries the meaning). */
+.fileTreeCommentSlotUnresolved {
+  color: var(--accent);
+}
+.fileTreeCommentSlotResolved {
+  color: var(--accent);
+  opacity: 0.45;
+}
+
 .fileTreeCheckCol {
   flex: 0 0 auto;
   display: flex;

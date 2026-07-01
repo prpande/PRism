@@ -12,6 +12,8 @@ import { fileFocusStatusToMarkerState } from '../../Ai/fileFocusMarkerState';
 import { buildTree, type TreeNode, type FileTreeNode, type DirectoryTreeNode } from './treeBuilder';
 import { useTreeHScroll } from '../../../hooks/useTreeHScroll';
 import { countViewedFiles } from '../../../hooks/useFileViewState';
+import { CommentGlyph } from '../../shared/CommentGlyph';
+import type { CommentIndicatorState } from './commentIndicatorState';
 import styles from './FileTree.module.css';
 
 export interface FileTreeProps {
@@ -30,6 +32,11 @@ export interface FileTreeProps {
   // that don't wire annotations (tests / non-FilesTab).
   annotationsLoading?: boolean;
   aiPreview: boolean;
+  // #513 — per-file comment state. Optional/nullable ONLY so non-FilesTab callers
+  // (tests, future embeds) can omit it; FilesTab always passes a real Map (possibly
+  // empty). Null/empty ⇒ rail collapsed (data-has-comments='0'), every slot blank —
+  // mirroring how aiPreview defaults false.
+  commentStateByPath?: Map<string, CommentIndicatorState> | null;
 }
 
 const STATUS_LABELS: Record<string, string> = {
@@ -133,6 +140,7 @@ export function FileTree({
   focusStatus,
   annotationsLoading = false,
   aiPreview,
+  commentStateByPath = null,
 }: FileTreeProps) {
   const tree = useMemo(() => buildTree(files), [files]);
   const viewedCount = useMemo(() => countViewedFiles(files, viewedPaths), [files, viewedPaths]);
@@ -163,6 +171,8 @@ export function FileTree({
     for (const entry of focusEntries) m.set(entry.path, entry.level);
     return m;
   }, [focusEntries]);
+
+  const hasComments = (commentStateByPath?.size ?? 0) > 0;
 
   // One header cue for the whole tree (spec §3 — never per-row). Working while EITHER
   // AI pass is in flight — the shared file-focus fetch OR the PR-wide hunk-annotation
@@ -215,6 +225,9 @@ export function FileTree({
       // scrollbar keeps spanning the tree column only. Set from the prop at render — no
       // post-mount flash.
       data-ai-on={aiPreview ? '1' : '0'}
+      // #513 — drives the fixed comment rail's width (collapses to 0 when the PR has
+      // no threads), mirroring the data-ai-on gate above.
+      data-has-comments={hasComments ? '1' : '0'}
     >
       <div className={`file-tree-header ${styles.fileTreeHeader}`}>
         <span className={styles.fileTreeHeaderLabel}>
@@ -238,6 +251,24 @@ export function FileTree({
         )}
       </div>
       <div className={styles.fileTreeBody}>
+        {/* #513 — fixed comment rail. First child of the body, OUTSIDE .fileTreeScroll
+            (like the AI/check columns on the right) so it never rides off on horizontal
+            scroll. Rendered from the same flat `rows` list so row i lines up across all
+            four columns. Collapses to width 0 when the PR has no threads (data-has-comments
+            on the root). aria-hidden — the spoken signal lives on the row (Task 4). */}
+        <div className={`file-tree-comment-col ${styles.fileTreeCommentCol}`} aria-hidden="true">
+          {rows.map((row) =>
+            row.kind === 'file' ? (
+              <CommentSlot
+                key={row.key}
+                path={row.node.path}
+                state={commentStateByPath?.get(row.node.path) ?? null}
+              />
+            ) : (
+              <div key={row.key} className={styles.fileTreeCommentSlot} data-row-key={row.dirKey} />
+            ),
+          )}
+        </div>
         <div
           ref={scrollRef}
           className={`file-tree-scroll ${styles.fileTreeScroll}`}
@@ -415,6 +446,28 @@ function AiSlot({ focusLevel, aiPreview }: { focusLevel: FocusLevel | null; aiPr
           />
         )}
       </span>
+    </div>
+  );
+}
+
+// #513 — one slot per file row in the fixed comment rail. `none` ⇒ empty slot (glyph
+// suppressed); the state class sets the accent colour the glyph inherits via currentColor.
+// data-row-path is the hover/selected resolution key (Task 5) — present on EVERY column's
+// per-row slot so a pointer anywhere on the row resolves to it.
+function CommentSlot({ path, state }: { path: string; state: CommentIndicatorState | null }) {
+  const stateClass =
+    state === 'unresolved'
+      ? styles.fileTreeCommentSlotUnresolved
+      : state === 'resolved'
+        ? styles.fileTreeCommentSlotResolved
+        : '';
+  return (
+    <div
+      className={`${styles.fileTreeCommentSlot}${stateClass ? ` ${stateClass}` : ''}`}
+      data-row-path={path}
+      data-comment-state={state ?? 'none'}
+    >
+      {state && <CommentGlyph />}
     </div>
   );
 }
