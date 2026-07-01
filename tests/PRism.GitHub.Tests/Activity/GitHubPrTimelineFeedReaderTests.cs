@@ -134,6 +134,49 @@ public sealed class GitHubPrTimelineFeedReaderTests
     }
 
     [Fact]
+    public async Task Distinct_requested_reviewers_at_same_actor_and_timestamp_get_distinct_ids()
+    {
+        // Two ReviewRequestedEvent nodes from the SAME actor at the SAME createdAt (one multi-reviewer
+        // request action) must not collide on Id — a colliding Id gets silently deduped away by the
+        // frontend's known-Id Set, dropping a requested reviewer from the feed.
+        const string json = """
+        {"data":{"repository":{"pullRequest":{
+          "createdAt":"2020-01-01T00:00:00Z",
+          "author":{"login":"opener","avatarUrl":"https://a/opener","__typename":"User"},
+          "timelineItems":{
+            "pageInfo":{"hasPreviousPage":true,"startCursor":"CUR"},
+            "nodes":[
+              {"__typename":"ReviewRequestedEvent","createdAt":"2021-01-01T00:00:00Z","actor":{"login":"opener","avatarUrl":null,"__typename":"User"},"requestedReviewer":{"login":"amy"}},
+              {"__typename":"ReviewRequestedEvent","createdAt":"2021-01-01T00:00:00Z","actor":{"login":"opener","avatarUrl":null,"__typename":"User"},"requestedReviewer":{"login":"bob"}}
+            ]}}}}}
+        """;
+        var page = await MakeReader(HttpStatusCode.OK, json).ReadPageAsync(Pr, cursor: null, pageSize: 30, CancellationToken.None);
+
+        page.Events.Should().HaveCount(2);
+        page.Events.Select(e => e.Id).Should().OnlyHaveUniqueItems();
+        page.Events.Select(e => e.Subject).Should().Contain(new[] { "amy", "bob" });
+    }
+
+    [Fact]
+    public async Task Review_id_uses_databaseId_when_present()
+    {
+        const string json = """
+        {"data":{"repository":{"pullRequest":{
+          "createdAt":"2020-01-01T00:00:00Z",
+          "author":{"login":"opener","avatarUrl":"https://a/opener","__typename":"User"},
+          "timelineItems":{
+            "pageInfo":{"hasPreviousPage":true,"startCursor":"CUR"},
+            "nodes":[
+              {"__typename":"PullRequestReview","databaseId":555,"state":"APPROVED","body":"","submittedAt":"2021-01-02T00:00:00Z","author":{"login":"alice","avatarUrl":"https://a/alice","__typename":"User"}}
+            ]}}}}}
+        """;
+        var page = await MakeReader(HttpStatusCode.OK, json).ReadPageAsync(Pr, cursor: null, pageSize: 30, CancellationToken.None);
+
+        page.Events.Should().ContainSingle();
+        page.Events[0].Id.Should().Contain("555");
+    }
+
+    [Fact]
     public async Task Posts_byte_identical_first_page_query()
     {
         var handler = new RecordingHttpMessageHandler(HttpStatusCode.OK,
@@ -145,6 +188,6 @@ public sealed class GitHubPrTimelineFeedReaderTests
         await reader.ReadPageAsync(Pr, cursor: null, pageSize: 30, CancellationToken.None);
 
         GraphQlRequest.QueryOf(handler.LastRequestBody).Should().Be(
-            """query{ repository(owner:"acme", name:"api"){ pullRequest(number:7){ createdAt author{ login avatarUrl __typename } timelineItems(last:30, itemTypes:[ISSUE_COMMENT,PULL_REQUEST_REVIEW,PULL_REQUEST_COMMIT,REVIEW_REQUESTED_EVENT,READY_FOR_REVIEW_EVENT,REOPENED_EVENT,CLOSED_EVENT,MERGED_EVENT]){ pageInfo{ hasPreviousPage startCursor } nodes{ __typename ... on IssueComment{ databaseId createdAt body author{ login avatarUrl __typename } } ... on PullRequestReview{ submittedAt state body author{ login avatarUrl __typename } } ... on PullRequestCommit{ commit{ oid committedDate author{ user{ login avatarUrl __typename } } } } ... on ReviewRequestedEvent{ createdAt actor{ login avatarUrl __typename } requestedReviewer{ ... on User{ login } ... on Team{ name } } } ... on ReadyForReviewEvent{ createdAt actor{ login avatarUrl __typename } } ... on ReopenedEvent{ createdAt actor{ login avatarUrl __typename } } ... on ClosedEvent{ createdAt actor{ login avatarUrl __typename } } ... on MergedEvent{ createdAt actor{ login avatarUrl __typename } } } } } } }""");
+            """query{ repository(owner:"acme", name:"api"){ pullRequest(number:7){ createdAt author{ login avatarUrl __typename } timelineItems(last:30, itemTypes:[ISSUE_COMMENT,PULL_REQUEST_REVIEW,PULL_REQUEST_COMMIT,REVIEW_REQUESTED_EVENT,READY_FOR_REVIEW_EVENT,REOPENED_EVENT,CLOSED_EVENT,MERGED_EVENT]){ pageInfo{ hasPreviousPage startCursor } nodes{ __typename ... on IssueComment{ databaseId createdAt body author{ login avatarUrl __typename } } ... on PullRequestReview{ databaseId submittedAt state body author{ login avatarUrl __typename } } ... on PullRequestCommit{ commit{ oid committedDate author{ user{ login avatarUrl __typename } } } } ... on ReviewRequestedEvent{ createdAt actor{ login avatarUrl __typename } requestedReviewer{ ... on User{ login } ... on Team{ name } } } ... on ReadyForReviewEvent{ createdAt actor{ login avatarUrl __typename } } ... on ReopenedEvent{ createdAt actor{ login avatarUrl __typename } } ... on ClosedEvent{ createdAt actor{ login avatarUrl __typename } } ... on MergedEvent{ createdAt actor{ login avatarUrl __typename } } } } } } }""");
     }
 }

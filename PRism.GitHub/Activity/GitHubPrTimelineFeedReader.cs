@@ -105,7 +105,7 @@ public sealed class GitHubPrTimelineFeedReader : IPrTimelineFeedReader
           .Append("){ createdAt author{ login avatarUrl __typename } timelineItems(last:")
           .Append(pageSize.ToString(CultureInfo.InvariantCulture))
           .Append(before)
-          .Append(", itemTypes:[ISSUE_COMMENT,PULL_REQUEST_REVIEW,PULL_REQUEST_COMMIT,REVIEW_REQUESTED_EVENT,READY_FOR_REVIEW_EVENT,REOPENED_EVENT,CLOSED_EVENT,MERGED_EVENT]){ pageInfo{ hasPreviousPage startCursor } nodes{ __typename ... on IssueComment{ databaseId createdAt body author{ login avatarUrl __typename } } ... on PullRequestReview{ submittedAt state body author{ login avatarUrl __typename } } ... on PullRequestCommit{ commit{ oid committedDate author{ user{ login avatarUrl __typename } } } } ... on ReviewRequestedEvent{ createdAt actor{ login avatarUrl __typename } requestedReviewer{ ... on User{ login } ... on Team{ name } } } ... on ReadyForReviewEvent{ createdAt actor{ login avatarUrl __typename } } ... on ReopenedEvent{ createdAt actor{ login avatarUrl __typename } } ... on ClosedEvent{ createdAt actor{ login avatarUrl __typename } } ... on MergedEvent{ createdAt actor{ login avatarUrl __typename } } } } } } }");
+          .Append(", itemTypes:[ISSUE_COMMENT,PULL_REQUEST_REVIEW,PULL_REQUEST_COMMIT,REVIEW_REQUESTED_EVENT,READY_FOR_REVIEW_EVENT,REOPENED_EVENT,CLOSED_EVENT,MERGED_EVENT]){ pageInfo{ hasPreviousPage startCursor } nodes{ __typename ... on IssueComment{ databaseId createdAt body author{ login avatarUrl __typename } } ... on PullRequestReview{ databaseId submittedAt state body author{ login avatarUrl __typename } } ... on PullRequestCommit{ commit{ oid committedDate author{ user{ login avatarUrl __typename } } } } ... on ReviewRequestedEvent{ createdAt actor{ login avatarUrl __typename } requestedReviewer{ ... on User{ login } ... on Team{ name } } } ... on ReadyForReviewEvent{ createdAt actor{ login avatarUrl __typename } } ... on ReopenedEvent{ createdAt actor{ login avatarUrl __typename } } ... on ClosedEvent{ createdAt actor{ login avatarUrl __typename } } ... on MergedEvent{ createdAt actor{ login avatarUrl __typename } } } } } } }");
         return sb.ToString();
     }
 
@@ -138,7 +138,10 @@ public sealed class GitHubPrTimelineFeedReader : IPrTimelineFeedReader
         var body = node.TryGetProperty("body", out var b) ? b.GetString() : null;
         var actor = ParseActor(node, "author");
         var ts = ParseTs(node, "submittedAt");
-        return new TimelineEvent(Id(actor, ts, "review"), verb, actor, ts,
+        var id = node.TryGetProperty("databaseId", out var idEl) && idEl.ValueKind == JsonValueKind.Number
+            ? $"review:{idEl.GetInt64().ToString(CultureInfo.InvariantCulture)}"
+            : Id(actor, ts, "review");
+        return new TimelineEvent(id, verb, actor, ts,
             Body: string.IsNullOrEmpty(body) ? null : body, CommitCount: null, Subject: null);
     }
 
@@ -160,7 +163,7 @@ public sealed class GitHubPrTimelineFeedReader : IPrTimelineFeedReader
         if (node.TryGetProperty("requestedReviewer", out var rr) && rr.ValueKind == JsonValueKind.Object)
             subject = rr.TryGetProperty("login", out var l) ? l.GetString()
                     : rr.TryGetProperty("name", out var n) ? n.GetString() : null;
-        return new TimelineEvent(Id(actor, ts, "req"), ActivityVerb.ReviewRequested, actor, ts, null, null, subject);
+        return new TimelineEvent(Id(actor, ts, $"req:{subject}"), ActivityVerb.ReviewRequested, actor, ts, null, null, subject);
     }
 
     private static TimelineEvent Simple(JsonElement node, ActivityVerb verb)

@@ -121,6 +121,18 @@ describe('ActivityFeed', () => {
     expect(screen.getByRole('status')).toHaveTextContent(/approved/i); // aria-live announced WHAT arrived
   });
 
+  it('renders a subject-less review-requested marker without a dangling "from"', async () => {
+    vi.spyOn(api, 'getTimelinePage').mockResolvedValue({
+      events: [ev('rr', { verb: 'review-requested', subject: null })],
+      olderCursor: null,
+      hasOlder: false,
+    });
+    render(<ActivityFeed prRef={pr} prUpdatedSignal={0} composerSlot={null} />);
+    const marker = await screen.findByTestId('timeline-marker');
+    expect(marker).toHaveTextContent('requested a review');
+    expect(marker).not.toHaveTextContent('requested review from');
+  });
+
   it('the commit-run accordion is an operable button that toggles on activation', async () => {
     const commits = Array.from({ length: 6 }, (_, i) =>
       ev(`p${i}`, { verb: 'pushed', commitCount: 1 }),

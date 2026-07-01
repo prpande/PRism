@@ -33,7 +33,10 @@ function stateBand(verb: ActivityVerb): string | undefined {
 }
 
 function Marker({ event }: { event: TimelineEvent }) {
-  const phrase = VERB_PHRASE[event.verb];
+  const phrase =
+    event.verb === 'review-requested' && !event.subject
+      ? 'requested a review' // no reviewer parsed — avoid a dangling "requested review from"
+      : VERB_PHRASE[event.verb];
   const tail = event.verb === 'review-requested' && event.subject ? ` ${event.subject}` : '';
   return (
     <li className={styles.marker} data-testid="timeline-marker">
