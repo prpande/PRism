@@ -3,7 +3,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { FileTree } from './FileTree';
 import { AI_TREE_ANALYZED_LABEL } from '../../Ai/aiStrings';
 import type { FileChange, FileFocus, FileFocusStatus } from '../../../api/types';
-import type { CommentIndicatorState } from './commentIndicatorState';
+import type { CommentIndicatorState, CommentCounts } from './commentIndicatorState';
 
 function file(path: string, overrides: Partial<FileChange> = {}): FileChange {
   return { path, status: 'modified', hunks: [], ...overrides };
@@ -702,6 +702,7 @@ describe('FileTree — header AI marker (Task 5 / #508)', () => {
 function renderWithComments(
   files: FileChange[],
   commentStateByPath: Map<string, CommentIndicatorState> | null,
+  commentCountsByPath: Map<string, CommentCounts> | null = null,
 ) {
   return render(
     <FileTree
@@ -714,6 +715,7 @@ function renderWithComments(
       focusStatus="no-changes"
       aiPreview={false}
       commentStateByPath={commentStateByPath}
+      commentCountsByPath={commentCountsByPath}
     />,
   );
 }
@@ -747,6 +749,23 @@ describe('FileTree comment rail (#513)', () => {
     // glyph present only for the two stateful rows
     expect(byPath('a.ts').querySelector('svg')).not.toBeNull();
     expect(byPath('c.ts').querySelector('svg')).toBeNull();
+  });
+
+  it('puts a thread-count tooltip on the comment slot; none for a threadless file', () => {
+    const state = new Map<string, CommentIndicatorState>([
+      ['a.ts', 'unresolved'],
+      ['b.ts', 'resolved'],
+    ]);
+    const counts = new Map<string, CommentCounts>([
+      ['a.ts', { open: 2, resolved: 1 }],
+      ['b.ts', { open: 0, resolved: 3 }],
+    ]);
+    const { container } = renderWithComments([f('a.ts'), f('b.ts'), f('c.ts')], state, counts);
+    const byPath = (p: string) =>
+      container.querySelector(`[data-row-path="${p}"][data-comment-state]`)!;
+    expect(byPath('a.ts').getAttribute('title')).toBe('2 unresolved · 1 resolved');
+    expect(byPath('b.ts').getAttribute('title')).toBe('3 resolved');
+    expect(byPath('c.ts').getAttribute('title')).toBeNull(); // no threads → no tooltip
   });
 
   it('keeps the four columns row-aligned: one comment slot per file, dirs get a bare slot', () => {

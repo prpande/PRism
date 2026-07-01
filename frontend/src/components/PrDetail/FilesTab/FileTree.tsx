@@ -14,7 +14,8 @@ import { buildTree, type TreeNode, type FileTreeNode, type DirectoryTreeNode } f
 import { useTreeHScroll } from '../../../hooks/useTreeHScroll';
 import { countViewedFiles } from '../../../hooks/useFileViewState';
 import { CommentGlyph } from '../../shared/CommentGlyph';
-import type { CommentIndicatorState } from './commentIndicatorState';
+import { commentTooltip } from './commentIndicatorState';
+import type { CommentIndicatorState, CommentCounts } from './commentIndicatorState';
 import styles from './FileTree.module.css';
 
 export interface FileTreeProps {
@@ -38,6 +39,9 @@ export interface FileTreeProps {
   // empty). Null/empty ⇒ rail collapsed (data-has-comments='0'), every slot blank —
   // mirroring how aiPreview defaults false.
   commentStateByPath?: Map<string, CommentIndicatorState> | null;
+  // #513 — per-file thread tallies for the comment-glyph hover tooltip. Same
+  // optional/nullable contract as commentStateByPath; absent ⇒ no tooltip.
+  commentCountsByPath?: Map<string, CommentCounts> | null;
 }
 
 const STATUS_LABELS: Record<string, string> = {
@@ -142,6 +146,7 @@ export function FileTree({
   annotationsLoading = false,
   aiPreview,
   commentStateByPath = null,
+  commentCountsByPath = null,
 }: FileTreeProps) {
   const tree = useMemo(() => buildTree(files), [files]);
   const viewedCount = useMemo(() => countViewedFiles(files, viewedPaths), [files, viewedPaths]);
@@ -281,6 +286,7 @@ export function FileTree({
                 key={row.key}
                 path={row.node.path}
                 state={commentStateByPath?.get(row.node.path) ?? null}
+                counts={commentCountsByPath?.get(row.node.path) ?? null}
                 selected={row.node.path === selectedPath}
                 hovered={hoveredPath === row.node.path}
               />
@@ -538,11 +544,13 @@ function AiSlot({
 function CommentSlot({
   path,
   state,
+  counts,
   selected,
   hovered,
 }: {
   path: string;
   state: CommentIndicatorState | null;
+  counts: CommentCounts | null;
   selected: boolean;
   hovered: boolean;
 }) {
@@ -557,6 +565,10 @@ function CommentSlot({
       className={`${styles.fileTreeCommentSlot}${stateClass ? ` ${stateClass}` : ''}`}
       data-row-path={path}
       data-comment-state={state ?? 'none'}
+      // #513 — hover tooltip carries the thread counts the count-free glyph omits.
+      // The rail is aria-hidden, so this is a pointer-only affordance (the row's
+      // sr-only text already speaks the state); mirrors the AI dot's own `title`.
+      title={counts ? commentTooltip(counts) : undefined}
       data-row-selected={selected ? 'true' : undefined}
       data-row-hovered={hovered ? 'true' : undefined}
     >

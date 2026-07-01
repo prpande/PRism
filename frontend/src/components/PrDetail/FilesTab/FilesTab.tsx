@@ -6,7 +6,7 @@ import { useFilesTabShortcuts } from '../../../hooks/useFilesTabShortcuts';
 import { useAiGate } from '../../../hooks/useAiGate';
 import { useAiHunkAnnotations } from '../../../hooks/useAiHunkAnnotations';
 import { FileTree } from './FileTree';
-import { deriveCommentStateByPath } from './commentIndicatorState';
+import { deriveCommentStateByPath, deriveCommentCountsByPath } from './commentIndicatorState';
 import { DiffPane } from './DiffPane';
 import type { DiffMode } from './DiffPane';
 import { DiffViewToggle } from './DiffViewToggle';
@@ -297,6 +297,11 @@ export function FilesTab() {
   // thread updates prDetail.reviewComments → this recomputes → the tree glyph updates.
   const commentStateByPath = useMemo(
     () => deriveCommentStateByPath(prDetail.reviewComments),
+    [prDetail.reviewComments],
+  );
+  // #513 — per-file thread tallies for the comment-glyph hover tooltip (open/resolved).
+  const commentCountsByPath = useMemo(
+    () => deriveCommentCountsByPath(prDetail.reviewComments),
     [prDetail.reviewComments],
   );
 
@@ -761,6 +766,7 @@ export function FilesTab() {
               annotationsLoading={aiHunkAnnotations.state === 'loading'}
               aiPreview={aiDotsOn}
               commentStateByPath={commentStateByPath}
+              commentCountsByPath={commentCountsByPath}
             />
           )}
         </div>
