@@ -39,17 +39,34 @@ describe('FileTree synthetic horizontal scrollbar (#214)', () => {
     expect(bar.getAttribute('tabindex')).toBeNull();
   });
 
-  it('renders the bar inside a two-column footer so it aligns under the tree column', () => {
+  it('renders the bar inside a three-cell footer (leading rail spacer, bar, right gutter)', () => {
     const { getByTestId } = renderTree([file('a.cs')]);
     const bar = getByTestId('file-tree-hscroll');
-    // Name the footer row explicitly (the hScrollRowRef div) rather than relying on an
-    // unnamed parentElement, so the assertion doesn't silently test the wrong node if the
-    // JSX ever adds a wrapper.
-    const row = bar.closest('.file-tree-hscroll-row');
-    expect(row).not.toBeNull();
-    // Footer mirrors .fileTreeBody: [bar cell][checkbox-column spacer].
-    expect(row!.children.length).toBe(2);
-    expect(row!.children[0]).toBe(bar);
+    const row = bar.closest('.file-tree-hscroll-row')!;
+    // Footer mirrors .fileTreeBody: [comment-rail spacer][bar][ai+check gutter spacer].
+    expect(row.children.length).toBe(3);
+    expect(row.children[1]).toBe(bar);
+  });
+
+  it('keeps the leading rail spacer present so it aligns under the tree column (width gated by CSS)', () => {
+    const { getByTestId } = render(
+      <FileTree
+        files={[file('a.cs')]}
+        selectedPath={null}
+        onSelectFile={() => {}}
+        viewedPaths={new Set()}
+        onToggleViewed={() => {}}
+        focusEntries={null}
+        focusStatus="no-changes"
+        aiPreview={false}
+        commentStateByPath={new Map([['a.cs', 'unresolved']])}
+      />,
+    );
+    const row = getByTestId('file-tree-hscroll').closest('.file-tree-hscroll-row')!;
+    // data-has-comments='1' drives the leading spacer's width via CSS; assert the
+    // root flag here (jsdom does no layout, so width itself is covered by e2e).
+    expect(getByTestId('file-tree').getAttribute('data-has-comments')).toBe('1');
+    expect(row.children.length).toBe(3);
   });
 
   it('omits the scrollbar entirely on the empty state', () => {
