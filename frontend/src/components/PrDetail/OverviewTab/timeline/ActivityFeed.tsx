@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useId, useMemo, useState } from 'react';
 import { Avatar } from '../../../Avatar/Avatar';
 import { formatAge } from '../../../../utils/relativeTime';
 import { CommentCard } from '../../Comment/CommentCard'; // lives under PrDetail/Comment/, not PrDetail/CommentCard/
@@ -60,18 +60,20 @@ function CommitGroup({
 }) {
   const [open, setOpen] = useState(!collapsedByDefault);
   const n = commits.length;
+  const listId = `${useId()}-commit-list`;
   return (
     <li className={styles.marker} data-testid="timeline-commit-group">
       <button
         type="button"
         className={styles.accordion}
         aria-expanded={open}
+        aria-controls={open ? listId : undefined}
         onClick={() => setOpen((v) => !v)}
       >
         pushed {n} {n === 1 ? 'commit' : 'commits'}
       </button>
       {open && (
-        <ul className={styles.commitList}>
+        <ul id={listId} className={styles.commitList}>
           {commits.map((c) => (
             <li key={c.id} className={styles.commitRow}>
               <span className={styles.actor}>{c.actor.login}</span>

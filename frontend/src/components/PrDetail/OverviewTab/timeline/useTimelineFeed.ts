@@ -96,6 +96,16 @@ export function useTimelineFeed(prRef: PrReference, opts: { prUpdatedSignal: num
 
   // Live-refresh: the parent bumps prUpdatedSignal on each pr-updated frame for this PR.
   const firstSignal = useRef(true);
+  // PrDetailView is reused across PR navigation (not remounted — see usePrDetail.ts), so this ref
+  // survives a PR change. Reset it whenever the PR `key` changes so a freshly-navigated-to PR gets
+  // the same "skip the first fire" treatment a real mount gets — otherwise a stale `false` guard
+  // from the previous PR lets refetchNewest fire alongside loadFirstPage's own initial request for
+  // the new PR, doubling the request and risking a liveAnnouncement computed against stale events.
+  // Declared before the signal effect below so it applies within the same commit as a key change
+  // (refetchNewest's identity also changes with `key`, which is what re-triggers that effect).
+  useEffect(() => {
+    firstSignal.current = true;
+  }, [key]);
   useEffect(() => {
     if (firstSignal.current) {
       firstSignal.current = false;

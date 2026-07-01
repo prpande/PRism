@@ -44,6 +44,28 @@ public sealed class GitHubPrTimelineFeedReaderTests
     }
 
     [Fact]
+    public async Task Maps_ready_for_review_node_to_other_not_reviewed()
+    {
+        // Draft→ready is not a review outcome — mapping it to Reviewed would misleadingly render
+        // "<author> reviewed". It maps to Other (renders the neutral "updated" phrase) instead.
+        const string json = """
+        {"data":{"repository":{"pullRequest":{
+          "createdAt":"2020-01-01T00:00:00Z",
+          "author":{"login":"opener","avatarUrl":"https://a/opener","__typename":"User"},
+          "timelineItems":{
+            "pageInfo":{"hasPreviousPage":true,"startCursor":"CUR"},
+            "nodes":[
+              {"__typename":"ReadyForReviewEvent","createdAt":"2021-01-01T00:00:00Z","actor":{"login":"opener","avatarUrl":"https://a/opener","__typename":"User"}}
+            ]}}}}}
+        """;
+        var page = await MakeReader(HttpStatusCode.OK, json).ReadPageAsync(Pr, cursor: null, pageSize: 30, CancellationToken.None);
+
+        page.Events.Should().ContainSingle();
+        page.Events[0].Verb.Should().Be(ActivityVerb.Other);
+        page.Events[0].Actor.Login.Should().Be("opener");
+    }
+
+    [Fact]
     public async Task Synthesizes_opened_node_when_no_older_pages()
     {
         const string json = """

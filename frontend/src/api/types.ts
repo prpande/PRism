@@ -756,7 +756,7 @@ export interface ActivityResponse {
   stale: boolean; // #619
 }
 
-// #620 — PR activity timeline. Mirrors PRism.Core/Timeline's TimelineActorRef/TimelineEvent/
+// #620 — PR activity timeline. Mirrors PRism.Core.Activity's TimelineActorRef/TimelineEvent/
 // TimelinePage contracts (camelCase wire shape).
 export interface TimelineActorRef {
   login: string | null;

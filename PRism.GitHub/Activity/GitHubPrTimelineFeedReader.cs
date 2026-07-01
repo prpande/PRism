@@ -117,7 +117,7 @@ public sealed class GitHubPrTimelineFeedReader : IPrTimelineFeedReader
             "PullRequestReview" => Review(node),
             "PullRequestCommit" => Commit(node),
             "ReviewRequestedEvent" => Requested(node),
-            "ReadyForReviewEvent" => Simple(node, ActivityVerb.Reviewed),   // ReadyForReview → see Risks: verb mapping
+            "ReadyForReviewEvent" => Simple(node, ActivityVerb.Other),   // draft→ready is not a review; mapped to Other (renders "updated") pending a dedicated verb — deferred, touches the shared enum ActivityRail (#619) also uses
             "ReopenedEvent" => Simple(node, ActivityVerb.Reopened),
             "ClosedEvent" => Simple(node, ActivityVerb.Closed),
             "MergedEvent" => Simple(node, ActivityVerb.Merged),

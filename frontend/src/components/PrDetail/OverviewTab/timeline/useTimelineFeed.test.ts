@@ -58,6 +58,35 @@ describe('useTimelineFeed', () => {
     expect(spy).toHaveBeenCalledTimes(2);
   });
 
+  it('does not refetch-newest on PR navigation, only the initial load (firstSignal reset)', async () => {
+    // PrDetailView is reused across PR navigation (not remounted), so prUpdatedSignal can already
+    // be non-zero when a different prRef arrives — mount with sig=1 directly (not advanced later)
+    // so firstSignal.current is only ever flipped false-by-mount, never by a genuine live-refresh.
+    const prB = { owner: 'acme', repo: 'api', number: 8 };
+    const spy = vi
+      .spyOn(api, 'getTimelinePage')
+      // PR A initial load
+      .mockResolvedValueOnce({ events: [ev('1')], olderCursor: null, hasOlder: false })
+      // PR B initial load (loadFirstPage effect — expected)
+      .mockResolvedValueOnce({ events: [ev('9')], olderCursor: null, hasOlder: false })
+      // Only consumed by a buggy extra refetchNewest(B) call racing the initial load above.
+      .mockResolvedValueOnce({ events: [ev('99')], olderCursor: null, hasOlder: false });
+    const { result, rerender } = renderHook(
+      ({ prRef, sig }) => useTimelineFeed(prRef, { prUpdatedSignal: sig }),
+      { initialProps: { prRef: pr, sig: 1 } },
+    );
+    await waitFor(() => expect(result.current.status).toBe('ready'));
+    expect(result.current.liveAnnouncement).toBe('');
+
+    // Navigate to PR B with prUpdatedSignal unchanged (non-zero) — simulates PrDetailView reuse.
+    rerender({ prRef: prB, sig: 1 });
+    await waitFor(() => expect(result.current.events.map((e) => e.id)).toEqual(['9']));
+
+    // Only the initial load for B should have fired — not an extra refetchNewest alongside it.
+    expect(spy).toHaveBeenCalledTimes(2);
+    expect(result.current.liveAnnouncement).toBe('');
+  });
+
   it('sets error status when the fetch rejects', async () => {
     vi.spyOn(api, 'getTimelinePage').mockRejectedValue(new Error('boom'));
     const { result } = renderHook(() => useTimelineFeed(pr, { prUpdatedSignal: 0 }));
