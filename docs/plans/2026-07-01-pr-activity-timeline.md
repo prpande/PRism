@@ -4,7 +4,7 @@
 
 **Goal:** Replace the Overview tab's standalone root-conversation card with a single unified, newest-first activity+conversation feed (comments as cards, review/push/lifecycle events as markers), with commit-run grouping and live-refresh.
 
-**Architecture:** A new single-PR paginated GraphQL `timelineItems` reader (`IPrTimelineFeedReader`) feeds a `GET .../timeline?cursor=` endpoint. The React feed owns its own fetch (load / "show older" / post-refetch / SSE live-refresh); it does **not** read the `headSha`-keyed PrDetail snapshot. Live-refresh is delivered by widening `ActivePrPoller`'s emission gate so review/reviewer deltas publish the existing `pr-updated` frame. Commit-run grouping is a pure client-side transform.
+**Architecture:** A new single-PR paginated GraphQL `timelineItems` reader (`IPrTimelineFeedReader`) feeds a `GET .../timeline?cursor=` endpoint. The React feed owns its own fetch (load / "show older" / post-refetch / SSE live-refresh); it does **not** read the `headSha`-keyed PrDetail snapshot. Live-refresh is delivered by widening `ActivePrPoller`'s emission gate so **root-comment count and reviewer deltas** publish the existing `pr-updated` frame (and by bumping the frontend signal on every frame, not just mergeability changes). Commit-run grouping is a pure client-side transform.
 
 **Tech Stack:** Backend — C#/.NET 10 minimal APIs, System.Text.Json, GraphQL over `GitHubHttp`. Frontend — React + Vite + TypeScript, vitest + Testing Library, Playwright e2e.
 
@@ -16,7 +16,7 @@
 - Frontend: run `npm run lint` (prettier `--check` gates CI); `eslint` no-unused-vars ignores `_`-prefixed. Typecheck with `tsc -b`, never `tsc --noEmit`. Run vitest/playwright via the local `.bin` binaries, never `npx`.
 - Backend: build/test with the real `dotnet.exe`; xUnit + FluentAssertions; test classes `public sealed class …Tests`, `[Fact]`, methods `Verb_snake_case`.
 - GET endpoints under `PrDetailEndpoints.cs` do **not** enforce the tab-id header (mutations only); validate `owner`/`repo` with `SharedRegexes.OwnerRepo()` before use.
-- New GraphQL query wire output must be pinned with a `RecordingHttpMessageHandler` + `GraphQlRequest.QueryOf(...).Should().Be(...)` byte-identity golden (repo precedent #682). Capture the golden in its own green commit.
+- New GraphQL query wire output must be pinned with a `RecordingHttpMessageHandler` + `GraphQlRequest.QueryOf(...).Should().Be(...)` byte-identity golden (repo precedent #682). For a **net-new** query (Task 2) the golden is authored alongside the reader — there is no prior wire shape to preserve, so the "own green commit first" step from #682 does not apply. For a **modification of an existing pinned query** (Task 4 adds `comments{ totalCount }` to `ActiveSelection`) the change deliberately alters wire output: regenerate the `GitHubActivePrBatchReaderTests` golden in the same commit and confirm the diff is exactly the added field.
 - Adding a card after `StatsTiles` changes the Overview DOM → regenerate the `pr-detail-overview` Playwright visual baseline (Linux via CI artifact) in the same PR; grep e2e specs for `overview-tab` before changing markup.
 - Feed is **timeline-endpoint-sourced**; never wire feed freshness to `PrDetailLoader.Invalidate`.
 
@@ -30,10 +30,11 @@
 - `tests/PRism.GitHub.Tests/Activity/GitHubPrTimelineFeedReaderTests.cs`.
 
 **Backend (modify):**
-- `PRism.Web/Endpoints/PrDetailEndpoints.cs` — add `GET .../timeline`.
-- `PRism.Core/PrDetail/ActivePrPoller.cs` + `ActivePrPollerState.cs` — widen emission gate on reviewer deltas.
-- `PRism.Web/Program.cs` (or the DI composition root) — register `IPrTimelineFeedReader`.
-- `tests/PRism.Core.Tests/PrDetail/ActivePrPollerTests.cs` — reviewer-delta emission test.
+- `PRism.Web/Endpoints/PrDetailEndpoints.cs` — add `GET .../timeline` (502 on degraded).
+- `PRism.GitHub/ServiceCollectionExtensions.cs` — register `IPrTimelineFeedReader` (beside the sibling reader, ~line 214).
+- `PRism.GitHub/ActivePr/GitHubActivePrBatchReader.cs` + `PRism.Core.Contracts/ActivePrPollSnapshot.cs` — add root-comment count to `ActiveSelection` + snapshot.
+- `PRism.Core/PrDetail/ActivePrPoller.cs` + `ActivePrPollerState.cs` — widen emission gate on root-comment + reviewer deltas.
+- `tests/PRism.Core.Tests/PrDetail/ActivePrPollerTests.cs` — root-comment + approval emission tests; `tests/PRism.GitHub.Tests/ActivePr/GitHubActivePrBatchReaderTests.cs` — golden regen.
 
 **Frontend (create):**
 - `frontend/src/api/timeline.ts` — `getTimelinePage`.
@@ -45,7 +46,9 @@
 
 **Frontend (modify):**
 - `frontend/src/api/types.ts` — add `TimelineActorRef`, `TimelineEvent`, `TimelinePage`.
-- `frontend/src/components/PrDetail/OverviewTab/OverviewTab.tsx` — swap `PrRootConversation` for `ActivityFeed`.
+- `frontend/src/components/PrDetail/OverviewTab/OverviewTab.tsx` — swap `PrRootConversation` for `ActivityFeed` + `refetchRef` bridge.
+- `frontend/src/components/PrDetail/useActivePrUpdates.ts` + `prDetailContext.tsx` — surface `prUpdatedSignal` (bump on every frame).
+- `frontend/src/components/PrDetail/OverviewTab/PrRootConversation.tsx` — export `PrRootConversationActions`; drop comment-list rendering.
 - `frontend/e2e/parity-baselines.spec.ts` baseline regen.
 
 ---
@@ -82,6 +85,7 @@ public sealed class TimelineFeedContractsTests
         page.Events.Should().ContainSingle().Which.Verb.Should().Be(ActivityVerb.Approved);
         page.OlderCursor.Should().Be("cur");
         page.HasOlder.Should().BeTrue();
+        page.Degraded.Should().BeFalse();   // default: a real page is not degraded
     }
 }
 ```
@@ -118,11 +122,15 @@ public sealed record TimelineEvent(
 /// One newest-first page of the feed. <paramref name="OlderCursor"/> + <paramref name="HasOlder"/>
 /// drive "Show older activity" (backward pagination); when <c>HasOlder</c> is false the synthesized
 /// <see cref="ActivityVerb.Opened"/> node is the last (oldest) element.
+/// <paramref name="Degraded"/> is true when the underlying GitHub read failed (transport/parse) and
+/// the reader returned an empty page rather than throwing — this lets the endpoint surface a real
+/// error to the SPA instead of an indistinguishable false-empty ("No activity yet") state.
 /// </summary>
 public sealed record TimelinePage(
     IReadOnlyList<TimelineEvent> Events,
     string? OlderCursor,
-    bool HasOlder);
+    bool HasOlder,
+    bool Degraded = false);
 
 /// <summary>Reads a single PR's full activity timeline, newest-first, one page at a time.</summary>
 public interface IPrTimelineFeedReader
@@ -227,11 +235,30 @@ public sealed class GitHubPrTimelineFeedReaderTests
     }
 
     [Fact]
-    public async Task Degrades_to_empty_page_on_non_success()
+    public async Task Degrades_to_flagged_empty_page_on_non_success()
     {
         var page = await MakeReader(HttpStatusCode.BadGateway, "{}").ReadPageAsync(Pr, cursor: null, pageSize: 30, CancellationToken.None);
         page.Events.Should().BeEmpty();
         page.HasOlder.Should().BeFalse();
+        page.Degraded.Should().BeTrue();   // failure ≠ genuine-empty: the endpoint maps this to 502
+    }
+
+    [Fact]
+    public async Task Orders_same_timestamp_nodes_deterministically()
+    {
+        // Two nodes with the identical committedDate/submittedAt: order must be stable by id, not
+        // by GraphQL array happenstance (spec decision #4). Same JSON read twice → identical order.
+        const string json = """
+        {"data":{"repository":{"pullRequest":{
+          "createdAt":"2020-01-01T00:00:00Z","author":{"login":"opener","avatarUrl":null,"__typename":"User"},
+          "timelineItems":{"pageInfo":{"hasPreviousPage":true,"startCursor":"CUR"},"nodes":[
+            {"__typename":"PullRequestReview","state":"APPROVED","body":"","submittedAt":"2021-05-05T00:00:00Z","author":{"login":"zoe","avatarUrl":null,"__typename":"User"}},
+            {"__typename":"PullRequestReview","state":"APPROVED","body":"","submittedAt":"2021-05-05T00:00:00Z","author":{"login":"amy","avatarUrl":null,"__typename":"User"}}
+          ]}}}}}
+        """;
+        var first = await MakeReader(HttpStatusCode.OK, json).ReadPageAsync(Pr, null, 30, CancellationToken.None);
+        var second = await MakeReader(HttpStatusCode.OK, json).ReadPageAsync(Pr, null, 30, CancellationToken.None);
+        first.Events.Select(e => e.Id).Should().Equal(second.Events.Select(e => e.Id));   // stable across reads
     }
 
     [Fact]
@@ -288,7 +315,10 @@ public sealed class GitHubPrTimelineFeedReader : IPrTimelineFeedReader
 
     public async Task<TimelinePage> ReadPageAsync(PrReference prRef, string? cursor, int pageSize, CancellationToken ct)
     {
-        var empty = new TimelinePage(Array.Empty<TimelineEvent>(), OlderCursor: null, HasOlder: false);
+        // Degraded: a transport/parse failure returns an empty page FLAGGED (Degraded:true) so the
+        // endpoint (Task 3) can surface a real error to the SPA instead of a false-empty "No activity
+        // yet". A genuinely empty PR returns Degraded:false via the normal path below.
+        var empty = new TimelinePage(Array.Empty<TimelineEvent>(), OlderCursor: null, HasOlder: false, Degraded: true);
 
         var token = await _readToken().ConfigureAwait(false);
         using var http = _httpFactory.CreateClient("github");
@@ -321,7 +351,14 @@ public sealed class GitHubPrTimelineFeedReader : IPrTimelineFeedReader
                 if (evt is not null) parsed.Add(evt);
             }
         }
-        parsed.Reverse();   // GraphQL returns oldest→newest; the feed is newest-first
+        // GraphQL returns oldest→newest; the feed is newest-first. Order by a stable secondary key so
+        // same-timestamp ties (e.g. a squash-push and a comment landing in the same second) resolve
+        // deterministically across reloads (spec decision #4). LINQ OrderBy is a stable sort; List.Sort
+        // is not — do NOT swap this for parsed.Sort(...).
+        parsed = parsed
+            .OrderByDescending(e => e.Timestamp)
+            .ThenByDescending(e => e.Id, StringComparer.Ordinal)
+            .ToList();
 
         if (!hasOlder)
         {
@@ -467,7 +504,7 @@ public sealed class GitHubPrTimelineFeedReader : IPrTimelineFeedReader
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `dotnet test tests/PRism.GitHub.Tests --filter GitHubPrTimelineFeedReaderTests`
-Expected: PASS (all 4). If the byte-identity golden fails, copy the actual query string from the failure into the assertion — the query is authoritative once green, then never reformat it.
+Expected: PASS (all 6). If the byte-identity golden fails, copy the actual query string from the failure into the assertion — the query is authoritative once green, then never reformat it.
 
 - [ ] **Step 5: Commit**
 
@@ -488,12 +525,12 @@ EOF
 
 **Files:**
 - Modify: `PRism.Web/Endpoints/PrDetailEndpoints.cs` (add route near the `/checks` GET, ~line 282)
-- Modify: DI composition root (where `IPrTimelineReader`/readers are registered — search `AddSingleton<IPrTimelineReader`) to add `IPrTimelineFeedReader`
+- Modify: `PRism.GitHub/ServiceCollectionExtensions.cs` (register `IPrTimelineFeedReader` alongside the sibling `IPrTimelineReader` block at ~line 214 — **not** `PRism.Web/Program.cs`; the readers are wired in the GitHub project's extension method)
 - Test: `tests/PRism.Web.Tests/Endpoints/TimelineEndpointTests.cs`
 
 **Interfaces:**
 - Consumes: `IPrTimelineFeedReader` (Task 1/2).
-- Produces: `GET /api/pr/{owner}/{repo}/{number:int}/timeline?cursor=&pageSize=` → `Results.Ok(TimelinePage)` | 422 on invalid owner/repo.
+- Produces: `GET /api/pr/{owner}/{repo}/{number:int}/timeline?cursor=` → `Results.Ok(TimelinePage)` | 422 on invalid owner/repo | 502 on a degraded GitHub read. `pageSize` is fixed server-side at 30 (NOT client-bound), so a client cannot request an oversized page.
 
 - [ ] **Step 1: Write the failing test** (use the project's existing `WebApplicationFactory` test harness — override `ConfigureWebHost`, register a fake `IPrTimelineFeedReader`)
 
@@ -542,6 +579,21 @@ public sealed class TimelineEndpointTests : IClassFixture<WebApplicationFactory<
         var resp = await Client().GetAsync("/api/pr/bad!owner/api/7/timeline");
         resp.StatusCode.Should().Be(HttpStatusCode.UnprocessableEntity);
     }
+
+    [Fact]
+    public async Task Returns_502_when_read_degraded()
+    {
+        var client = _factory.WithWebHostBuilder(b => b.ConfigureServices(s =>
+            s.AddSingleton<IPrTimelineFeedReader>(new DegradedReader()))).CreateClient();
+        var resp = await client.GetAsync("/api/pr/acme/api/7/timeline");
+        resp.StatusCode.Should().Be(HttpStatusCode.BadGateway);   // false-empty must not read as 200/empty
+    }
+
+    private sealed class DegradedReader : IPrTimelineFeedReader
+    {
+        public Task<TimelinePage> ReadPageAsync(PrReference prRef, string? cursor, int pageSize, CancellationToken ct)
+            => Task.FromResult(new TimelinePage(Array.Empty<TimelineEvent>(), OlderCursor: null, HasOlder: false, Degraded: true));
+    }
 }
 ```
 
@@ -552,16 +604,16 @@ Expected: FAIL — route not mapped (404) / reader unresolved.
 
 - [ ] **Step 3: Register the reader in DI**
 
-Find the existing timeline-reader registration (`grep -rn "IPrTimelineReader" PRism.Web`) and add alongside it:
+Open `PRism.GitHub/ServiceCollectionExtensions.cs` and find the sibling `GitHubPrTimelineReader` registration (~line 214-219). It reads the token and host via the locals already in scope in that method — `factory` (`IHttpClientFactory`), `tokens` (the token store), `config` (`IConfigStore`). Register the feed reader **right beside it, using those same delegates verbatim** so host/token resolution is byte-for-byte identical:
 
 ```csharp
-services.AddSingleton<IPrTimelineFeedReader>(sp => new GitHubPrTimelineFeedReader(
-    sp.GetRequiredService<IHttpClientFactory>(),
-    /* readToken */ () => sp.GetRequiredService<ITokenStore>().GetTokenAsync(),
-    /* readHost  */ () => sp.GetRequiredService<IHostProvider>().CurrentHost));
+services.AddSingleton<IPrTimelineFeedReader>(_ => new PRism.GitHub.Activity.GitHubPrTimelineFeedReader(
+    factory,
+    () => tokens.ReadAsync(CancellationToken.None),
+    () => config.Current.Github.Host));
 ```
 
-Match the exact `readToken`/`readHost` delegates the sibling `GitHubPrTimelineReader` registration uses — copy them verbatim from that registration so host/token resolution is identical.
+Do NOT invent `ITokenStore.GetTokenAsync()` / `IHostProvider.CurrentHost` — those members do not exist; the real seams are `tokens.ReadAsync(CancellationToken.None)` and `config.Current.Github.Host` (confirm against the sibling line before writing).
 
 - [ ] **Step 4: Map the endpoint** (in `PrDetailEndpoints.MapPrDetail`, after the `/checks` GET)
 
@@ -576,6 +628,8 @@ app.MapGet("/api/pr/{owner}/{repo}/{number:int}/timeline",
 
         var prRef = new PrReference(owner, repo, number);
         var page = await timeline.ReadPageAsync(prRef, cursor, pageSize: 30, ct).ConfigureAwait(false);
+        if (page.Degraded)
+            return Results.Problem(type: "/timeline/upstream-unavailable", statusCode: 502);
         return Results.Ok(page);
     });
 ```
@@ -583,38 +637,60 @@ app.MapGet("/api/pr/{owner}/{repo}/{number:int}/timeline",
 - [ ] **Step 5: Run tests to verify they pass**
 
 Run: `dotnet test tests/PRism.Web.Tests --filter TimelineEndpointTests`
-Expected: PASS (both).
+Expected: PASS (all three: page, bad-owner 422, degraded 502).
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add PRism.Web/Endpoints/PrDetailEndpoints.cs PRism.Web/Program.cs tests/PRism.Web.Tests/Endpoints/TimelineEndpointTests.cs
+git add PRism.Web/Endpoints/PrDetailEndpoints.cs PRism.GitHub/ServiceCollectionExtensions.cs tests/PRism.Web.Tests/Endpoints/TimelineEndpointTests.cs
 git commit -F- <<'EOF'
 feat(#620): GET /api/pr/{owner}/{repo}/{number}/timeline endpoint
 
 Read-only paged timeline endpoint + IPrTimelineFeedReader DI registration.
+Degraded GitHub reads surface as 502, not a false-empty 200.
 EOF
 ```
 
 ---
 
-### Task 4: Widen `ActivePrPoller` emission gate for reviewer deltas
+### Task 4: Widen `ActivePrPoller` emission gate for root-comment + reviewer deltas
+
+**Why this shape (verified against code):** the poller's existing `commentChanged` gate compares `snapshot.CommentCount`, but that count is `CountReviewComments(pr)` — the sum of **inline review-thread** comments (`GitHubActivePrBatchReader.cs:106`), and `ActiveSelection` (`GitHubActivePrBatchReader.cs:74-78`) does **not** fetch the PR's root issue-comment connection at all. So a new **root PR comment** — the feed's primary content — bumps nothing and publishes no frame today. Reviewer name-lists ride the frame but never trigger it either. This task adds BOTH a root-issue-comment signal and a reviewer-delta signal to the gate. (Deliberately out of scope, deferred as a follow-up: a COMMENT-state review with a body, or a re-request to an already-awaiting reviewer, changes no count and still won't live-refresh — see Open items. The SSE per-event streaming follow-up subsumes it.)
 
 **Files:**
-- Modify: `PRism.Core/PrDetail/ActivePrPollerState.cs` (add `Last*` reviewer fields)
-- Modify: `PRism.Core/PrDetail/ActivePrPoller.cs:279-332` (compute `reviewersChanged`, add to gate, retain state)
-- Test: `tests/PRism.Core.Tests/PrDetail/ActivePrPollerTests.cs` (add a case)
+- Modify: `PRism.GitHub/ActivePr/GitHubActivePrBatchReader.cs` (add `comments{ totalCount }` to `ActiveSelection`; populate a new `IssueCommentCount` on the snapshot)
+- Modify: `PRism.Core.Contracts/ActivePrPollSnapshot.cs` (add `int IssueCommentCount = 0` trailing param)
+- Modify: `PRism.Core/PrDetail/ActivePrPollerState.cs` (add `LastIssueCommentCount` + `Last*` reviewer fields)
+- Modify: `PRism.Core/PrDetail/ActivePrPoller.cs:279-332` (compute `issueCommentChanged` + `reviewersChanged`, add to gate, retain state)
+- Regenerate: `tests/PRism.GitHub.Tests/ActivePr/GitHubActivePrBatchReaderTests.cs` byte-identity golden (the `ActiveSelection` wire shape changed — Global Constraints: regen in this commit, confirm the diff is only the added `comments{ totalCount }`)
+- Test: `tests/PRism.Core.Tests/PrDetail/ActivePrPollerTests.cs` (add root-comment-delta + approval-delta cases)
 
 **Interfaces:**
-- Produces: a `pr-updated` (`ActivePrUpdated`) frame now publishes when approvals / changes-requested / awaiting-reviewer count changes, even with no head/comment/state/readiness change. This is what the frontend feed subscribes to for live-refresh.
+- Produces: a `pr-updated` (`ActivePrUpdated`) frame now publishes when the root issue-comment count OR approvals / changes-requested / awaiting-reviewer count changes, even with no head/inline-comment/state/readiness change. This is what the frontend feed subscribes to for live-refresh. The frame's payload is unchanged (the feed refetches the timeline endpoint on any bump; it does not read frame fields).
 
-- [ ] **Step 1: Write the failing test** (mirror the existing poller test setup — fake `IActivePrBatchReader` returning two snapshots that differ only in `Approvals`)
+- [ ] **Step 1: Write the failing tests** (mirror the existing poller test setup — fake `IActivePrBatchReader` returning two snapshots that differ only in one field)
 
 ```csharp
 [Fact]
-public async Task Publishes_when_only_approvals_change()
+public async Task Publishes_when_only_root_comments_change()
 {
     var bus = new RecordingBus();                       // existing test double in this file
+    var reader = new StubBatchReader(
+        first:  Snapshot(headSha: "h1", issueComments: 2),
+        second: Snapshot(headSha: "h1", issueComments: 3));   // a teammate posted a root comment
+    var poller = MakePoller(reader, bus);
+
+    await poller.TickAsync(CancellationToken.None);     // firstPoll — seeds state, emits
+    bus.Events.Clear();
+    await poller.TickAsync(CancellationToken.None);     // only the root-comment count changed
+
+    bus.Events.OfType<ActivePrUpdated>().Should().ContainSingle();
+}
+
+[Fact]
+public async Task Publishes_when_only_approvals_change()
+{
+    var bus = new RecordingBus();
     var reader = new StubBatchReader(
         first:  Snapshot(headSha: "h1", approvals: 0, changesRequested: 0, awaiting: new[] { "lee" }),
         second: Snapshot(headSha: "h1", approvals: 1, changesRequested: 0, awaiting: Array.Empty<string>()));
@@ -629,62 +705,102 @@ public async Task Publishes_when_only_approvals_change()
 }
 ```
 
-Adjust `Snapshot(...)`/`MakePoller(...)`/`StubBatchReader`/`RecordingBus` to the exact helpers already present in `ActivePrPollerTests.cs` (read the file first; reuse, don't invent).
+Adjust `Snapshot(...)`/`MakePoller(...)`/`StubBatchReader`/`RecordingBus` to the exact helpers already present in `ActivePrPollerTests.cs` (read the file first; reuse, don't invent). Extend the existing `Snapshot(...)` helper with an `issueComments` parameter that maps to the new `IssueCommentCount` (Step 3) — leave its other params at their current defaults so the existing poller tests still compile unchanged.
 
-- [ ] **Step 2: Run test to verify it fails**
+- [ ] **Step 2: Run tests to verify they fail**
 
 Run: `dotnet test tests/PRism.Core.Tests --filter ActivePrPollerTests`
-Expected: FAIL — second tick emits nothing today (gate ignores reviewer deltas).
+Expected: FAIL — the second tick emits nothing today (the gate ignores root-comment and reviewer deltas; `snapshot.CommentCount` is inline-thread comments only).
 
-- [ ] **Step 3: Add retained fields** to `ActivePrPollerState.cs`
+- [ ] **Step 3: Fetch root-comment count + add `IssueCommentCount` to the snapshot**
+
+In `PRism.GitHub/ActivePr/GitHubActivePrBatchReader.cs`, add the root issue-comment connection to `ActiveSelection`. **Preserve exact single-space wire spacing** (the byte-identity golden depends on it) — insert `comments{ totalCount }` right after `reviewDecision`:
 
 ```csharp
+    // was: "...mergeStateStatus reviewDecision " +
+    "headRefOid baseRefOid state isDraft mergeable mergeStateStatus reviewDecision comments{ totalCount } " +
+```
+
+Add `IssueCommentCount` to the snapshot record (`PRism.Core.Contracts/ActivePrPollSnapshot.cs`) as a **trailing param with a default** so the REST `PollActivePrAsync` path and existing tests still compile:
+
+```csharp
+    bool IsDraft = false,
+    // Root PR issue-comment total (comments{ totalCount }). Distinct from CommentCount, which is the
+    // per-inline-review-comment count. Drives root-comment live-refresh (#620). REST path leaves it 0.
+    int IssueCommentCount = 0);
+```
+
+Populate it in `TryParse` (reuse the local `TotalCount` helper already defined there):
+
+```csharp
+        snapshot = new ActivePrPollSnapshot(
+            // ...existing args unchanged...
+            IsDraft: isDraft,
+            IssueCommentCount: TotalCount("comments"));
+```
+
+Then regenerate the byte-identity golden in `GitHubActivePrBatchReaderTests.cs` (copy the actual query from the failing assertion) and confirm the diff is **only** the added `comments{ totalCount }`.
+
+- [ ] **Step 4: Add retained fields** to `ActivePrPollerState.cs`
+
+```csharp
+    public int? LastIssueCommentCount { get; set; }
     public int? LastApprovals { get; set; }
     public int? LastChangesRequested { get; set; }
     public int? LastAwaitingCount { get; set; }
 ```
 
-- [ ] **Step 4: Compute `reviewersChanged` and add it to the gate** (`ActivePrPoller.cs`, alongside the other `*Changed` bools at ~line 279-297)
+- [ ] **Step 5: Compute the new deltas and add them to the gate** (`ActivePrPoller.cs`, alongside the other `*Changed` bools at ~line 279-297)
 
 ```csharp
+var issueCommentChanged =
+    state.LastIssueCommentCount is { } lic && lic != snapshot.IssueCommentCount;
 var reviewersChanged =
     (state.LastApprovals is { } laApprovals && laApprovals != snapshot.Approvals) ||
     (state.LastChangesRequested is { } laCr && laCr != snapshot.ChangesRequested) ||
-    (state.LastAwaitingCount is { } laAwait && laAwait != snapshot.AwaitingReviewers.Count);
+    (state.LastAwaitingCount is { } laAwait && laAwait != (snapshot.AwaitingReviewers?.Count ?? 0));
 ```
 
-Add `|| reviewersChanged` to the emission `if` at line 301:
+`AwaitingReviewers` is a nullable list (`IReadOnlyList<Reviewer>?`) — the `?.Count ?? 0` guard is required; a bare `.Count` NREs on the REST path where it is null.
+
+Add both to the emission `if` at line 301:
 
 ```csharp
-if (firstPoll || headChanged || baseChanged || commentChanged || stateChanged || readinessChanged || reviewersChanged)
+if (firstPoll || headChanged || baseChanged || commentChanged || stateChanged || readinessChanged || issueCommentChanged || reviewersChanged)
 ```
 
 Retain the new state after emission (with the other `state.Last* =` writes at ~line 325):
 
 ```csharp
+state.LastIssueCommentCount = snapshot.IssueCommentCount;
 state.LastApprovals = snapshot.Approvals;
 state.LastChangesRequested = snapshot.ChangesRequested;
-state.LastAwaitingCount = snapshot.AwaitingReviewers.Count;
+state.LastAwaitingCount = snapshot.AwaitingReviewers?.Count ?? 0;
 ```
 
-- [ ] **Step 5: Run tests to verify they pass**
+- [ ] **Step 6: Run tests to verify they pass**
+
+Run: `dotnet test tests/PRism.GitHub.Tests --filter GitHubActivePrBatchReaderTests`
+Expected: PASS (byte-identity golden regenerated, diff is only `comments{ totalCount }`).
 
 Run: `dotnet test tests/PRism.Core.Tests --filter ActivePrPollerTests`
-Expected: PASS. Run the whole `PRism.Core.Tests` project too — the poller is widely covered; confirm no existing emission-count assertion regressed.
+Expected: PASS. Then run the whole `PRism.Core.Tests` project — the poller is widely covered; confirm no existing emission-count assertion regressed by the two new gate terms.
 
 Run: `dotnet test tests/PRism.Core.Tests`
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
-git add PRism.Core/PrDetail/ActivePrPoller.cs PRism.Core/PrDetail/ActivePrPollerState.cs tests/PRism.Core.Tests/PrDetail/ActivePrPollerTests.cs
+git add PRism.GitHub/ActivePr/GitHubActivePrBatchReader.cs PRism.Core.Contracts/ActivePrPollSnapshot.cs PRism.Core/PrDetail/ActivePrPoller.cs PRism.Core/PrDetail/ActivePrPollerState.cs tests/PRism.GitHub.Tests/ActivePr/GitHubActivePrBatchReaderTests.cs tests/PRism.Core.Tests/PrDetail/ActivePrPollerTests.cs
 git commit -F- <<'EOF'
-feat(#620): publish pr-updated on reviewer/approval deltas
+feat(#620): publish pr-updated on root-comment + reviewer deltas
 
-Widen ActivePrPoller emission gate so a fresh approval / changes-request /
-review-request (no head/comment/state/readiness change) still publishes the
-frame the timeline feed live-refreshes on.
+Fetch comments{ totalCount } into the active-poll snapshot and widen the
+ActivePrPoller emission gate so a fresh root PR comment, approval,
+changes-request, or review-request (no head/inline-comment/state/readiness
+change) still publishes the frame the timeline feed live-refreshes on.
+Regenerates the GitHubActivePrBatchReader byte-identity golden.
 EOF
 ```
 
@@ -723,6 +839,8 @@ export interface TimelinePage {
   events: TimelineEvent[];
   olderCursor: string | null;
   hasOlder: boolean;
+  degraded?: boolean;   // wire-mirror of TimelinePage.Degraded; the endpoint 502s on degraded, so the
+                        // SPA usually sees this only as `false` on 200 responses (optional for test mocks)
 }
 ```
 
@@ -913,9 +1031,9 @@ git commit -m "feat(#620): commit-run grouping transform"
 
 **Interfaces:**
 - Consumes: `getTimelinePage` (Task 5); `TimelineEvent`, `PrReference`.
-- Produces: `useTimelineFeed(prRef: PrReference, opts: { prUpdatedSignal: number }) → { events: TimelineEvent[]; status: 'loading' | 'error' | 'ready'; hasOlder: boolean; loadOlder: () => void; loadingOlder: boolean; refetchNewest: () => void }`.
+- Produces: `useTimelineFeed(prRef: PrReference, opts: { prUpdatedSignal: number }) → { events: TimelineEvent[]; status: 'loading' | 'error' | 'ready'; hasOlder: boolean; loadOlder: () => void; loadingOlder: boolean; refetchNewest: () => void; reload: () => void; liveAnnouncement: string }`.
 
-Behavior: on mount / `prRef` change, load the newest page (`status='loading'` → `'ready'`/`'error'`). `loadOlder` fetches with `olderCursor`, **appends** older events (dedup by `id`), updates `hasOlder`/`olderCursor`. `refetchNewest` re-fetches the first page and merges by `id` (new events prepended; existing kept). `opts.prUpdatedSignal` is a monotonically-increasing counter the parent bumps on each `pr-updated` SSE frame for this PR; a change triggers `refetchNewest`. `AbortController` cancels in-flight on unmount/prRef change.
+Behavior: on mount / `prRef` change, load the newest page (`status='loading'` → `'ready'`/`'error'`). `loadOlder` fetches with `olderCursor`, **appends** older events (dedup by `id`), updates `hasOlder`/`olderCursor`, and does NOT touch `liveAnnouncement`. `refetchNewest` re-fetches the first page and merges by `id` (new events prepended; existing kept), and sets `liveAnnouncement` to a phrase describing what arrived (e.g. `"alice approved"` / `"3 new updates"`) — only when genuinely-new events land. `reload` is the error-state retry: it re-runs the first-page load and resets `status` (unlike `loadOlder`, which no-ops when `!hasOlder`). `opts.prUpdatedSignal` is a monotonically-increasing counter the parent bumps on each `pr-updated` SSE frame for this PR; a change triggers `refetchNewest`. `AbortController` cancels in-flight on unmount/prRef change.
 
 - [ ] **Step 1: Write the failing tests** (use `@testing-library/react` `renderHook`, mock `./timeline`)
 
@@ -970,6 +1088,18 @@ describe('useTimelineFeed', () => {
     const { result } = renderHook(() => useTimelineFeed(pr, { prUpdatedSignal: 0 }));
     await waitFor(() => expect(result.current.status).toBe('error'));
   });
+
+  it('reload recovers from an initial-load error', async () => {
+    const spy = vi.spyOn(api, 'getTimelinePage')
+      .mockRejectedValueOnce(new Error('boom'))
+      .mockResolvedValueOnce({ events: [ev('1')], olderCursor: null, hasOlder: false });
+    const { result } = renderHook(() => useTimelineFeed(pr, { prUpdatedSignal: 0 }));
+    await waitFor(() => expect(result.current.status).toBe('error'));
+    act(() => result.current.reload());
+    await waitFor(() => expect(result.current.status).toBe('ready'));
+    expect(result.current.events).toHaveLength(1);
+    expect(spy).toHaveBeenCalledTimes(2);
+  });
 });
 ```
 
@@ -998,6 +1128,9 @@ export function useTimelineFeed(prRef: PrReference, opts: { prUpdatedSignal: num
   const [hasOlder, setHasOlder] = useState(false);
   const [loadingOlder, setLoadingOlder] = useState(false);
   const cursorRef = useRef<string | null>(null);
+  const eventsRef = useRef<TimelineEvent[]>([]);
+  eventsRef.current = events;   // latest events for refetchNewest's fresh-diff (avoids setState-in-updater)
+  const [liveAnnouncement, setLiveAnnouncement] = useState('');
   const key = `${prRef.owner}/${prRef.repo}/${prRef.number}`;
 
   // Initial load (and reload on PR change).
@@ -1016,6 +1149,21 @@ export function useTimelineFeed(prRef: PrReference, opts: { prUpdatedSignal: num
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key]);
 
+  // Explicit retry for the error state. Distinct from loadOlder (which early-returns when !hasOlder,
+  // so it is a no-op after an initial-load failure) — this re-runs the first-page load and resets status.
+  const reload = useCallback(() => {
+    setStatus('loading');
+    getTimelinePage(prRef, null)
+      .then((page) => {
+        setEvents(page.events);
+        cursorRef.current = page.olderCursor;
+        setHasOlder(page.hasOlder);
+        setStatus('ready');
+      })
+      .catch(() => setStatus('error'));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key]);
+
   const loadOlder = useCallback(() => {
     if (loadingOlder || !hasOlder) return;
     setLoadingOlder(true);
@@ -1031,12 +1179,17 @@ export function useTimelineFeed(prRef: PrReference, opts: { prUpdatedSignal: num
 
   const refetchNewest = useCallback(() => {
     getTimelinePage(prRef, null).then((page) => {
-      // Prepend genuinely-new events; keep already-loaded older ones.
-      setEvents((prev) => {
-        const known = new Set(prev.map((e) => e.id));
-        const fresh = page.events.filter((e) => !known.has(e.id));
-        return [...fresh, ...prev];
-      });
+      // Prepend genuinely-new events; keep already-loaded older ones. Compute fresh against the ref
+      // (not inside the setEvents updater) so we can announce what arrived without a render-phase setState.
+      const known = new Set(eventsRef.current.map((e) => e.id));
+      const fresh = page.events.filter((e) => !known.has(e.id));
+      if (fresh.length === 0) return;
+      const top = fresh[0];
+      // Announce WHAT arrived, not a raw total — and only on this live path (loadOlder must not announce).
+      setLiveAnnouncement(
+        fresh.length === 1 && top.actor.login ? `${top.actor.login} ${top.verb}` : `${fresh.length} new updates`,
+      );
+      setEvents((prev) => [...fresh, ...prev]);
     }).catch(() => { /* live-refresh is best-effort; keep the current feed on failure */ });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key]);
@@ -1048,14 +1201,14 @@ export function useTimelineFeed(prRef: PrReference, opts: { prUpdatedSignal: num
     refetchNewest();
   }, [opts.prUpdatedSignal, refetchNewest]);
 
-  return { events, status, hasOlder, loadOlder, loadingOlder, refetchNewest };
+  return { events, status, hasOlder, loadOlder, loadingOlder, refetchNewest, reload, liveAnnouncement };
 }
 ```
 
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `cd frontend && ./node_modules/.bin/vitest run src/components/PrDetail/OverviewTab/timeline/useTimelineFeed.test.ts`
-Expected: PASS (all 4).
+Expected: PASS (all 5).
 
 - [ ] **Step 5: Commit**
 
@@ -1082,7 +1235,7 @@ Verb→phrase: import the maps from `ActivityRail` if exported, else define a lo
 - [ ] **Step 1: Write the failing tests**
 
 ```typescript
-import { render, screen, within } from '@testing-library/react';
+import { render, screen, fireEvent } from '@testing-library/react';
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { ActivityFeed } from './ActivityFeed';
 import * as api from '../../../../api/timeline';
@@ -1125,6 +1278,50 @@ describe('ActivityFeed', () => {
     expect(await screen.findByTestId('timeline-error')).toBeInTheDocument();
     expect(screen.queryByText(/no activity yet/i)).not.toBeInTheDocument();
   });
+
+  it('renders a bodied approval as one card carrying the approved state', async () => {
+    vi.spyOn(api, 'getTimelinePage').mockResolvedValue({
+      events: [ev('r', { verb: 'approved', body: 'ship it' })], olderCursor: null, hasOlder: false });
+    render(<ActivityFeed prRef={pr} prUpdatedSignal={0} composerSlot={null} />);
+    expect(await screen.findByText('ship it')).toBeInTheDocument();           // the body → a card
+    expect(screen.getByText(/approved/i)).toBeInTheDocument();                // ...with the state band
+    expect(screen.queryByTestId('timeline-marker')).not.toBeInTheDocument();  // not a separate duplicate marker
+  });
+
+  it('Retry re-fetches after an initial-load failure (not a no-op)', async () => {
+    const spy = vi.spyOn(api, 'getTimelinePage')
+      .mockRejectedValueOnce(new Error('boom'))
+      .mockResolvedValueOnce({ events: [ev('c', { verb: 'commented', body: 'hi' })], olderCursor: null, hasOlder: false });
+    render(<ActivityFeed prRef={pr} prUpdatedSignal={0} composerSlot={null} />);
+    fireEvent.click(await screen.findByRole('button', { name: /retry/i }));
+    expect(await screen.findByText('hi')).toBeInTheDocument();
+    expect(spy).toHaveBeenCalledTimes(2);
+  });
+
+  it('a live merge announces the arrival without stealing focus or auto-scrolling', async () => {
+    const scrollSpy = vi.spyOn(HTMLElement.prototype, 'scrollIntoView').mockImplementation(() => {});
+    vi.spyOn(api, 'getTimelinePage')
+      .mockResolvedValueOnce({ events: [ev('1', { verb: 'commented', body: 'first' })], olderCursor: null, hasOlder: false })
+      .mockResolvedValueOnce({ events: [ev('9', { verb: 'approved' }), ev('1', { verb: 'commented', body: 'first' })], olderCursor: null, hasOlder: false });
+    const { rerender } = render(<ActivityFeed prRef={pr} prUpdatedSignal={0} composerSlot={null} />);
+    await screen.findByText('first');
+    const focused = document.activeElement;
+    rerender(<ActivityFeed prRef={pr} prUpdatedSignal={1} composerSlot={null} />);   // simulate a pr-updated frame
+    await screen.findByTestId('timeline-marker');                 // the approval merged in
+    expect(document.activeElement).toBe(focused);                 // focus not stolen
+    expect(scrollSpy).not.toHaveBeenCalled();                     // no auto-scroll on merge
+    expect(screen.getByRole('status')).toHaveTextContent(/approved/i);   // aria-live announced WHAT arrived
+  });
+
+  it('the commit-run accordion is an operable button that toggles on activation', async () => {
+    const commits = Array.from({ length: 6 }, (_, i) => ev(`p${i}`, { verb: 'pushed', commitCount: 1 }));
+    vi.spyOn(api, 'getTimelinePage').mockResolvedValue({ events: commits, olderCursor: null, hasOlder: false });
+    render(<ActivityFeed prRef={pr} prUpdatedSignal={0} composerSlot={null} />);
+    const acc = await screen.findByRole('button', { name: /6 commits/i });   // a real <button> ⇒ keyboard-operable
+    expect(acc).toHaveAttribute('aria-expanded', 'false');
+    fireEvent.click(acc);
+    expect(acc).toHaveAttribute('aria-expanded', 'true');   // expands to reveal the per-commit list
+  });
 });
 ```
 
@@ -1135,11 +1332,13 @@ Expected: FAIL — component missing.
 
 - [ ] **Step 3: Write the component** (and a minimal `.module.css` with `.rail`, `.marker`, `.card`, `.srOnly` — use `position:relative` on the pane container, not `absolute .sr-only`, per repo memory)
 
+**Scroll preservation (the "merge without moving scroll" requirement):** the whole Overview scrolls as one document (user decision — no bounded internal scroll), and `refetchNewest` prepends new nodes above older ones. Rely on the browser's native scroll-anchoring: do NOT set `overflow-anchor: none` anywhere on the feed's `.rail`/ancestors, and never call `scrollIntoView`/set `scrollTop` on merge. With default `overflow-anchor: auto` on the document scroller, nodes inserted above the viewport keep the user's current anchor visually stable — this is what the live-merge test above asserts (no `scrollIntoView`, focus retained). If a future bounded-scroll container is introduced, that container needs an explicit anchor since document-level anchoring won't apply.
+
 ```tsx
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Avatar } from '../../../Avatar/Avatar';
 import { formatAge } from '../../../../utils/relativeTime';
-import { CommentCard } from '../../../CommentCard/CommentCard';
+import { CommentCard } from '../../Comment/CommentCard';   // NOT ../../../CommentCard/ — component lives under PrDetail/Comment/
 import type { PrReference, TimelineEvent, ActivityVerb } from '../../../../api/types';
 import { useTimelineFeed } from './useTimelineFeed';
 import { groupCommitRuns, type FeedNode } from './groupCommitRuns';
@@ -1151,6 +1350,15 @@ const VERB_PHRASE: Record<ActivityVerb, string> = {
   'changes-requested': 'requested changes', 'review-requested': 'requested review from',
   pushed: 'pushed', mentioned: 'mentioned', 'ci-activity': 'CI', authored: 'authored', other: 'updated',
 };
+
+// A review that carries a body renders as ONE card; when it is an approval / changes-requested the
+// review outcome shows as a band-end badge on that same card (never a separate duplicate marker).
+// CommentCard renders `bandEnd` inside a <Badge> only when non-null, so a plain comment stays plain.
+function stateBand(verb: ActivityVerb): React.ReactNode {
+  if (verb === 'approved') return 'approved';
+  if (verb === 'changes-requested') return 'requested changes';
+  return undefined;
+}
 
 function Marker({ event }: { event: TimelineEvent }) {
   const phrase = VERB_PHRASE[event.verb];
@@ -1190,10 +1398,23 @@ function CommitGroup({ commits, collapsedByDefault }: { commits: TimelineEvent[]
 }
 
 export function ActivityFeed({
-  prRef, prUpdatedSignal, composerSlot,
-}: { prRef: PrReference; prUpdatedSignal: number; composerSlot: React.ReactNode }) {
-  const { events, status, hasOlder, loadOlder, loadingOlder } = useTimelineFeed(prRef, { prUpdatedSignal });
-  const [showBots, setShowBots] = useState(false);
+  prRef, prUpdatedSignal, composerSlot, onRegisterRefetch,
+}: {
+  prRef: PrReference;
+  prUpdatedSignal: number;
+  composerSlot: React.ReactNode;
+  onRegisterRefetch?: (fn: () => void) => void;   // OverviewTab wires the composer's post→refetch through this
+}) {
+  const { events, status, hasOlder, loadOlder, loadingOlder, refetchNewest, reload, liveAnnouncement } =
+    useTimelineFeed(prRef, { prUpdatedSignal });
+  useEffect(() => { onRegisterRefetch?.(refetchNewest); }, [onRegisterRefetch, refetchNewest]);
+  // Bot toggle persists per session (spec: matches ActivityRail). Global key, not per-PR — the
+  // user's "show bots" preference is a viewing mode, not PR state.
+  const [showBots, setShowBots] = useState(
+    () => sessionStorage.getItem('prism.activityFeed.showBots') === '1');
+  useEffect(() => {
+    sessionStorage.setItem('prism.activityFeed.showBots', showBots ? '1' : '0');
+  }, [showBots]);
 
   const nodes: FeedNode[] = useMemo(
     () => groupCommitRuns(events.filter((e) => showBots || !e.actor.isBot)),
@@ -1202,7 +1423,7 @@ export function ActivityFeed({
   return (
     <section className="overview-card" data-testid="activity-feed" aria-label="PR activity">
       <div className={styles.srOnly} role="status" aria-live="polite">
-        {status === 'ready' ? `${events.length} activity items` : ''}
+        {liveAnnouncement}
       </div>
       {composerSlot}
       <div className={styles.toolbar}>
@@ -1214,7 +1435,7 @@ export function ActivityFeed({
       {status === 'loading' && <div className={styles.skeleton} data-testid="timeline-skeleton" aria-hidden="true" />}
       {status === 'error' && (
         <div className={styles.error} data-testid="timeline-error">
-          Couldn’t load activity. <button type="button" onClick={loadOlder}>Retry</button>
+          Couldn’t load activity. <button type="button" onClick={reload}>Retry</button>
         </div>
       )}
       {status === 'ready' && nodes.length === 0 && (
@@ -1234,6 +1455,7 @@ export function ActivityFeed({
                   avatarUrl={node.event.actor.avatarUrl ?? undefined}
                   createdAt={node.event.timestamp}
                   body={node.event.body}
+                  bandEnd={stateBand(node.event.verb)}
                   data-testid="timeline-comment"
                 />
               </li>
@@ -1254,12 +1476,12 @@ export function ActivityFeed({
 }
 ```
 
-If `CommentCard`'s prop names differ from the above (verify against `frontend/src/components/CommentCard/CommentCard.tsx`), match its actual signature — the recon shows `PrRootConversation` renders `<CommentCard density="comfortable" …>`; copy the exact prop names it passes.
+Verify `CommentCard`'s prop names against `frontend/src/components/PrDetail/Comment/CommentCard.tsx` (confirmed to accept `density`, `author`, `avatarUrl`, `createdAt`, `body`, and a `bandEnd?: React.ReactNode` rendered inside a `<Badge>`). `PrRootConversation` renders `<CommentCard density="comfortable" …>` — copy the exact prop names it passes.
 
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `cd frontend && ./node_modules/.bin/vitest run src/components/PrDetail/OverviewTab/timeline/ActivityFeed.test.tsx`
-Expected: PASS (all 4). Then `./node_modules/.bin/tsc -b`.
+Expected: PASS (all 8). Then `./node_modules/.bin/tsc -b`.
 
 - [ ] **Step 5: Commit**
 
@@ -1273,21 +1495,29 @@ git commit -m "feat(#620): ActivityFeed component (rail, cards, markers, accordi
 ### Task 9: Lift the composer + wire `ActivityFeed` into `OverviewTab`
 
 **Files:**
-- Modify: `frontend/src/components/PrDetail/OverviewTab/OverviewTab.tsx:107-131`
-- Modify: `frontend/src/components/PrDetail/OverviewTab/timeline/useTimelineFeed.ts` (expose `refetchNewest` to the composer post-callback)
-- Test: `frontend/src/components/PrDetail/OverviewTab/OverviewTab.test.tsx` (add/adjust) + preserve/port `PrRootConversation.test.tsx` composer cases into an `ActivityFeed` composer test
+- Modify: `frontend/src/components/PrDetail/OverviewTab/OverviewTab.tsx:107-131` (swap component; add the `refetchRef` bridge)
+- Modify: `frontend/src/components/PrDetail/useActivePrUpdates.ts` (~line 70 raw `pr-updated` handler) + `frontend/src/components/PrDetail/prDetailContext.tsx` (surface `prUpdatedSignal`)
+- Modify: `frontend/src/components/PrDetail/OverviewTab/PrRootConversation.tsx` (export `PrRootConversationActions`; delete the comment-list rendering)
+- Test: `frontend/src/components/PrDetail/OverviewTab/OverviewTab.test.tsx` (add/adjust) + a `useActivePrUpdates`/`prDetailContext` counter test + preserve/port `PrRootConversation.test.tsx` composer cases into an `ActivityFeed` composer test
 
 **Interfaces:**
-- Consumes: existing `usePrDetailContext()`; the `replyContext` `useMemo` already computed in `OverviewTab` (line 87-105); the `pr-updated` subscription already in `prDetailContext` (surface a monotonically-increasing counter — reuse the existing `pr-updated` handler that drives live mergeability, adding a bump).
+- Consumes: existing `usePrDetailContext()`; the `replyContext` `useMemo` already computed in `OverviewTab` (line 87-105); the raw `pr-updated` subscription (surface a monotonically-increasing counter — see Step 1 for its real location).
 - Produces: Overview renders `ActivityFeed` (with the lifted composer as `composerSlot`) where `PrRootConversation` was.
 
-- [ ] **Step 1: Expose a `pr-updated` counter** — in `prDetailContext.tsx`, where the `pr-updated` frame is already handled (#655 mergeability), add a `prUpdatedSignal` counter to the context value that increments on each frame for the active PR. Write a test in `prDetailContext.test.tsx` asserting the counter increments on a simulated frame. (Mirror the existing mergeability-update test.)
+- [ ] **Step 1: Expose a `pr-updated` counter — bump on EVERY frame, at the raw handler**
+
+**Critical (verified against code):** the `pr-updated` frame is NOT handled in `prDetailContext.tsx`. The raw `stream.on('pr-updated', …)` handler lives in `useActivePrUpdates.ts` (~line 70); `prDetailContext` only surfaces the *derived* `liveMergeReadiness`. If you bump the counter where the mergeability value is set, it fires only when `mergeReadinessChanged` is true — which silently defeats the whole feature: a bare approval, a review-request, or a root comment (exactly the frames Task 4's poller-widening now delivers, all with `mergeReadinessChanged=false`) would never bump the counter, so the feed would never live-refresh.
+
+Bump the counter in the **raw** `pr-updated` handler in `useActivePrUpdates.ts` (which fires on every frame for the active PR), and thread it out through the hook → `prDetailContext` value as `prUpdatedSignal`:
 
 ```typescript
-// inside the pr-updated handler, alongside the mergeability update:
+// useActivePrUpdates.ts — inside stream.on('pr-updated', (event) => { ... }), on EVERY frame
+// (do NOT gate on mergeReadinessChanged / any specific field):
 setPrUpdatedSignal((n) => n + 1);
-// expose prUpdatedSignal in the context value object
+// expose prUpdatedSignal from the hook, and surface it in the prDetailContext value object.
 ```
+
+Write a test in `useActivePrUpdates.test.ts` (or `prDetailContext.test.tsx`, wherever the handler is exercised) asserting the counter increments on a simulated `pr-updated` frame that carries **no** mergeability change — this is the regression guard for the bug above. Mirror the existing frame-dispatch test.
 
 - [ ] **Step 2: Write the failing wiring test**
 
@@ -1303,25 +1533,40 @@ expect(screen.queryByTestId('pr-root-comment')).not.toBeInTheDocument();
 Run: `cd frontend && ./node_modules/.bin/vitest run src/components/PrDetail/OverviewTab/OverviewTab.test.tsx`
 Expected: FAIL — OverviewTab still renders `PrRootConversation`.
 
-- [ ] **Step 4: Swap the component** in `OverviewTab.tsx` — replace the `<PrRootConversation comments={prDetail.rootComments} replyContext={replyContext} />` line with:
+- [ ] **Step 4a: Export the composer.** `PrRootConversationActions` is currently a **private** function in `PrRootConversation.tsx` (no `export`). Add `export` to it (and to whatever it depends on that must cross the module boundary) so it can be passed as `composerSlot`. Keep the actions/composer module; delete only the now-unused `PrRootConversation` comment-list rendering — the feed owns comment rendering now.
+
+- [ ] **Step 4b: Choose the post→refetch bridge — a callback ref (committed choice, not a menu).** The composer is built by `OverviewTab` and passed into `ActivityFeed` as an opaque `composerSlot`, so `ActivityFeed`'s `refetchNewest` is not directly reachable from the composer. Wire them through a ref owned by `OverviewTab`:
 
 ```tsx
+// OverviewTab.tsx — prRef + prUpdatedSignal come from usePrDetailContext() (Step 1)
+const refetchRef = useRef<(() => void) | null>(null);
+
 <ActivityFeed
   prRef={prRef}
   prUpdatedSignal={prUpdatedSignal}
+  onRegisterRefetch={(fn) => { refetchRef.current = fn; }}   // ActivityFeed calls this in an effect with refetchNewest
   composerSlot={
     replyContext ? (
-      <PrRootConversationActions replyContext={replyContext} onPosted={/* refetch handled inside ActivityFeed via prUpdatedSignal or an explicit onPosted->refetchNewest bridge */ undefined} />
+      <PrRootConversationActions
+        replyContext={replyContext}
+        onPosted={() => refetchRef.current?.()}   // immediate refetch on the user's own post
+      />
     ) : null
   }
 />
 ```
 
-Extract the composer/actions (`PrRootConversationActions` + `PrRootReplyComposer` + `CollapsedComposerAffordance` + `MarkAllReadButton`) out of `PrRootConversation` into a reusable `PrRootConversationActions` export (if not already separately exported) so it can be passed as `composerSlot`. Delete the now-unused `PrRootConversation` comment-list rendering (the feed owns comment rendering now); keep the actions/composer module. Bridge the post-success to `refetchNewest` (either lift `refetchNewest` from `useTimelineFeed` up via a ref/callback, or have the composer publish a local event the feed listens to — simplest: `ActivityFeed` accepts an `onComposerPosted` ref it wires to `refetchNewest`, and the composer calls it after a successful post).
+In `ActivityFeed`, accept `onRegisterRefetch?: (fn: () => void) => void` and register `refetchNewest` once:
+
+```tsx
+useEffect(() => { onRegisterRefetch?.(refetchNewest); }, [onRegisterRefetch, refetchNewest]);
+```
+
+Rationale for committing to this over the alternatives: the SSE path is now a **backstop** (Task 4 fetches issue-comment count, so the poller bumps `prUpdatedSignal` on the user's own comment within one poll interval), but that has poll latency — the explicit `onPosted` bridge makes the just-posted comment appear immediately. A double refetch (bridge + SSE) is harmless: `refetchNewest` dedups by `id`, so the comment still appears exactly once.
 
 - [ ] **Step 5: Run tests to verify they pass**
 
-Run: `cd frontend && ./node_modules/.bin/vitest run src/components/PrDetail/OverviewTab/ src/components/PrDetail/prDetailContext.test.tsx`
+Run: `cd frontend && ./node_modules/.bin/vitest run src/components/PrDetail/OverviewTab/ src/components/PrDetail/prDetailContext.test.tsx src/components/PrDetail/useActivePrUpdates.test.ts`
 Expected: PASS. Then run the **full** frontend suite (composer/draft behavior is broadly covered):
 
 Run: `cd frontend && ./node_modules/.bin/vitest run`
@@ -1377,20 +1622,24 @@ git commit -m "test(#620): timeline e2e + regen pr-detail-overview baseline"
 - Unified feed replacing `PrRootConversation` → Tasks 8, 9. ✓
 - Paginated timestamped read, `Opened` synth, no review-request-removed → Task 2. ✓
 - `GET .../timeline` endpoint → Task 3. ✓
-- Live-refresh via widened poller gate → Task 4 (backend) + Tasks 7/9 (frontend subscribe + refetch). ✓
-- Flat newest-first ordering + tie-break → Task 2 (reader order) + Task 6/8 render. Tie-break: reader preserves GraphQL order; equal-timestamp stability comes from that stable order — **note:** if a same-timestamp reorder flake appears, add an explicit `id` secondary sort in the reader (documented in Risks).
-- One-review-one-unit (bodied approval → card) → Task 2 sets `Body`; Task 8 renders body→card (state glyph on the card: extend `Marker`/`CommentCard` to show the verb glyph for `approved`/`changes-requested` with a body — fold into Task 8 rendering). ✓
+- Live-refresh via widened poller gate → Task 4 (backend: **root-comment count** `issueCommentChanged` + reviewer deltas) + Tasks 7/9 (frontend: counter bumped in the **raw** `useActivePrUpdates` handler on every frame, feed refetches). ✓ Known follow-up: no-op-count reviews (COMMENT-state review, re-request to an already-awaiting reviewer) still don't live-refresh — see Open items.
+- Flat newest-first ordering + tie-break → Task 2 orders explicitly by `(Timestamp desc, Id)` via stable `OrderByDescending().ThenByDescending()` (spec #4 — **implemented, not deferred**), asserted by `Orders_same_timestamp_nodes_deterministically`; Task 6/8 render. ✓
+- One-review-one-unit (bodied approval → card) → Task 2 sets `Body`; Task 8 renders body→card **with the state band** (`bandEnd={stateBand(verb)}` for `approved`/`changes-requested`), asserted by `renders a bodied approval as one card carrying the approved state`. ✓
+- Error vs empty distinction → Task 2 flags `Degraded` on a failed read; Task 3 maps it to 502; Task 8 shows the retry-distinct error state (`reload`), never a false-empty "No activity yet". ✓
 - Commit-run grouping/accordion → Tasks 6, 8. ✓
 - Source-of-truth (feed owns refetch, no snapshot Invalidate) → Task 7. ✓
 - UI states (loading/empty/error/live-merge/end-of-history/bot default/a11y) → Task 8. ✓
 - Testing + verification + baseline regen → Task 10. ✓
 - Deferred (per-event streaming, unseen divider, comment density) → NOT built (correct). ✓
 
-**Placeholder scan:** the `composerSlot`/`onPosted` bridge in Task 9 Step 4 names two concrete options and picks the ref-callback one — implementer picks the simplest that passes the ported composer tests; not a placeholder but a genuine small integration choice. All code steps show real code.
+**Placeholder scan:** the post→refetch bridge in Task 9 Step 4b now commits to the callback-ref mechanism (single choice, with rationale), not a menu. All code steps show real code.
 
-**Type consistency:** `TimelineEvent`/`TimelinePage`/`TimelineActorRef` field names match across Core (Task 1), reader (Task 2), wire types (Task 5), hook (Task 7), grouping (Task 6), component (Task 8). `FeedNode` shape identical in Tasks 6 and 8. `useTimelineFeed` return shape consumed correctly in Task 8. `groupCommitRuns` threshold constant shared.
+**Type consistency:** `TimelineEvent`/`TimelinePage`/`TimelineActorRef` field names match across Core (Task 1), reader (Task 2), wire types (Task 5), hook (Task 7), grouping (Task 6), component (Task 8). `TimelinePage.Degraded` added in Task 1 and consumed in Task 3 (502 map). `ActivePrPollSnapshot.IssueCommentCount` (Task 4 backend) flows reader→snapshot→gate. `FeedNode` shape identical in Tasks 6 and 8. `useTimelineFeed` return shape — now `{ events, status, hasOlder, loadOlder, loadingOlder, refetchNewest, reload, liveAnnouncement }` — is destructured consistently in Task 8; `ActivityFeed`'s `onRegisterRefetch` prop (Task 8) matches its caller in Task 9 Step 4b. `groupCommitRuns` threshold constant shared.
 
 ## Open items carried to implementation (from spec Risks)
 - **ReadyForReview verb** — Task 2 maps it to `ActivityVerb.Reviewed` provisionally; confirm/introduce a dedicated verb during Task 2 if `Reviewed` reads wrong in the UI.
 - **Commit-group across page boundaries** — Task 7 `loadOlder` appends older events; grouping (Task 8) re-runs over the full list each render, so a run split across a page merge re-coalesces automatically. Verify in Task 10 Step 5 with a PR whose commit burst spans a page.
 - **PrRootConversation test port** — Task 9 Step 5 requires the full frontend suite green; inventory the composer/draft tests first.
+- **No-op-count review live-refresh (deferred follow-up)** — the poller gate compares reviewer *counts*, so a COMMENT-state review with a body, or a review-request re-sent to an already-awaiting reviewer, changes no count and won't live-refresh (it still appears on the next manual refresh / navigation). Subsumed by the SSE per-event streaming follow-up; file it there. Live-validate the requested-reviewer-COMMENT case in Task 10 Step 5 to confirm whether GitHub bumps `AwaitingReviewers` for a requested reviewer's comment-only review (if it does, that sub-case is already covered).
+- **`refetchNewest` gap on >30 new events between frames** — the newest page is 30; if more than 30 events land between two `pr-updated` frames, the refetched page won't reach the previously-known top, leaving an un-fetched gap. Low likelihood at real frame frequency; no gap-detection in v1. Note it; revisit only if observed.
+- **`VERB_PHRASE` reuse** — Task 8 defines a local `VERB_PHRASE`; `ActivityRail`'s map is module-private. Prefer exporting `ActivityRail`'s map and importing it (single source) over forking the table, if the export is low-friction; otherwise the local copy is acceptable for v1 (keep the two in sync).

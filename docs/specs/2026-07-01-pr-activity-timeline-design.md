@@ -154,14 +154,21 @@ marker.
 from `ActivePrUpdated`, which *carries* `Approvals` / `ChangesRequested` / `Approvers` name-lists
 (#593) and which PR-detail already subscribes to for live mergeability (#655, `prDetailContext.tsx`).
 **Verified constraint (`ActivePrPoller.cs:301`):** the frame is only *published* when
-`firstPoll || headChanged || baseChanged || commentChanged || stateChanged || readinessChanged`. The
-reviewer name-lists ride the frame but do **not** trigger it — so a bare approval that doesn't flip
-merge-readiness, a review-request (touches only `AwaitingReviewers`), or a review-with-body (a
-`PULL_REQUEST_REVIEW`, not an issue comment) publishes **nothing**. Live-refresh for the events this
-feature exists to surface therefore requires **widening the poller's emission gate**: add a
-`reviewersChanged` / `reviewCountChanged` delta comparison against prior state, **or** introduce a
-dedicated review-detected bus event with its own publish site. This is a real, localized backend
-change — v1 includes it. On a published frame for the active PR, the feed refetches its newest page
+`firstPoll || headChanged || baseChanged || commentChanged || stateChanged || readinessChanged`.
+Crucially, `commentChanged` compares `snapshot.CommentCount`, which is `CountReviewComments` — the
+per-**inline-review-thread** comment count (`GitHubActivePrBatchReader.cs:106`); `ActiveSelection`
+does **not** fetch the PR's root issue-comment connection at all. So a new **root PR comment** — the
+feed's primary content — bumps nothing and publishes nothing, and the reviewer name-lists ride the
+frame but do not trigger it either (a bare approval that doesn't flip merge-readiness, or a
+review-request touching only `AwaitingReviewers`, publishes nothing). Live-refresh for the events
+this feature exists to surface therefore requires **widening the poller's emission gate** on two
+fronts: (1) fetch `comments{ totalCount }` into the snapshot and add an `issueCommentChanged` delta,
+and (2) add a `reviewersChanged` delta (approvals / changes-requested / awaiting-count) against prior
+state. The frontend counter must also bump on **every** `pr-updated` frame (in the raw
+`useActivePrUpdates` handler), not only on mergeability changes. This is a real, localized backend +
+frontend change — v1 includes it. **Known v1 limitation:** the reviewer gate is count-based, so a
+no-op-count review (a COMMENT-state review with a body, or a re-request to an already-awaiting
+reviewer) still won't live-refresh; that edge folds into the per-event streaming follow-up. On a published frame for the active PR, the feed refetches its newest page
 and merges (respecting the merge/scroll rules in *UI states & interactions*). No new SSE *stream* is
 added in v1; per-event streaming is the #1 follow-up.
 
