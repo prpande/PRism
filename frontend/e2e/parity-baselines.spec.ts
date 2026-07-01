@@ -202,6 +202,10 @@ test.describe('parity baselines — PR Detail', () => {
     await setupAndOpenHandoffParityFixture(page);
     const overview = page.locator('[data-testid="overview-tab"]');
     await overview.waitFor();
+    // #620 — the Overview activity feed now fetches /timeline and renders real
+    // content (FakePrTimelineFeedReader). Wait for a stable feed node before
+    // screenshotting so the capture isn't racing the feed's initial fetch.
+    await page.getByTestId('timeline-comment').first().waitFor();
     await page.addStyleTag({ content: KILL_ANIMATIONS_CSS });
     await expect(overview).toHaveScreenshot('pr-detail-overview.png', SCREENSHOT_OPTS);
   });
