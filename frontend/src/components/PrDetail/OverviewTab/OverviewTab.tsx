@@ -144,6 +144,8 @@ export function OverviewTab() {
           onRegisterRefetch={(fn) => {
             refetchRef.current = fn;
           }}
+          // replyContext is always defined in OverviewTab (built unconditionally above); no
+          // null guard needed here.
           composerSlot={
             <PrRootConversationActions
               replyContext={replyContext}
