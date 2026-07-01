@@ -303,6 +303,9 @@ public sealed partial class ActivePrPoller : BackgroundService, IImmediateRefres
             // #620: reviewer name-lists ride the frame (Approvals/ChangesRequested/AwaitingReviewers)
             // but never triggered the gate on their own. AwaitingReviewers is nullable
             // (IReadOnlyList<Reviewer>?) — `?.Count ?? 0` guards the REST path where it is null.
+            // Known limitation: this compares reviewer COUNTS, not reviewer IDENTITY — a same-count
+            // reviewer swap (e.g. one approver replaced by another) won't trip the gate on its own.
+            // Subsumed by the per-event SSE-streaming follow-up, which will diff identities directly.
             var reviewersChanged =
                 (state.LastApprovals is { } laApprovals && laApprovals != snapshot.Approvals) ||
                 (state.LastChangesRequested is { } laCr && laCr != snapshot.ChangesRequested) ||

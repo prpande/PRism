@@ -42,7 +42,7 @@ function Marker({ event }: { event: TimelineEvent }) {
     <li className={styles.marker} data-testid="timeline-marker">
       <Avatar src={event.actor.avatarUrl} login={event.actor.login ?? ''} size="sm" />
       <span className={styles.lead}>
-        <span className={styles.actor}>{event.actor.login}</span>{' '}
+        {event.actor.login && <span className={styles.actor}>{event.actor.login} </span>}
         <span className={styles.verb}>
           {phrase}
           {tail}
@@ -112,8 +112,9 @@ export function ActivityFeed({
   useEffect(() => {
     onRegisterRefetch?.(refetchNewest);
   }, [onRegisterRefetch, refetchNewest]);
-  // Bot toggle persists per session (spec: matches ActivityRail). Global key, not per-PR — the
-  // user's "show bots" preference is a viewing mode, not PR state.
+  // Bot toggle persists for this feed for the session (sessionStorage). Global key, not per-PR —
+  // the user's "show bots" preference is a viewing mode, not PR state. Note: ActivityRail's bot
+  // toggle is transient (no persistence), so this is intentionally feed-local, not a shared convention.
   const [showBots, setShowBots] = useState(
     () => sessionStorage.getItem('prism.activityFeed.showBots') === '1',
   );

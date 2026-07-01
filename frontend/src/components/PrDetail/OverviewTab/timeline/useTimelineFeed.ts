@@ -83,7 +83,7 @@ export function useTimelineFeed(prRef: PrReference, opts: { prUpdatedSignal: num
         // Announce WHAT arrived, not a raw total — and only on this live path (loadOlder must not announce).
         setLiveAnnouncement(
           fresh.length === 1 && top.actor.login
-            ? `${top.actor.login} ${top.verb}`
+            ? `${top.actor.login} ${top.verb.replace(/-/g, ' ')}`
             : `${fresh.length} new updates`,
         );
         setEvents((prev) => [...fresh, ...prev]);

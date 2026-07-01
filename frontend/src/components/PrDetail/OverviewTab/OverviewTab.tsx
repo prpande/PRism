@@ -1,4 +1,4 @@
-import { useMemo, useRef } from 'react';
+import { useCallback, useMemo, useRef } from 'react';
 import { useFileDiff } from '../../../hooks/useFileDiff';
 import { useAiSummary } from '../../../hooks/useAiSummary';
 import { useAiGate, useIsLiveMode } from '../../../hooks/useAiGate';
@@ -83,6 +83,11 @@ export function OverviewTab() {
   // the prUpdatedSignal-driven SSE backstop) is harmless — refetchNewest dedups
   // by id.
   const refetchRef = useRef<(() => void) | null>(null);
+  // Stable identity so ActivityFeed's onRegisterRefetch registration effect (deps include this
+  // callback) doesn't re-run on every OverviewTab render.
+  const handleRegisterRefetch = useCallback((fn: () => void) => {
+    refetchRef.current = fn;
+  }, []);
 
   // Hydrate `existingPrRootDraft` from the shared draft session so the
   // PR-root composer opens with the persisted body when one exists. PR-root
@@ -141,9 +146,7 @@ export function OverviewTab() {
         <ActivityFeed
           prRef={prRef}
           prUpdatedSignal={prUpdatedSignal}
-          onRegisterRefetch={(fn) => {
-            refetchRef.current = fn;
-          }}
+          onRegisterRefetch={handleRegisterRefetch}
           // replyContext is always defined in OverviewTab (built unconditionally above); no
           // null guard needed here.
           composerSlot={
