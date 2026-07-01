@@ -287,6 +287,7 @@ export function FileTree({
                   isViewed={viewedPaths.has(row.node.path)}
                   onSelectFile={onSelectFile}
                   focusLevel={focusByPath?.get(row.node.path) ?? null}
+                  commentState={commentStateByPath?.get(row.node.path) ?? null}
                 />
               ),
             )}
@@ -365,12 +366,14 @@ function FileCell({
   isViewed,
   onSelectFile,
   focusLevel,
+  commentState,
 }: {
   row: FileRow;
   isSelected: boolean;
   isViewed: boolean;
   onSelectFile: (path: string) => void;
   focusLevel: FocusLevel | null;
+  commentState: CommentIndicatorState | null;
 }) {
   const node = row.node;
   return (
@@ -416,6 +419,11 @@ function FileCell({
       {focusLevel && focusLevel !== 'low' && (
         <span className="sr-only">{` AI focus: ${focusLevel}`}</span>
       )}
+      {/* #513 — comment state in reading order (status word → name → AI focus →
+          comment state). Carries the resolved/unresolved distinction non-visually
+          so the accent-dim glyph is not a colour-only signal (WCAG 1.4.1). */}
+      {commentState === 'unresolved' && <span className="sr-only"> has unresolved comments</span>}
+      {commentState === 'resolved' && <span className="sr-only"> comments resolved</span>}
     </div>
   );
 }

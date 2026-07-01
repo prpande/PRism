@@ -757,4 +757,32 @@ describe('FileTree comment rail (#513)', () => {
     expect(col.querySelectorAll('[data-row-key]').length).toBe(1); // the parent dir's bare slot
     expect(col.children.length).toBe(3); // dir + 2 files, row-aligned with the other columns
   });
+
+  it('exposes comment state in reading order: status word → filename → comment state', () => {
+    const { container } = renderWithComments([f('a.ts')], new Map([['a.ts', 'unresolved']]));
+    const row = container.querySelector('[data-testid="files-tab-tree-row"]')!;
+    const text = row.textContent!;
+    // Order assertion (not mere containment): the comment sr-text must follow the
+    // filename, which must follow the status word. The AI-focus sr-span sits between
+    // name and comment by construction (Step 3 appends comment AFTER the AI block);
+    // it is absent here because focusEntries is null, so we pin the observable three.
+    const statusIdx = text.indexOf('Modified');
+    const nameIdx = text.indexOf('a.ts');
+    const commentIdx = text.indexOf('has unresolved comments');
+    expect(statusIdx).toBeGreaterThanOrEqual(0);
+    expect(nameIdx).toBeGreaterThan(statusIdx);
+    expect(commentIdx).toBeGreaterThan(nameIdx);
+  });
+
+  it('says "comments resolved" for a fully-resolved file', () => {
+    const { container } = renderWithComments([f('a.ts')], new Map([['a.ts', 'resolved']]));
+    const row = container.querySelector('[data-testid="files-tab-tree-row"]')!;
+    expect(row.textContent).toContain('comments resolved');
+  });
+
+  it('adds no comment sr-text for a file with no threads', () => {
+    const { container } = renderWithComments([f('a.ts')], new Map());
+    const row = container.querySelector('[data-testid="files-tab-tree-row"]')!;
+    expect(row.textContent).not.toContain('comment');
+  });
 });
