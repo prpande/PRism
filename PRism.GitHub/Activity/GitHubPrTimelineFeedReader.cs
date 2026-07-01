@@ -34,53 +34,61 @@ public sealed class GitHubPrTimelineFeedReader : IPrTimelineFeedReader
         // yet". A genuinely empty PR returns Degraded:false via the normal path below.
         var empty = new TimelinePage(Array.Empty<TimelineEvent>(), OlderCursor: null, HasOlder: false, Degraded: true);
 
-        var token = await _readToken().ConfigureAwait(false);
-        using var http = _httpFactory.CreateClient("github");
-        var endpoint = HostUrlResolver.GraphQlEndpoint(_readHost());
-        var payload = JsonSerializer.Serialize(new { query = BuildQuery(prRef, cursor, pageSize) });
-        using var content = new StringContent(payload, Encoding.UTF8, "application/json");
-        using var resp = await GitHubHttp.SendAsync(
-            http, HttpMethod.Post, endpoint.ToString(), token, ct, content: content, apiVersion: false).ConfigureAwait(false);
-        if (!resp.IsSuccessStatusCode) return empty;
-
-        using var stream = await resp.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
-        using var doc = await JsonDocument.ParseAsync(stream, cancellationToken: ct).ConfigureAwait(false);
-        if (!doc.RootElement.TryGetProperty("data", out var data)) return empty;
-        if (!TryGetPath(data, out var pr, "repository", "pullRequest")) return empty;
-        if (!TryGetPath(pr, out var items, "timelineItems")) return empty;
-
-        var hasOlder = items.TryGetProperty("pageInfo", out var pi)
-            && pi.TryGetProperty("hasPreviousPage", out var hp) && hp.GetBoolean();
-        string? olderCursor = null;
-        if (items.TryGetProperty("pageInfo", out var pi2)
-            && pi2.TryGetProperty("startCursor", out var sc) && sc.ValueKind == JsonValueKind.String)
-            olderCursor = sc.GetString();
-
-        var parsed = new List<TimelineEvent>();
-        if (items.TryGetProperty("nodes", out var nodes) && nodes.ValueKind == JsonValueKind.Array)
+        try
         {
-            foreach (var node in nodes.EnumerateArray())
+            var token = await _readToken().ConfigureAwait(false);
+            using var http = _httpFactory.CreateClient("github");
+            var endpoint = HostUrlResolver.GraphQlEndpoint(_readHost());
+            var payload = JsonSerializer.Serialize(new { query = BuildQuery(prRef, cursor, pageSize) });
+            using var content = new StringContent(payload, Encoding.UTF8, "application/json");
+            using var resp = await GitHubHttp.SendAsync(
+                http, HttpMethod.Post, endpoint.ToString(), token, ct, content: content, apiVersion: false).ConfigureAwait(false);
+            if (!resp.IsSuccessStatusCode) return empty;
+
+            using var stream = await resp.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
+            using var doc = await JsonDocument.ParseAsync(stream, cancellationToken: ct).ConfigureAwait(false);
+            if (!doc.RootElement.TryGetProperty("data", out var data)) return empty;
+            if (!TryGetPath(data, out var pr, "repository", "pullRequest")) return empty;
+            if (!TryGetPath(pr, out var items, "timelineItems")) return empty;
+
+            var hasOlder = items.TryGetProperty("pageInfo", out var pi)
+                && pi.TryGetProperty("hasPreviousPage", out var hp) && hp.GetBoolean();
+            string? olderCursor = null;
+            if (items.TryGetProperty("pageInfo", out var pi2)
+                && pi2.TryGetProperty("startCursor", out var sc) && sc.ValueKind == JsonValueKind.String)
+                olderCursor = sc.GetString();
+
+            var parsed = new List<TimelineEvent>();
+            if (items.TryGetProperty("nodes", out var nodes) && nodes.ValueKind == JsonValueKind.Array)
             {
-                var evt = ParseNode(node);
-                if (evt is not null) parsed.Add(evt);
+                foreach (var node in nodes.EnumerateArray())
+                {
+                    var evt = ParseNode(node);
+                    if (evt is not null) parsed.Add(evt);
+                }
             }
-        }
-        // GraphQL returns oldest→newest; the feed is newest-first. Order by a stable secondary key so
-        // same-timestamp ties (e.g. a squash-push and a comment landing in the same second) resolve
-        // deterministically across reloads (spec decision #4). LINQ OrderBy is a stable sort; List.Sort
-        // is not — do NOT swap this for parsed.Sort(...).
-        parsed = parsed
-            .OrderByDescending(e => e.Timestamp)
-            .ThenByDescending(e => e.Id, StringComparer.Ordinal)
-            .ToList();
+            // GraphQL returns oldest→newest; the feed is newest-first. Order by a stable secondary key so
+            // same-timestamp ties (e.g. a squash-push and a comment landing in the same second) resolve
+            // deterministically across reloads (spec decision #4). LINQ OrderBy is a stable sort; List.Sort
+            // is not — do NOT swap this for parsed.Sort(...).
+            parsed = parsed
+                .OrderByDescending(e => e.Timestamp)
+                .ThenByDescending(e => e.Id, StringComparer.Ordinal)
+                .ToList();
 
-        if (!hasOlder)
+            if (!hasOlder)
+            {
+                var opened = SynthesizeOpened(pr);
+                if (opened is not null) parsed.Add(opened);   // oldest element
+            }
+
+            return new TimelinePage(parsed, olderCursor, hasOlder);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+        catch (Exception ex) when (ex is HttpRequestException or JsonException or TaskCanceledException)
         {
-            var opened = SynthesizeOpened(pr);
-            if (opened is not null) parsed.Add(opened);   // oldest element
+            return empty;   // degrade, don't throw — mirrors GitHubPrTimelineReader
         }
-
-        return new TimelinePage(parsed, olderCursor, hasOlder);
     }
 
     private static string BuildQuery(PrReference pr, string? cursor, int pageSize)

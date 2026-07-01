@@ -70,6 +70,30 @@ public sealed class GitHubPrTimelineFeedReaderTests
     }
 
     [Fact]
+    public async Task Degrades_on_malformed_json()
+    {
+        var page = await MakeReader(HttpStatusCode.OK, "{ not json").ReadPageAsync(Pr, cursor: null, pageSize: 30, CancellationToken.None);
+        page.Events.Should().BeEmpty();
+        page.HasOlder.Should().BeFalse();
+        page.Degraded.Should().BeTrue();   // truncated/malformed body ≠ genuine-empty
+    }
+
+    [Fact]
+    public async Task Degrades_on_transport_failure()
+    {
+        var reader = new GitHubPrTimelineFeedReader(
+            new FakeHttpClientFactory(FakeHttpMessageHandler.Throws(new HttpRequestException("boom")), new Uri("https://api.github.com/")),
+            () => Task.FromResult<string?>("token"),
+            () => "https://github.com");
+
+        var page = await reader.ReadPageAsync(Pr, cursor: null, pageSize: 30, CancellationToken.None);
+
+        page.Events.Should().BeEmpty();
+        page.HasOlder.Should().BeFalse();
+        page.Degraded.Should().BeTrue();   // connection refused / DNS failure ≠ genuine-empty
+    }
+
+    [Fact]
     public async Task Orders_same_timestamp_nodes_deterministically()
     {
         // Two nodes with the identical committedDate/submittedAt: order must be stable by id, not
