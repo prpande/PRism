@@ -147,6 +147,16 @@
 .fileTree[data-ai-on='1'] .fileTreeHScrollSpacerCol {
   width: calc(var(--check-col-w) + var(--ai-col-w));
 }
+/* #513 — leading spacer reserving the comment rail's width so the synthetic bar
+   spans only the tree column. 0 by default; widened to --comment-col-w in lockstep
+   with .fileTreeCommentCol when the PR has threads. */
+.fileTreeHScrollSpacerColLead {
+  flex: 0 0 auto;
+  width: 0;
+}
+.fileTree[data-has-comments='1'] .fileTreeHScrollSpacerColLead {
+  width: var(--comment-col-w);
+}
 /* #492 — fixed AI focus column, between the scrolling tree and the checkbox column.
    Like .fileTreeCheckCol it lives outside .fileTreeScroll, so the dot never scrolls
    off-screen. Collapses to 0 width when AI is off (driven by data-ai-on on the root),

@@ -394,6 +394,10 @@ export function FileTree({
         className={`file-tree-hscroll-row ${styles.fileTreeHScrollRow}`}
         aria-hidden="true"
       >
+        {/* #513 — leading spacer mirrors the comment rail so the synthetic bar stays
+            aligned under .fileTreeScroll once the tree is shifted right by the rail.
+            Collapses to 0 in lockstep with the rail (same data-has-comments gate). */}
+        <div className={styles.fileTreeHScrollSpacerColLead} />
         <div
           ref={hScrollRef}
           className={`file-tree-hscroll ${styles.fileTreeHScroll}`}
