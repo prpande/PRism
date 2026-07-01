@@ -309,7 +309,9 @@ describe('FileTree comment rail (#513)', () => {
     const { container } = renderWithComments([f('dir/a.ts'), f('dir/b.ts')], new Map());
     // 2 file comment slots (data-comment-state) + 1 dir bare slot in the comment column
     const col = container.querySelector('.file-tree-comment-col')!;
-    expect(col.querySelectorAll('[data-comment-state]').length).toBe(2);
+    expect(col.querySelectorAll('[data-comment-state]').length).toBe(2); // one per file row
+    expect(col.querySelectorAll('[data-row-key]').length).toBe(1); // the parent dir's bare slot
+    expect(col.children.length).toBe(3); // dir + 2 files, row-aligned with the other columns
   });
 });
 ```
@@ -485,10 +487,20 @@ git commit -m "feat(#513): fixed left comment rail in FileTree with 3-state glyp
 Append to the `FileTree comment rail (#513)` describe in `FileTree.test.tsx`:
 
 ```tsx
-  it('exposes comment state to screen readers after the filename and AI focus', () => {
+  it('exposes comment state in reading order: status word → filename → comment state', () => {
     const { container } = renderWithComments([f('a.ts')], new Map([['a.ts', 'unresolved']]));
     const row = container.querySelector('[data-testid="files-tab-tree-row"]')!;
-    expect(row.textContent).toContain('has unresolved comments');
+    const text = row.textContent!;
+    // Order assertion (not mere containment): the comment sr-text must follow the
+    // filename, which must follow the status word. The AI-focus sr-span sits between
+    // name and comment by construction (Step 3 appends comment AFTER the AI block);
+    // it is absent here because focusEntries is null, so we pin the observable three.
+    const statusIdx = text.indexOf('Modified');
+    const nameIdx = text.indexOf('a.ts');
+    const commentIdx = text.indexOf('has unresolved comments');
+    expect(statusIdx).toBeGreaterThanOrEqual(0);
+    expect(nameIdx).toBeGreaterThan(statusIdx);
+    expect(commentIdx).toBeGreaterThan(nameIdx);
   });
 
   it('says "comments resolved" for a fully-resolved file', () => {
@@ -626,7 +638,10 @@ describe('FileTree full-row highlight (#513)', () => {
 
   it('sets hovered on all four slots when a row is hovered, and clears on leave', () => {
     const { container } = renderTree(null);
-    const body = container.querySelector('.file-tree-body-marker')! as HTMLElement; // see note
+    // The body div carries only the hashed CSS-module class (styles.fileTreeBody);
+    // target it by class-substring. It owns the delegated handlers, so it is the
+    // correct mouseLeave target for the clear-on-leave assertion.
+    const body = container.querySelector('[class*="fileTreeBody"]')! as HTMLElement;
     // hover via the AI gutter slot to prove gutter-hover resolution
     const aiSlot = slots(container, 'b.ts').find((el) => el.className.includes('fileTreeAiSlot'))!;
     fireEvent.mouseOver(aiSlot);
@@ -675,7 +690,7 @@ describe('FileTree full-row highlight (#513)', () => {
 });
 ```
 
-> Note on the `.file-tree-body-marker` lookup: Step 3 adds `className={styles.fileTreeBody}` — reuse `container.querySelector('[class*="fileTreeBody"]')` if a stable hook is preferred. Adjust the selector in the test to whatever the body div exposes; the `mouseLeave` target must be the body div that owns the handlers.
+> Note: the `[class*="fileTreeBody"]` lookup resolves the CSS-module-hashed body div (Step 3 gives it `className={styles.fileTreeBody}` and the `onMouseOver`/`onMouseLeave` handlers). If a stable hook is preferred later, add a `data-testid` to that div in Step 3 and target it instead — the `mouseLeave` target must be the div that owns the handlers.
 
 - [ ] **Step 2: Run tests to verify they fail**
 
@@ -1137,7 +1152,15 @@ Per project memory: serve detached via `run.ps1` (port 5180) with the real data 
 
 - [ ] **Step 2: Capture the three states, both themes**
 
-With Playwright MCP (serve over HTTP; `file://` is blocked), screenshot the file tree in light and dark showing: a file with the solid-accent glyph (unresolved), a file with the dimmed glyph (resolved), and a file with a blank slot (none). Include at least one frame with the **resolved** glyph on the **selected** row and one on a **hovered** row, so the resolved-vs-blank contrast on the selected/hover wash is visually proven (Accessibility requirement). If the dimmed 0.45 glyph visually collapses into the blank state on the selected wash in either theme, raise the resolved opacity floor (edit `.fileTreeCommentSlotResolved`) until distinguishable, re-run the FE suite, and note the deviation in the PR `## Proof`.
+With Playwright MCP (serve over HTTP; `file://` is blocked), screenshot the file tree in light and dark showing: a file with the solid-accent glyph (unresolved), a file with the dimmed glyph (resolved), and a file with a blank slot (none). Include at least one frame with the **resolved** glyph on the **selected** row and one on a **hovered** row, so the resolved-vs-blank contrast on the selected/hover wash is proven (Accessibility requirement). Also capture a **no-comment (blank) row under hover and selected** in both themes to confirm the rail still reads seamless (no residual gutter edge) in the state most likely to reveal one.
+
+- [ ] **Step 2a: Objectively measure the resolved-glyph contrast on the selected wash (not eyeball-only)**
+
+Judgment-by-screenshot is not sufficient here — oklch surface scales are theme-asymmetric (light descends, dark ascends+compressed), so "looks fine in light" does not transfer to dark, and the resolved glyph is a same-hue accent tint over an accent-soft wash. Measure the rendered contrast objectively via the project's 1px-canvas method (`getComputedStyle` returns authored oklch, not rgb — sample through a canvas). In the running app, on a **selected** row carrying a **resolved** glyph, sample the glyph's effective painted color (accent @ 0.45 composited over the selected wash) and the adjacent blank-slot background, and compute their ΔL / contrast. **Acceptance:** the resolved glyph must be perceptibly distinct from the blank slot on rest, hover, AND selected in BOTH themes. If it fails on the selected wash in either theme, raise `.fileTreeCommentSlotResolved`'s opacity floor (or swap the opacity dim for a hue/stroke cue), re-run the FE suite, and record the deviation from the owner-approved 0.45 at-rest value in the PR `## Proof`. (The 0.45 value is the approved at-rest treatment; this step guards it under the new washes, it does not override it.)
+
+- [ ] **Step 2b: Re-verify the pre-existing AI Medium-focus dot on the new washes**
+
+Task 5 paints the hover/selected backgrounds under the AI column for the first time (today it stays `--surface-1`). The row-level Medium-focus dot (`.fileTreeAiMed`, a flat `opacity: 0.6` accent dot) was gate-verified only against static `--surface-1` — unlike the header marker, it uses no theme-aware token. Screenshot (both themes) a row with a Medium-focus AI dot in the **hovered** and **selected** states and confirm the dot stays visible against `--surface-3` and the accent-soft selected wash. If it doesn't, bump `.fileTreeAiMed`'s opacity or move it to a theme-aware token (mirroring the header's `--ai-idle-opacity`), re-run the FE suite, and note it in `## Proof`.
 
 - [ ] **Step 3: Verify no unintended visual-baseline regression**
 

@@ -81,8 +81,10 @@ Mirror the established fixed-column pattern (`.file-tree-ai-col` / `.file-tree-c
 Glyph color is set on the slot via a state class:
 
 ```css
-.fileTreeCommentSlot--unresolved { color: var(--accent); }
-.fileTreeCommentSlot--resolved   { color: var(--accent); opacity: 0.45; }
+/* CSS-module classes are camelCase per PRism convention (BEM `--` lives only in the
+   parallel global className strings, not the module). */
+.fileTreeCommentSlotUnresolved { color: var(--accent); }
+.fileTreeCommentSlotResolved   { color: var(--accent); opacity: 0.45; }
 ```
 
 ## Accessibility
