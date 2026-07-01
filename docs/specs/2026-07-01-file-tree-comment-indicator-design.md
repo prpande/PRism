@@ -118,6 +118,8 @@ The issue AC says "show a comment indicator … **with the count**." Per owner d
 
 ## Out of scope (follow-ups)
 
+- **Directory rollup on collapsed folders** (ce-doc-review P1, owner-deferred 2026-07-01). A collapsed directory shows no aggregate comment signal for its subtree — a reviewer must expand it to see per-file glyphs. Deferred for parity with the existing AI-dot column, which has the same limitation; the tree is expanded by default, so the signal only hides on deliberate collapse. Revisit as a follow-up (spanning all three fixed gutters) if it proves annoying in use.
 - **Click-to-jump** to a file's first thread (interaction). Filing as a follow-up if wanted.
 - **Outdated-thread** distinction (anchorSha drift).
 - **Comment count** numerals, should they ever be wanted back.
+- **Forced-colors / High Contrast** visual distinction for the opacity-only states — app-wide gap, tracked for a codebase-wide pass (see Accessibility).
