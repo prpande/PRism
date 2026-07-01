@@ -3,6 +3,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { FileTree } from './FileTree';
 import { AI_TREE_ANALYZED_LABEL } from '../../Ai/aiStrings';
 import type { FileChange, FileFocus, FileFocusStatus } from '../../../api/types';
+import type { CommentIndicatorState, CommentCounts } from './commentIndicatorState';
 
 function file(path: string, overrides: Partial<FileChange> = {}): FileChange {
   return { path, status: 'modified', hunks: [], ...overrides };
@@ -695,5 +696,207 @@ describe('FileTree — header AI marker (Task 5 / #508)', () => {
     renderTree({ aiPreview: true, focusStatus: 'loading' });
     const progress = screen.getByTestId('file-tree-ai-progress');
     expect(within(progress).queryByText(AI_TREE_ANALYZED_LABEL)).not.toBeInTheDocument();
+  });
+});
+
+function renderWithComments(
+  files: FileChange[],
+  commentStateByPath: Map<string, CommentIndicatorState> | null,
+  commentCountsByPath: Map<string, CommentCounts> | null = null,
+) {
+  return render(
+    <FileTree
+      files={files}
+      selectedPath={null}
+      onSelectFile={() => {}}
+      viewedPaths={new Set()}
+      onToggleViewed={() => {}}
+      focusEntries={null}
+      focusStatus="no-changes"
+      aiPreview={false}
+      commentStateByPath={commentStateByPath}
+      commentCountsByPath={commentCountsByPath}
+    />,
+  );
+}
+
+describe('FileTree comment rail (#513)', () => {
+  const f = (path: string): FileChange => ({ path, status: 'modified', hunks: [] });
+
+  it('collapses the rail (data-has-comments=0) when there are no threads', () => {
+    const { getByTestId } = renderWithComments([f('a.ts')], new Map());
+    expect(getByTestId('file-tree').getAttribute('data-has-comments')).toBe('0');
+  });
+
+  it('expands the rail (data-has-comments=1) when a file has threads', () => {
+    const { getByTestId } = renderWithComments([f('a.ts')], new Map([['a.ts', 'unresolved']]));
+    expect(getByTestId('file-tree').getAttribute('data-has-comments')).toBe('1');
+  });
+
+  it('renders the correct comment-state per file row and blank otherwise', () => {
+    const map = new Map<string, CommentIndicatorState>([
+      ['a.ts', 'unresolved'],
+      ['b.ts', 'resolved'],
+    ]);
+    const { container } = renderWithComments([f('a.ts'), f('b.ts'), f('c.ts')], map);
+    const slots = container.querySelectorAll('[data-comment-state]');
+    expect(slots.length).toBe(3); // one per file row
+    const byPath = (p: string) =>
+      container.querySelector(`[data-row-path="${p}"][data-comment-state]`)!;
+    expect(byPath('a.ts').getAttribute('data-comment-state')).toBe('unresolved');
+    expect(byPath('b.ts').getAttribute('data-comment-state')).toBe('resolved');
+    expect(byPath('c.ts').getAttribute('data-comment-state')).toBe('none');
+    // glyph present only for the two stateful rows
+    expect(byPath('a.ts').querySelector('svg')).not.toBeNull();
+    expect(byPath('c.ts').querySelector('svg')).toBeNull();
+    // #513 — the resolved row (and only it) carries the green success tick
+    expect(byPath('b.ts').querySelector('[data-resolved-tick]')).not.toBeNull();
+    expect(byPath('a.ts').querySelector('[data-resolved-tick]')).toBeNull();
+    // #513 — the unresolved row (and only it) renders the solid/filled bubble
+    expect(byPath('a.ts').querySelector('[data-comment-fill]')).not.toBeNull();
+    expect(byPath('b.ts').querySelector('[data-comment-fill]')).toBeNull();
+  });
+
+  it('puts a thread-count tooltip on the comment slot; none for a threadless file', () => {
+    const state = new Map<string, CommentIndicatorState>([
+      ['a.ts', 'unresolved'],
+      ['b.ts', 'resolved'],
+    ]);
+    const counts = new Map<string, CommentCounts>([
+      ['a.ts', { open: 2, resolved: 1 }],
+      ['b.ts', { open: 0, resolved: 3 }],
+    ]);
+    const { container } = renderWithComments([f('a.ts'), f('b.ts'), f('c.ts')], state, counts);
+    const byPath = (p: string) =>
+      container.querySelector(`[data-row-path="${p}"][data-comment-state]`)!;
+    expect(byPath('a.ts').getAttribute('title')).toBe('2 unresolved · 1 resolved');
+    expect(byPath('b.ts').getAttribute('title')).toBe('3 resolved');
+    expect(byPath('c.ts').getAttribute('title')).toBeNull(); // no threads → no tooltip
+  });
+
+  it('keeps the four columns row-aligned: one comment slot per file, dirs get a bare slot', () => {
+    const { container } = renderWithComments([f('dir/a.ts'), f('dir/b.ts')], new Map());
+    // 2 file comment slots (data-comment-state) + 1 dir bare slot in the comment column
+    const col = container.querySelector('.file-tree-comment-col')!;
+    expect(col.querySelectorAll('[data-comment-state]').length).toBe(2); // one per file row
+    expect(col.querySelectorAll('[data-row-key]').length).toBe(1); // the parent dir's bare slot
+    expect(col.children.length).toBe(3); // dir + 2 files, row-aligned with the other columns
+  });
+
+  it('exposes comment state in reading order: status word → filename → comment state', () => {
+    const { container } = renderWithComments([f('a.ts')], new Map([['a.ts', 'unresolved']]));
+    const row = container.querySelector('[data-testid="files-tab-tree-row"]')!;
+    const text = row.textContent!;
+    // Order assertion (not mere containment): the comment sr-text must follow the
+    // filename, which must follow the status word. The AI-focus sr-span sits between
+    // name and comment by construction (Step 3 appends comment AFTER the AI block);
+    // it is absent here because focusEntries is null, so we pin the observable three.
+    const statusIdx = text.indexOf('Modified');
+    const nameIdx = text.indexOf('a.ts');
+    const commentIdx = text.indexOf('has unresolved comments');
+    expect(statusIdx).toBeGreaterThanOrEqual(0);
+    expect(nameIdx).toBeGreaterThan(statusIdx);
+    expect(commentIdx).toBeGreaterThan(nameIdx);
+  });
+
+  it('says "comments resolved" for a fully-resolved file', () => {
+    const { container } = renderWithComments([f('a.ts')], new Map([['a.ts', 'resolved']]));
+    const row = container.querySelector('[data-testid="files-tab-tree-row"]')!;
+    expect(row.textContent).toContain('comments resolved');
+  });
+
+  it('adds no comment sr-text for a file with no threads', () => {
+    const { container } = renderWithComments([f('a.ts')], new Map());
+    const row = container.querySelector('[data-testid="files-tab-tree-row"]')!;
+    expect(row.textContent).not.toContain('comment');
+  });
+});
+
+describe('FileTree full-row highlight (#513)', () => {
+  const f = (path: string): FileChange => ({ path, status: 'modified', hunks: [] });
+
+  function renderTree(selectedPath: string | null) {
+    return render(
+      <FileTree
+        files={[f('a.ts'), f('b.ts')]}
+        selectedPath={selectedPath}
+        onSelectFile={() => {}}
+        viewedPaths={new Set()}
+        onToggleViewed={() => {}}
+        focusEntries={null}
+        focusStatus="no-changes"
+        aiPreview
+        commentStateByPath={new Map([['a.ts', 'unresolved']])}
+      />,
+    );
+  }
+
+  const slots = (container: HTMLElement, path: string) =>
+    Array.from(container.querySelectorAll(`[data-row-path="${path}"]`));
+
+  it('marks all four column slots selected for the selected file (not just the name cell)', () => {
+    const { container } = renderTree('a.ts');
+    const marked = slots(container, 'a.ts').filter(
+      (el) => el.getAttribute('data-row-selected') === 'true',
+    );
+    expect(marked.length).toBe(4); // comment, name, ai, check
+    expect(
+      slots(container, 'b.ts').some((el) => el.getAttribute('data-row-selected') === 'true'),
+    ).toBe(false);
+  });
+
+  it('sets hovered on all four slots when a row is hovered, and clears on leave', () => {
+    const { container } = renderTree(null);
+    // The body div carries only the hashed CSS-module class (styles.fileTreeBody);
+    // target it by class-substring. It owns the delegated handlers, so it is the
+    // correct mouseLeave target for the clear-on-leave assertion.
+    const body = container.querySelector('[class*="fileTreeBody"]')! as HTMLElement;
+    // hover via the AI gutter slot to prove gutter-hover resolution
+    const aiSlot = slots(container, 'b.ts').find((el) => el.className.includes('fileTreeAiSlot'))!;
+    fireEvent.mouseOver(aiSlot);
+    expect(
+      slots(container, 'b.ts').filter((el) => el.getAttribute('data-row-hovered') === 'true')
+        .length,
+    ).toBe(4);
+    fireEvent.mouseLeave(body);
+    expect(
+      slots(container, 'b.ts').some((el) => el.getAttribute('data-row-hovered') === 'true'),
+    ).toBe(false);
+  });
+
+  it('selected wins: hovering the selected row keeps selected and adds hover flag without dropping selected', () => {
+    const { container } = renderTree('a.ts');
+    const nameCell = slots(container, 'a.ts').find(
+      (el) => el.getAttribute('data-testid') === 'files-tab-tree-row',
+    )!;
+    fireEvent.mouseOver(nameCell);
+    const sel = slots(container, 'a.ts');
+    expect(sel.every((el) => el.getAttribute('data-row-selected') === 'true')).toBe(true);
+    // Assert the hover flag also coexists on the row; CSS precedence (selected after
+    // hover) relies on both flags being present at once, not just selected surviving.
+    expect(sel.every((el) => el.getAttribute('data-row-hovered') === 'true')).toBe(true);
+  });
+
+  it('directory rows hover across their empty gutter slots and never enter selected', () => {
+    const { container } = render(
+      <FileTree
+        files={[f('dir/a.ts')]}
+        selectedPath="dir/a.ts"
+        onSelectFile={() => {}}
+        viewedPaths={new Set()}
+        onToggleViewed={() => {}}
+        focusEntries={null}
+        focusStatus="no-changes"
+        aiPreview
+        commentStateByPath={new Map()}
+      />,
+    );
+    const dirSlots = Array.from(container.querySelectorAll('[data-row-key]'));
+    expect(dirSlots.length).toBeGreaterThanOrEqual(1);
+    fireEvent.mouseOver(dirSlots[0]);
+    const dirKey = dirSlots[0].getAttribute('data-row-key')!;
+    const marked = Array.from(container.querySelectorAll(`[data-row-key="${dirKey}"]`));
+    expect(marked.every((el) => el.getAttribute('data-row-selected') !== 'true')).toBe(true);
+    expect(marked.some((el) => el.getAttribute('data-row-hovered') === 'true')).toBe(true);
   });
 });
