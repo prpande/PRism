@@ -31,6 +31,7 @@ export function makePrDetailContextValue(
     toggleViewed: vi.fn(),
     reload: vi.fn(),
     isLoading: false,
+    prUpdatedSignal: 0,
     ...overrides,
   };
 }

@@ -54,6 +54,11 @@ export interface PrDetailContextValue {
   // Undefined until the first mergeReadinessChanged event arrives; the panel prefers this value
   // over the frozen snapshot seed (pr.mergeReadiness) once set.
   liveMergeReadiness?: MergeReadiness;
+  // #620 — monotonically-increasing counter bumped on every pr-updated SSE frame for this PR
+  // (useActivePrUpdates.prUpdatedSignal), regardless of what changed. ActivityFeed passes this to
+  // useTimelineFeed so a bare approval, review-request, or root comment live-refreshes the feed —
+  // NOT gated on liveMergeReadiness changing.
+  prUpdatedSignal: number;
 }
 
 const PrDetailContext = createContext<PrDetailContextValue | null>(null);

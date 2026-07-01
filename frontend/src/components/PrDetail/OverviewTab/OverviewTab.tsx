@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useMemo, useRef } from 'react';
 import { useFileDiff } from '../../../hooks/useFileDiff';
 import { useAiSummary } from '../../../hooks/useAiSummary';
 import { useAiGate, useIsLiveMode } from '../../../hooks/useAiGate';
@@ -8,7 +8,11 @@ import { buildAllRange } from '../range';
 import { AiSummaryCard } from './AiSummaryCard';
 import { PrDescription } from './PrDescription';
 import { StatsTiles } from './StatsTiles';
-import { PrRootConversation, type PrRootConversationReplyContext } from './PrRootConversation';
+import {
+  PrRootConversationActions,
+  type PrRootConversationReplyContext,
+} from './PrRootConversation';
+import { ActivityFeed } from './timeline/ActivityFeed';
 import { ReviewFilesCta } from './ReviewFilesCta';
 import { PrActionsPanel } from './PrActionsPanel';
 import { prRootDraft } from '../draftKinds';
@@ -25,6 +29,7 @@ export function OverviewTab() {
     subscribed,
     baseShaChanged,
     viewedPaths,
+    prUpdatedSignal,
   } = usePrDetailContext();
   const aiOn = useAiGate('summary');
   const live = useIsLiveMode();
@@ -69,6 +74,15 @@ export function OverviewTab() {
   const hasFiles = !(diff.data !== null && diff.data.files.length === 0);
 
   const handleReviewFiles = () => onSelectSubTab('files');
+
+  // #620 — bridges the lifted composer's onPosted straight into ActivityFeed's
+  // refetchNewest for an immediate (pre-SSE/poll) appearance of the user's own
+  // comment. ActivityFeed registers refetchNewest into this ref via
+  // onRegisterRefetch; the composer (built here, passed down as an opaque
+  // composerSlot) can't otherwise reach it. A double refetch (this bridge +
+  // the prUpdatedSignal-driven SSE backstop) is harmless — refetchNewest dedups
+  // by id.
+  const refetchRef = useRef<(() => void) | null>(null);
 
   // Hydrate `existingPrRootDraft` from the shared draft session so the
   // PR-root composer opens with the persisted body when one exists. PR-root
@@ -124,7 +138,19 @@ export function OverviewTab() {
           threadsCount={threadsCount}
           viewedCount={viewedCount}
         />
-        <PrRootConversation comments={prDetail.rootComments} replyContext={replyContext} />
+        <ActivityFeed
+          prRef={prRef}
+          prUpdatedSignal={prUpdatedSignal}
+          onRegisterRefetch={(fn) => {
+            refetchRef.current = fn;
+          }}
+          composerSlot={
+            <PrRootConversationActions
+              replyContext={replyContext}
+              onPosted={() => refetchRef.current?.()}
+            />
+          }
+        />
         <ReviewFilesCta hasFiles={hasFiles} onReviewFiles={handleReviewFiles} />
       </div>
       <PrActionsPanel />

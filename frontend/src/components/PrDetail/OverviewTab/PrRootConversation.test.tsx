@@ -1,21 +1,18 @@
-import { render, screen, within } from '@testing-library/react';
-import { describe, it, expect } from 'vitest';
-import { PrRootConversation, type PrRootConversationReplyContext } from './PrRootConversation';
-import type { IssueCommentDto, PrReference } from '../../../api/types';
+import { render, screen, waitFor } from '@testing-library/react';
+import { describe, it, expect, vi } from 'vitest';
+import * as draftApi from '../../../api/draft';
+import * as rootCommentApi from '../../../api/rootComment';
+import {
+  PrRootConversationActions,
+  type PrRootConversationReplyContext,
+} from './PrRootConversation';
+import type { PrReference } from '../../../api/types';
 
-const aliceComment: IssueCommentDto = {
-  id: 101,
-  author: 'alice',
-  createdAt: '2026-05-08T14:00:00Z',
-  body: 'Looks good — see comment about **WhenAll** semantics.',
-};
-
-const bobComment: IssueCommentDto = {
-  id: 102,
-  author: 'bob',
-  createdAt: '2026-05-08T15:00:00Z',
-  body: 'Acknowledged.',
-};
+// #620 — PrRootConversation's comment-list rendering moved to ActivityFeed
+// (see ActivityFeed.test.tsx for comment/marker rendering coverage). This
+// file now covers only PrRootConversationActions: the lifted composer +
+// Mark-all-read actions, ported from the old PrRootConversation composer
+// cases, plus the new onPosted refetch-bridge wiring.
 
 const ref: PrReference = { owner: 'octocat', repo: 'hello', number: 42 };
 
@@ -27,15 +24,9 @@ const replyContext: PrRootConversationReplyContext = {
   onComposerClose: () => undefined,
 };
 
-describe('PrRootConversation', () => {
-  it('renders the read-only fallback footer when replyContext is omitted', () => {
-    render(<PrRootConversation comments={[]} />);
-    expect(screen.getByText(/Composer not available in this context\./)).toBeInTheDocument();
-  });
-
-  it('replaces the read-only footer with Reply + Mark-all-read actions when replyContext is supplied', () => {
-    render(<PrRootConversation comments={[]} replyContext={replyContext} />);
-    expect(screen.queryByText(/Composer not available in this context\./)).not.toBeInTheDocument();
+describe('PrRootConversationActions', () => {
+  it('renders the Reply and Mark-all-read actions', () => {
+    render(<PrRootConversationActions replyContext={replyContext} />);
     expect(
       screen.getByRole('button', { name: 'Reply to the PR conversation' }),
     ).toBeInTheDocument();
@@ -44,78 +35,32 @@ describe('PrRootConversation', () => {
 
   it('clicking Reply mounts the PrRootReplyComposer (form role with PR-root aria-label)', async () => {
     const user = await import('@testing-library/user-event').then((m) => m.default.setup());
-    render(<PrRootConversation comments={[]} replyContext={replyContext} />);
+    render(<PrRootConversationActions replyContext={replyContext} />);
     await user.click(screen.getByRole('button', { name: 'Reply to the PR conversation' }));
     expect(screen.getByRole('form', { name: 'Reply to this PR' })).toBeInTheDocument();
   });
 
-  it('renders no comment entries when comments is empty', () => {
-    const { container } = render(<PrRootConversation comments={[]} />);
-    expect(within(container).queryAllByTestId('pr-root-comment')).toHaveLength(0);
-  });
+  it('forwards onPosted through to the mounted composer, firing on a successful post (#620)', async () => {
+    const user = await import('@testing-library/user-event').then((m) => m.default.setup());
+    vi.spyOn(draftApi, 'sendPatch').mockResolvedValue({
+      ok: true,
+      status: 200,
+      data: { id: 'uuid-existing' },
+    } as never);
+    vi.spyOn(rootCommentApi, 'postRootComment').mockResolvedValue({ ok: true });
+    const onPosted = vi.fn();
 
-  it('renders a single comment with author, timestamp, and Markdown body', () => {
-    render(<PrRootConversation comments={[aliceComment]} />);
-    expect(screen.getByText('alice')).toBeInTheDocument();
-    const timeEl = screen.getByText((_, el) => el?.tagName.toLowerCase() === 'time');
-    expect(timeEl).toHaveAttribute('dateTime', '2026-05-08T14:00:00Z');
-    const strong = screen.getByText('WhenAll');
-    expect(strong.tagName.toLowerCase()).toBe('strong');
-  });
+    render(
+      <PrRootConversationActions
+        replyContext={{ ...replyContext, existingPrRootDraft: null }}
+        onPosted={onPosted}
+      />,
+    );
+    await user.click(screen.getByRole('button', { name: 'Reply to the PR conversation' }));
+    const editor = screen.getByLabelText('PR-level body');
+    await user.type(editor, 'ready to ship — long enough to clear the create threshold');
+    await user.click(screen.getByRole('button', { name: /^Post$/ }));
 
-  it('renders multiple comments in the supplied order', () => {
-    render(<PrRootConversation comments={[aliceComment, bobComment]} />);
-    const authors = screen.getAllByText(/^(alice|bob)$/).map((el) => el.textContent);
-    expect(authors).toEqual(['alice', 'bob']);
-  });
-
-  it('does not render any Reply button when replyContext is omitted', () => {
-    render(<PrRootConversation comments={[aliceComment, bobComment]} />);
-    expect(screen.queryByRole('button', { name: /reply/i })).not.toBeInTheDocument();
-  });
-
-  it('does not render a Mark all read button when replyContext is omitted', () => {
-    render(<PrRootConversation comments={[aliceComment]} />);
-    expect(screen.queryByRole('button', { name: /mark all read/i })).not.toBeInTheDocument();
-  });
-
-  it('keys comments by id (no React duplicate-key warning when shapes differ)', () => {
-    const { container } = render(<PrRootConversation comments={[aliceComment, bobComment]} />);
-    const items = within(container).queryAllByTestId('pr-root-comment');
-    expect(items).toHaveLength(2);
-  });
-
-  it('isolates each comment so author is scoped to its entry', () => {
-    const { container } = render(<PrRootConversation comments={[aliceComment, bobComment]} />);
-    const entries = within(container).queryAllByTestId('pr-root-comment');
-    expect(within(entries[0] as HTMLElement).getByText('alice')).toBeInTheDocument();
-    expect(within(entries[1] as HTMLElement).getByText('bob')).toBeInTheDocument();
-  });
-
-  it('co-locates author, timestamp, and body inside a single comment card', () => {
-    const { container } = render(<PrRootConversation comments={[aliceComment]} />);
-    const entry = within(container).getByTestId('pr-root-comment');
-    // author, the <time> element, and the markdown body all live within ONE entry
-    expect(within(entry).getByText('alice')).toBeInTheDocument();
-    expect(
-      within(entry).getByText((_, el) => el?.tagName.toLowerCase() === 'time'),
-    ).toHaveAttribute('dateTime', '2026-05-08T14:00:00Z');
-    expect(within(entry).getByText('WhenAll').tagName.toLowerCase()).toBe('strong');
-  });
-
-  it('renders an avatar in the comment band next to the author', () => {
-    const withAvatar: IssueCommentDto[] = [
-      {
-        id: 1,
-        author: 'alice',
-        createdAt: '2026-01-02T00:00:00Z',
-        body: 'looks good',
-        avatarUrl: 'https://avatars.githubusercontent.com/u/1?v=4',
-      },
-    ];
-    render(<PrRootConversation comments={withAvatar} replyContext={undefined} />);
-    const card = screen.getByTestId('pr-root-comment');
-    expect(card.querySelector('[data-testid="avatar"]')).not.toBeNull();
-    expect(card.textContent).toContain('alice');
+    await waitFor(() => expect(onPosted).toHaveBeenCalledTimes(1));
   });
 });

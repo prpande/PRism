@@ -168,6 +168,7 @@ function Wrapper({ prDetail }: { prDetail: PrDetailDto }) {
         toggleViewed: () => {},
         reload: () => {},
         isLoading: false,
+        prUpdatedSignal: 0,
       }}
     >
       <Outlet />

@@ -44,6 +44,7 @@ function Harness({
     toggleViewed: () => {},
     reload: () => {},
     isLoading: false,
+    prUpdatedSignal: 0,
   };
   return (
     <PrDetailContextProvider value={value}>

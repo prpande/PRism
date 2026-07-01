@@ -30,6 +30,7 @@ test('provides prRef + session to children', () => {
     toggleViewed: vi.fn(),
     reload: vi.fn(),
     isLoading: false,
+    prUpdatedSignal: 0,
   } satisfies PrDetailContextValue;
   render(
     <PrDetailContextProvider value={value}>

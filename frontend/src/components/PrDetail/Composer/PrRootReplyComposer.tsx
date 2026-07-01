@@ -29,6 +29,10 @@ export interface PrRootReplyComposerProps {
   onDraftIdChange: (id: string | null) => void;
   registerOpenComposer: (draftId: string, ownerKey: ComposerOwnerKey) => () => void;
   onClose: () => void;
+  // #620 — fires on a successful post, alongside onClose. Distinct from onClose because onClose
+  // also fires on discard/cancel; the caller (OverviewTab) bridges this into ActivityFeed's
+  // refetchNewest, so a discard must not trigger a spurious refetch.
+  onPosted?: () => void;
   // Spec § 5.7a. Set when a peer tab claimed cross-tab ownership of this
   // PR. Disables the action buttons; the wrapped editor short-circuits
   // autosave via its own `readOnly` gate.
@@ -43,6 +47,7 @@ export function PrRootReplyComposer({
   onDraftIdChange,
   registerOpenComposer,
   onClose,
+  onPosted,
   readOnly = false,
 }: PrRootReplyComposerProps) {
   // Live body tracked from the wrapped editor (spec § 4.7 — drives Post gating
@@ -131,7 +136,9 @@ export function PrRootReplyComposer({
         return;
       }
       // Success: the SSE refetch (Task 14) reflects the posted comment + draft
-      // removal.
+      // removal. onPosted fires first so the caller's immediate feed-refetch
+      // bridge (#620) races against, rather than waits on, that SSE path.
+      onPosted?.();
       onClose();
     } finally {
       setPostInFlight(false);
