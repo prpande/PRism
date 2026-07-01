@@ -6,6 +6,7 @@ import { useFilesTabShortcuts } from '../../../hooks/useFilesTabShortcuts';
 import { useAiGate } from '../../../hooks/useAiGate';
 import { useAiHunkAnnotations } from '../../../hooks/useAiHunkAnnotations';
 import { FileTree } from './FileTree';
+import { deriveCommentStateByPath } from './commentIndicatorState';
 import { DiffPane } from './DiffPane';
 import type { DiffMode } from './DiffPane';
 import { DiffViewToggle } from './DiffViewToggle';
@@ -290,6 +291,13 @@ export function FilesTab() {
   const fileThreads = useMemo(
     () => (selectedPath ? prDetail.reviewComments.filter((t) => t.filePath === selectedPath) : []),
     [prDetail.reviewComments, selectedPath],
+  );
+
+  // #513 — per-file comment indicator state. Reactive for free: posting/resolving a
+  // thread updates prDetail.reviewComments → this recomputes → the tree glyph updates.
+  const commentStateByPath = useMemo(
+    () => deriveCommentStateByPath(prDetail.reviewComments),
+    [prDetail.reviewComments],
   );
 
   // Hoisted: single flat list of all real comments — used both by the optimistic
@@ -752,6 +760,7 @@ export function FilesTab() {
               focusStatus={fileFocus.status}
               annotationsLoading={aiHunkAnnotations.state === 'loading'}
               aiPreview={aiDotsOn}
+              commentStateByPath={commentStateByPath}
             />
           )}
         </div>
