@@ -35,4 +35,23 @@ describe('groupCommitRuns', () => {
     const nodes = groupCommitRuns([ev('1', 'approved')]);
     expect(nodes).toEqual([{ kind: 'event', event: expect.objectContaining({ id: '1' }) }]);
   });
+
+  it('does not collapse at exactly the threshold (boundary: threshold=5, run=5)', () => {
+    const run = Array.from({ length: 5 }, (_, i) => ev(String(i), 'pushed'));
+    expect(groupCommitRuns(run, 5)[0]).toMatchObject({
+      kind: 'commit-group',
+      collapsedByDefault: false,
+    });
+  });
+
+  it('groups a single commit into a non-collapsed commit-group', () => {
+    const nodes = groupCommitRuns([ev('1', 'pushed')]);
+    expect(nodes).toHaveLength(1);
+    expect(nodes[0]).toMatchObject({ kind: 'commit-group', collapsedByDefault: false });
+    expect((nodes[0] as { commits: unknown[] }).commits).toHaveLength(1);
+  });
+
+  it('returns empty array for empty input', () => {
+    expect(groupCommitRuns([])).toEqual([]);
+  });
 });
