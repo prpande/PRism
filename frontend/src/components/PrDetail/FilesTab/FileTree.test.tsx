@@ -847,7 +847,9 @@ describe('FileTree full-row highlight (#513)', () => {
     fireEvent.mouseOver(nameCell);
     const sel = slots(container, 'a.ts');
     expect(sel.every((el) => el.getAttribute('data-row-selected') === 'true')).toBe(true);
-    // hover flag may also be present; CSS precedence (selected after hover) keeps the wash.
+    // Assert the hover flag also coexists on the row; CSS precedence (selected after
+    // hover) relies on both flags being present at once, not just selected surviving.
+    expect(sel.every((el) => el.getAttribute('data-row-hovered') === 'true')).toBe(true);
   });
 
   it('directory rows hover across their empty gutter slots and never enter selected', () => {
