@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using PRism.Core.Activity;
 using PRism.Core.Contracts;
+using static PRism.GitHub.GitHubGraphQL;
 
 namespace PRism.GitHub.Activity;
 
@@ -206,18 +207,4 @@ public sealed class GitHubPrTimelineFeedReader : IPrTimelineFeedReader
 
     private static string Id(TimelineActorRef actor, DateTimeOffset ts, string kind)
         => $"{kind}:{actor.Login}:{ts.ToUnixTimeMilliseconds()}";
-
-    private static bool TryGetPath(JsonElement root, out JsonElement leaf, params string[] path)
-    {
-        leaf = root;
-        foreach (var seg in path)
-        {
-            if (leaf.ValueKind != JsonValueKind.Object || !leaf.TryGetProperty(seg, out leaf))
-            {
-                leaf = default;
-                return false;
-            }
-        }
-        return true;
-    }
 }

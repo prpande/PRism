@@ -1,5 +1,6 @@
 import { useEffect, useId, useMemo, useState } from 'react';
 import { Avatar } from '../../../Avatar/Avatar';
+import { Skeleton } from '../../../Skeleton/Skeleton';
 import { formatAge } from '../../../../utils/relativeTime';
 import { CommentCard } from '../../Comment/CommentCard'; // lives under PrDetail/Comment/, not PrDetail/CommentCard/
 import type { PrReference, TimelineEvent, ActivityVerb } from '../../../../api/types';
@@ -27,10 +28,8 @@ const VERB_PHRASE: Record<ActivityVerb, string> = {
 // A review that carries a body renders as ONE card; when it is an approval / changes-requested the
 // review outcome shows as a band-end badge on that same card (never a separate duplicate marker).
 // CommentCard renders `bandEnd` inside a <Badge> only when non-null, so a plain comment stays plain.
-function stateBand(verb: ActivityVerb): React.ReactNode {
-  if (verb === 'approved') return 'approved';
-  if (verb === 'changes-requested') return 'requested changes';
-  return undefined;
+function stateBand(verb: ActivityVerb): string | undefined {
+  return verb === 'approved' || verb === 'changes-requested' ? VERB_PHRASE[verb] : undefined;
 }
 
 function Marker({ event }: { event: TimelineEvent }) {
@@ -136,9 +135,7 @@ export function ActivityFeed({
         </button>
       </div>
 
-      {status === 'loading' && (
-        <div className={styles.skeleton} data-testid="timeline-skeleton" aria-hidden="true" />
-      )}
+      {status === 'loading' && <Skeleton height="4rem" data-testid="timeline-skeleton" />}
       {status === 'error' && (
         <div className={styles.error} data-testid="timeline-error">
           Couldn’t load activity.{' '}

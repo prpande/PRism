@@ -90,23 +90,6 @@
   color: var(--text-3);
 }
 
-.skeleton {
-  height: 4rem;
-  border-radius: var(--radius-2);
-  background: var(--surface-3);
-  animation: pulse 1.4s ease-in-out infinite;
-}
-
-@keyframes pulse {
-  0%,
-  100% {
-    opacity: 0.6;
-  }
-  50% {
-    opacity: 1;
-  }
-}
-
 .error {
   font-size: var(--text-sm);
   color: var(--text-2);
