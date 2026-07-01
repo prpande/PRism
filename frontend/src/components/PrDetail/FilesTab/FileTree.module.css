@@ -179,6 +179,7 @@
   justify-content: center;
   height: var(--tree-row-h);
   flex: none;
+  transition: background var(--t-fast);
 }
 
 /* #513 — fixed comment rail, first (left-most) child of .fileTreeBody, OUTSIDE
@@ -203,6 +204,7 @@
   height: var(--tree-row-h);
   padding: 0 var(--s-1);
   flex: none;
+  transition: background var(--t-fast);
 }
 /* Glyph colour via the slot (SVG inherits currentColor). Solid accent = actionable;
    dimmed accent = all resolved (supplementary; the sr-only text carries the meaning). */
@@ -231,6 +233,7 @@
      AI dot when AI is on. Keep --check-col-w (above) in sync with this padding. */
   padding: 0 var(--s-1);
   flex: none;
+  transition: background var(--t-fast);
 }
 
 /* File rows — handoff `tree-row` treatment */
