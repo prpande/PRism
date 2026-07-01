@@ -39,7 +39,7 @@ public sealed class GitHubActivePrBatchReaderTests
         await reader.PollBatchAsync(new[] { new PrReference("o", "r", 1) }, CancellationToken.None);
 
         GraphQlRequest.QueryOf(handler.LastRequestBody).Should().Be(
-            """query{a0: repository(owner:"o", name:"r"){ pullRequest(number:1){ headRefOid baseRefOid state isDraft mergeable mergeStateStatus reviewDecision reviewThreads(first:100){ nodes{ comments{ totalCount } } } reviews{ totalCount } latestReviews(first:20){ nodes{ author{ login avatarUrl } state } } reviewRequests(first:20){ nodes{ requestedReviewer{ ... on User{ login avatarUrl } ... on Team{ name } } } } } } rateLimit{ cost remaining } }""");
+            """query{a0: repository(owner:"o", name:"r"){ pullRequest(number:1){ headRefOid baseRefOid state isDraft mergeable mergeStateStatus reviewDecision comments{ totalCount } reviewThreads(first:100){ nodes{ comments{ totalCount } } } reviews{ totalCount } latestReviews(first:20){ nodes{ author{ login avatarUrl } state } } reviewRequests(first:20){ nodes{ requestedReviewer{ ... on User{ login avatarUrl } ... on Team{ name } } } } } } rateLimit{ cost remaining } }""");
     }
 
     // #665 byte-identity: a JSON-escapable owner/repo must serialize through the shared envelope
