@@ -572,7 +572,7 @@ function CommentSlot({
       data-row-selected={selected ? 'true' : undefined}
       data-row-hovered={hovered ? 'true' : undefined}
     >
-      {state && <CommentGlyph />}
+      {state && <CommentGlyph variant={state === 'resolved' ? 'resolved' : 'filled'} />}
     </div>
   );
 }

@@ -749,6 +749,12 @@ describe('FileTree comment rail (#513)', () => {
     // glyph present only for the two stateful rows
     expect(byPath('a.ts').querySelector('svg')).not.toBeNull();
     expect(byPath('c.ts').querySelector('svg')).toBeNull();
+    // #513 — the resolved row (and only it) carries the green success tick
+    expect(byPath('b.ts').querySelector('[data-resolved-tick]')).not.toBeNull();
+    expect(byPath('a.ts').querySelector('[data-resolved-tick]')).toBeNull();
+    // #513 — the unresolved row (and only it) renders the solid/filled bubble
+    expect(byPath('a.ts').querySelector('[data-comment-fill]')).not.toBeNull();
+    expect(byPath('b.ts').querySelector('[data-comment-fill]')).toBeNull();
   });
 
   it('puts a thread-count tooltip on the comment slot; none for a threadless file', () => {
