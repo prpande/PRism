@@ -159,8 +159,8 @@ public class ActivePrPollerTests
         bus.Clear();
 
         batch.SetSnapshot(pr, MakeSnapshot(readiness: MergeReadiness.Ready, isDraft: false,
-            approvals: 1, changesRequested: 0, awaiting: Array.Empty<string>()));
-        await poller.TickAsync(T0.AddSeconds(30), CancellationToken.None); // only approvals changed
+            approvals: 1, changesRequested: 0, awaiting: new[] { "lee" }));
+        await poller.TickAsync(T0.AddSeconds(30), CancellationToken.None); // only approvals changed; awaiting held constant
 
         var evt = Assert.Single(bus.Published.OfType<ActivePrUpdated>());
         Assert.Equal(1, evt.Approvals);
