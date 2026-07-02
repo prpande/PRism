@@ -1,5 +1,6 @@
 import { useState, useCallback, useRef } from 'react';
 import type { MutableRefObject } from 'react';
+import { useLatestRef } from '../../../hooks/useLatestRef';
 import type { InlineAnchor } from '../Composer/InlineCommentComposer';
 import type { UseDraftSessionResult } from '../../../hooks/useDraftSession';
 import type { PrDetailPr } from '../../../api/types';
@@ -26,7 +27,6 @@ export function useInlineComposer({ draftSession, prDetail }: UseInlineComposerO
   setComposerDraftId: (id: string | null) => void;
   flushRef: MutableRefObject<(() => Promise<string | null>) | null>;
   findExistingDraft: (anchor: InlineAnchor) => { id: string; bodyMarkdown: string } | null;
-  openComposerAt: (rawAnchor: InlineAnchor) => void;
   handleLineClick: (rawAnchor: InlineAnchor) => void;
   handleComposerClose: () => void;
 } {
@@ -66,39 +66,44 @@ export function useInlineComposer({ draftSession, prDetail }: UseInlineComposerO
 
   // handleLineClick crosses the memoized DiffPane boundary, so it is created
   // ONCE (useCallback with no deps) and reads the current activeAnchor +
-  // openComposerAt through a ref updated each render (mirrors DiffPane's n/p
-  // navRef — avoids handing DiffPane a fresh identity on every render).
-  const lineClickDepsRef = useRef({ activeAnchor, openComposerAt });
-  lineClickDepsRef.current = { activeAnchor, openComposerAt };
-  const handleLineClick = useCallback((rawAnchor: InlineAnchor) => {
-    const { activeAnchor, openComposerAt } = lineClickDepsRef.current;
-    // Same-anchor click → no-op (composer already mounted there).
-    if (
-      activeAnchor &&
-      activeAnchor.filePath === rawAnchor.filePath &&
-      activeAnchor.lineNumber === rawAnchor.lineNumber &&
-      activeAnchor.side === rawAnchor.side
-    ) {
-      return;
-    }
-    // #299 — drafts auto-save as the author types, so switching lines never
-    // needs a "keep or discard?" prompt: whatever was being drafted is already
-    // persisted. Flush any pending (sub-debounce) edit of the current composer
-    // first so a fast line switch doesn't drop the last keystrokes, then open
-    // the composer at the new line. A saved draft left behind stays persisted
-    // (and reappears via findExistingDraft when the user clicks back to its
-    // line); discarding it is an explicit action on the composer's Discard
-    // button. The flush is fire-and-forget — it reads the latest body before
-    // the composer unmounts, and onSaved refetches when it lands. We don't
-    // block the switch on it, but a rejection is logged rather than swallowed:
-    // the unmounted composer has no badge to surface the failure, and the
-    // dropped edit is otherwise invisible (the draft's last-saved state stays
-    // intact).
-    activeComposerFlushRef.current?.().catch((err) => {
-      console.error('[FilesTab] flush on line-switch failed; latest edit may be unsaved', err);
-    });
-    openComposerAt(rawAnchor);
-  }, []);
+  // openComposerAt through a latest ref (mirrors DiffPane's n/p navRef —
+  // avoids handing DiffPane a fresh identity on every render).
+  const lineClickDepsRef = useLatestRef({ activeAnchor, openComposerAt });
+  const handleLineClick = useCallback(
+    (rawAnchor: InlineAnchor) => {
+      const { activeAnchor, openComposerAt } = lineClickDepsRef.current;
+      // Same-anchor click → no-op (composer already mounted there).
+      if (
+        activeAnchor &&
+        activeAnchor.filePath === rawAnchor.filePath &&
+        activeAnchor.lineNumber === rawAnchor.lineNumber &&
+        activeAnchor.side === rawAnchor.side
+      ) {
+        return;
+      }
+      // #299 — drafts auto-save as the author types, so switching lines never
+      // needs a "keep or discard?" prompt: whatever was being drafted is already
+      // persisted. Flush any pending (sub-debounce) edit of the current composer
+      // first so a fast line switch doesn't drop the last keystrokes, then open
+      // the composer at the new line. A saved draft left behind stays persisted
+      // (and reappears via findExistingDraft when the user clicks back to its
+      // line); discarding it is an explicit action on the composer's Discard
+      // button. The flush is fire-and-forget — it reads the latest body before
+      // the composer unmounts, and onSaved refetches when it lands. We don't
+      // block the switch on it, but a rejection is logged rather than swallowed:
+      // the unmounted composer has no badge to surface the failure, and the
+      // dropped edit is otherwise invisible (the draft's last-saved state stays
+      // intact).
+      activeComposerFlushRef.current?.().catch((err) => {
+        console.error('[FilesTab] flush on line-switch failed; latest edit may be unsaved', err);
+      });
+      openComposerAt(rawAnchor);
+      // Ref-only dep: useLatestRef returns a stable ref object, so the callback
+      // identity never changes (the lint rule can't see that a custom hook's ref
+      // is stable, so it must be listed).
+    },
+    [lineClickDepsRef],
+  );
 
   function handleComposerClose() {
     setActiveAnchor(null);
@@ -116,7 +121,6 @@ export function useInlineComposer({ draftSession, prDetail }: UseInlineComposerO
     setComposerDraftId,
     flushRef: activeComposerFlushRef,
     findExistingDraft,
-    openComposerAt,
     handleLineClick,
     handleComposerClose,
   };

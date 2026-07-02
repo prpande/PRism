@@ -6,6 +6,7 @@ import { PrDetailContextProvider } from '../prDetailContext';
 import { __resetTabIdForTest } from '../../../api/draft';
 import { useDraftSession } from '../../../hooks/useDraftSession';
 import { makePrDetailDto, makePr } from '../../../../__tests__/helpers/prDetail';
+import { jsonResponse } from '../../../../__tests__/helpers/http';
 import type {
   DiffDto,
   DraftCommentDto,
@@ -177,13 +178,7 @@ function makeRouteHandler(diff: DiffDto, session: ReviewSessionDto | (() => Revi
   const sessionOf = () => (typeof session === 'function' ? session() : session);
   return vi.fn().mockImplementation((url: string, init?: RequestInit) => {
     const method = init?.method ?? 'GET';
-    const json = (payload: unknown) =>
-      Promise.resolve(
-        new Response(JSON.stringify(payload), {
-          status: 200,
-          headers: { 'Content-Type': 'application/json' },
-        }),
-      );
+    const json = (payload: unknown) => Promise.resolve(jsonResponse(payload));
     if (typeof url === 'string') {
       if (url.includes('/diff')) return json(diff);
       if (url.endsWith('/draft') && method === 'GET') return json(sessionOf());

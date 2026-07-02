@@ -5,14 +5,10 @@
 import { describe, it, expect } from 'vitest';
 import { render } from '@testing-library/react';
 import { FileTree } from './FileTree';
-import { buildTree } from './treeBuilder';
+import { treeProps } from '../../../../__tests__/helpers/fileTree';
 import type { FileChange } from '../../../api/types';
 
 const file = (path: string): FileChange => ({ path, status: 'modified', hunks: [] });
-
-// #327 (Task 9) — FileTree takes the built tree from FilesTab; build it with the real
-// builder so fixtures match production tree construction.
-const treeProps = (files: FileChange[]) => ({ files, tree: buildTree(files) });
 
 function renderTree(files: FileChange[]) {
   return render(

@@ -1,4 +1,4 @@
-import { memo } from 'react';
+import { memo, useMemo } from 'react';
 import type { DiffLine } from '../../../../api/types';
 import { hunkAnnotationRows, preLineAnnotationRows } from './AnnotationRows';
 import { DiffLineRow } from './DiffLineRow';
@@ -42,30 +42,35 @@ export const UnifiedDiffBody = memo(function UnifiedDiffBody({
   changeStartMap,
   changeEndMap,
 }: DiffBodyProps) {
-  // #327 Task 12 — per-row composer-content stamp. The key is parsed once per
-  // body render into a location → stamp map (`${filePath}:${lineNumber}=${stamp}`
-  // entries; the stamp is 'c' for the open composer plus placeholder clientIds);
-  // each row gets its own stamp (or null), NEVER the raw key (the raw key would
-  // break every row's memo on each composer move — the per-row stamp re-renders
-  // exactly the rows whose composer content appears, changes, or leaves; a mere
-  // boolean would miss the same-line composer→placeholder swap after post-now).
-  // Stamps never contain '=' so each entry splits at its LAST '='. CRITICAL:
-  // `${path}:${commentLineNum}` below must stay format-identical to the key
-  // builder in FilesTab's activeComposerKey memo; a mismatch silently defeats
-  // the whole mechanism (guarded by FilesTab.renderCount.perf.test.tsx).
-  const composerStamps =
-    activeComposerKey === null
-      ? null
-      : new Map(
-          activeComposerKey.split('|').map((entry) => {
-            const eq = entry.lastIndexOf('=');
-            return [entry.slice(0, eq), entry.slice(eq + 1)] as const;
-          }),
-        );
+  // #327 Task 12 — per-row composer-content stamp. The key is parsed ONCE per
+  // (key, path) change into a numeric line → stamp map: each
+  // `${filePath}:${lineNumber}=${stamp}` entry (the stamp is 'c' for the open
+  // composer plus placeholder clientIds) splits at its LAST '=' (stamps never
+  // contain '='), then at the location's LAST ':' (file paths may contain
+  // ':'), keeping only entries for the current file. Each row gets its own
+  // stamp (or null), NEVER the raw key (the raw key would break every row's
+  // memo on each composer move — the per-row stamp re-renders exactly the rows
+  // whose composer content appears, changes, or leaves; a mere boolean would
+  // miss the same-line composer→placeholder swap after post-now). CRITICAL:
+  // this parse must stay format-identical to the key builder in FilesTab's
+  // activeComposerKey memo; a mismatch silently defeats the whole mechanism
+  // (guarded by FilesTab.renderCount.perf.test.tsx).
+  const composerStamps = useMemo(() => {
+    if (activeComposerKey === null) return null;
+    const stamps = new Map<number, string>();
+    for (const entry of activeComposerKey.split('|')) {
+      const eq = entry.lastIndexOf('=');
+      const loc = entry.slice(0, eq);
+      const colon = loc.lastIndexOf(':');
+      if (loc.slice(0, colon) !== path) continue;
+      stamps.set(Number(loc.slice(colon + 1)), entry.slice(eq + 1));
+    }
+    return stamps;
+  }, [activeComposerKey, path]);
   const composerStampFor = (commentLineNum: number | null): string | null =>
     commentLineNum === null || composerStamps === null
       ? null
-      : (composerStamps.get(`${path}:${commentLineNum}`) ?? null);
+      : (composerStamps.get(commentLineNum) ?? null);
 
   const rows: React.ReactNode[] = [];
   let hunkCounter = -1;

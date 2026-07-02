@@ -1,5 +1,6 @@
 import { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import { ApiError } from '../../../api/client';
+import { useLatestRef } from '../../../hooks/useLatestRef';
 import { useFileDiff } from '../../../hooks/useFileDiff';
 import { useUnionDiff } from '../../../hooks/useUnionDiff';
 import { useFilesTabShortcuts } from '../../../hooks/useFilesTabShortcuts';
@@ -354,7 +355,7 @@ export function FilesTab() {
   // per-line filter live in the hook; see useOptimisticComments.ts).
   const {
     optimisticByThread,
-    newInlinePlaceholders,
+    newInlineLocations,
     placeholdersForLine,
     notePosted,
     noteReplyPosted,
@@ -372,19 +373,20 @@ export function FilesTab() {
   // would compare equal and strand the stale composer; caught by
   // FilesTabComposer.test.tsx once Task 13 stabilized replyContext, which had
   // masked it by churning the rows on every refetch). CRITICAL: the format
-  // must stay identical to UnifiedDiffBody's per-row stamp parse — a mismatch
+  // must stay identical to UnifiedDiffBody's parse — it splits the key once
+  // per body render into a path-filtered Map<lineNumber, stamp> — a mismatch
   // silently defeats the mechanism (guarded by
   // FilesTab.renderCount.perf.test.tsx's inverse assertions). Stamps never
-  // contain '=' (clientIds are UUIDs / counter strings), so the parser can
-  // split each entry at its LAST '=' even for exotic file paths.
+  // contain '=' (clientIds are UUIDs / counter strings) and locations split
+  // their line number at the LAST ':', so exotic file paths (containing '='
+  // or ':') parse correctly.
   const activeComposerKey = useMemo(() => {
     const stamps = new Map<string, string>();
     if (activeAnchor) stamps.set(`${activeAnchor.filePath}:${activeAnchor.lineNumber}`, 'c');
-    // anchorKey format is `${filePath}:${lineNumber}:${side}` (see
-    // optimisticComment.ts) — strip the trailing :side segment.
-    for (const o of newInlinePlaceholders) {
-      if (!o.anchorKey) continue;
-      const loc = o.anchorKey.slice(0, o.anchorKey.lastIndexOf(':'));
+    // Placeholder locations arrive pre-parsed from useOptimisticComments
+    // (newInlineLocations) — the anchorKey string format stays private there.
+    for (const o of newInlineLocations) {
+      const loc = `${o.filePath}:${o.lineNumber}`;
       const prev = stamps.get(loc);
       stamps.set(loc, prev ? `${prev}+${o.clientId}` : o.clientId);
     }
@@ -393,7 +395,7 @@ export function FilesTab() {
       .map(([loc, stamp]) => `${loc}=${stamp}`)
       .sort()
       .join('|');
-  }, [activeAnchor, newInlinePlaceholders]);
+  }, [activeAnchor, newInlineLocations]);
 
   // #299 — refresh the shared draft session after each successful auto-save so
   // the Drafts tab reflects the just-saved draft live, without waiting for the
@@ -420,7 +422,7 @@ export function FilesTab() {
   // function identity is stabilized. The memoized bodies re-render on composer
   // location changes via activeComposerKey (above), never via this function's
   // identity.
-  const composerRenderDeps = {
+  const composerRenderDepsRef = useLatestRef({
     activeAnchor,
     placeholdersForLine,
     findExistingDraft,
@@ -433,9 +435,7 @@ export function FilesTab() {
     readOnly,
     notePosted,
     prRef,
-  };
-  const composerRenderDepsRef = useRef(composerRenderDeps);
-  composerRenderDepsRef.current = composerRenderDeps;
+  });
 
   const renderComposerForLine = useCallback(
     (filePath: string, lineNumber: number): React.ReactNode => {
@@ -519,9 +519,10 @@ export function FilesTab() {
         </>
       );
     },
-    // Ref-only dep: activeComposerFlushRef is a useRef object (stable identity
-    // for the life of useInlineComposer), so the callback identity never changes.
-    [activeComposerFlushRef],
+    // Ref-only deps: activeComposerFlushRef (a useRef from useInlineComposer)
+    // and composerRenderDepsRef (useLatestRef) are stable ref objects, so the
+    // callback identity never changes.
+    [activeComposerFlushRef, composerRenderDepsRef],
   );
 
   const [collapseOverrides, setCollapseOverrides] = useState<Record<string, boolean>>({});
@@ -549,15 +550,13 @@ export function FilesTab() {
   //       which would briefly drop the diff-and-prefer merge protection for
   //       the open draft.
   //   (B) `replyData` (below) — the REACTIVE per-thread data channel.
-  const replyCallbackDeps = {
+  const replyCallbackDepsRef = useLatestRef({
     registerOpenComposer: draftSession.registerOpenComposer,
     refetch: draftSession.refetch,
     beginPosting: draftSession.beginPosting,
     endPosting: draftSession.endPosting,
     noteReplyPosted,
-  };
-  const replyCallbackDepsRef = useRef(replyCallbackDeps);
-  replyCallbackDepsRef.current = replyCallbackDeps;
+  });
 
   const replyContext = useMemo<ExistingCommentWidgetReplyContext>(
     () => ({
@@ -586,7 +585,9 @@ export function FilesTab() {
         void replyCallbackDepsRef.current.refetch();
       },
     }),
-    [prRef, prState, readOnly],
+    // replyCallbackDepsRef is a stable useLatestRef object — listed only to
+    // satisfy the lint rule; it never invalidates the memo.
+    [prRef, prState, readOnly, replyCallbackDepsRef],
   );
 
   // #327 Task 13 — (B) the reactive per-thread data channel. `useDraftSession`'s

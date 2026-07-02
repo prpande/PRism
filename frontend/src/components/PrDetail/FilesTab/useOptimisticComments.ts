@@ -37,9 +37,11 @@ type ReviewThreadLike = { comments: ReadonlyArray<RealCommentLike> };
 
 export function useOptimisticComments(reviewThreads: ReadonlyArray<ReviewThreadLike>): {
   optimisticByThread: Record<string, OptimisticComment[]>;
-  // #327 Task 12 — the UN-DEDUPED new-inline placeholders (threadId === null,
-  // still awaiting their real comment). Feeds FilesTab's activeComposerKey.
-  newInlinePlaceholders: OptimisticComment[];
+  // #327 Task 12 — the UN-DEDUPED new-inline placeholder locations (threadId
+  // === null, still awaiting their real comment), with each placeholder's
+  // anchorKey already parsed into structured fields so the anchorKey string
+  // format stays private to this subsystem. Feeds FilesTab's activeComposerKey.
+  newInlineLocations: { filePath: string; lineNumber: number; clientId: string }[];
   placeholdersForLine: (filePath: string, lineNumber: number) => OptimisticComment[];
   notePosted: (
     anchor: Pick<InlineAnchor, 'filePath' | 'lineNumber' | 'side'>,
@@ -105,10 +107,33 @@ export function useOptimisticComments(reviewThreads: ReadonlyArray<ReviewThreadL
   // must stay marked in activeComposerKey through the placeholder→real handoff
   // window, so the row hosting the handoff keeps re-rendering until the prune
   // effect actually drops the placeholder. Memoized so identity is stable while
-  // `optimistic` is unchanged (activeComposerKey's memo keys on it).
+  // `optimistic` is unchanged (newInlineLocations' memo keys on it).
   const newInlinePlaceholders = useMemo(
     () => optimistic.filter((o) => o.threadId == null),
     [optimistic],
+  );
+
+  // Structured locations for the un-deduped new-inline placeholders. anchorKey
+  // is `${filePath}:${lineNumber}:${side}` (see notePosted below) and filePath
+  // may itself contain ':', so parse from the RIGHT: last ':' delimits the
+  // side, the ':' before it delimits the line number. Parsing here keeps the
+  // anchorKey string format private to this subsystem — FilesTab consumes
+  // structured fields, no string surgery.
+  const newInlineLocations = useMemo(
+    () =>
+      newInlinePlaceholders.flatMap((o) => {
+        if (o.anchorKey == null) return [];
+        const sideSep = o.anchorKey.lastIndexOf(':');
+        const lineSep = o.anchorKey.lastIndexOf(':', sideSep - 1);
+        return [
+          {
+            filePath: o.anchorKey.slice(0, lineSep),
+            lineNumber: Number(o.anchorKey.slice(lineSep + 1, sideSep)),
+            clientId: o.clientId,
+          },
+        ];
+      }),
+    [newInlinePlaceholders],
   );
 
   // #302 Task 11b — new-inline optimistic placeholders for a diff line. Matched
@@ -118,14 +143,13 @@ export function useOptimisticComments(reviewThreads: ReadonlyArray<ReviewThreadL
   // allRealComments is a hoisted useMemo (closure capture) — no per-line flatMap.
   const placeholdersForLine = useCallback(
     (filePath: string, lineNumber: number) =>
-      optimistic.filter(
+      newInlinePlaceholders.filter(
         (o) =>
-          o.threadId == null &&
           o.anchorKey != null &&
           o.anchorKey.startsWith(`${filePath}:${lineNumber}:`) &&
           !allRealComments.some((c) => c.databaseId != null && c.databaseId === o.postedCommentId),
       ),
-    [optimistic, allRealComments],
+    [newInlinePlaceholders, allRealComments],
   );
 
   // New inline thread — no server thread id yet. Anchor the placeholder
@@ -175,7 +199,7 @@ export function useOptimisticComments(reviewThreads: ReadonlyArray<ReviewThreadL
 
   return {
     optimisticByThread,
-    newInlinePlaceholders,
+    newInlineLocations,
     placeholdersForLine,
     notePosted,
     noteReplyPosted,

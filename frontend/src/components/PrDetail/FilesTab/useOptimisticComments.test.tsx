@@ -60,6 +60,19 @@ describe('useOptimisticComments', () => {
     expect(result.current.optimisticByThread).toEqual({});
   });
 
+  it('newInlineLocations exposes structured new-inline locations — parsing anchorKey from the right so a filePath containing ":" survives — and excludes reply placeholders', () => {
+    const { result } = setup();
+
+    act(() => {
+      result.current.notePosted({ ...anchor, filePath: 'weird:dir/a.ts' }, 123, 'colon path');
+      result.current.noteReplyPosted('thread-1', 456, 'reply — not a new-inline location');
+    });
+
+    expect(result.current.newInlineLocations).toEqual([
+      { filePath: 'weird:dir/a.ts', lineNumber: 1, clientId: expect.any(String) },
+    ]);
+  });
+
   it('de-dups the placeholder out of placeholdersForLine when a real comment with matching databaseId arrives', () => {
     const { result, rerender } = setup();
 

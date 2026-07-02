@@ -186,17 +186,6 @@ describe('useInlineComposer', () => {
     expect(result.current.activeAnchor?.anchoredSha).toBe('sha-head-2');
   });
 
-  it('openComposerAt opens directly (no same-anchor guard, no flush) — the raw open primitive', () => {
-    const { result } = setup(makeOpts({ session: sessionWith([draft({ id: 'match-me' })]) }));
-
-    act(() => {
-      result.current.openComposerAt(rawAnchor());
-    });
-
-    expect(result.current.activeAnchor).toEqual(rawAnchor({ anchoredSha: 'sha-head' }));
-    expect(result.current.composerDraftId).toBe('match-me');
-  });
-
   it('findExistingDraft returns the matching draft id+body, or null', () => {
     const { result } = setup(
       makeOpts({ session: sessionWith([draft({ id: 'd', bodyMarkdown: 'b' })]) }),

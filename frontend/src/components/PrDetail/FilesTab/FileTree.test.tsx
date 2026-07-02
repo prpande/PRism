@@ -1,20 +1,13 @@
 import { render, screen, fireEvent, within } from '@testing-library/react';
 import { describe, it, expect, vi } from 'vitest';
 import { FileTree } from './FileTree';
-import { buildTree } from './treeBuilder';
 import { AI_TREE_ANALYZED_LABEL } from '../../Ai/aiStrings';
+import { treeProps } from '../../../../__tests__/helpers/fileTree';
 import type { FileChange, FileFocus, FileFocusStatus } from '../../../api/types';
 import type { CommentIndicatorState, CommentCounts } from './commentIndicatorState';
 
 function file(path: string, overrides: Partial<FileChange> = {}): FileChange {
   return { path, status: 'modified', hunks: [], ...overrides };
-}
-
-// #327 (Task 9) — FilesTab builds the tree once and passes it down, so FileTree now
-// takes the built tree alongside `files`. Derive both props from the real builder so
-// fixtures can never drift from production tree construction.
-function treeProps(files: FileChange[]) {
-  return { files, tree: buildTree(files) };
 }
 
 describe('FileTree', () => {

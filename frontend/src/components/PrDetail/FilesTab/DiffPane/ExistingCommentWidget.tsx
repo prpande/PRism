@@ -1,9 +1,4 @@
-import type {
-  DraftCommentDto,
-  DraftReplyDto,
-  PrReference,
-  ReviewThreadDto,
-} from '../../../../api/types';
+import type { PrReference, ReviewThreadDto } from '../../../../api/types';
 import { CommentCard } from '../../Comment/CommentCard';
 import { CollapsedComposerAffordance } from '../../Composer/CollapsedComposerAffordance';
 import { ReplyComposer } from '../../Composer/ReplyComposer';
@@ -13,7 +8,6 @@ import {
   type ComposerOwnerKey,
 } from '../../../../hooks/useDraftSession';
 import { useDraftBackedDisclosure } from '../../../../hooks/useDraftBackedDisclosure';
-import type { OptimisticComment } from '../optimisticComment';
 import { useReplyData } from '../ReplyDataContext';
 import { ThreadDisclosureHeader } from './ThreadDisclosureHeader';
 import { stripMarkdown } from '../../HotspotsTab/stripMarkdown';
@@ -24,8 +18,7 @@ import { stripMarkdown } from '../../HotspotsTab/stripMarkdown';
 // diff rows without breaking their React.memo bail on every autosave refetch.
 // The per-thread DATA (draftComments/draftReplies/postingInProgress/
 // optimisticByThread) flows through the reactive ReplyDataContext channel
-// instead; the data fields below remain as an OPTIONAL no-provider fallback so
-// pure-rendering unit tests can pass everything through this one prop.
+// exclusively — mount a ReplyDataProvider to supply it (unit tests included).
 export interface ExistingCommentWidgetReplyContext {
   prRef: PrReference;
   prState: 'open' | 'closed' | 'merged';
@@ -42,21 +35,6 @@ export interface ExistingCommentWidgetReplyContext {
   // the just-posted comment surfaces. 11b passes the posted body so the parent
   // can stash an optimistic placeholder for this thread.
   onReplyPosted?: (threadId: string, postedCommentId: number, body: string) => void;
-
-  // ---- No-provider data fallback (unit tests only; ignored when a
-  // ReplyDataProvider is mounted — FilesTab supplies the live data there) ----
-  draftReplies?: DraftReplyDto[];
-  // #302 — post-now wiring (Task 11a). The staged-check needs this reply's own
-  // draft id, which only exists here (inside ThreadView). So the parent hands
-  // down the raw pieces and ThreadView calls computeAnyOtherDraftsStaged with
-  // its draftReplyId.
-  draftComments?: DraftCommentDto[];
-  postingInProgress?: boolean;
-  // #302 Task 11b — optimistic reply placeholders, keyed by threadId. Each
-  // thread renders its entries (dimmed) AFTER its real comments, filtered to
-  // exclude any whose postedCommentId already matches a real comment's
-  // databaseId (de-dup by databaseId — see optimisticComment.ts).
-  optimisticByThread?: Record<string, OptimisticComment[]>;
 }
 
 export interface ThreadCollapseControl {
@@ -107,20 +85,18 @@ function ThreadView({
   // ReplyDataContext channel (provided by FilesTab above DiffPane); the
   // replyContext prop is the stable callbacks bag. The consumer sits HERE —
   // below the memoized DiffLineRow — so a draft-session refetch re-renders
-  // only thread widgets, never bailed diff rows. Falls back to the prop's
-  // optional data fields when no provider is mounted (unit-test harnesses).
+  // only thread widgets, never bailed diff rows. Renders without data (empty
+  // defaults) when no provider is mounted (pure-rendering unit harnesses).
   const replyData = useReplyData();
-  const draftReplies = replyData?.draftReplies ?? replyContext?.draftReplies ?? [];
-  const draftComments = replyData?.draftComments ?? replyContext?.draftComments ?? [];
-  const postingInProgress = replyData?.postingInProgress ?? replyContext?.postingInProgress;
-  const optimisticByThread = replyData?.optimisticByThread ?? replyContext?.optimisticByThread;
+  const draftReplies = replyData?.draftReplies ?? [];
+  const draftComments = replyData?.draftComments ?? [];
+  const postingInProgress = replyData?.postingInProgress ?? false;
+  const optimisticByThread = replyData?.optimisticByThread;
 
   // Hydrate from any existing draft reply against this thread. A user who
   // returns to the page mid-flow sees a "Reply (saved draft)" affordance
   // and the composer pre-populated with the persisted body when opened.
-  const existingDraft = replyContext
-    ? draftReplies.find((r) => r.parentThreadId === thread.threadId)
-    : undefined;
+  const existingDraft = draftReplies.find((r) => r.parentThreadId === thread.threadId);
 
   // The composer auto-mounts when there is already a saved draft for this
   // thread (incl. cross-tab arrivals after mount); otherwise the user opens it
@@ -222,7 +198,7 @@ function ThreadView({
                 draftComments,
                 draftReplies,
                 draftReplyId,
-                postingInProgress ?? false,
+                postingInProgress,
               )}
               beginPosting={replyContext.beginPosting}
               endPosting={replyContext.endPosting}

@@ -30,8 +30,8 @@ const ReplyDataContext = createContext<ReplyData | null>(null);
 export const ReplyDataProvider = ReplyDataContext.Provider;
 
 // Null when no provider is mounted (DiffPane / widget unit-test harnesses) —
-// consumers then fall back to the data fields still allowed on the
-// replyContext prop.
+// consumers then render with empty defaults (no drafts, no optimistic
+// placeholders).
 export function useReplyData(): ReplyData | null {
   return useContext(ReplyDataContext);
 }
