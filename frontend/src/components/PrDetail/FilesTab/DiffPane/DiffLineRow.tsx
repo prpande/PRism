@@ -1,15 +1,14 @@
 import { memo } from 'react';
-import type { ReviewThreadDto, DraftSide, DiffLine } from '../../../../api/types';
+import type { ReviewThreadDto, DiffLine } from '../../../../api/types';
 import type { InlineAnchor } from '../../Composer/InlineCommentComposer';
-import {
-  ExistingCommentWidget,
-  type ExistingCommentWidgetReplyContext,
-  type ThreadCollapseControl,
+import type {
+  ExistingCommentWidgetReplyContext,
+  ThreadCollapseControl,
 } from './ExistingCommentWidget';
 import { normalizeEol, type SyntaxTokenMaps } from '../../../../hooks/useSyntaxTokens';
 import { HighlightedLine } from '../../../Markdown/HighlightedLine';
 import { MergedPairedContent, tokensFor } from './MergedPairedContent';
-import { NewGutterCell, ComposerSlot, makeGutterClick } from './gutter';
+import { NewGutterCell, CommentWidgetRow, ComposerSlot, makeGutterClick } from './gutter';
 import styles from './DiffPane.module.css';
 
 interface DiffLineRowProps {
@@ -88,7 +87,6 @@ export const DiffLineRow = memo(function DiffLineRow({
   // anchoredSha-by-iteration plumbing lands, this gate can flip to allow
   // line.type === 'delete' as well.
   const commentLineNum = line.newLineNum;
-  const side: DraftSide = 'right';
   const canComment =
     onLineClick && commentLineNum !== null && (line.type === 'insert' || line.type === 'context');
 
@@ -97,7 +95,7 @@ export const DiffLineRow = memo(function DiffLineRow({
         onLineClick,
         filePath,
         lineNumber: commentLineNum,
-        side,
+        side: 'right',
         anchoredLineContent: line.content,
       })
     : undefined;
@@ -127,17 +125,12 @@ export const DiffLineRow = memo(function DiffLineRow({
         </td>
       </tr>
       {threadsAtLine && threadsAtLine.length > 0 && (
-        <tr className={`diff-comment-row ${styles.diffCommentRow}`}>
-          <td colSpan={colSpan}>
-            <div className={styles.diffStickyViewport}>
-              <ExistingCommentWidget
-                threads={threadsAtLine}
-                replyContext={replyContext}
-                collapse={collapse}
-              />
-            </div>
-          </td>
-        </tr>
+        <CommentWidgetRow
+          threads={threadsAtLine}
+          colSpan={colSpan}
+          replyContext={replyContext}
+          collapse={collapse}
+        />
       )}
       {commentLineNum !== null && renderComposerForLine && (
         <ComposerSlot

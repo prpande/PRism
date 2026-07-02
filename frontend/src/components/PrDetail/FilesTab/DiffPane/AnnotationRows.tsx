@@ -24,3 +24,32 @@ export function annotationRows({
     </tr>
   ));
 }
+
+// Whole-file mode: the annotation rows queued to render before row `idx`
+// (see DiffPane's annotationsByRowIdx re-anchoring map). Returns [] when the
+// map is null or has no entry, keeping the callers' guard-free spread; the
+// `ann-${idx}` key scheme matches the hunk-mode emit sites.
+export function preLineAnnotationRows(
+  annotationsByRowIdx: Map<number, HunkAnnotation[]> | null,
+  idx: number,
+  colSpan: number,
+): React.ReactElement[] {
+  const annotations = annotationsByRowIdx?.get(idx);
+  if (!annotations) return [];
+  return annotationRows({ annotations, colSpan, keyPrefix: `ann-${idx}` });
+}
+
+// Hunks mode: the annotation rows for hunk `hunkIdx`, emitted after its
+// hunk-header row at `rowIdx`. Lookup key (hunk index) and React key prefix
+// (row index) intentionally differ — the key scheme stays `ann-${rowIdx}`
+// like every other emit site. Returns [] when the map is null or has no entry.
+export function hunkAnnotationRows(
+  annotationsForFile: Map<number, HunkAnnotation[]> | null,
+  hunkIdx: number,
+  rowIdx: number,
+  colSpan: number,
+): React.ReactElement[] {
+  const annotations = annotationsForFile?.get(hunkIdx);
+  if (!annotations) return [];
+  return annotationRows({ annotations, colSpan, keyPrefix: `ann-${rowIdx}` });
+}

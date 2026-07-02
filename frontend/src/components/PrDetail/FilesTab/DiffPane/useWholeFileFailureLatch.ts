@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import type { UseWholeFileContentResult } from '../../../../hooks/useWholeFileContent';
 
 export interface WholeFileFailureLatch {
   failure: string | null; // latched failureReason, null = no banner
@@ -14,7 +15,7 @@ export function useWholeFileFailureLatch({
   onWholeFileFailed,
   onWholeFileRetry,
 }: {
-  fetchStatus: 'idle' | 'loading' | 'ok' | 'failed';
+  fetchStatus: UseWholeFileContentResult['fetchStatus'];
   failureReason: string | null | undefined;
   selectedPath: string | null;
   onWholeFileFailed?: (reason: string) => void;

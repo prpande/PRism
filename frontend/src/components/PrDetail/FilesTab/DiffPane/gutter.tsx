@@ -1,4 +1,10 @@
+import type { ReviewThreadDto } from '../../../../api/types';
 import type { InlineAnchor } from '../../Composer/InlineCommentComposer';
+import {
+  ExistingCommentWidget,
+  type ExistingCommentWidgetReplyContext,
+  type ThreadCollapseControl,
+} from './ExistingCommentWidget';
 import styles from './DiffPane.module.css';
 
 // Shared builder for the gutter comment-affordance click handlers. All four
@@ -69,6 +75,35 @@ export function NewGutterCell({
         </button>
       )}
     </td>
+  );
+}
+
+// Full-width follow-up row hosting the ExistingCommentWidget for a line's
+// review threads. Shared by the unified (DiffLineRow) and split (SplitDiffBody)
+// emit sites so the wrapper markup stays identical.
+export function CommentWidgetRow({
+  threads,
+  colSpan,
+  replyContext,
+  collapse,
+}: {
+  threads: ReviewThreadDto[];
+  colSpan: number;
+  replyContext?: ExistingCommentWidgetReplyContext;
+  collapse?: ThreadCollapseControl;
+}) {
+  return (
+    <tr className={`diff-comment-row ${styles.diffCommentRow}`}>
+      <td colSpan={colSpan}>
+        <div className={styles.diffStickyViewport}>
+          <ExistingCommentWidget
+            threads={threads}
+            replyContext={replyContext}
+            collapse={collapse}
+          />
+        </div>
+      </td>
+    </tr>
   );
 }
 

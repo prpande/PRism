@@ -1,6 +1,6 @@
 import { memo } from 'react';
 import type { DiffLine } from '../../../../api/types';
-import { annotationRows } from './AnnotationRows';
+import { hunkAnnotationRows, preLineAnnotationRows } from './AnnotationRows';
 import { DiffLineRow } from './DiffLineRow';
 import type { DiffBodyProps } from './diffBodyProps';
 
@@ -26,13 +26,12 @@ function findAdjacentPair(lines: DiffLine[], idx: number): DiffLine | null {
 // Default shallow compare is correct: the output is a pure function of these
 // props, and DiffPane memoizes every derived structure it passes down.
 export const UnifiedDiffBody = memo(function UnifiedDiffBody({
-  selectedPath,
+  selectedPath: path,
   lines,
   threadsByLine,
   annotationsForFile,
   annotationsByRowIdx,
-  wholeFileEnabled,
-  wholeFileFetchStatus,
+  wholeFileOk,
   colSpan,
   syntax,
   onLineClick,
@@ -42,7 +41,6 @@ export const UnifiedDiffBody = memo(function UnifiedDiffBody({
   changeStartMap,
   changeEndMap,
 }: DiffBodyProps) {
-  const path = selectedPath;
   const rows: React.ReactNode[] = [];
   let hunkCounter = -1;
   for (let idx = 0; idx < lines.length; idx++) {
@@ -50,7 +48,7 @@ export const UnifiedDiffBody = memo(function UnifiedDiffBody({
 
     if (line.type === 'hunk-header') {
       hunkCounter += 1;
-      if (!wholeFileEnabled || wholeFileFetchStatus !== 'ok') {
+      if (!wholeFileOk) {
         // Hunks-only mode: emit the hunk-header row + per-hunk AI annotations.
         const commentLineNum = line.newLineNum;
         const threadsAtLine = commentLineNum ? threadsByLine.get(commentLineNum) : undefined;
@@ -70,21 +68,15 @@ export const UnifiedDiffBody = memo(function UnifiedDiffBody({
             collapse={collapse}
           />,
         );
-        const annotations = annotationsForFile?.get(hunkCounter);
-        if (annotations) {
-          rows.push(...annotationRows({ annotations, colSpan, keyPrefix: `ann-${idx}` }));
-        }
+        rows.push(...hunkAnnotationRows(annotationsForFile, hunkCounter, idx, colSpan));
       }
       // Whole-file ok mode: emit nothing for the hunk-header itself.
       continue;
     }
 
     // Whole-file ok mode: emit pre-line annotations queued in annotationsByRowIdx.
-    if (wholeFileEnabled && wholeFileFetchStatus === 'ok' && annotationsByRowIdx) {
-      const ann = annotationsByRowIdx.get(idx);
-      if (ann) {
-        rows.push(...annotationRows({ annotations: ann, colSpan, keyPrefix: `ann-${idx}` }));
-      }
+    if (wholeFileOk) {
+      rows.push(...preLineAnnotationRows(annotationsByRowIdx, idx, colSpan));
     }
 
     const commentLineNum = line.type === 'delete' ? null : line.newLineNum;

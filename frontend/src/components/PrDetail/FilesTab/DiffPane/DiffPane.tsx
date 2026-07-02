@@ -137,6 +137,11 @@ export function DiffPane({
     isSplit,
   });
 
+  // The one whole-file condition the render path branches on: enabled AND the
+  // content fetch succeeded. Computed once; the diff bodies receive it as the
+  // single `wholeFileOk` prop (they never see the raw enabled/fetchStatus pair).
+  const wholeFileOk = wholeFileEnabled && wholeFile.fetchStatus === 'ok';
+
   const syntax = useSyntaxTokens({
     path: selectedPath,
     file,
@@ -163,7 +168,7 @@ export function DiffPane({
   // parsing.
   const allLines: DiffLine[] = useMemo(() => {
     if (!file) return [];
-    if (wholeFileEnabled && wholeFile.fetchStatus === 'ok' && wholeFile.headContent !== null) {
+    if (wholeFileOk && wholeFile.headContent !== null) {
       return interleaveWholeFile(file, wholeFile.headContent, wholeFile.baseContent);
     }
     const out: DiffLine[] = [];
@@ -171,7 +176,7 @@ export function DiffPane({
       out.push(...parseHunkLines(hunk.body));
     }
     return out;
-  }, [file, wholeFileEnabled, wholeFile.fetchStatus, wholeFile.headContent, wholeFile.baseContent]);
+  }, [file, wholeFileOk, wholeFile.headContent, wholeFile.baseContent]);
 
   // #554: gutter width tracks the widest line number in the file so 3-4 digit
   // numbers aren't clipped. Exposed as a CSS var consumed by --diff-gutter-w
@@ -188,7 +193,7 @@ export function DiffPane({
   // AI annotation re-anchoring map for whole-file mode: maps row idx → annotations
   // that should render before that row (first non-header line after each hunk-header).
   const annotationsByRowIdx = useMemo(() => {
-    if (!wholeFileEnabled || wholeFile.fetchStatus !== 'ok') return null;
+    if (!wholeFileOk) return null;
     const map = new Map<number, HunkAnnotation[]>();
     const consumedHunks = new Set<number>();
     let hunkCounter = -1;
@@ -205,7 +210,7 @@ export function DiffPane({
       }
     }
     return map;
-  }, [wholeFileEnabled, wholeFile.fetchStatus, allLines, annotationsForFile]);
+  }, [wholeFileOk, allLines, annotationsForFile]);
 
   // Scroll reset on wholeFileEnabled toggle or file navigation.
   const diffBodyRef = useRef<HTMLDivElement>(null);
@@ -250,7 +255,8 @@ export function DiffPane({
   const changes = useMemo(() => computeChanges(allLines), [allLines]);
   // The change-nav index resets to the top only when the rendered view actually
   // swaps — keyed on the same view identity the scroll-reset above uses
-  // (selectedPath + the DERIVED whole-file mode, line ~372) — so the two stay in
+  // (selectedPath + the DERIVED whole-file mode; see the scroll-reset effect
+  // above) — so the two stay in
   // lockstep and a same-file `changes` recompute (whole-file success / parent
   // re-fetch) doesn't snap the counter back to "1" (#577). The `\n` separator is
   // collision-proof: a newline can't appear in a file path, so no path+flag pair
@@ -352,12 +358,13 @@ export function DiffPane({
   const colSpan = isSplit ? 4 : 3;
   const modeClass = isSplit ? 'diff-pane--split' : 'diff-pane--unified';
   const wrapClass = lineWrap ? ' diff-pane--wrap' : '';
+  // Both bodies implement DiffBodyProps; only the tag differs by mode.
+  const Body = isSplit ? SplitDiffBody : UnifiedDiffBody;
 
   // The minimap renders only in whole-file mode when the content overflows and
   // has changes. The native vertical scrollbar is hidden under exactly the same
   // condition — never hide it without the rail there to replace it.
-  const showMinimap =
-    wholeFileEnabled && wholeFile.fetchStatus === 'ok' && nav.hasOverflow && changes.length > 0;
+  const showMinimap = wholeFileOk && nav.hasOverflow && changes.length > 0;
 
   // Large-file indicator: when the file is a highlightable language and has
   // hunks, but the syntax hook produced no tokens, highlighting was suppressed
@@ -439,43 +446,22 @@ export function DiffPane({
               </colgroup>
             )}
             <tbody>
-              {isSplit ? (
-                <SplitDiffBody
-                  selectedPath={selectedPath}
-                  lines={allLines}
-                  threadsByLine={threadsByLine}
-                  annotationsForFile={annotationsForFile}
-                  annotationsByRowIdx={annotationsByRowIdx}
-                  wholeFileEnabled={wholeFileEnabled}
-                  wholeFileFetchStatus={wholeFile.fetchStatus}
-                  colSpan={colSpan}
-                  syntax={syntax}
-                  onLineClick={onLineClick}
-                  renderComposerForLine={renderComposerForLine}
-                  replyContext={replyContext}
-                  collapse={collapse}
-                  changeStartMap={changeStartMap}
-                  changeEndMap={changeEndMap}
-                />
-              ) : (
-                <UnifiedDiffBody
-                  selectedPath={selectedPath}
-                  lines={allLines}
-                  threadsByLine={threadsByLine}
-                  annotationsForFile={annotationsForFile}
-                  annotationsByRowIdx={annotationsByRowIdx}
-                  wholeFileEnabled={wholeFileEnabled}
-                  wholeFileFetchStatus={wholeFile.fetchStatus}
-                  colSpan={colSpan}
-                  syntax={syntax}
-                  onLineClick={onLineClick}
-                  renderComposerForLine={renderComposerForLine}
-                  replyContext={replyContext}
-                  collapse={collapse}
-                  changeStartMap={changeStartMap}
-                  changeEndMap={changeEndMap}
-                />
-              )}
+              <Body
+                selectedPath={selectedPath}
+                lines={allLines}
+                threadsByLine={threadsByLine}
+                annotationsForFile={annotationsForFile}
+                annotationsByRowIdx={annotationsByRowIdx}
+                wholeFileOk={wholeFileOk}
+                colSpan={colSpan}
+                syntax={syntax}
+                onLineClick={onLineClick}
+                renderComposerForLine={renderComposerForLine}
+                replyContext={replyContext}
+                collapse={collapse}
+                changeStartMap={changeStartMap}
+                changeEndMap={changeEndMap}
+              />
             </tbody>
           </table>
         </div>

@@ -1,9 +1,8 @@
 import { memo } from 'react';
-import { ExistingCommentWidget } from './ExistingCommentWidget';
-import { annotationRows } from './AnnotationRows';
+import { hunkAnnotationRows, preLineAnnotationRows } from './AnnotationRows';
 import { SplitDiffLineRow } from './SplitDiffLineRow';
+import { CommentWidgetRow, ComposerSlot } from './gutter';
 import type { DiffBodyProps } from './diffBodyProps';
-import styles from './DiffPane.module.css';
 
 // Split-mode diff body: the former renderSplitRows closure (including its
 // emitWidgetAndComposerRows helper) with its captured scope made explicit as
@@ -15,13 +14,12 @@ import styles from './DiffPane.module.css';
 // Default shallow compare is correct: the output is a pure function of these
 // props, and DiffPane memoizes every derived structure it passes down.
 export const SplitDiffBody = memo(function SplitDiffBody({
-  selectedPath,
+  selectedPath: path,
   lines,
   threadsByLine,
   annotationsForFile,
   annotationsByRowIdx,
-  wholeFileEnabled,
-  wholeFileFetchStatus,
+  wholeFileOk,
   colSpan,
   syntax,
   onLineClick,
@@ -31,7 +29,6 @@ export const SplitDiffBody = memo(function SplitDiffBody({
   changeStartMap,
   changeEndMap,
 }: DiffBodyProps) {
-  const path = selectedPath;
   const rows: React.ReactNode[] = [];
   let hunkCounter = -1;
 
@@ -46,30 +43,25 @@ export const SplitDiffBody = memo(function SplitDiffBody({
     const threads = threadsByLine.get(anchorLineNum);
     if (threads && threads.length > 0) {
       rows.push(
-        <tr key={`widget-${idx}`} className={`diff-comment-row ${styles.diffCommentRow}`}>
-          <td colSpan={colSpan}>
-            <div className={styles.diffStickyViewport}>
-              <ExistingCommentWidget
-                threads={threads}
-                replyContext={replyContext}
-                collapse={collapse}
-              />
-            </div>
-          </td>
-        </tr>,
+        <CommentWidgetRow
+          key={`widget-${idx}`}
+          threads={threads}
+          colSpan={colSpan}
+          replyContext={replyContext}
+          collapse={collapse}
+        />,
       );
     }
     if (renderComposerForLine) {
-      const node = renderComposerForLine(path, anchorLineNum);
-      if (node) {
-        rows.push(
-          <tr key={`composer-${idx}`} className={`diff-composer-row ${styles.diffComposerRow}`}>
-            <td colSpan={colSpan}>
-              <div className={styles.diffStickyViewport}>{node}</div>
-            </td>
-          </tr>,
-        );
-      }
+      rows.push(
+        <ComposerSlot
+          key={`composer-${idx}`}
+          filePath={path}
+          lineNumber={anchorLineNum}
+          colSpan={colSpan}
+          render={renderComposerForLine}
+        />,
+      );
     }
   }
 
@@ -78,7 +70,7 @@ export const SplitDiffBody = memo(function SplitDiffBody({
 
     if (line.type === 'hunk-header') {
       hunkCounter += 1;
-      if (!wholeFileEnabled || wholeFileFetchStatus !== 'ok') {
+      if (!wholeFileOk) {
         rows.push(
           <SplitDiffLineRow
             key={idx}
@@ -88,20 +80,14 @@ export const SplitDiffBody = memo(function SplitDiffBody({
             syntax={syntax}
           />,
         );
-        const annotations = annotationsForFile?.get(hunkCounter);
-        if (annotations) {
-          rows.push(...annotationRows({ annotations, colSpan, keyPrefix: `ann-${idx}` }));
-        }
+        rows.push(...hunkAnnotationRows(annotationsForFile, hunkCounter, idx, colSpan));
       }
       continue;
     }
 
     // Whole-file ok mode: emit pre-line annotations queued in annotationsByRowIdx.
-    if (wholeFileEnabled && wholeFileFetchStatus === 'ok' && annotationsByRowIdx) {
-      const ann = annotationsByRowIdx.get(idx);
-      if (ann) {
-        rows.push(...annotationRows({ annotations: ann, colSpan, keyPrefix: `ann-${idx}` }));
-      }
+    if (wholeFileOk) {
+      rows.push(...preLineAnnotationRows(annotationsByRowIdx, idx, colSpan));
     }
 
     if (line.type === 'context') {

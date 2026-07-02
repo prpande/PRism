@@ -15,8 +15,10 @@ export interface DiffBodyProps {
   threadsByLine: Map<number, ReviewThreadDto[]>;
   annotationsForFile: Map<number, HunkAnnotation[]> | null; // hunk mode
   annotationsByRowIdx: Map<number, HunkAnnotation[]> | null; // whole-file mode
-  wholeFileEnabled: boolean;
-  wholeFileFetchStatus: 'idle' | 'loading' | 'ok' | 'failed';
+  // True iff whole-file view is enabled AND its content fetch succeeded —
+  // DiffPane computes `wholeFileEnabled && fetchStatus === 'ok'` once and
+  // passes the conjunction; the bodies never branch on the raw pieces.
+  wholeFileOk: boolean;
   colSpan: number;
   syntax: SyntaxTokenMaps;
   onLineClick?: (anchor: InlineAnchor) => void;
