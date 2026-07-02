@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { InboxSection as InboxSectionDto, InboxItemEnrichment } from '../../api/types';
 // Aliased: the `groupByRepo` prop (#219 toggle) would otherwise shadow this fold helper.
-import { groupByRepo as buildRepoGroups, prId } from './groupByRepo';
+import { groupByRepo as buildRepoGroups, prId, EMPTY_SETTLED } from './groupByRepo';
 import { InboxRow } from './InboxRow';
 import { InboxCaret } from './InboxCaret';
 import { RepoGroupAccordion } from './RepoGroupAccordion';
@@ -9,12 +9,6 @@ import { RecentlyClosedFooter } from './RecentlyClosedFooter';
 import styles from './InboxSection.module.css';
 
 const RECENTLY_CLOSED = 'recently-closed';
-
-// #671 — a module-level empty set shared as the `settled` default. Using
-// `= new Set()` as a default *parameter* re-evaluates on every render where the
-// prop is omitted, minting a fresh identity that flows into the rows and defeats
-// InboxRow's React.memo. One frozen-by-convention instance keeps the identity stable.
-const EMPTY_SETTLED: ReadonlySet<string> = new Set();
 
 const EmptyCopy: Record<string, string> = {
   'review-requested': 'No reviews requested right now.',

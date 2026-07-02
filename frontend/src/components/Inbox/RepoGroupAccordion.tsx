@@ -1,13 +1,9 @@
 import { memo, useState } from 'react';
 import type { InboxItemEnrichment } from '../../api/types';
-import { type RepoGroup, prId } from './groupByRepo';
+import { type RepoGroup, prId, EMPTY_SETTLED } from './groupByRepo';
 import { InboxRow } from './InboxRow';
 import { InboxCaret } from './InboxCaret';
 import styles from './RepoGroupAccordion.module.css';
-
-// #671 — shared stable default; see InboxSection's EMPTY_SETTLED for why a
-// `= new Set()` default parameter would defeat the row memo.
-const EMPTY_SETTLED: ReadonlySet<string> = new Set();
 
 interface Props {
   group: RepoGroup;

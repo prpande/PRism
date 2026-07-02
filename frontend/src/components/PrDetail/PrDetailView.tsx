@@ -146,7 +146,7 @@ export function PrDetailView({
   const handleLifecycleChanged = useCallback(() => {
     updates.clear();
     reload();
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- updates.clear is functionally stable (always resets to initial) but not referentially stable; reload is a stable useCallback from usePrDetail (#331)
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- updates.clear is a stable useCallback([]) since #671, but the `updates` object identity is fresh each render (spread return), so we can't list it; reload is a stable useCallback from usePrDetail (#331)
   }, [reload]);
   useLifecycleChangedSubscriber({ prRef, onChanged: handleLifecycleChanged });
   // #392: when a review is submitted, reload PR detail (so the just-posted inline

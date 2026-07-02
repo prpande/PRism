@@ -213,9 +213,9 @@ describe('useActivePrUpdates', () => {
   });
 
   it('#671 — clear() keeps a stable identity across re-renders so memoized consumers can bail out', async () => {
-    // clear is passed straight to a child (BannerRefresh onDismiss) and lives in a
-    // useMemo/useCallback dep at the consumer. A fresh arrow per render defeats that
-    // memoization — useCallback pins it. A bare re-render (same ref, no SSE event, so
+    // clear lives in usePrDetailRefresh's `refresh` useCallback dep array (via
+    // PrDetailView's `clearUpdates`). A fresh arrow per render re-created `refresh`
+    // every render — useCallback pins it. A bare re-render (same ref, no SSE event, so
     // no state change) must return the same clear reference.
     const ref: PrReference = { owner: 'acme', repo: 'api', number: 1 };
     const { result, rerender } = renderHook(() => useActivePrUpdates(ref));
