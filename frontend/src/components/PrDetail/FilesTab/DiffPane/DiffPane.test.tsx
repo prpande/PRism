@@ -74,7 +74,7 @@ describe('DiffPane', () => {
         diffMode="side-by-side"
         truncated={false}
         reviewThreads={[]}
-        prUrl=""
+        htmlUrl=""
       />,
     );
     expect(screen.getByText(/select a file/i)).toBeInTheDocument();
@@ -90,7 +90,7 @@ describe('DiffPane', () => {
         diffMode="side-by-side"
         truncated={false}
         reviewThreads={[]}
-        prUrl=""
+        htmlUrl=""
       />,
     );
     const status = screen.getByRole('status');
@@ -113,7 +113,7 @@ describe('DiffPane', () => {
         diffMode="side-by-side"
         truncated={false}
         reviewThreads={[]}
-        prUrl=""
+        htmlUrl=""
       />,
     );
     const status = screen.getByRole('status');
@@ -137,7 +137,7 @@ describe('DiffPane', () => {
         diffMode="side-by-side"
         truncated={false}
         reviewThreads={[]}
-        prUrl=""
+        htmlUrl=""
       />,
     );
     // Header spinner is gated off, so only the overlay's live region announces.
@@ -155,7 +155,7 @@ describe('DiffPane', () => {
         diffMode="side-by-side"
         truncated={false}
         reviewThreads={[]}
-        prUrl=""
+        htmlUrl=""
       />,
     );
     expect(screen.getByText('src/main.ts')).toBeInTheDocument();
@@ -170,7 +170,7 @@ describe('DiffPane', () => {
         diffMode="unified"
         truncated={false}
         reviewThreads={[]}
-        prUrl=""
+        htmlUrl=""
       />,
     );
     const diffPane = screen.getByTestId('diff-pane');
@@ -188,7 +188,7 @@ describe('DiffPane', () => {
         diffMode="unified"
         truncated={true}
         reviewThreads={[]}
-        prUrl="https://github.com/octocat/hello/pull/42"
+        htmlUrl="https://github.com/octocat/hello/pull/42"
       />,
     );
     expect(screen.getByText(/open on github/i)).toBeInTheDocument();
@@ -205,7 +205,7 @@ describe('DiffPane', () => {
         diffMode="unified"
         truncated={false}
         reviewThreads={[]}
-        prUrl=""
+        htmlUrl=""
       />,
     );
     expect(screen.queryByText(/open on github/i)).not.toBeInTheDocument();
@@ -220,7 +220,7 @@ describe('DiffPane', () => {
         diffMode="unified"
         truncated={false}
         reviewThreads={[sampleThread]}
-        prUrl=""
+        htmlUrl=""
       />,
     );
     const commentWidgets = screen.getAllByTestId('comment-widget');
@@ -238,7 +238,7 @@ describe('DiffPane', () => {
         diffMode="unified"
         truncated={false}
         reviewThreads={[]}
-        prUrl=""
+        htmlUrl=""
       />,
     );
     expect(screen.getByText(/empty file/i)).toBeInTheDocument();
@@ -253,7 +253,7 @@ describe('DiffPane', () => {
         diffMode="side-by-side"
         truncated={false}
         reviewThreads={[]}
-        prUrl=""
+        htmlUrl=""
       />,
     );
     expect(screen.getByTestId('diff-pane')).toHaveClass('diff-pane--split');
@@ -268,7 +268,7 @@ describe('DiffPane', () => {
         diffMode="unified"
         truncated={false}
         reviewThreads={[]}
-        prUrl=""
+        htmlUrl=""
       />,
     );
     expect(screen.getByTestId('diff-pane')).toHaveClass('diff-pane--unified');
@@ -283,7 +283,7 @@ describe('DiffPane', () => {
         diffMode="side-by-side"
         truncated={false}
         reviewThreads={[]}
-        prUrl=""
+        htmlUrl=""
       />,
     );
     expect(screen.getByTestId('diff-pane')).not.toHaveClass('diff-pane--wrap');
@@ -298,7 +298,7 @@ describe('DiffPane', () => {
         diffMode="side-by-side"
         truncated={false}
         reviewThreads={[]}
-        prUrl=""
+        htmlUrl=""
         lineWrap
       />,
     );
@@ -314,7 +314,7 @@ describe('DiffPane', () => {
         diffMode="side-by-side"
         truncated={false}
         reviewThreads={[]}
-        prUrl=""
+        htmlUrl=""
       />,
     );
     expect(screen.getByTestId('diff-hscroll')).toBeInTheDocument();
@@ -329,7 +329,7 @@ describe('DiffPane', () => {
         diffMode="unified"
         truncated={false}
         reviewThreads={[]}
-        prUrl=""
+        htmlUrl=""
       />,
     );
     expect(screen.queryByTestId('diff-hscroll')).not.toBeInTheDocument();
@@ -344,7 +344,7 @@ describe('DiffPane', () => {
         diffMode="side-by-side"
         truncated={false}
         reviewThreads={[]}
-        prUrl=""
+        htmlUrl=""
         lineWrap
       />,
     );
@@ -360,7 +360,7 @@ describe('DiffPane', () => {
         diffMode="side-by-side"
         truncated={false}
         reviewThreads={[sampleThread]}
-        prUrl=""
+        htmlUrl=""
       />,
     );
     const widgetRows = screen
@@ -383,7 +383,7 @@ describe('DiffPane', () => {
         diffMode="unified"
         truncated={false}
         reviewThreads={[sampleThread]}
-        prUrl=""
+        htmlUrl=""
       />,
     );
     const widgetRows = screen
@@ -406,7 +406,7 @@ describe('DiffPane', () => {
         diffMode="side-by-side"
         truncated={false}
         reviewThreads={[]}
-        prUrl=""
+        htmlUrl=""
       />,
     );
     const diffPane = screen.getByTestId('diff-pane');
@@ -430,7 +430,7 @@ describe('DiffPane', () => {
         diffMode="side-by-side"
         truncated={false}
         reviewThreads={[]}
-        prUrl=""
+        htmlUrl=""
       />,
     );
     const diffPane = screen.getByTestId('diff-pane');
@@ -454,7 +454,7 @@ describe('DiffPane', () => {
         diffMode="side-by-side"
         truncated={false}
         reviewThreads={[]}
-        prUrl=""
+        htmlUrl=""
         annotations={[
           {
             path: 'src/main.ts',
@@ -490,7 +490,7 @@ describe('DiffPane', () => {
         diffMode="side-by-side"
         truncated={false}
         reviewThreads={[]}
-        prUrl=""
+        htmlUrl=""
       />,
     );
     const diffPane = screen.getByTestId('diff-pane');
@@ -526,7 +526,7 @@ describe('DiffPane', () => {
         diffMode="side-by-side"
         truncated={false}
         reviewThreads={[]}
-        prUrl=""
+        htmlUrl=""
         onLineClick={() => {}}
       />,
     );
@@ -554,7 +554,7 @@ describe('DiffPane', () => {
         diffMode="side-by-side"
         truncated={false}
         reviewThreads={[]}
-        prUrl=""
+        htmlUrl=""
         onLineClick={() => {}}
       />,
     );
@@ -580,7 +580,7 @@ describe('DiffPane', () => {
         diffMode="side-by-side"
         truncated={false}
         reviewThreads={[sampleThread]}
-        prUrl=""
+        htmlUrl=""
       />,
     );
     const widget = screen.getByTestId('comment-widget');
@@ -600,7 +600,7 @@ describe('DiffPane', () => {
         diffMode="side-by-side"
         truncated={false}
         reviewThreads={[]}
-        prUrl=""
+        htmlUrl=""
         onLineClick={onLineClick}
       />,
     );
@@ -626,7 +626,7 @@ describe('DiffPane', () => {
         diffMode="side-by-side"
         truncated={false}
         reviewThreads={[]}
-        prUrl=""
+        htmlUrl=""
       />,
     );
     const diffPane = screen.getByTestId('diff-pane');
@@ -644,7 +644,7 @@ describe('DiffPane', () => {
         diffMode="unified"
         truncated={false}
         reviewThreads={[]}
-        prUrl=""
+        htmlUrl=""
       />,
     );
     const diffPane = screen.getByTestId('diff-pane');
@@ -665,7 +665,7 @@ describe('DiffPane whole-file mode', () => {
     diffMode: 'unified' as DiffMode,
     truncated: false,
     reviewThreads: [],
-    prUrl: 'https://example.com/pr/1',
+    htmlUrl: 'https://example.com/pr/1',
   };
 
   beforeEach(() => {

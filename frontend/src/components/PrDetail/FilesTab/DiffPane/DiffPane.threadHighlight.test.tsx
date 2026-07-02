@@ -61,7 +61,7 @@ describe('DiffPane commented-line highlight', () => {
         diffMode="unified"
         truncated={false}
         reviewThreads={[threadAtLine1]}
-        prUrl=""
+        htmlUrl=""
       />,
     );
     const commentedRow = container.querySelector('tr.diff-line--commented');
