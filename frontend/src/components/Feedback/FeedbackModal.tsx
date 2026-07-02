@@ -1,12 +1,10 @@
-import { useEffect, useId, useRef, useState, type PointerEvent } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { SegmentedControl } from '../controls/SegmentedControl';
 import { submitFeedback, type FeedbackRequest } from '../../api/feedback';
 import { buildFeedbackIssueUrl } from '../../feedback/feedbackRepo';
+import { useModalFocusTrap, useScrimDismiss } from '../../hooks/useModalFocusTrap';
 import styles from './FeedbackModal.module.css';
-
-const FOCUSABLE =
-  'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
 type Category = 'Bug' | 'Idea' | 'Other';
 type ModalState =
@@ -62,10 +60,6 @@ export function FeedbackModal({
   restoreFocusFallbackSelector,
 }: FeedbackModalProps) {
   const dialogRef = useRef<HTMLDivElement | null>(null);
-  const previouslyFocused = useRef<HTMLElement | null>(null);
-  const scrimDownTarget = useRef<EventTarget | null>(null);
-  const fallbackRef = useRef(restoreFocusFallbackSelector);
-  fallbackRef.current = restoreFocusFallbackSelector;
   const titleId = useId();
   const liveRef = useRef<HTMLDivElement | null>(null);
   const cancelRef = useRef<HTMLButtonElement | null>(null);
@@ -155,28 +149,21 @@ export function FeedbackModal({
     }
   }
 
-  // ── Capture focus on mount; restore on unmount ──
-  useEffect(() => {
-    previouslyFocused.current = document.activeElement as HTMLElement | null;
-    const dialog = dialogRef.current;
-    // Initial focus: first category radio (form-dialog APG convention).
-    // Fall back to the first focusable element in the dialog.
-    const firstRadio = dialog?.querySelector<HTMLElement>('[role="radio"]');
-    const firstFocusable = dialog?.querySelector<HTMLElement>(FOCUSABLE);
-    (firstRadio ?? firstFocusable)?.focus();
-    return () => {
-      // Trigger-opened → restore to the opener. Cold deep-link (body had focus)
-      // → move to the background landmark, never bare <body>.
-      const opener = previouslyFocused.current;
-      if (opener && opener !== document.body) opener.focus();
-      else if (fallbackRef.current)
-        document.querySelector<HTMLElement>(fallbackRef.current)?.focus();
-    };
-    // Run once on mount/unmount; the fallback selector is read via fallbackRef so
-    // the empty dep array is intentional and exhaustive-deps-clean — the effect
-    // closes over only refs, which react-hooks treats as stable. (#331 wired the
-    // plugin; no disable directive is needed because there is no violation here.)
-  }, []);
+  // ── Focus capture/trap/restore + Esc (#328 shared hook) ──
+  // The modal is mounted only while open, so `active: true` keys the trap to
+  // mount/unmount. Initial focus: first category radio (form-dialog APG
+  // convention), falling back to the first focusable element in the dialog.
+  // Esc routes through requestClose so the dirty-guard still applies; the hook
+  // reads it through a latest-ref (requestClose is recreated every render).
+  // Trigger-opened → restore to the opener. Cold deep-link (body had focus)
+  // → move to the background landmark, never bare <body>.
+  useModalFocusTrap(dialogRef, {
+    active: true,
+    onEscape: requestClose,
+    restoreFallbackSelector: restoreFocusFallbackSelector,
+    initialFocus: () => dialogRef.current?.querySelector<HTMLElement>('[role="radio"]') ?? null,
+  });
+  const scrim = useScrimDismiss(requestClose);
 
   // ── Move focus to the primary action after leaving idle/in-flight ──
   // Scoped to THIS dialog's root so a second mounted dialog can't win the match.
@@ -186,42 +173,6 @@ export function FeedbackModal({
       ?.querySelector<HTMLElement>('[data-modal-role="primary"], [data-feedback-close]')
       ?.focus();
   }, [modalState.kind]);
-
-  // ── Esc + Tab focus trap ──
-  useEffect(() => {
-    const handleKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        e.preventDefault();
-        requestClose();
-        return;
-      }
-      if (e.key === 'Tab' && dialogRef.current) {
-        const f = Array.from(dialogRef.current.querySelectorAll<HTMLElement>(FOCUSABLE));
-        if (f.length === 0) return;
-        const first = f[0];
-        const last = f[f.length - 1];
-        const active = document.activeElement;
-        if (e.shiftKey && (active === first || !dialogRef.current.contains(active))) {
-          e.preventDefault();
-          last.focus();
-        } else if (!e.shiftKey && (active === last || !dialogRef.current.contains(active))) {
-          e.preventDefault();
-          first.focus();
-        }
-      }
-    };
-    document.addEventListener('keydown', handleKey);
-    return () => document.removeEventListener('keydown', handleKey);
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- lists requestClose's exact reactive closure deps {onClose, dirty, modalState.kind} rather than the per-render requestClose function (#331)
-  }, [onClose, dirty, modalState.kind]);
-
-  const onScrimPointerDown = (e: PointerEvent) => {
-    scrimDownTarget.current = e.target;
-  };
-  const onScrimPointerUp = (e: PointerEvent) => {
-    if (e.target === e.currentTarget && scrimDownTarget.current === e.currentTarget) requestClose();
-    scrimDownTarget.current = null;
-  };
 
   const modalTitle =
     modalState.kind === 'success'
@@ -234,8 +185,8 @@ export function FeedbackModal({
     <div
       className={styles.scrim}
       data-testid="feedback-scrim"
-      onPointerDown={onScrimPointerDown}
-      onPointerUp={onScrimPointerUp}
+      onPointerDown={scrim.onPointerDown}
+      onPointerUp={scrim.onPointerUp}
     >
       <div
         ref={dialogRef}
