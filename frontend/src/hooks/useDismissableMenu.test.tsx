@@ -64,6 +64,20 @@ describe('useDismissableMenu — Escape', () => {
     expect(notPrevented).toBe(true);
     expect(screen.queryByTestId('menu')).toBeNull();
   });
+
+  it('ignores an Escape another widget already consumed (defaultPrevented)', () => {
+    const onCloseSpy = vi.fn();
+    render(<Harness onCloseSpy={onCloseSpy} />);
+    const consumed = new KeyboardEvent('keydown', {
+      key: 'Escape',
+      bubbles: true,
+      cancelable: true,
+    });
+    consumed.preventDefault();
+    document.dispatchEvent(consumed);
+    expect(onCloseSpy).not.toHaveBeenCalled();
+    expect(screen.getByTestId('menu')).toBeInTheDocument();
+  });
 });
 
 describe('useDismissableMenu — outside pointerdown', () => {

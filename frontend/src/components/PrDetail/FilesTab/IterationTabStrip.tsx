@@ -31,7 +31,8 @@ export function IterationTabStrip({
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const overflowRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
-  const dropdownId = `${useId()}-iteration-dropdown`;
+  const id = useId();
+  const dropdownId = `${id}-iteration-dropdown`;
 
   // Esc + outside-pointerdown dismissal (#328 shared hook). The boundary is
   // the overflow wrapper (trigger + dropdown), NOT the whole strip — clicking
