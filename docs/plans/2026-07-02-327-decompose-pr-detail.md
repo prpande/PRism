@@ -14,7 +14,7 @@
 - Pixel-identical rendering; no visual or interaction changes anywhere.
 - Vitest via the LOCAL binary only: `cd frontend && ./node_modules/.bin/vitest run <paths>` (never `npx vitest`). Typecheck: `./node_modules/.bin/tsc -b` (never `tsc --noEmit` — vacuous here). Lint (includes prettier --check, gates CI): `npm run lint`.
 - All line numbers below are anchored to the slice-1 starting tree (commit `e8965c3a`); if drift is suspected, locate by the quoted symbol, not the number.
-- Existing test suites must pass unmodified, EXCEPT the exact carve-outs the spec names: (a) import-path updates, (b) `prUrl:''` → `htmlUrl:''` in the two perf-test fixtures, (c) slice 2's named matchMedia-stub/viewport-test changes.
+- Existing test suites must pass unmodified, EXCEPT the exact carve-outs the spec names: (a) import-path updates, (b) the mechanical `prUrl` → `htmlUrl` prop rename in every test fixture that passes the prop (7 files — see Task 6), (c) slice 2's named matchMedia-stub/viewport-test changes.
 - Commit messages: conventional, reference `#327` as bare text in the body (never `fix(#327):` — auto-closes). `Closes #327` appears only in PR 3's description. End every commit with:
   `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`
   `Claude-Session: https://claude.ai/code/session_01Cz9md9aAqTauY4aotrTLiT`
@@ -87,8 +87,9 @@ export function annotationRows(opts: {
 ### Task 3: Move `MergedPairedContent` + gutter helpers to sibling files
 
 **Files:**
-- Create: `frontend/src/components/PrDetail/FilesTab/DiffPane/MergedPairedContent.tsx` (from `DiffPane.tsx:55-120`, WITH its `React.memo` wrapper and the #670 comment)
+- Create: `frontend/src/components/PrDetail/FilesTab/DiffPane/MergedPairedContent.tsx` (from `DiffPane.tsx:49-120` — the range INCLUDES the module helper `tokensFor` at `:49-56`, which moves here and is **exported**: `DiffLineRow`/`SplitDiffLineRow` also call it and will import it from this file in Task 4. Keep the `React.memo` wrapper and the #670 comment)
 - Create: `frontend/src/components/PrDetail/FilesTab/DiffPane/gutter.tsx` (`NewGutterCell` from `:185-211` + `ComposerSlot` — locate by symbol)
+- Note for Task 5: the module helper `findAdjacentPair` (`:213-224`) is consumed only by `renderUnifiedRows` — it moves into `UnifiedDiffBody.tsx` in Task 5 (module-scope, not a prop)
 - Modify: `DiffPane.tsx` (delete moved code, import from siblings)
 
 - [ ] **Step 1: Move verbatim** (exports added; imports each file needs carried over; no logic edits). **Step 2: Run DiffPane suites + `./node_modules/.bin/tsc -b`** → pass (note: `DiffPane.wordDiffMemo.perf.test.tsx` mocks the `diff` package at module level — unaffected by the move, verified at spec time). **Step 3: Commit** — `refactor(fe): move MergedPairedContent + gutter cells to DiffPane siblings (for #327)`.
@@ -114,7 +115,7 @@ export function makeGutterClick(opts: {
 ```
 
 - [ ] **Step 1: Diff the four handleClick closures** (`SplitDiffLineRow` context `:1100-1109`, solo-insert `:1179-1188`, paired `:1225-1234`; `DiffLineRow` `:986-1000`) and confirm they differ only in `anchoredLineContent` (`content ?? ''`, `content ?? ''`, `newText ?? ''`, `line.content`) and anchor fields. If any carries extra logic, keep that difference at the call site.
-- [ ] **Step 2: Implement `makeGutterClick`** building today's anchor object identically; replace all four closures with calls.
+- [ ] **Step 2: Implement `makeGutterClick`** building today's anchor object identically — the four anchors are `{filePath, lineNumber, side: 'right', anchoredSha: '', anchoredLineContent}`; hardcode `anchoredSha: ''` inside the helper (not an opt) and move the explanatory comment at `:992-996` with it. `DiffLineRow`'s `canComment` type-gate stays at its call site. Replace all four closures with calls.
 - [ ] **Step 3: Move the two row components verbatim** to their files (they import `MergedPairedContent`/`gutter` from Task 3's files and `styles`).
 - [ ] **Step 4: Run DiffPane suites + tsc -b** → pass (rowMemo.perf mocks the HighlightedLine module — unaffected). **Step 5: Commit** — `refactor(fe): row components to sibling files, one gutter click builder (for #327)`.
 
@@ -144,11 +145,12 @@ export interface DiffBodyProps {
   collapse?: ThreadCollapseControl;
   changeStartMap: <existing type>;
   changeEndMap: <existing type>;
-  // slice 2 adds: activeComposerKey: string | null
+  // slice 2 (Task 12) EXTENDS this interface with: activeComposerKey: string | null
+  // — the memo wrapper added in Step 3 will gain that dep then; don't design it out.
 }
 ```
 
-**IMPORTANT completeness rule (spec Risks):** after converting, grep each body file for every identifier not defined locally or imported — each one MUST be a prop. The spec's list is the floor, not the ceiling; the closures capture ~15 outer variables and missing one is the highest-risk failure of this slice.
+**IMPORTANT completeness rule (spec Risks):** after converting, grep each body file for every identifier not defined locally — each one MUST be either a prop (reactive values) or an import from a sibling/module (pure helpers like `findAdjacentPair`, `tokensFor`, `annotationRows`). Feasibility review pre-enumerated the full captured set: `selectedPath, allLines→lines, threadsByLine, annotationsForFile, annotationsByRowIdx, wholeFileEnabled, wholeFile.fetchStatus→wholeFileFetchStatus, colSpan, syntax, changeStartMap, changeEndMap, onLineClick, renderComposerForLine, replyContext, collapse` — the props list above covers all of it. Type-name corrections vs the sketch: the annotation type is `HunkAnnotation` (not `HunkAnnotationDto`), and the actual map types are `| null` where the sketch says `| undefined` — match the source, `tsc -b` is the gate.
 
 - [ ] **Step 1: Extract WITHOUT `React.memo`** — plain function components, props exactly the captured set. Run the full DiffPane suite → pass.
 - [ ] **Step 2: Commit** — `refactor(fe): renderUnified/SplitRows closures become body components (for #327)`.
@@ -157,9 +159,9 @@ export interface DiffBodyProps {
 
 ### Task 6: `prUrl` → `htmlUrl` rename
 
-**Files:** Modify: `DiffPane.tsx` (`:129, :233`, forward site `:902`), `DiffTruncationBanner.tsx` (its own `prUrl` prop — single consumer), `FilesTab.tsx:786`, `DiffPane.rowMemo.perf.test.tsx` (fixture `prUrl:''`→`htmlUrl:''`), `DiffPane.wordDiffMemo.perf.test.tsx` (same).
+**Files:** Modify: `DiffPane.tsx` (`:129, :233`, forward site `:902`), `DiffTruncationBanner.tsx` (its own `prUrl` prop — single consumer), `FilesTab.tsx:786` (and rename its `:316` local `const prUrl = prDetail.pr.htmlUrl ?? undefined` for grep hygiene), plus the mechanical fixture rename in ALL test files passing the prop: `DiffPane.test.tsx` (~30 occurrences), `DiffPane.highlight.test.tsx` (5), `DiffPane.lineNumbers.test.tsx` (5), `DiffPane.changeNav.test.tsx`, `DiffPane.driftGuard.test.tsx`, `DiffPane.threadHighlight.test.tsx`, `DiffPane.rowMemo.perf.test.tsx`, `DiffPane.wordDiffMemo.perf.test.tsx`, `frontend/__tests__/DiffTruncationBanner.test.tsx`. **Out of scope:** `SubmitDialog.tsx:325`'s unrelated local `const prUrl = htmlUrl;` stays.
 
-- [ ] **Step 1: Rename** (grep `prUrl` across `frontend/` afterward → zero hits). **Step 2: Full frontend suite + tsc -b + lint** → pass. **Step 3: Commit** — `refactor(fe): rename prUrl to htmlUrl at the DiffPane boundary (for #327)`.
+- [ ] **Step 1: Rename** — gate: `grep -rn prUrl frontend/src/components/PrDetail/FilesTab frontend/src/components/PrDetail/FilesTab/DiffPane frontend/__tests__/DiffTruncationBanner.test.tsx` → zero hits (SubmitDialog excluded by scope). **Step 2: Full frontend suite + tsc -b + lint** → pass. **Step 3: Commit** — `refactor(fe): rename prUrl to htmlUrl at the DiffPane boundary (for #327)`.
 
 ### Task 7: Slice-1 gate (orchestrator)
 
@@ -200,7 +202,7 @@ value: (query: string) => {
 
 - [ ] **Step 1: Upgrade the stub** (evaluate at call time against `window.innerWidth`; keep the exact no-op listener shape). Run the FULL frontend suite → must stay green BEFORE any consumer changes (proves the upgrade is compatible: InboxPage's 1180px gate stays false at jsdom's 1024; per-test overrides win).
 - [ ] **Step 2: Commit** — `test(fe): matchMedia stub evaluates width queries against innerWidth (for #327)`.
-- [ ] **Step 3: Create `useIsSplitCapable`**, swap the three literals + delete `useViewportWidth`. Viewport tests that change `innerWidth` mid-test: re-render after the change or install a per-test matchMedia mock (InboxPage's save/restore pattern) — touch ONLY the tests the spec names.
+- [ ] **Step 3: Create `useIsSplitCapable`**, swap the three literals + delete `useViewportWidth`. Viewport tests in `frontend/__tests__/FilesTab.test.tsx` and `FilesTab.viewPreservation.test.tsx` that change `innerWidth` mid-test: re-render after the change or install a per-test matchMedia mock (InboxPage's save/restore pattern) — touch ONLY those two files.
 - [ ] **Step 4: Full suite + commit** — `refactor(fe): useIsSplitCapable + SPLIT_DIFF_MIN_WIDTH replace useViewportWidth (for #327)`.
 
 ### Task 9: Single tree build
@@ -261,9 +263,17 @@ export function useInlineComposer(opts: { draftSession: …; prDetail: …; show
 const activeComposerKey = useMemo(() => {
   const locs = new Set<string>();
   if (activeAnchor) locs.add(`${activeAnchor.filePath}:${activeAnchor.lineNumber}`);
-  for (const o of optimistic) if (!o.threadId) locs.add(`${o.filePath}:${o.line}`); // un-deduped new-inline placeholders — match today's field names
+  // New-inline placeholders carry anchorKey?: string formatted `${filePath}:${lineNumber}:${side}`
+  // (optimisticComment.ts:20-23) — strip the trailing side segment to get `${filePath}:${lineNumber}`.
+  for (const o of optimistic)
+    if (!o.threadId && o.anchorKey) locs.add(o.anchorKey.slice(0, o.anchorKey.lastIndexOf(':')));
   return locs.size ? [...locs].sort().join('|') : null;
 }, [activeAnchor, optimistic]);
+```
+
+`UnifiedDiffBody` derives each row's `isComposerLocation` from the IDENTICAL `${filePath}:${lineNumber}` normalization (a format mismatch silently defeats the memo bail — the render-count test's inverse assertions are the guard, and they must assert **row-level** bail, not body-level).
+
+```ts
 ```
 
 - [ ] **Step 1 (test-first): render-count test** `FilesTab.renderCount.perf.test.tsx` per spec acceptance 3: (a) typing spanning an autosave refetch (drive `draftSession.refetch` resolution) re-renders no `DiffLineRow` with unchanged thread data; (b) inverse: click line → composer row mounts; close → unmounts; (c) reply-path inverse: `optimisticByThread` change surfaces in the affected `ExistingCommentWidget`. Use the `rowMemo.perf` harness pattern (module-mock a row-internal component to count renders). Expect (a) to FAIL before stabilization, (b)/(c) to PASS (they pin current behavior first).
@@ -275,7 +285,7 @@ const activeComposerKey = useMemo(() => {
 
 Per spec constraints: callbacks bag latest-ref-backed (5 callbacks); per-thread data (draft replies find, `optimisticByThread` lookup, `draftComments`) flows through a React-context (or `useSyncExternalStore`) channel delivering **per-thread slices with stable identity when unchanged** — NOT a ref read (stales on cross-tab draft arrival) and NOT a per-row prop (churns on every autosave). Reply-composer open/close stays widget-local (verify while implementing; it is today).
 
-- [ ] Test-first: extend Task 12's test (c) to span an autosave refetch altering ONE thread's draft-reply state → only that widget re-renders/reflects it. Implement, full suite, commit — `refactor(fe): split replyContext into stable callbacks + per-thread data channel (for #327)`.
+- [ ] Test-first: extend assertion (c) in `FilesTab.renderCount.perf.test.tsx` (created in Task 12) to span an autosave refetch altering ONE thread's draft-reply state → only that thread's `ExistingCommentWidget` re-renders/reflects it. Implement, full suite, commit — `refactor(fe): split replyContext into stable callbacks + per-thread data channel (for #327)`.
 
 ### Task 14: Handler-convention sweep + slice-2 gate
 
@@ -295,23 +305,32 @@ Per spec constraints: callbacks bag latest-ref-backed (5 callbacks); per-thread 
 
 **Files:** Create `frontend/src/components/PrDetail/useSubmitFlow.ts` + test; Modify `PrHeader.tsx` (`:279-451` — the two effects, `patchVerdict`, `onResume`, `surfaceSubmitError`, `surfaceForeignReviewError`, `onResumeForeignPendingReview`, `onDiscardForeignPendingReview`, `onDiscardAllDrafts`, `handlePillDiscard`).
 
+**Boundary decision (settled here, per feasibility review):** the hook OWNS `useSubmit(reference)` and the dialog/pill-modal state — the moved handlers mutate `setDialogOpen`/`setPillDiscardError`/`setPillDiscardModalOpen` and call `submit.*`, and the remaining layout reads `submit.state`/`submit.lastResume`/`submit.discardInFlight` and calls `submit.submit`/`submit.retry`/`submit.reset` (via `closeDialog`, `:311-314`, which moves too). **Excluded from the move:** the DEV-only `htmlUrl` console.warn effect at `:296-303` (diagnostics keyed on `[title, htmlUrl, reference]`) — it stays in PrHeader.
+
 **Interfaces (Produces):**
 
 ```ts
 export function useSubmitFlow(opts: {
   reference: PrReference; session: …; onSessionRefetch: () => void; show: …; // exact types read from PrHeader's current usage
 }): {
+  // submit-state slice the layout renders:
+  submitState: …; lastResume: …; discardInFlight: boolean;
+  submitAction: { submit: …, retry: …, }; // or expose the submit object readonly — implementer picks the narrower surface that keeps PrHeader.tsx layout-only
+  // dialog + pill-modal state:
+  dialogOpen: boolean; openDialog: () => void; closeDialog: () => void;
+  pillDiscardModalOpen: boolean; pillDiscardError: string | null; setPillDiscardModalOpen: …;
+  // handlers (moved verbatim):
   onResume: () => void;
   onResumeForeignPendingReview: () => void;
   onDiscardForeignPendingReview: () => void;
   onDiscardAllDrafts: () => void;
   handlePillDiscard: (…) => void;
   patchVerdict: (…) => void;
-  // + any state the layout reads (enumerate from PrHeader's render usage while moving)
+  surfaceSubmitError: (…) => void;
 };
 ```
 
-- [ ] Move verbatim (hook test via renderHook covering resume + discard-all + foreign-review surfacing with mocked api); `PrHeader.test.tsx`/`PrHeader.actions.test.tsx` unmodified and green — they are the real guard. Full suite; commit — `refactor(fe): extract useSubmitFlow; PrHeader is layout + action row (for #327)`.
+- [ ] Move verbatim within that boundary (hook test via renderHook covering resume + discard-all + foreign-review surfacing with mocked api); `PrHeader.test.tsx`/`PrHeader.actions.test.tsx` unmodified and green — they are the real guard. Full suite; commit — `refactor(fe): extract useSubmitFlow; PrHeader is layout + action row (for #327)`.
 
 ### Task 17: Slice-3 gate
 
