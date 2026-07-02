@@ -17,8 +17,9 @@ import {
   type ThreadCollapseControl,
 } from './ExistingCommentWidget';
 import { DiffTruncationBanner } from './DiffTruncationBanner';
-import { WordDiffOverlay } from './WordDiffOverlay';
 import { annotationRows } from './AnnotationRows';
+import { MergedPairedContent, tokensFor } from './MergedPairedContent';
+import { NewGutterCell, ComposerSlot } from './gutter';
 import { useWholeFileContent } from '../../../../hooks/useWholeFileContent';
 import { useLockedPaneScroll } from '../../../../hooks/useLockedPaneScroll';
 import { useDiffViewportWidthVar } from '../../../../hooks/useDiffViewportWidthVar';
@@ -28,9 +29,7 @@ import {
   type SyntaxTokenMaps,
 } from '../../../../hooks/useSyntaxTokens';
 import { HighlightedLine } from '../../../Markdown/HighlightedLine';
-import { type LineToken, pathToLang } from '../../../Markdown/shikiInstance';
-import { mergeWordDiffWithTokens } from './mergeWordDiff';
-import { diffWordsWithSpace } from 'diff';
+import { pathToLang } from '../../../Markdown/shikiInstance';
 import { WholeFileFailureBanner } from './WholeFileFailureBanner';
 import { useWholeFileFailureLatch } from './useWholeFileFailureLatch';
 import { Spinner } from '../../../Spinner';
@@ -42,83 +41,6 @@ import { isInputTarget } from '../../../../hooks/isInputTarget';
 import styles from './DiffPane.module.css';
 
 export type DiffMode = 'side-by-side' | 'unified';
-
-// Look up the syntax tokens for a single diff line, keyed by 1-based line
-// number on the requested side. Returns [] when the line has no number on
-// that side (e.g. a delete line has no new-side number) or the map has no
-// entry — HighlightedLine then renders its plaintext fallback.
-function tokensFor(
-  maps: SyntaxTokenMaps,
-  side: 'old' | 'new',
-  lineNum: number | null | undefined,
-): LineToken[] {
-  if (lineNum == null) return [];
-  return (side === 'old' ? maps.oldLineTokens : maps.newLineTokens).get(lineNum) ?? [];
-}
-
-// Renders one side of a paired (modified) line: shiki syntax color layered with
-// background-only word-diff. When tokens are not yet available (highlighter
-// warming, or large-file suppression), falls back to the legacy WordDiffOverlay
-// so the changed-region emphasis never regresses to plaintext.
-//
-// #670: memoized so the per-paired-line `diffWordsWithSpace` runs only when this
-// line's inputs actually change. All props are referentially stable across an
-// unrelated re-render — `syntax` is a `useMemo`'d object (stable `EMPTY` sentinel
-// until tokens change); `side`/`lineNum`/`oldText`/`newText` derive from memoized
-// `allLines`. Memoizing the component (rather than an internal `useMemo`) caches
-// the fallback branches too and avoids a rules-of-hooks hazard with the two early
-// returns below. Default shallow compare is correct: the output is a pure function
-// of these props.
-const MergedPairedContent = memo(function MergedPairedContent({
-  syntax,
-  side,
-  lineNum,
-  oldText,
-  newText,
-}: {
-  syntax: SyntaxTokenMaps;
-  side: 'old' | 'new';
-  lineNum: number | null | undefined;
-  oldText: string;
-  newText: string;
-}) {
-  const toks = tokensFor(syntax, side, lineNum);
-  if (toks.length === 0) {
-    // No tokens yet (highlighter warming / large file) → existing word-diff fallback.
-    return (
-      <WordDiffOverlay
-        oldText={oldText}
-        newText={newText}
-        type={side === 'old' ? 'delete' : 'insert'}
-      />
-    );
-  }
-  // sideText is the token concatenation, NOT pair.content — guarantees
-  // sum(token.length) === sideText.length so the merge's index walk is always in-bounds.
-  const sideText = toks.map((t) => t.text).join('');
-  // Defense-in-depth: the word-diff indexes sideText's coordinate space, so the
-  // tokens for this line MUST equal this side's content. In whole-file mode a
-  // line-number/blob disagreement would silently mis-highlight; fall back to the
-  // always-correct overlay instead.
-  const expected = normalizeEol(side === 'old' ? oldText : newText);
-  if (sideText !== expected) {
-    return (
-      <WordDiffOverlay
-        oldText={oldText}
-        newText={newText}
-        type={side === 'old' ? 'delete' : 'insert'}
-      />
-    );
-  }
-  // #670: the React.memo wrapper above means this word-diff runs only when this
-  // line's inputs change, not on every render. One residual case remains: a theme
-  // toggle changes `syntax` identity, so the memo re-runs diffWordsWithSpace on
-  // toggle (theme-independent work). Caching across themes is a deferred non-goal —
-  // see docs/specs/2026-07-01-diffpane-render-perf-design.md.
-  const parts = diffWordsWithSpace(normalizeEol(oldText), normalizeEol(newText));
-  const spans = mergeWordDiffWithTokens(sideText, toks, parts, side);
-  return <HighlightedLine spans={spans} fallback={sideText} />;
-});
 
 export interface DiffPaneProps {
   prRef: PrReference;
@@ -174,41 +96,6 @@ export interface DiffPaneProps {
   // over-promised — focus level ≠ which hunks the annotator actually annotates). null
   // when AI is off, still loading, or the annotator returned nothing.
   annotations?: HunkAnnotation[] | null;
-}
-
-// New-side gutter cell. #554: the line number is ALWAYS rendered as visible flow
-// text; the comment affordance is an additive hover glyph (a filled, accent-colored
-// comment bubble; its aria-label carries the line number, so the click contract
-// that many e2e specs query by `name: /add comment on line N/` is unchanged).
-// Previously the number lived *inside* the opacity-0 affordance button, so on
-// all-insert (added) files — which have no old-side number — the entire gutter
-// looked blank until hover.
-function NewGutterCell({
-  lineNum,
-  onComment,
-}: {
-  lineNum: number | null | undefined;
-  onComment?: () => void;
-}) {
-  return (
-    <td className={`diff-gutter diff-gutter--new ${styles.diffGutter} ${styles.diffGutterNew}`}>
-      <span className={`diff-gutter-num ${styles.diffGutterNum}`}>{lineNum ?? ''}</span>
-      {lineNum != null && onComment && (
-        <button
-          type="button"
-          className={`diff-comment-affordance ${styles.diffCommentAffordance}`}
-          aria-label={`Add comment on line ${lineNum}`}
-          onClick={onComment}
-        >
-          {/* Filled Octicon comment-16 (solid bubble), accent-colored via CSS.
-              The aria-label carries the accessible name, so the glyph is hidden. */}
-          <svg viewBox="0 0 16 16" width="12" height="12" fill="currentColor" aria-hidden="true">
-            <path d="M1.75 1h12.5c.966 0 1.75.784 1.75 1.75v9.5A1.75 1.75 0 0 1 14.25 13H8.061l-2.574 2.573A1.458 1.458 0 0 1 3 14.543V13H1.75A1.75 1.75 0 0 1 0 11.25v-9.5C0 1.784.784 1 1.75 1Z" />
-          </svg>
-        </button>
-      )}
-    </td>
-  );
 }
 
 function findAdjacentPair(lines: DiffLine[], idx: number): DiffLine | null {
@@ -1208,28 +1095,3 @@ const SplitDiffLineRow = memo(function SplitDiffLineRow({
 
   return null;
 });
-
-// A row that renders the composer iff the parent's renderComposerForLine
-// returns non-null for the given line. Avoids putting `if (active)` logic
-// into DiffPane itself.
-function ComposerSlot({
-  filePath,
-  lineNumber,
-  colSpan,
-  render,
-}: {
-  filePath: string;
-  lineNumber: number;
-  colSpan: number;
-  render: (filePath: string, lineNumber: number) => React.ReactNode;
-}) {
-  const node = render(filePath, lineNumber);
-  if (!node) return null;
-  return (
-    <tr className={`diff-composer-row ${styles.diffComposerRow}`}>
-      <td colSpan={colSpan}>
-        <div className={styles.diffStickyViewport}>{node}</div>
-      </td>
-    </tr>
-  );
-}
