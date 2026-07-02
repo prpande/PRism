@@ -14,7 +14,7 @@
 - Pixel-identical rendering; no visual or interaction changes anywhere.
 - Vitest via the LOCAL binary only: `cd frontend && ./node_modules/.bin/vitest run <paths>` (never `npx vitest`). Typecheck: `./node_modules/.bin/tsc -b` (never `tsc --noEmit` — vacuous here). Lint (includes prettier --check, gates CI): `npm run lint`.
 - All line numbers below are anchored to the slice-1 starting tree (commit `e8965c3a`); if drift is suspected, locate by the quoted symbol, not the number.
-- Existing test suites must pass unmodified, EXCEPT the exact carve-outs the spec names: (a) import-path updates, (b) the mechanical `prUrl` → `htmlUrl` prop rename in every test fixture that passes the prop (7 files — see Task 6), (c) slice 2's named matchMedia-stub/viewport-test changes.
+- Existing test suites must pass unmodified, EXCEPT the exact carve-outs the spec names: (a) import-path updates, (b) the mechanical `prUrl` → `htmlUrl` prop rename in every test fixture that passes the prop (9 files — see Task 6), (c) slice 2's named matchMedia-stub/viewport-test changes.
 - Commit messages: conventional, reference `#327` as bare text in the body (never `fix(#327):` — auto-closes). `Closes #327` appears only in PR 3's description. End every commit with:
   `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`
   `Claude-Session: https://claude.ai/code/session_01Cz9md9aAqTauY4aotrTLiT`
@@ -67,7 +67,7 @@ export function useWholeFileFailureLatch(opts: {
 **Interfaces (Produces):**
 
 ```tsx
-import type { HunkAnnotationDto } from '../../../../api/types'; // match DiffPane's existing import
+import type { HunkAnnotation } from …; // real type name is HunkAnnotation — match DiffPane's existing import exactly
 import { AiHunkAnnotation } from …; // same import DiffPane uses today
 import styles from './DiffPane.module.css';
 
@@ -202,7 +202,7 @@ value: (query: string) => {
 
 - [ ] **Step 1: Upgrade the stub** (evaluate at call time against `window.innerWidth`; keep the exact no-op listener shape). Run the FULL frontend suite → must stay green BEFORE any consumer changes (proves the upgrade is compatible: InboxPage's 1180px gate stays false at jsdom's 1024; per-test overrides win).
 - [ ] **Step 2: Commit** — `test(fe): matchMedia stub evaluates width queries against innerWidth (for #327)`.
-- [ ] **Step 3: Create `useIsSplitCapable`**, swap the three literals + delete `useViewportWidth`. Viewport tests in `frontend/__tests__/FilesTab.test.tsx` and `FilesTab.viewPreservation.test.tsx` that change `innerWidth` mid-test: re-render after the change or install a per-test matchMedia mock (InboxPage's save/restore pattern) — touch ONLY those two files.
+- [ ] **Step 3: Create `useIsSplitCapable`**, swap the three literals + delete `useViewportWidth`. Viewport tests in `frontend/__tests__/FilesTab.test.tsx` and `FilesTab.viewPreservation.test.tsx` that change `innerWidth` mid-test: REMOUNT the component after the change (fresh `render()`, not `rerender()` — `useMediaQuery` reads `matches` only in its `useState` initializer and the stub's listeners are no-ops) or install a per-test matchMedia mock (InboxPage's save/restore pattern) — touch ONLY those two files.
 - [ ] **Step 4: Full suite + commit** — `refactor(fe): useIsSplitCapable + SPLIT_DIFF_MIN_WIDTH replace useViewportWidth (for #327)`.
 
 ### Task 9: Single tree build
