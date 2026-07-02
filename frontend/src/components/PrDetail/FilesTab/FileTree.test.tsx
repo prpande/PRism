@@ -1,6 +1,7 @@
 import { render, screen, fireEvent, within } from '@testing-library/react';
 import { describe, it, expect, vi } from 'vitest';
 import { FileTree } from './FileTree';
+import { buildTree } from './treeBuilder';
 import { AI_TREE_ANALYZED_LABEL } from '../../Ai/aiStrings';
 import type { FileChange, FileFocus, FileFocusStatus } from '../../../api/types';
 import type { CommentIndicatorState, CommentCounts } from './commentIndicatorState';
@@ -9,11 +10,18 @@ function file(path: string, overrides: Partial<FileChange> = {}): FileChange {
   return { path, status: 'modified', hunks: [], ...overrides };
 }
 
+// #327 (Task 9) — FilesTab builds the tree once and passes it down, so FileTree now
+// takes the built tree alongside `files`. Derive both props from the real builder so
+// fixtures can never drift from production tree construction.
+function treeProps(files: FileChange[]) {
+  return { files, tree: buildTree(files) };
+}
+
 describe('FileTree', () => {
   it('renders file nodes from FileChange array', () => {
     render(
       <FileTree
-        files={[file('README.md'), file('src/main.ts')]}
+        {...treeProps([file('README.md'), file('src/main.ts')])}
         selectedPath={null}
         onSelectFile={vi.fn()}
         viewedPaths={new Set()}
@@ -30,7 +38,7 @@ describe('FileTree', () => {
   it('renders smart-compacted directory labels', () => {
     render(
       <FileTree
-        files={[file('src/components/Header/Header.tsx')]}
+        {...treeProps([file('src/components/Header/Header.tsx')])}
         selectedPath={null}
         onSelectFile={vi.fn()}
         viewedPaths={new Set()}
@@ -47,7 +55,7 @@ describe('FileTree', () => {
   it('highlights the selected file', () => {
     render(
       <FileTree
-        files={[file('a.ts'), file('b.ts')]}
+        {...treeProps([file('a.ts'), file('b.ts')])}
         selectedPath="a.ts"
         onSelectFile={vi.fn()}
         viewedPaths={new Set()}
@@ -67,7 +75,7 @@ describe('FileTree', () => {
     const onSelect = vi.fn();
     render(
       <FileTree
-        files={[file('a.ts')]}
+        {...treeProps([file('a.ts')])}
         selectedPath={null}
         onSelectFile={onSelect}
         viewedPaths={new Set()}
@@ -85,7 +93,7 @@ describe('FileTree', () => {
     const onToggle = vi.fn();
     render(
       <FileTree
-        files={[file('a.ts')]}
+        {...treeProps([file('a.ts')])}
         selectedPath={null}
         onSelectFile={vi.fn()}
         viewedPaths={new Set(['a.ts'])}
@@ -104,7 +112,7 @@ describe('FileTree', () => {
   it('labels each viewed checkbox by full path so same-named files are distinct', () => {
     render(
       <FileTree
-        files={[file('src/index.ts'), file('lib/index.ts')]}
+        {...treeProps([file('src/index.ts'), file('lib/index.ts')])}
         selectedPath={null}
         onSelectFile={vi.fn()}
         viewedPaths={new Set()}
@@ -123,7 +131,7 @@ describe('FileTree', () => {
   it('marks a viewed file row with the gray-out class and never line-through', () => {
     const { container } = render(
       <FileTree
-        files={[file('seen.ts', { status: 'modified' })]}
+        {...treeProps([file('seen.ts', { status: 'modified' })])}
         selectedPath={null}
         onSelectFile={vi.fn()}
         viewedPaths={new Set(['seen.ts'])}
@@ -144,7 +152,7 @@ describe('FileTree', () => {
   it('collapses and expands directories', () => {
     render(
       <FileTree
-        files={[file('src/a.ts'), file('src/b.ts')]}
+        {...treeProps([file('src/a.ts'), file('src/b.ts')])}
         selectedPath={null}
         onSelectFile={vi.fn()}
         viewedPaths={new Set()}
@@ -165,7 +173,7 @@ describe('FileTree', () => {
   it('shows viewed count in header', () => {
     render(
       <FileTree
-        files={[file('a.ts'), file('b.ts'), file('c.ts')]}
+        {...treeProps([file('a.ts'), file('b.ts'), file('c.ts')])}
         selectedPath={null}
         onSelectFile={vi.fn()}
         viewedPaths={new Set(['a.ts'])}
@@ -181,7 +189,7 @@ describe('FileTree', () => {
   it('renders file status icon for added files', () => {
     const { container } = render(
       <FileTree
-        files={[file('new.ts', { status: 'added' })]}
+        {...treeProps([file('new.ts', { status: 'added' })])}
         selectedPath={null}
         onSelectFile={vi.fn()}
         viewedPaths={new Set()}
@@ -199,7 +207,7 @@ describe('FileTree', () => {
   it('renders empty state when files is empty', () => {
     render(
       <FileTree
-        files={[]}
+        {...treeProps([])}
         selectedPath={null}
         onSelectFile={vi.fn()}
         viewedPaths={new Set()}
@@ -215,7 +223,7 @@ describe('FileTree', () => {
   it('indents rows at 12px per depth level', () => {
     const { container } = render(
       <FileTree
-        files={[file('src/a.ts')]}
+        {...treeProps([file('src/a.ts')])}
         selectedPath={null}
         onSelectFile={vi.fn()}
         viewedPaths={new Set()}
@@ -236,7 +244,7 @@ describe('FileTree', () => {
   it('renders the directory chevron as an SVG, not the ▸ glyph', () => {
     const { container } = render(
       <FileTree
-        files={[file('src/a.ts')]}
+        {...treeProps([file('src/a.ts')])}
         selectedPath={null}
         onSelectFile={vi.fn()}
         viewedPaths={new Set()}
@@ -256,7 +264,7 @@ describe('FileTree', () => {
   it('renders an accent folder icon inside the directory toggle button', () => {
     render(
       <FileTree
-        files={[file('src/a.ts')]}
+        {...treeProps([file('src/a.ts')])}
         selectedPath={null}
         onSelectFile={vi.fn()}
         viewedPaths={new Set()}
@@ -276,7 +284,10 @@ describe('FileTree', () => {
   it('marks a deleted file name with the deleted class; non-deleted files do not', () => {
     render(
       <FileTree
-        files={[file('gone.ts', { status: 'deleted' }), file('keep.ts', { status: 'modified' })]}
+        {...treeProps([
+          file('gone.ts', { status: 'deleted' }),
+          file('keep.ts', { status: 'modified' }),
+        ])}
         selectedPath={null}
         onSelectFile={vi.fn()}
         viewedPaths={new Set()}
@@ -293,7 +304,7 @@ describe('FileTree', () => {
   it('adds title tooltips to file and directory name spans', () => {
     render(
       <FileTree
-        files={[file('src/really-long-file-name-that-would-overflow.ts')]}
+        {...treeProps([file('src/really-long-file-name-that-would-overflow.ts')])}
         selectedPath={null}
         onSelectFile={vi.fn()}
         viewedPaths={new Set()}
@@ -322,7 +333,7 @@ describe('FileTree — status accessible label (item 8)', () => {
     (status, letter, word) => {
       const { container } = render(
         <FileTree
-          files={[file('x.ts', { status })]}
+          {...treeProps([file('x.ts', { status })])}
           selectedPath={null}
           onSelectFile={vi.fn()}
           viewedPaths={new Set()}
@@ -354,7 +365,7 @@ describe('FileTree — whole-tree horizontal scroll + fixed checkbox column (ite
   it('puts the whole tree (names + rows) inside ONE horizontal scroll container', () => {
     const { container } = render(
       <FileTree
-        files={[file('src/a-really-long-file-name.ts')]}
+        {...treeProps([file('src/a-really-long-file-name.ts')])}
         selectedPath={null}
         onSelectFile={vi.fn()}
         viewedPaths={new Set()}
@@ -380,7 +391,7 @@ describe('FileTree — whole-tree horizontal scroll + fixed checkbox column (ite
   it('renders the viewed checkbox in a separate column OUTSIDE the scroll container', () => {
     const { container } = render(
       <FileTree
-        files={[file('a-really-long-file-name.ts')]}
+        {...treeProps([file('a-really-long-file-name.ts')])}
         selectedPath={null}
         onSelectFile={vi.fn()}
         viewedPaths={new Set()}
@@ -404,7 +415,7 @@ describe('FileTree — whole-tree horizontal scroll + fixed checkbox column (ite
   it('aligns the checkbox column to the rows: one checkbox per file, a slot per dir', () => {
     const { container } = render(
       <FileTree
-        files={[file('src/a.ts'), file('src/b.ts')]}
+        {...treeProps([file('src/a.ts'), file('src/b.ts')])}
         selectedPath={null}
         onSelectFile={vi.fn()}
         viewedPaths={new Set()}
@@ -433,7 +444,7 @@ describe('FileTree — AI focus dot (D32a)', () => {
   it('renders no dot when aiPreview is off, but the column slot is collapsed', () => {
     const { container } = render(
       <FileTree
-        files={files}
+        {...treeProps(files)}
         selectedPath={null}
         onSelectFile={() => {}}
         viewedPaths={new Set()}
@@ -452,7 +463,7 @@ describe('FileTree — AI focus dot (D32a)', () => {
     const entries: FileFocus[] = [{ path: 'src/Calc.cs', level: 'high', rationale: 'core logic' }];
     const { container } = render(
       <FileTree
-        files={files}
+        {...treeProps(files)}
         selectedPath={null}
         onSelectFile={() => {}}
         viewedPaths={new Set()}
@@ -477,7 +488,7 @@ describe('FileTree — AI focus dot (D32a)', () => {
     const entries: FileFocus[] = [{ path: 'src/Calc.cs', level: 'medium', rationale: 'tests' }];
     const { container } = render(
       <FileTree
-        files={files}
+        {...treeProps(files)}
         selectedPath={null}
         onSelectFile={() => {}}
         viewedPaths={new Set()}
@@ -500,7 +511,7 @@ describe('FileTree — AI focus dot (D32a)', () => {
     const entries: FileFocus[] = [{ path: 'src/Calc.cs', level: 'low', rationale: 'formatting' }];
     const { container } = render(
       <FileTree
-        files={files}
+        {...treeProps(files)}
         selectedPath={null}
         onSelectFile={() => {}}
         viewedPaths={new Set()}
@@ -523,7 +534,7 @@ describe('FileTree — AI focus dot (D32a)', () => {
   it('outer .file-tree-ai slot carries aria-hidden=true so AT ignores the column', () => {
     const { container } = render(
       <FileTree
-        files={files}
+        {...treeProps(files)}
         selectedPath={null}
         onSelectFile={() => {}}
         viewedPaths={new Set()}
@@ -551,7 +562,7 @@ describe('FileTree — AI dot fixed column (#492)', () => {
     const entries: FileFocus[] = [{ path: longPath, level: 'high', rationale: 'core logic' }];
     const { container } = render(
       <FileTree
-        files={[F(longPath)]}
+        {...treeProps([F(longPath)])}
         selectedPath={null}
         onSelectFile={() => {}}
         viewedPaths={new Set()}
@@ -575,7 +586,7 @@ describe('FileTree — AI dot fixed column (#492)', () => {
   it('places the AI column to the LEFT of the viewed-checkbox column', () => {
     const { container } = render(
       <FileTree
-        files={[F('a.ts')]}
+        {...treeProps([F('a.ts')])}
         selectedPath={null}
         onSelectFile={() => {}}
         viewedPaths={new Set()}
@@ -597,7 +608,7 @@ describe('FileTree — AI dot fixed column (#492)', () => {
   it('aligns the AI column to the rows: a .file-tree-ai per file, an empty slot per dir', () => {
     const { container } = render(
       <FileTree
-        files={[F('src/a.ts'), F('src/b.ts')]}
+        {...treeProps([F('src/a.ts'), F('src/b.ts')])}
         selectedPath={null}
         onSelectFile={() => {}}
         viewedPaths={new Set()}
@@ -625,7 +636,7 @@ function renderTree(overrides: {
 }) {
   return render(
     <FileTree
-      files={fixtureFiles}
+      {...treeProps(fixtureFiles)}
       selectedPath={null}
       onSelectFile={() => {}}
       viewedPaths={new Set()}
@@ -706,7 +717,7 @@ function renderWithComments(
 ) {
   return render(
     <FileTree
-      files={files}
+      {...treeProps(files)}
       selectedPath={null}
       onSelectFile={() => {}}
       viewedPaths={new Set()}
@@ -818,7 +829,7 @@ describe('FileTree full-row highlight (#513)', () => {
   function renderTree(selectedPath: string | null) {
     return render(
       <FileTree
-        files={[f('a.ts'), f('b.ts')]}
+        {...treeProps([f('a.ts'), f('b.ts')])}
         selectedPath={selectedPath}
         onSelectFile={() => {}}
         viewedPaths={new Set()}
@@ -880,7 +891,7 @@ describe('FileTree full-row highlight (#513)', () => {
   it('directory rows hover across their empty gutter slots and never enter selected', () => {
     const { container } = render(
       <FileTree
-        files={[f('dir/a.ts')]}
+        {...treeProps([f('dir/a.ts')])}
         selectedPath="dir/a.ts"
         onSelectFile={() => {}}
         viewedPaths={new Set()}

@@ -745,6 +745,7 @@ export function FilesTab() {
           ) : (
             <FileTree
               files={files}
+              tree={tree}
               selectedPath={selectedPath}
               onSelectFile={setSelectedPath}
               viewedPaths={viewedPaths}
