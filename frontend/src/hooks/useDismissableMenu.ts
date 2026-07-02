@@ -43,7 +43,10 @@ export function useDismissableMenu({
       if (returnFocus) setTimeout(() => returnFocusRef.current?.focus(), 0);
     };
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') close(true);
+      // Skip an Escape another widget already consumed (a composer dirty-guard
+      // or a modal trap preventDefaults it) — closing here would also schedule
+      // a deferred refocus that can land behind a just-opened modal.
+      if (e.key === 'Escape' && !e.defaultPrevented) close(true);
     };
     const onPointerDown = (e: PointerEvent) => {
       if (rootRef.current && !rootRef.current.contains(e.target as Node)) {

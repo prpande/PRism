@@ -75,11 +75,13 @@ describe('IterationTabStrip — ARIA popup semantics (#328)', () => {
     expect(trigger).toHaveAttribute('aria-expanded', 'true');
   });
 
-  it('exposes the dropdown as a labelled menu of menuitems', async () => {
+  it('exposes the dropdown as a labelled menu of menuitemradios', async () => {
     const trigger = renderWithOverflow();
     await userEvent.click(trigger);
     const menu = screen.getByRole('menu', { name: /all iterations/i });
     expect(menu).toBeInTheDocument();
-    expect(screen.getAllByRole('menuitem')).toHaveLength(2);
+    // menuitemradio (+ aria-checked), not menuitem: the options carry a
+    // selected state, and aria-selected is not permitted on menuitem.
+    expect(screen.getAllByRole('menuitemradio')).toHaveLength(2);
   });
 });

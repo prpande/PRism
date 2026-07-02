@@ -196,12 +196,12 @@ function IterationOption({
   return (
     <button
       type="button"
-      role="menuitem"
+      role="menuitemradio"
       className={
         `iteration-option${disabled ? ' iteration-option--disabled' : ''} ` +
         `${styles.iterationOption}${disabled ? ` ${styles.iterationOptionDisabled}` : ''}`
       }
-      aria-selected={isActive}
+      aria-checked={isActive}
       disabled={disabled}
       onClick={onSelect}
     >
