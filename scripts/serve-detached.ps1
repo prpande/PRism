@@ -236,9 +236,10 @@ function Write-WrapperScript {
     # collects unambiguously -- no reliance on array-coercion of a comma list.
     $argLiteral = ($argTail | ForEach-Object { "'$($_.Replace("'", "''"))'" }) -join ' '
 
-    # run.ps1's $Reset is the position-0 ValidateSet param; a bare leading
-    # --no-browser with no named -Reset binds positionally to $Reset and fails its
-    # ValidateSet. Name -Reset None so pass-through args reach ValueFromRemainingArguments.
+    # Name -Reset None explicitly (the no-op reset) so the wrapper's intent is clear.
+    # run.ps1 sets PositionalBinding=$false, so pass-through args reach
+    # ValueFromRemainingArguments regardless of whether -Reset is named (#274) -- naming
+    # it is belt-and-suspenders, not required as it once was.
     $content = @"
 # serve-detached.wrapper.ps1 -- AUTHORED AT RUNTIME, disposable, overwritten each launch.
 # Owns its own redirection so the WMI command line carries none (spec cause 3).
