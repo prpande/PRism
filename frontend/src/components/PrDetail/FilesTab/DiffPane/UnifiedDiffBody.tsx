@@ -43,22 +43,25 @@ export const UnifiedDiffBody = memo(function UnifiedDiffBody({
   changeEndMap,
 }: DiffBodyProps) {
   // #327 Task 12 — per-row composer-content stamp. The key is parsed ONCE per
-  // (key, path) change into a numeric line → stamp map: each
-  // `${filePath}:${lineNumber}=${stamp}` entry (the stamp is 'c' for the open
-  // composer plus placeholder clientIds) splits at its LAST '=' (stamps never
-  // contain '='), then at the location's LAST ':' (file paths may contain
-  // ':'), keeping only entries for the current file. Each row gets its own
-  // stamp (or null), NEVER the raw key (the raw key would break every row's
-  // memo on each composer move — the per-row stamp re-renders exactly the rows
-  // whose composer content appears, changes, or leaves; a mere boolean would
-  // miss the same-line composer→placeholder swap after post-now). CRITICAL:
-  // this parse must stay format-identical to the key builder in FilesTab's
+  // (key, path) change into a numeric line → stamp map: NUL-joined ('\0' —
+  // the one character git forbids in paths; '|', '=' and ':' are all legal)
+  // `${filePath}:${lineNumber}=${stamp}` entries. The stamp is
+  // `c:${draftId}:${anyOtherDraftsStaged}` for the open composer plus
+  // placeholder clientIds — this parse never interprets it, only per-row
+  // equality matters. Each entry splits at its LAST '=' (stamps never contain
+  // '='), then at the location's LAST ':' (file paths may contain ':'),
+  // keeping only entries for the current file. Each row gets its own stamp
+  // (or null), NEVER the raw key (the raw key would break every row's memo on
+  // each composer move — the per-row stamp re-renders exactly the rows whose
+  // composer content appears, changes, or leaves; a mere boolean would miss
+  // the same-line composer→placeholder swap after post-now). CRITICAL: this
+  // parse must stay format-identical to the key builder in FilesTab's
   // activeComposerKey memo; a mismatch silently defeats the whole mechanism
   // (guarded by FilesTab.renderCount.perf.test.tsx).
   const composerStamps = useMemo(() => {
     if (activeComposerKey === null) return null;
     const stamps = new Map<number, string>();
-    for (const entry of activeComposerKey.split('|')) {
+    for (const entry of activeComposerKey.split('\0')) {
       const eq = entry.lastIndexOf('=');
       const loc = entry.slice(0, eq);
       const colon = loc.lastIndexOf(':');

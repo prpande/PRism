@@ -23,8 +23,9 @@ interface DiffLineRowProps {
   dataChangeEnd?: number;
   onLineClick?: (anchor: InlineAnchor) => void;
   renderComposerForLine?: (filePath: string, lineNumber: number) => React.ReactNode;
-  // #327 Task 12 — this row's composer-content stamp ('c' for the open
-  // composer plus placeholder clientIds; null when this line hosts neither),
+  // #327 Task 12 — this row's composer-content stamp
+  // (`c:${draftId}:${anyOtherDraftsStaged}` for the open composer plus
+  // placeholder clientIds; null when this line hosts neither),
   // derived per row by UnifiedDiffBody from activeComposerKey. Declared ONLY so
   // it participates in React.memo's shallow compare: renderComposerForLine is
   // identity-stable, so this changing is what re-renders the row (and its

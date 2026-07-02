@@ -1,4 +1,4 @@
-import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
+import { render, screen, within, fireEvent, waitFor, act } from '@testing-library/react';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { MemoryRouter, Routes, Route, Outlet } from 'react-router-dom';
 import { FilesTab } from './FilesTab';
@@ -199,6 +199,69 @@ function countGetDraft(handler: ReturnType<typeof makeRouteHandler>): number {
   }).length;
 }
 
+// Stateful handler for the composer-reactivity tests: the served GET /draft
+// session mirrors a server-side draft store that create/update/delete PUTs
+// mutate, and create PUTs return the backend's `{ assignedId }` contract —
+// close enough to the real PrDraftEndpoints for the create → autosave →
+// discard lifecycle.
+function makeStatefulRouteHandler(diff: DiffDto) {
+  const server = emptySession();
+  const patches: Record<string, unknown>[] = [];
+  const handler = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+    const method = init?.method ?? 'GET';
+    const json = (payload: unknown) => Promise.resolve(jsonResponse(payload));
+    if (typeof url === 'string') {
+      if (url.includes('/diff')) return json(diff);
+      if (url.endsWith('/draft') && method === 'GET') {
+        // Fresh arrays each GET, matching a real deserialized response.
+        return json({
+          ...server,
+          draftComments: [...server.draftComments],
+          draftReplies: [...server.draftReplies],
+        });
+      }
+      if (url.endsWith('/draft') && method === 'PUT') {
+        const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>;
+        patches.push(body);
+        if (body.newDraftComment) {
+          const p = body.newDraftComment as DraftCommentDto & Record<string, unknown>;
+          server.draftComments.push({
+            id: 'uuid-created',
+            filePath: p.filePath,
+            lineNumber: p.lineNumber,
+            side: p.side,
+            anchoredSha: p.anchoredSha,
+            anchoredLineContent: p.anchoredLineContent,
+            bodyMarkdown: p.bodyMarkdown,
+            status: 'draft',
+            isOverriddenStale: false,
+            postedCommentId: null,
+          });
+          return json({ assignedId: 'uuid-created' });
+        }
+        if (body.updateDraftComment) {
+          const p = body.updateDraftComment as { id: string; bodyMarkdown: string };
+          const d = server.draftComments.find((x) => x.id === p.id);
+          if (d) d.bodyMarkdown = p.bodyMarkdown;
+          return json({});
+        }
+        if (body.deleteDraftComment) {
+          const p = body.deleteDraftComment as { id: string };
+          server.draftComments = server.draftComments.filter((x) => x.id !== p.id);
+          return json({});
+        }
+        return json({});
+      }
+    }
+    return Promise.resolve(new Response('{}', { status: 200 }));
+  });
+  return { handler, patches };
+}
+
+function patchesOfKind(patches: Record<string, unknown>[], kind: string): unknown[] {
+  return patches.filter((p) => kind in p).map((p) => p[kind]);
+}
+
 // Render-count probe: every Wrapper render rebuilds the context `value`
 // object, so each Wrapper render re-renders FilesTab through the context.
 // Assertion (a) uses this to prove the autosave refetch really re-rendered
@@ -341,6 +404,126 @@ describe('FilesTab render-count guard — activeComposerKey + stable renderCompo
     expect(optimistic.className).toContain('comment-card--posting');
   });
 
+  it('(d) an autosave-assigned draft id reaches the MOUNTED composer — Discard opens the confirm modal and deletes the draft, not a silent close', async () => {
+    // Finding: onAssignedId → setComposerDraftId(D) re-renders FilesTab, but
+    // activeComposerKey must CHANGE for the composer-hosting row to re-render —
+    // a byte-identical key strands the mounted composer at draftId=null, so
+    // Discard/Escape takes the null branch (silent close, no delete; the
+    // "discarded" draft later posts with the review).
+    const { handler, patches } = makeStatefulRouteHandler(onefileDiff);
+    globalThis.fetch = handler as unknown as typeof fetch;
+    render(<App prDetail={prDetailWithThread} />);
+    await selectFileUnified();
+
+    // Open the composer on a line with NO existing draft.
+    fireEvent.click(await screen.findByRole('button', { name: 'Add comment on line 1' }));
+    const textarea = (await screen.findByLabelText('Comment body')) as HTMLTextAreaElement;
+    expect(textarea.value).toBe('');
+
+    // Type past the create threshold → debounce autosave → create PUT →
+    // { assignedId: 'uuid-created' } → onAssignedId → setComposerDraftId.
+    fireEvent.change(textarea, { target: { value: 'a fresh draft body' } });
+    await waitFor(() => expect(patchesOfKind(patches, 'newDraftComment')).toHaveLength(1));
+    await act(async () => {}); // flush onAssignedId + the onSaved refetch
+
+    // The mounted composer must now operate with the assigned id: Discard
+    // opens the confirmation modal (draftId !== null branch) instead of
+    // silently closing.
+    fireEvent.click(screen.getByRole('button', { name: 'Discard' }));
+    expect(await screen.findByText('Discard saved draft?')).toBeInTheDocument();
+    expect(
+      screen.getByRole('form', { name: 'Draft comment on src/main.ts line 1' }),
+    ).toBeInTheDocument();
+
+    // Confirm → the delete PATCH fires for the ASSIGNED id and the composer closes.
+    const confirmBtn = screen
+      .getAllByRole('button', { name: 'Discard' })
+      .find((b) => b.getAttribute('data-modal-role') === 'primary');
+    expect(confirmBtn).toBeDefined();
+    fireEvent.click(confirmBtn!);
+    await waitFor(() =>
+      expect(patchesOfKind(patches, 'deleteDraftComment')).toEqual([{ id: 'uuid-created' }]),
+    );
+    await waitFor(() =>
+      expect(
+        screen.queryByRole('form', { name: 'Draft comment on src/main.ts line 1' }),
+      ).not.toBeInTheDocument(),
+    );
+  });
+
+  it('(e) a second staged draft arriving while the composer is open updates its post-now gating live (#302 D3)', async () => {
+    // Finding: anyOtherDraftsStaged is computed inside the identity-stable
+    // renderComposerForLine from ref-reads — if the composer-hosting row bails
+    // when another draft appears, the mounted composer's post-now gate and
+    // Save label go stale.
+    let session = sessionWithSavedDraft();
+    const handler = makeRouteHandler(onefileDiff, () => session);
+    globalThis.fetch = handler as unknown as typeof fetch;
+    render(<App prDetail={prDetailWithThread} />);
+    await selectFileUnified();
+
+    // Open the line-1 composer (hydrates the saved draft → draftId is
+    // assigned at mount, isolating this test from finding (d)).
+    fireEvent.click(await screen.findByRole('button', { name: 'Add comment on line 1' }));
+    const textarea = (await screen.findByLabelText('Comment body')) as HTMLTextAreaElement;
+    expect(textarea.value).toBe(SEED_BODY);
+    const composer = screen.getByTestId('inline-comment-composer');
+
+    // No other drafts staged: post-now enabled, default Save label.
+    expect(within(composer).getByRole('button', { name: 'Comment' })).toHaveAttribute(
+      'aria-disabled',
+      'false',
+    );
+    expect(within(composer).getByRole('button', { name: 'Add to review' })).toBeInTheDocument();
+
+    const getDraftBefore = countGetDraft(handler);
+    // A second draft (a reply on thread t3) arrives on the next refetch —
+    // same cross-tab machinery as (c2).
+    session = { ...sessionWithSavedDraft(), draftReplies: sessionWithDraftReply().draftReplies };
+
+    // Type → debounce autosave → onSaved → refetch → merged session gains the reply.
+    fireEvent.change(textarea, { target: { value: `${SEED_BODY} — trigger refetch` } });
+    await waitFor(() => expect(countGetDraft(handler)).toBeGreaterThan(getDraftBefore));
+    // Proof the arrival landed: t3's ReplyComposer auto-mounts (reactive channel).
+    await screen.findByTestId('reply-composer');
+
+    // The OPEN inline composer's gate must reflect the second staged draft:
+    // post-now disabled with the review-in-progress tooltip, Save relabeled.
+    await waitFor(() =>
+      expect(within(composer).getByRole('button', { name: 'Comment' })).toHaveAttribute(
+        'aria-disabled',
+        'true',
+      ),
+    );
+    expect(
+      within(composer).getByRole('button', { name: 'Add review comment' }),
+    ).toBeInTheDocument();
+  });
+
+  it('(f) composer key round-trips a file path containing "|", "=" and ":" — the composer appears on that file', async () => {
+    // Finding: '|' is legal in git paths but was the key's entry joiner — a
+    // path containing '|' shatters UnifiedDiffBody's parse, so the stamp never
+    // reaches the row and the composer never mounts. Exercises the REAL
+    // producer (FilesTab's activeComposerKey memo) and the REAL parser
+    // (UnifiedDiffBody's composerStamps) end to end.
+    const weirdPath = 'src/we|rd=file:v2.ts';
+    const weirdDiff: DiffDto = {
+      range: 'basedef..headabc',
+      files: [{ ...onefileDiff.files[0], path: weirdPath }],
+      truncated: false,
+    };
+    const handler = makeRouteHandler(weirdDiff, emptySession());
+    globalThis.fetch = handler as unknown as typeof fetch;
+    render(<App prDetail={prDetailWithThread} />);
+    await waitFor(() => {
+      fireEvent.click(screen.getByText('we|rd=file:v2.ts'));
+    });
+    fireEvent.click(screen.getByTestId('diff-view-unified'));
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Add comment on line 1' }));
+    await screen.findByRole('form', { name: `Draft comment on ${weirdPath} line 1` });
+  });
+
   it('(c2) a draft reply arriving via an autosave refetch surfaces in the affected thread widget while unrelated rows still bail (#327 Task 13)', async () => {
     // Served session starts WITHOUT a draft reply; the getter lets the test
     // swap it mid-flight to simulate a cross-tab arrival on the next refetch.
@@ -382,10 +565,14 @@ describe('FilesTab render-count guard — activeComposerKey + stable renderCompo
 
     // Sanity: the refetch really re-rendered the tree.
     expect(wrapperRenders.count).toBeGreaterThan(rendersBefore);
-    // The stability half: (a)-style row bail still holds — the draft-array
-    // churn travelled ONLY through the reactive channel, never through the
-    // rows' replyContext prop, so no DiffLineRow with unchanged thread and
-    // composer data re-rendered.
-    expect(hl.count).toBe(0);
+    // The stability half: (a)-style row bail still holds for UNRELATED rows —
+    // the draft-array churn travelled through the reactive channel and (for
+    // the open composer's own row) through its activeComposerKey stamp, never
+    // through the rows' replyContext prop. Exactly ONE probe row re-renders:
+    // the composer-hosting line-1 context row, whose stamp legitimately
+    // changed because the arriving reply flipped its anyOtherDraftsStaged
+    // post-now gate (#302 D3 — see test (e)). Line 3's context row (the
+    // unchanged-thread probe) still bails.
+    expect(hl.count).toBe(1);
   });
 });

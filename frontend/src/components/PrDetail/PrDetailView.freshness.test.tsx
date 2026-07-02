@@ -98,7 +98,10 @@ const openTabsStub: OpenTabsContextValue = {
   clearAllTabs: vi.fn(),
 };
 
-vi.mock('../../hooks/useDraftSession', () => ({
+vi.mock('../../hooks/useDraftSession', async (importOriginal) => ({
+  // Spread the real module so pure exports (computeAnyOtherDraftsStaged,
+  // called by FilesTab at render time) stay live; only the hook is faked.
+  ...(await importOriginal<typeof import('../../hooks/useDraftSession')>()),
   useDraftSession: () => ({
     session: { draftComments: [], draftReplies: [], draftVerdictStatus: 'none' },
     status: 'ready',

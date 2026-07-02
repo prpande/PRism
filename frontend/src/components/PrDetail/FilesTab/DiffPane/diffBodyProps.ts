@@ -26,9 +26,12 @@ export interface DiffBodyProps {
   // #327 Task 12 — composite key of every location where renderComposerForLine
   // returns content (the open composer's line + each un-deduped new-inline
   // placeholder's line): sorted `${filePath}:${lineNumber}=${stamp}` entries
-  // joined with '|', or null when none (the stamp — 'c' for the composer plus
-  // placeholder clientIds — distinguishes WHAT renders there, so post-now's
-  // same-line composer→placeholder swap still changes the key).
+  // joined with NUL ('\0' — the one character git forbids in paths), or null
+  // when none (the stamp — `c:${draftId}:${anyOtherDraftsStaged}` for the
+  // composer plus placeholder clientIds — distinguishes WHAT renders there
+  // and carries the mounted composer's reactive content, so post-now's
+  // same-line composer→placeholder swap, an autosave-assigned draft id, and a
+  // post-now-gate flip all change the key).
   // renderComposerForLine is identity-stable, so this key is what breaks the
   // body memo when composer content appears, moves, changes, or disappears.
   // UnifiedDiffBody derives a per-row stamp from it — the raw key must NEVER

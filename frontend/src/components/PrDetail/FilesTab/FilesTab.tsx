@@ -361,28 +361,66 @@ export function FilesTab() {
     noteReplyPosted,
   } = useOptimisticComments(prDetail.reviewComments);
 
+  // #302 — the open inline composer's "another draft is staged" gate, shared
+  // by the activeComposerKey stamp below and renderComposerForLine (single
+  // source, so the stamp and the rendered prop can never disagree). It also
+  // folds in postingInProgress (computeAnyOtherDraftsStaged returns false
+  // mid-post), so a posting flip that changes the composer-visible value
+  // changes the stamp too — no separate stamp slot needed.
+  const anyOtherDraftsStaged = useMemo(
+    () =>
+      computeAnyOtherDraftsStaged(
+        draftSession.session?.draftComments ?? [],
+        draftSession.session?.draftReplies ?? [],
+        composerDraftId,
+        draftSession.postingInProgress,
+      ),
+    [
+      draftSession.session?.draftComments,
+      draftSession.session?.draftReplies,
+      composerDraftId,
+      draftSession.postingInProgress,
+    ],
+  );
+
   // #327 Task 12 — composite key of every location where renderComposerForLine
   // returns content: the open composer's line plus each UN-deduped new-inline
   // placeholder's line, as sorted `${filePath}:${lineNumber}=${stamp}` entries
-  // joined with '|', or null when none. The `stamp` names WHAT renders there —
-  // 'c' for the open composer plus each placeholder's clientId — because
+  // joined with NUL ('\0' — the one character git forbids in paths; '|' is
+  // legal and used to shatter the parse), or null when none. The `stamp` names
+  // WHAT renders there — `c:${composerDraftId}:${anyOtherDraftsStaged}` for
+  // the open composer plus each placeholder's clientId — because
   // renderComposerForLine below is identity-stable, so this key is the ONLY
   // channel that breaks the memoized diff bodies when composer content appears,
-  // moves, disappears, OR is replaced in place (post-now closes the composer
+  // moves, disappears, is replaced in place (post-now closes the composer
   // and drops an optimistic placeholder at the SAME line — a location-only key
   // would compare equal and strand the stale composer; caught by
   // FilesTabComposer.test.tsx once Task 13 stabilized replyContext, which had
-  // masked it by churning the rows on every refetch). CRITICAL: the format
-  // must stay identical to UnifiedDiffBody's parse — it splits the key once
-  // per body render into a path-filtered Map<lineNumber, stamp> — a mismatch
-  // silently defeats the mechanism (guarded by
-  // FilesTab.renderCount.perf.test.tsx's inverse assertions). Stamps never
-  // contain '=' (clientIds are UUIDs / counter strings) and locations split
-  // their line number at the LAST ':', so exotic file paths (containing '='
-  // or ':') parse correctly.
+  // masked it by churning the rows on every refetch), OR changes the reactive
+  // content the MOUNTED composer reads: the autosave-assigned draftId (else
+  // Discard/Escape keeps the null branch — silent close, no delete — and
+  // registerOpenComposer never registers the real id) and the post-now gate
+  // input anyOtherDraftsStaged (#302 D3 — the gate must update live while the
+  // composer is open). Those two are exactly the composerRenderDepsRef fields
+  // that can change while the composer is mounted without some OTHER re-render
+  // channel already firing: prRef/prState/readOnly changes re-render every row
+  // via the replyContext prop's identity, initialBody/findExistingDraft matter
+  // only at mount, and the remaining fields are identity-stable callbacks.
+  // CRITICAL: the format must stay identical to UnifiedDiffBody's parse — it
+  // splits the key once per body render into a path-filtered
+  // Map<lineNumber, stamp> — a mismatch silently defeats the mechanism
+  // (guarded by FilesTab.renderCount.perf.test.tsx's inverse assertions).
+  // Stamps never contain '=' or NUL (draft ids / clientIds are UUIDs or
+  // counter strings) and locations split their line number at the LAST ':',
+  // so exotic file paths (containing '=', ':' or '|') parse correctly.
   const activeComposerKey = useMemo(() => {
     const stamps = new Map<string, string>();
-    if (activeAnchor) stamps.set(`${activeAnchor.filePath}:${activeAnchor.lineNumber}`, 'c');
+    if (activeAnchor) {
+      stamps.set(
+        `${activeAnchor.filePath}:${activeAnchor.lineNumber}`,
+        `c:${composerDraftId ?? ''}:${anyOtherDraftsStaged ? 1 : 0}`,
+      );
+    }
     // Placeholder locations arrive pre-parsed from useOptimisticComments
     // (newInlineLocations) — the anchorKey string format stays private there.
     for (const o of newInlineLocations) {
@@ -394,8 +432,8 @@ export function FilesTab() {
     return [...stamps.entries()]
       .map(([loc, stamp]) => `${loc}=${stamp}`)
       .sort()
-      .join('|');
-  }, [activeAnchor, newInlineLocations]);
+      .join('\0'); // NUL entry joiner — the one character git forbids in paths
+  }, [activeAnchor, newInlineLocations, composerDraftId, anyOtherDraftsStaged]);
 
   // #299 — refresh the shared draft session after each successful auto-save so
   // the Drafts tab reflects the just-saved draft live, without waiting for the
@@ -435,6 +473,7 @@ export function FilesTab() {
     readOnly,
     notePosted,
     prRef,
+    anyOtherDraftsStaged,
   });
 
   const renderComposerForLine = useCallback(
@@ -452,6 +491,7 @@ export function FilesTab() {
         readOnly,
         notePosted,
         prRef,
+        anyOtherDraftsStaged,
       } = composerRenderDepsRef.current;
 
       const composerHere =
@@ -500,12 +540,10 @@ export function FilesTab() {
             onSaved={handleComposerSaved}
             flushRef={activeComposerFlushRef}
             readOnly={readOnly}
-            anyOtherDraftsStaged={computeAnyOtherDraftsStaged(
-              draftSession.session?.draftComments ?? [],
-              draftSession.session?.draftReplies ?? [],
-              composerDraftId,
-              draftSession.postingInProgress,
-            )}
+            // The shared memo above — also folded into the composer's
+            // activeComposerKey stamp, so a change here re-renders the hosting
+            // row and this ref-read is never stale (#302 D3).
+            anyOtherDraftsStaged={anyOtherDraftsStaged}
             beginPosting={draftSession.beginPosting}
             endPosting={draftSession.endPosting}
             onPosted={(postedCommentId, body) => {
