@@ -10,15 +10,13 @@ import { prRefKey } from '../../../../api/types';
 import { useDiffScrollCapture } from '../../../../hooks/diffScrollMemory';
 import { parseHunkLines, interleaveWholeFile } from './interleaveWholeFile';
 import type { InlineAnchor } from '../../Composer/InlineCommentComposer';
-import {
-  ExistingCommentWidget,
-  type ExistingCommentWidgetReplyContext,
-  type ThreadCollapseControl,
+import type {
+  ExistingCommentWidgetReplyContext,
+  ThreadCollapseControl,
 } from './ExistingCommentWidget';
 import { DiffTruncationBanner } from './DiffTruncationBanner';
-import { annotationRows } from './AnnotationRows';
-import { DiffLineRow } from './DiffLineRow';
-import { SplitDiffLineRow } from './SplitDiffLineRow';
+import { UnifiedDiffBody } from './UnifiedDiffBody';
+import { SplitDiffBody } from './SplitDiffBody';
 import { useWholeFileContent } from '../../../../hooks/useWholeFileContent';
 import { useLockedPaneScroll } from '../../../../hooks/useLockedPaneScroll';
 import { useDiffViewportWidthVar } from '../../../../hooks/useDiffViewportWidthVar';
@@ -90,19 +88,6 @@ export interface DiffPaneProps {
   // over-promised — focus level ≠ which hunks the annotator actually annotates). null
   // when AI is off, still loading, or the annotator returned nothing.
   annotations?: HunkAnnotation[] | null;
-}
-
-function findAdjacentPair(lines: DiffLine[], idx: number): DiffLine | null {
-  const line = lines[idx];
-  if (line.type === 'delete') {
-    const next = lines[idx + 1];
-    if (next?.type === 'insert') return next;
-  }
-  if (line.type === 'insert') {
-    const prev = lines[idx - 1];
-    if (prev?.type === 'delete') return prev;
-  }
-  return null;
 }
 
 export function DiffPane({
@@ -387,237 +372,6 @@ export function DiffPane({
     file.hunks.length > 0 &&
     syntax.oldLineTokens.size === 0 &&
     syntax.newLineTokens.size === 0;
-
-  function renderDiffRows(): React.ReactNode[] {
-    if (isSplit) return renderSplitRows();
-    return renderUnifiedRows();
-  }
-
-  function renderUnifiedRows(): React.ReactNode[] {
-    const path = selectedPath ?? '';
-    const rows: React.ReactNode[] = [];
-    let hunkCounter = -1;
-    for (let idx = 0; idx < allLines.length; idx++) {
-      const line = allLines[idx];
-
-      if (line.type === 'hunk-header') {
-        hunkCounter += 1;
-        if (!wholeFileEnabled || wholeFile.fetchStatus !== 'ok') {
-          // Hunks-only mode: emit the hunk-header row + per-hunk AI annotations.
-          const commentLineNum = line.newLineNum;
-          const threadsAtLine = commentLineNum ? threadsByLine.get(commentLineNum) : undefined;
-          const pair = findAdjacentPair(allLines, idx);
-          rows.push(
-            <DiffLineRow
-              key={idx}
-              line={line}
-              pair={pair}
-              threadsAtLine={threadsAtLine}
-              filePath={path}
-              colSpan={colSpan}
-              syntax={syntax}
-              onLineClick={onLineClick}
-              renderComposerForLine={renderComposerForLine}
-              replyContext={replyContext}
-              collapse={collapse}
-            />,
-          );
-          const annotations = annotationsForFile?.get(hunkCounter);
-          if (annotations) {
-            rows.push(...annotationRows({ annotations, colSpan, keyPrefix: `ann-${idx}` }));
-          }
-        }
-        // Whole-file ok mode: emit nothing for the hunk-header itself.
-        continue;
-      }
-
-      // Whole-file ok mode: emit pre-line annotations queued in annotationsByRowIdx.
-      if (wholeFileEnabled && wholeFile.fetchStatus === 'ok' && annotationsByRowIdx) {
-        const ann = annotationsByRowIdx.get(idx);
-        if (ann) {
-          rows.push(...annotationRows({ annotations: ann, colSpan, keyPrefix: `ann-${idx}` }));
-        }
-      }
-
-      const commentLineNum = line.type === 'delete' ? null : line.newLineNum;
-      const threadsAtLine = commentLineNum ? threadsByLine.get(commentLineNum) : undefined;
-      const pair = findAdjacentPair(allLines, idx);
-
-      rows.push(
-        <DiffLineRow
-          key={idx}
-          line={line}
-          pair={pair}
-          threadsAtLine={threadsAtLine}
-          filePath={path}
-          colSpan={colSpan}
-          syntax={syntax}
-          isFilled={line.isFilled}
-          dataChangeStart={changeStartMap.get(idx)}
-          dataChangeEnd={changeEndMap.get(idx)}
-          onLineClick={onLineClick}
-          renderComposerForLine={renderComposerForLine}
-          replyContext={replyContext}
-          collapse={collapse}
-        />,
-      );
-    }
-    return rows;
-  }
-
-  function renderSplitRows(): React.ReactNode[] {
-    const path = selectedPath ?? '';
-    const rows: React.ReactNode[] = [];
-    let hunkCounter = -1;
-
-    // Inline helper — emits an ExistingCommentWidget row (if threadsByLine has
-    // entries for the right-side line number) followed by a composer-slot row
-    // (if renderComposerForLine returns non-null). Both use the mode-aware
-    // colSpan. Solo-delete and hunk-header rows do NOT call this helper — they
-    // have no right-side line number to anchor to, consistent with
-    // unified-mode behavior.
-    function emitWidgetAndComposerRows(idx: number, anchorLineNum: number | null): void {
-      if (anchorLineNum == null) return;
-      const threads = threadsByLine.get(anchorLineNum);
-      if (threads && threads.length > 0) {
-        rows.push(
-          <tr key={`widget-${idx}`} className={`diff-comment-row ${styles.diffCommentRow}`}>
-            <td colSpan={colSpan}>
-              <div className={styles.diffStickyViewport}>
-                <ExistingCommentWidget
-                  threads={threads}
-                  replyContext={replyContext}
-                  collapse={collapse}
-                />
-              </div>
-            </td>
-          </tr>,
-        );
-      }
-      if (renderComposerForLine) {
-        const node = renderComposerForLine(path, anchorLineNum);
-        if (node) {
-          rows.push(
-            <tr key={`composer-${idx}`} className={`diff-composer-row ${styles.diffComposerRow}`}>
-              <td colSpan={colSpan}>
-                <div className={styles.diffStickyViewport}>{node}</div>
-              </td>
-            </tr>,
-          );
-        }
-      }
-    }
-
-    for (let idx = 0; idx < allLines.length; idx++) {
-      const line = allLines[idx];
-
-      if (line.type === 'hunk-header') {
-        hunkCounter += 1;
-        if (!wholeFileEnabled || wholeFile.fetchStatus !== 'ok') {
-          rows.push(
-            <SplitDiffLineRow
-              key={idx}
-              kind="header"
-              content={line.content}
-              filePath={path}
-              syntax={syntax}
-            />,
-          );
-          const annotations = annotationsForFile?.get(hunkCounter);
-          if (annotations) {
-            rows.push(...annotationRows({ annotations, colSpan, keyPrefix: `ann-${idx}` }));
-          }
-        }
-        continue;
-      }
-
-      // Whole-file ok mode: emit pre-line annotations queued in annotationsByRowIdx.
-      if (wholeFileEnabled && wholeFile.fetchStatus === 'ok' && annotationsByRowIdx) {
-        const ann = annotationsByRowIdx.get(idx);
-        if (ann) {
-          rows.push(...annotationRows({ annotations: ann, colSpan, keyPrefix: `ann-${idx}` }));
-        }
-      }
-
-      if (line.type === 'context') {
-        rows.push(
-          <SplitDiffLineRow
-            key={idx}
-            kind="context"
-            oldLineNum={line.oldLineNum}
-            newLineNum={line.newLineNum}
-            content={line.content}
-            filePath={path}
-            syntax={syntax}
-            isFilled={line.isFilled}
-            isAnchored={!!threadsByLine.get(line.newLineNum ?? -1)?.length}
-            onLineClick={onLineClick}
-          />,
-        );
-        emitWidgetAndComposerRows(idx, line.newLineNum);
-        continue;
-      }
-
-      if (line.type === 'delete') {
-        const next = allLines[idx + 1];
-        if (next?.type === 'insert') {
-          rows.push(
-            <SplitDiffLineRow
-              key={idx}
-              kind="paired"
-              oldLineNum={line.oldLineNum}
-              newLineNum={next.newLineNum}
-              oldText={line.content}
-              newText={next.content}
-              filePath={path}
-              syntax={syntax}
-              isAnchored={!!threadsByLine.get(next.newLineNum ?? -1)?.length}
-              dataChangeStart={changeStartMap.get(idx) ?? changeStartMap.get(idx + 1)}
-              dataChangeEnd={changeEndMap.get(idx) ?? changeEndMap.get(idx + 1)}
-              onLineClick={onLineClick}
-            />,
-          );
-          emitWidgetAndComposerRows(idx, next.newLineNum);
-          idx += 1; // consume the paired insert; the for-loop's ++ advances past it
-          continue;
-        }
-        rows.push(
-          <SplitDiffLineRow
-            key={idx}
-            kind="solo-delete"
-            oldLineNum={line.oldLineNum}
-            content={line.content}
-            filePath={path}
-            syntax={syntax}
-            dataChangeStart={changeStartMap.get(idx)}
-            dataChangeEnd={changeEndMap.get(idx)}
-          />,
-        );
-        continue;
-      }
-
-      if (line.type === 'insert') {
-        rows.push(
-          <SplitDiffLineRow
-            key={idx}
-            kind="solo-insert"
-            newLineNum={line.newLineNum}
-            content={line.content}
-            filePath={path}
-            syntax={syntax}
-            isAnchored={!!threadsByLine.get(line.newLineNum ?? -1)?.length}
-            dataChangeStart={changeStartMap.get(idx)}
-            dataChangeEnd={changeEndMap.get(idx)}
-            onLineClick={onLineClick}
-          />,
-        );
-        emitWidgetAndComposerRows(idx, line.newLineNum);
-        continue;
-      }
-    }
-    return rows;
-  }
-
   return (
     <div
       className={`diff-pane ${modeClass}${wrapClass} ${styles.diffPane}`}
@@ -684,7 +438,45 @@ export function DiffPane({
                 <col />
               </colgroup>
             )}
-            <tbody>{renderDiffRows()}</tbody>
+            <tbody>
+              {isSplit ? (
+                <SplitDiffBody
+                  selectedPath={selectedPath}
+                  lines={allLines}
+                  threadsByLine={threadsByLine}
+                  annotationsForFile={annotationsForFile}
+                  annotationsByRowIdx={annotationsByRowIdx}
+                  wholeFileEnabled={wholeFileEnabled}
+                  wholeFileFetchStatus={wholeFile.fetchStatus}
+                  colSpan={colSpan}
+                  syntax={syntax}
+                  onLineClick={onLineClick}
+                  renderComposerForLine={renderComposerForLine}
+                  replyContext={replyContext}
+                  collapse={collapse}
+                  changeStartMap={changeStartMap}
+                  changeEndMap={changeEndMap}
+                />
+              ) : (
+                <UnifiedDiffBody
+                  selectedPath={selectedPath}
+                  lines={allLines}
+                  threadsByLine={threadsByLine}
+                  annotationsForFile={annotationsForFile}
+                  annotationsByRowIdx={annotationsByRowIdx}
+                  wholeFileEnabled={wholeFileEnabled}
+                  wholeFileFetchStatus={wholeFile.fetchStatus}
+                  colSpan={colSpan}
+                  syntax={syntax}
+                  onLineClick={onLineClick}
+                  renderComposerForLine={renderComposerForLine}
+                  replyContext={replyContext}
+                  collapse={collapse}
+                  changeStartMap={changeStartMap}
+                  changeEndMap={changeEndMap}
+                />
+              )}
+            </tbody>
           </table>
         </div>
         {showMinimap && (
