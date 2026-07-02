@@ -120,7 +120,7 @@ only `FocusLevel`, never the rationale text), so reshaping the rationale is full
   specific risk/change.* All other prompt rules (selectivity, ≤10 high/medium cap, untrusted-data framing)
   are unchanged. `RetryReminder` is unchanged.
 - **No parser/contract-shape change.** `FileFocusParser` still parses `{path, score, rationale}`, still
-  sanitizes via `AiTextSanitizer` (preserving `\n`), still caps at `RationaleCap`. The synopsis-first text
+  sanitizes via `AiTextSanitizer` (preserving `\n`), still caps at `RationaleCap` *(cap since removed by #560 — prompt budget is the sole limiter)*. The synopsis-first text
   is just a rationale whose first line happens to be short — the parser is agnostic. Existing
   `FileFocusParserTests` stand unchanged.
 - **`PRism.AI.Contracts/Dtos/FileFocus.cs` — update the stale `Rationale` doc comment.** It currently reads
