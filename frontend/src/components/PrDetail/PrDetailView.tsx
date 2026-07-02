@@ -45,7 +45,6 @@ import { useActivationTransition } from '../../hooks/useActivationTransition';
 import { useAiFailure } from '../Ai/aiFailure';
 import { fileFocusStatusToMarkerState } from '../Ai/fileFocusMarkerState';
 import { ErrorModal } from '../ErrorModal';
-import bannerReconcileStyles from './BannerReconcile.module.css';
 import { MergedAnnouncer } from './MergedAnnouncer';
 
 // Keep-alive PR-detail view. Owns the active sub-tab as component STATE (not
@@ -577,7 +576,7 @@ export function PrDetailView({
       />
       {reconcile.banner && (
         <div role="alert" className="banner banner-danger">
-          <span className={bannerReconcileStyles.bannerReconcileMessage}>{reconcile.banner}</span>
+          <span className="banner-message">{reconcile.banner}</span>
           <button type="button" className="btn btn-ghost btn-sm" onClick={reconcile.clearBanner}>
             Dismiss
           </button>

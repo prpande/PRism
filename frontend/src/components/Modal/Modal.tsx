@@ -1,4 +1,5 @@
-import { useEffect, useId, useRef } from 'react';
+import { useId, useRef } from 'react';
+import { useModalFocusTrap } from '../../hooks/useModalFocusTrap';
 
 export interface ModalProps {
   open: boolean;
@@ -31,9 +32,6 @@ export interface ModalProps {
   children: React.ReactNode;
 }
 
-const FOCUSABLE_SELECTOR =
-  'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
-
 export function Modal({
   open,
   title,
@@ -46,59 +44,17 @@ export function Modal({
   children,
 }: ModalProps) {
   const dialogRef = useRef<HTMLDivElement | null>(null);
-  const previouslyFocused = useRef<HTMLElement | null>(null);
   const titleId = useId();
 
-  // Initial focus on open + restore on close. Captures the prior active
-  // element on the way in; restores focus to it on the way out.
-  useEffect(() => {
-    if (!open) return;
-    previouslyFocused.current = document.activeElement as HTMLElement | null;
-    const dialog = dialogRef.current;
-    if (!dialog) return;
-    const target =
-      dialog.querySelector<HTMLElement>(`[data-modal-role="${defaultFocus}"]`) ??
-      dialog.querySelector<HTMLElement>(FOCUSABLE_SELECTOR);
-    target?.focus();
-    return () => {
-      previouslyFocused.current?.focus();
-    };
-  }, [open, defaultFocus]);
-
-  // Esc + Tab focus trap. Listens at document level so the dialog catches
-  // events even when focus is on internal controls (textarea, etc.).
-  useEffect(() => {
-    if (!open) return;
-    const handleKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && !disableEscDismiss) {
-        e.preventDefault();
-        onClose();
-        return;
-      }
-      if (e.key === 'Tab' && dialogRef.current) {
-        const focusable = Array.from(
-          dialogRef.current.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR),
-        );
-        if (focusable.length === 0) return;
-        const first = focusable[0];
-        const last = focusable[focusable.length - 1];
-        const active = document.activeElement;
-        if (e.shiftKey) {
-          if (active === first || !dialogRef.current.contains(active)) {
-            e.preventDefault();
-            last.focus();
-          }
-        } else {
-          if (active === last || !dialogRef.current.contains(active)) {
-            e.preventDefault();
-            first.focus();
-          }
-        }
-      }
-    };
-    document.addEventListener('keydown', handleKey);
-    return () => document.removeEventListener('keydown', handleKey);
-  }, [open, onClose, disableEscDismiss]);
+  // Focus capture/trap/restore + Esc routing (#328 shared hook). onClose fires
+  // ONLY on Escape — no scrim click, no other dismissal path — and Esc is
+  // suppressed entirely when disableEscDismiss is set (Tab stays trapped).
+  useModalFocusTrap(dialogRef, {
+    active: open,
+    onEscape: disableEscDismiss ? undefined : onClose,
+    initialFocus: (dialog) =>
+      dialog.querySelector<HTMLElement>(`[data-modal-role="${defaultFocus}"]`),
+  });
 
   if (!open) return null;
 

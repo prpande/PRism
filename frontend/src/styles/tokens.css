@@ -827,6 +827,18 @@ a:hover { text-decoration: underline; }
 }
 .banner-warning { background: var(--warning-soft); color: var(--warning-fg); }
 .banner-danger { background: var(--danger-soft); color: var(--danger-fg); }
+/* #328 — shared banner layout utilities (previously triplicated per-banner
+   module rules: message fills the row, actions hug the right edge). */
+.banner-message {
+  flex: 1;
+  min-width: 0;
+}
+.banner-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  flex: none;
+}
 /* #510 — inline recovery action on a banner (e.g. WholeFileFailureBanner Retry).
    Outlined in the banner's own foreground colour so it reads as actionable
    against any banner tint without hard-coding a palette. */
