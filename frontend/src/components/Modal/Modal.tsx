@@ -52,8 +52,8 @@ export function Modal({
   useModalFocusTrap(dialogRef, {
     active: open,
     onEscape: disableEscDismiss ? undefined : onClose,
-    initialFocus: () =>
-      dialogRef.current?.querySelector<HTMLElement>(`[data-modal-role="${defaultFocus}"]`) ?? null,
+    initialFocus: (dialog) =>
+      dialog.querySelector<HTMLElement>(`[data-modal-role="${defaultFocus}"]`),
   });
 
   if (!open) return null;

@@ -153,15 +153,13 @@ export function FeedbackModal({
   // The modal is mounted only while open, so `active: true` keys the trap to
   // mount/unmount. Initial focus: first category radio (form-dialog APG
   // convention), falling back to the first focusable element in the dialog.
-  // Esc routes through requestClose so the dirty-guard still applies; the hook
-  // reads it through a latest-ref (requestClose is recreated every render).
-  // Trigger-opened → restore to the opener. Cold deep-link (body had focus)
-  // → move to the background landmark, never bare <body>.
+  // Esc routes through requestClose so the dirty-guard still applies.
+  // Restore semantics: see restoreFallbackSelector on useModalFocusTrap.
   useModalFocusTrap(dialogRef, {
     active: true,
     onEscape: requestClose,
     restoreFallbackSelector: restoreFocusFallbackSelector,
-    initialFocus: () => dialogRef.current?.querySelector<HTMLElement>('[role="radio"]') ?? null,
+    initialFocus: (dialog) => dialog.querySelector<HTMLElement>('[role="radio"]'),
   });
   const scrim = useScrimDismiss(requestClose);
 

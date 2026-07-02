@@ -12,16 +12,19 @@ export interface ModalFocusTrapOptions {
   /** Esc handler; omit to ignore Escape entirely (Modal's disableEscDismiss). */
   onEscape?: () => void;
   /**
-   * When the captured opener is absent or was document.body, restore focus to
-   * this selector's match instead. Omit to restore to the opener only.
+   * Restore-on-deactivate contract: trigger-opened → restore focus to the
+   * captured opener. Cold deep-link (the opener is absent or was
+   * document.body) → move focus to this selector's match (a background
+   * landmark), never bare <body>. Omit to restore to the opener only.
    */
   restoreFallbackSelector?: string;
   /**
-   * Consumer picks the element to focus on activation (e.g. Modal's
-   * [data-modal-role], Feedback's first radio). Falling through (or returning
-   * null) focuses the first FOCUSABLE_SELECTOR match inside the dialog.
+   * Consumer picks the element to focus on activation, given the resolved
+   * dialog element (e.g. Modal's [data-modal-role], Feedback's first radio).
+   * Falling through (or returning null) focuses the first FOCUSABLE_SELECTOR
+   * match inside the dialog.
    */
-  initialFocus?: () => HTMLElement | null;
+  initialFocus?: (dialog: HTMLElement) => HTMLElement | null;
 }
 
 /**
@@ -49,7 +52,8 @@ export function useModalFocusTrap(
     const dialog = dialogRef.current;
     if (dialog) {
       const target =
-        optsRef.current.initialFocus?.() ?? dialog.querySelector<HTMLElement>(FOCUSABLE_SELECTOR);
+        optsRef.current.initialFocus?.(dialog) ??
+        dialog.querySelector<HTMLElement>(FOCUSABLE_SELECTOR);
       target?.focus();
     }
     return () => {

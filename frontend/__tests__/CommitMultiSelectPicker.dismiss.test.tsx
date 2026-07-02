@@ -5,17 +5,7 @@ import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, it, expect, vi } from 'vitest';
 import { CommitMultiSelectPicker } from '../src/components/PrDetail/FilesTab/CommitMultiSelectPicker';
-import type { CommitDto } from '../src/api/types';
-
-function commit(sha: string, message = `Commit ${sha}`): CommitDto {
-  return {
-    sha,
-    message,
-    committedDate: '2026-05-01T00:00:00Z',
-    additions: 10,
-    deletions: 5,
-  };
-}
+import { commit } from './helpers/prDetail';
 
 describe('CommitMultiSelectPicker — outside-click dismissal (#328)', () => {
   it('closes the dropdown on a click outside the picker', async () => {

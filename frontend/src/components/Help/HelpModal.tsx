@@ -71,8 +71,7 @@ export function HelpModal({
 
   // Focus capture/trap/restore + Esc (#328 shared hook). The modal is mounted
   // only while open, so `active: true` keys the trap to mount/unmount.
-  // Trigger-opened → restore to the opener. Cold deep-link (body had focus)
-  // → move to the background landmark, never bare <body>.
+  // Restore semantics: see restoreFallbackSelector on useModalFocusTrap.
   useModalFocusTrap(dialogRef, {
     active: true,
     onEscape: onClose,

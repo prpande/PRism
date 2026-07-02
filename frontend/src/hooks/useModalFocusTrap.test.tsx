@@ -7,7 +7,7 @@ interface TrapHarnessProps {
   active: boolean;
   onEscape?: () => void;
   restoreFallbackSelector?: string;
-  initialFocus?: () => HTMLElement | null;
+  initialFocus?: (dialog: HTMLElement) => HTMLElement | null;
 }
 
 // Dialog stays mounted while inactive (keep-alive shape) so the inert case can
@@ -45,7 +45,7 @@ describe('useModalFocusTrap — initial focus', () => {
     render(
       <TrapHarness
         active
-        initialFocus={() => document.querySelector<HTMLElement>('[data-modal-role="middle"]')}
+        initialFocus={(dialog) => dialog.querySelector<HTMLElement>('[data-modal-role="middle"]')}
       />,
     );
     expect(screen.getByTestId('middle')).toHaveFocus();

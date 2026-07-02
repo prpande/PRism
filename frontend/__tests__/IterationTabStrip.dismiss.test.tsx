@@ -5,17 +5,7 @@ import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, it, expect, vi } from 'vitest';
 import { IterationTabStrip } from '../src/components/PrDetail/FilesTab/IterationTabStrip';
-import type { IterationDto } from '../src/api/types';
-
-function iter(n: number, hasResolvableRange = true): IterationDto {
-  return {
-    number: n,
-    beforeSha: `before${n}`,
-    afterSha: `after${n}`,
-    commits: [],
-    hasResolvableRange,
-  };
-}
+import { iter } from './helpers/prDetail';
 
 // Five iterations → 3 inline + a 2-item "All iterations" overflow dropdown.
 function renderWithOverflow() {
