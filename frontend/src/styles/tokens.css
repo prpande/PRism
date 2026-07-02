@@ -962,7 +962,9 @@ a:hover { text-decoration: underline; }
   align-items: flex-start;
   justify-content: center;
   padding: var(--s-8) var(--s-4);
-  background: oklch(0 0 0 / 0.45);
+  /* #328: the theme-aware scrim token (0.32 light / 0.55 dark) replaces the
+     previously hardcoded 0.45 — every modal scrim shares this value now. */
+  background: var(--scrim);
   z-index: 1000;
   overflow-y: auto;
 }
@@ -977,7 +979,7 @@ a:hover { text-decoration: underline; }
   background: var(--surface-1);
   border: 1px solid var(--border-1);
   border-radius: var(--radius-4);
-  box-shadow: 0 16px 48px oklch(0 0 0 / 0.25);
+  box-shadow: var(--shadow-modal);
 }
 .modal-dialog:has(.submit-dialog) { max-width: 720px; }
 @media (max-width: 899px) {
