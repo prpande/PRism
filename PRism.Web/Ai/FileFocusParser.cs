@@ -5,20 +5,20 @@ namespace PRism.Web.Ai;
 
 /// <summary>Pure structured-output harness for the file-focus seam (spec §5). Parses the first
 /// top-level JSON array of {path, score, rationale}, validates against the real changed-file set
-/// (unknown paths dropped — never invented), normalizes scores, dedups last-valid-wins, and caps
-/// the rationale. Backfill + all-medium fallback are exposed for the ranker to compose. No I/O.</summary>
+/// (unknown paths dropped — never invented), normalizes scores, dedups last-valid-wins, and
+/// sanitizes the rationale. Backfill + all-medium fallback are exposed for the ranker to compose.
+/// No I/O.</summary>
 internal static class FileFocusParser
 {
-    // Runaway-output backstop, NOT the expected length. Raised 160 → 600 (owner live-validation 2026-06-14):
-    // the Hotspots tab now shows the full multi-sentence narrative, and 160 clipped real rationales mid-word.
-    // 600 ≈ 3-4 sentences — comfortably above the prompt's "one to three sentences" budget, so a compliant
-    // rationale is never truncated, while a pathological response is still bounded. Mirrors the hunk
-    // annotator's BodyCap (HunkAnnotationParser.BodyCap = 600).
-    internal const int RationaleCap = 600;
+    // No length cap on the rationale: the ranker prompt's "one to three sentences" budget is the
+    // sole limiter, and the model's output renders in full (#560, owner decision 2026-07-02 —
+    // replaced the 600-char runaway backstop, which clipped compliant-but-long rationales).
+    // The hunk annotator's BodyCap is intentionally NOT mirrored here anymore: its drop-not-truncate
+    // semantics never lose compliant content, so it keeps its bound.
     internal const string BackfillRationale = "Not individually ranked.";
     internal const string FallbackRationale = "Automatic fallback — ranking unavailable.";
 
-    /// <summary>Parse + validate + dedup + cap. Returns false only when no top-level JSON array can
+    /// <summary>Parse + validate + dedup + sanitize. Returns false only when no top-level JSON array can
     /// be extracted (caller then retries / falls back). A valid-but-empty array returns true with an
     /// empty list (caller backfills). Output contains at most one entry per known path.</summary>
     internal static bool TryParse(string text, IReadOnlyList<string> changedPaths, out IReadOnlyList<FileFocus> entries)
@@ -50,7 +50,7 @@ internal static class FileFocusParser
             if (!known.Contains(path)) continue;                  // unknown path → drop
             if (!el.TryGetProperty("score", out var scoreEl) || scoreEl.ValueKind != JsonValueKind.String) continue;
             if (!TryLevel(scoreEl.GetString(), out var level)) continue;   // invalid score → drop (caller backfills)
-            var rationale = CapRationale(el.TryGetProperty("rationale", out var rEl) && rEl.ValueKind == JsonValueKind.String
+            var rationale = SanitizeRationale(el.TryGetProperty("rationale", out var rEl) && rEl.ValueKind == JsonValueKind.String
                 ? rEl.GetString() : null);
             byPath[path] = new FileFocus(path, level, rationale);          // last write wins
         }
@@ -88,19 +88,10 @@ internal static class FileFocusParser
         }
     }
 
-    // Sanitize BEFORE capping: the rationale renders as markdown on the Hotspots tab (panel + stripped
-    // preview), so it must run the same bidi/control-char strip every AI-markdown surface does (#465).
-    // StripDangerous keeps \n/\r/\t, so a multi-line rationale's markdown structure survives the cap.
-    private static string CapRationale(string? raw)
-    {
-        var s = AiTextSanitizer.StripDangerous(raw).Trim();
-        if (s.Length == 0) return string.Empty;
-        if (s.Length <= RationaleCap) return s;
-        var cut = RationaleCap - 1;
-        // Don't split a UTF-16 surrogate pair at the cut — that would leave a dangling high
-        // surrogate before the ellipsis. Back the cut off one unit so the pair drops whole.
-        if (cut > 0 && char.IsHighSurrogate(s[cut - 1])) cut--;
-        return s[..cut] + "…";
-    }
+    // The rationale renders as markdown on the Hotspots tab (panel + stripped preview), so it must
+    // run the same bidi/control-char strip every AI-markdown surface does (#465). StripDangerous
+    // keeps \n/\r/\t, so a multi-line rationale's markdown structure survives.
+    private static string SanitizeRationale(string? raw)
+        => AiTextSanitizer.StripDangerous(raw).Trim();
 
 }
