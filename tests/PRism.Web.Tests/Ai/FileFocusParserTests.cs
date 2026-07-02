@@ -76,17 +76,18 @@ public sealed class FileFocusParserTests
     }
 
     [Fact]
-    public void Caps_rationale_at_the_cap_with_ellipsis()
+    public void Never_truncates_a_long_rationale()
     {
-        // The cap is a runaway-output backstop, not the expected case: owner live-validation (2026-06-14)
-        // raised it from 160 → a multi-sentence budget so the Hotspots tab can show the full narrative.
-        // The test asserts against the constant so it stays correct as the cap is tuned.
-        var longText = new string('x', FileFocusParser.RationaleCap + 200);
-        var text = $$"""[{"path":"a.cs","score":"high","rationale":"{{longText}}"}]""";
+        // #560: the ranker prompt is the only length limiter. The old 600-char RationaleCap backstop
+        // clipped compliant-but-long rationales mid-content (owner decision 2026-07-02: cap removed
+        // outright). A rationale well past the old cap must survive verbatim — no cut, no ellipsis.
+        // Ends with an emoji (a UTF-16 surrogate pair) so the pair also survives whole now that
+        // nothing cuts the string.
+        var narrative = string.Concat(Enumerable.Repeat("A compliant but long rationale sentence. ", 40)).Trim()
+            + " " + char.ConvertFromUtf32(0x1F600); // ~1640 chars, > the old 600-char cap
+        var text = $$"""[{"path":"a.cs","score":"high","rationale":"{{narrative}}"}]""";
         FileFocusParser.TryParse(text, Changed, out var entries).Should().BeTrue();
-        var r = entries.Single(e => e.Path == "a.cs").Rationale;
-        r.Length.Should().BeLessThanOrEqualTo(FileFocusParser.RationaleCap);
-        r.Should().EndWith("…");
+        entries.Single(e => e.Path == "a.cs").Rationale.Should().Be(narrative);
     }
 
     [Fact]
@@ -176,21 +177,4 @@ public sealed class FileFocusParserTests
         entries.Single(e => e.Path == "a.cs").Rationale.Should().Be("- one\n- two");
     }
 
-    [Fact]
-    public void Caps_rationale_without_splitting_a_surrogate_pair()
-    {
-        // A non-BMP char (emoji = a UTF-16 surrogate pair) straddling the cut must not be split into a
-        // dangling high surrogate (claude[bot] PR #518). 😀 is built from its code point so this source
-        // file stays pure ASCII. Placed at UTF-16 indices cap-2 / cap-1 so the naive cut at cap-1 would
-        // split it; the fix backs the cut off one unit, dropping the pair whole.
-        var emoji = char.ConvertFromUtf32(0x1F600); // 😀 — high+low surrogate
-        var head = new string('x', FileFocusParser.RationaleCap - 2);
-        var rationale = head + emoji + new string('y', 50);
-        var text = $$"""[{"path":"a.cs","score":"high","rationale":"{{rationale}}"}]""";
-        FileFocusParser.TryParse(text, Changed, out var entries).Should().BeTrue();
-        var r = entries.Single(e => e.Path == "a.cs").Rationale;
-        r.Should().Be(head + "…");                       // pair dropped whole — no half character
-        char.IsHighSurrogate(r[^2]).Should().BeFalse();  // char before the ellipsis is not a lone surrogate
-        r.Length.Should().BeLessThanOrEqualTo(FileFocusParser.RationaleCap);
-    }
 }
