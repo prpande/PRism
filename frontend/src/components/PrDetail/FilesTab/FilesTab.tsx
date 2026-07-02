@@ -313,7 +313,7 @@ export function FilesTab() {
     [prDetail.reviewComments],
   );
 
-  const prUrl = prDetail.pr.htmlUrl ?? undefined;
+  const htmlUrl = prDetail.pr.htmlUrl ?? undefined;
 
   const handleNextFile = useCallback(() => {
     if (fileList.length === 0) return;
@@ -783,7 +783,7 @@ export function FilesTab() {
             diffMode={effectiveDiffMode}
             truncated={diff.data?.truncated ?? false}
             reviewThreads={fileThreads}
-            prUrl={prUrl}
+            htmlUrl={htmlUrl}
             onLineClick={handleLineClick}
             renderComposerForLine={renderComposerForLine}
             replyContext={replyContext}

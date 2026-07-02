@@ -30,7 +30,7 @@ describe('DiffPane syntax highlighting', () => {
         diffMode="unified"
         truncated={false}
         reviewThreads={[]}
-        prUrl=""
+        htmlUrl=""
         headSha="h"
         baseSha="b"
       />,
@@ -56,7 +56,7 @@ describe('DiffPane syntax highlighting', () => {
         diffMode="side-by-side"
         truncated={false}
         reviewThreads={[]}
-        prUrl=""
+        htmlUrl=""
         headSha="h"
         baseSha="b"
       />,
@@ -95,7 +95,7 @@ describe('DiffPane syntax highlighting', () => {
         diffMode="unified"
         truncated={false}
         reviewThreads={[]}
-        prUrl=""
+        htmlUrl=""
         headSha="h"
         baseSha="b"
       />,
@@ -117,7 +117,7 @@ describe('DiffPane syntax highlighting', () => {
         diffMode="unified"
         truncated={false}
         reviewThreads={[]}
-        prUrl=""
+        htmlUrl=""
         headSha="h"
         baseSha="b"
       />,
@@ -146,7 +146,7 @@ describe('DiffPane syntax highlighting', () => {
         diffMode="unified"
         truncated={false}
         reviewThreads={[]}
-        prUrl=""
+        htmlUrl=""
         headSha="h"
         baseSha="b"
       />,

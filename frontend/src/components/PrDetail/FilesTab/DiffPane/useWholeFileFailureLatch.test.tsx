@@ -48,7 +48,11 @@ describe('useWholeFileFailureLatch', () => {
       selectedPath: 'a.ts',
       onWholeFileFailed,
     };
-    const { result, rerender } = renderLatch({ ...props, fetchStatus: 'idle', failureReason: null });
+    const { result, rerender } = renderLatch({
+      ...props,
+      fetchStatus: 'idle',
+      failureReason: null,
+    });
     rerender(props);
     expect(onWholeFileFailed).toHaveBeenCalledTimes(1);
 

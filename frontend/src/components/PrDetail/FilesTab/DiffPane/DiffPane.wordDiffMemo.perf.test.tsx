@@ -42,7 +42,7 @@ const paneProps = (overrides: { truncated: boolean }) => ({
   file,
   diffMode: 'side-by-side' as const,
   reviewThreads: [],
-  prUrl: '',
+  htmlUrl: '',
   headSha: 'h',
   baseSha: 'b',
   ...overrides,

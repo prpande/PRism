@@ -73,7 +73,7 @@ describe('DiffPane — added-file line numbers (#554)', () => {
         diffMode="unified"
         truncated={false}
         reviewThreads={[]}
-        prUrl=""
+        htmlUrl=""
         onLineClick={() => {}}
       />,
     );
@@ -89,7 +89,7 @@ describe('DiffPane — added-file line numbers (#554)', () => {
         diffMode="side-by-side"
         truncated={false}
         reviewThreads={[]}
-        prUrl=""
+        htmlUrl=""
         onLineClick={() => {}}
       />,
     );
@@ -105,7 +105,7 @@ describe('DiffPane — added-file line numbers (#554)', () => {
         diffMode="unified"
         truncated={false}
         reviewThreads={[]}
-        prUrl=""
+        htmlUrl=""
         onLineClick={() => {}}
       />,
     );
@@ -121,7 +121,7 @@ describe('DiffPane — added-file line numbers (#554)', () => {
         diffMode="unified"
         truncated={false}
         reviewThreads={[]}
-        prUrl=""
+        htmlUrl=""
         onLineClick={() => {}}
       />,
     );
@@ -139,7 +139,7 @@ describe('DiffPane — added-file line numbers (#554)', () => {
         diffMode="unified"
         truncated={false}
         reviewThreads={[]}
-        prUrl=""
+        htmlUrl=""
         onLineClick={() => {}}
       />,
     );

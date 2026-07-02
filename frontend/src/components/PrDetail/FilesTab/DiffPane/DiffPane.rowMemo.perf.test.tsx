@@ -77,7 +77,7 @@ const paneProps = (overrides: {
   prRef,
   selectedPath: 'src/main.ts',
   file,
-  prUrl: '',
+  htmlUrl: '',
   headSha: 'h',
   baseSha: 'b',
   ...overrides,
