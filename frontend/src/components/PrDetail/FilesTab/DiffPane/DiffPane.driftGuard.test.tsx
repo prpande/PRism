@@ -53,7 +53,7 @@ describe('DiffPane paired-line drift guard', () => {
         diffMode="unified"
         truncated={false}
         reviewThreads={[]}
-        prUrl=""
+        htmlUrl=""
         headSha="h"
         baseSha="b"
       />,

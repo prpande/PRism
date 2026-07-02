@@ -46,7 +46,7 @@ function renderPane(diffMode: DiffMode = 'unified') {
       diffMode={diffMode}
       truncated={false}
       reviewThreads={[]}
-      prUrl=""
+      htmlUrl=""
     />,
   );
 }
