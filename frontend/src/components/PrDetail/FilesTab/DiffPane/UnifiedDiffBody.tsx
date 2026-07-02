@@ -63,10 +63,13 @@ export const UnifiedDiffBody = memo(function UnifiedDiffBody({
     const stamps = new Map<number, string>();
     for (const entry of activeComposerKey.split('\0')) {
       const eq = entry.lastIndexOf('=');
+      if (eq === -1) continue; // malformed entry — skip rather than mis-map
       const loc = entry.slice(0, eq);
       const colon = loc.lastIndexOf(':');
-      if (loc.slice(0, colon) !== path) continue;
-      stamps.set(Number(loc.slice(colon + 1)), entry.slice(eq + 1));
+      if (colon === -1 || loc.slice(0, colon) !== path) continue;
+      const lineNumber = Number(loc.slice(colon + 1));
+      if (!Number.isFinite(lineNumber)) continue;
+      stamps.set(lineNumber, entry.slice(eq + 1));
     }
     return stamps;
   }, [activeComposerKey, path]);

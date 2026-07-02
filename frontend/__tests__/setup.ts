@@ -34,7 +34,9 @@ if (typeof window !== 'undefined' && typeof window.matchMedia !== 'function') {
       // width-gated hooks (useMediaQuery) see the test's viewport. Every other
       // query keeps the historical `matches: false`. Listeners stay no-ops:
       // tests that change innerWidth mid-test must remount (or install their
-      // own matchMedia mock) to observe the new width.
+      // own matchMedia mock) to observe the new width. Only the FIRST width
+      // clause of a compound query (e.g. `(min-width: X) and (max-width: Y)`)
+      // is evaluated — extend the regex if a compound query ever appears.
       const m = /\((min|max)-width:\s*([\d.]+)px\)/.exec(query);
       const matches = m
         ? m[1] === 'min'

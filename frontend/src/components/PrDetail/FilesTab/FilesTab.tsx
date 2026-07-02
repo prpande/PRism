@@ -423,10 +423,20 @@ export function FilesTab() {
     }
     // Placeholder locations arrive pre-parsed from useOptimisticComments
     // (newInlineLocations) — the anchorKey string format stays private there.
+    // clientIds are sorted per location so the stamp is order-stable: two
+    // placeholders on one line must not churn the key when only their
+    // insertion order differs (the stamp is compared by equality only).
+    const clientIdsByLoc = new Map<string, string[]>();
     for (const o of newInlineLocations) {
       const loc = `${o.filePath}:${o.lineNumber}`;
+      const ids = clientIdsByLoc.get(loc);
+      if (ids) ids.push(o.clientId);
+      else clientIdsByLoc.set(loc, [o.clientId]);
+    }
+    for (const [loc, ids] of clientIdsByLoc) {
+      const suffix = ids.sort().join('+');
       const prev = stamps.get(loc);
-      stamps.set(loc, prev ? `${prev}+${o.clientId}` : o.clientId);
+      stamps.set(loc, prev ? `${prev}+${suffix}` : suffix);
     }
     if (stamps.size === 0) return null;
     return [...stamps.entries()]

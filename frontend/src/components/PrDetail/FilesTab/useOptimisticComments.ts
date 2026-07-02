@@ -124,11 +124,14 @@ export function useOptimisticComments(reviewThreads: ReadonlyArray<ReviewThreadL
       newInlinePlaceholders.flatMap((o) => {
         if (o.anchorKey == null) return [];
         const sideSep = o.anchorKey.lastIndexOf(':');
-        const lineSep = o.anchorKey.lastIndexOf(':', sideSep - 1);
+        const lineSep = sideSep === -1 ? -1 : o.anchorKey.lastIndexOf(':', sideSep - 1);
+        if (lineSep === -1) return []; // malformed anchorKey — skip rather than emit junk
+        const lineNumber = Number(o.anchorKey.slice(lineSep + 1, sideSep));
+        if (!Number.isFinite(lineNumber)) return [];
         return [
           {
             filePath: o.anchorKey.slice(0, lineSep),
-            lineNumber: Number(o.anchorKey.slice(lineSep + 1, sideSep)),
+            lineNumber,
             clientId: o.clientId,
           },
         ];

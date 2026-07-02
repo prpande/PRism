@@ -501,6 +501,10 @@ describe('FilesTab render-count guard — activeComposerKey + stable renderCompo
   });
 
   it('(f) composer key round-trips a file path containing "|", "=" and ":" — the composer appears on that file', async () => {
+    // NOTE: this suite is also the loud guard for DiffLineRow's deliberately
+    // UNREAD `composerStamp` prop (it exists only to participate in the memo
+    // shallow-compare — see DiffLineRow.tsx). Deleting that "unused" prop
+    // makes these mount/reactivity assertions fail.
     // Finding: '|' is legal in git paths but was the key's entry joiner — a
     // path containing '|' shatters UnifiedDiffBody's parse, so the stamp never
     // reaches the row and the composer never mounts. Exercises the REAL
