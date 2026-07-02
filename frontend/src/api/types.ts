@@ -756,6 +756,32 @@ export interface ActivityResponse {
   stale: boolean; // #619
 }
 
+// #620 — PR activity timeline. Mirrors PRism.Core.Activity's TimelineActorRef/TimelineEvent/
+// TimelinePage contracts (camelCase wire shape).
+export interface TimelineActorRef {
+  login: string | null;
+  avatarUrl: string | null;
+  isBot: boolean;
+}
+
+export interface TimelineEvent {
+  id: string;
+  verb: ActivityVerb;
+  actor: TimelineActorRef;
+  timestamp: string;
+  body: string | null;
+  commitCount: number | null;
+  subject: string | null;
+}
+
+export interface TimelinePage {
+  events: TimelineEvent[];
+  olderCursor: string | null;
+  hasOlder: boolean;
+  degraded?: boolean; // wire-mirror of TimelinePage.Degraded; the endpoint 502s on degraded, so the
+  // SPA usually sees this only as `false` on 200 responses (optional for test mocks)
+}
+
 // #517 — AI usage & spend. Mirrors PRism.Web/Ai/AiUsageReport.cs (camelCase wire shape).
 export type AiUsageWindow = '24h' | '7d' | '30d' | 'all';
 

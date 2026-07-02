@@ -14,6 +14,12 @@ export interface CommentCardProps {
   createdAt: string;
   body: string;
   density?: CommentDensity;
+  /**
+   * Avatar size override. Defaults to the density-derived size (compact→sm, comfortable→md).
+   * The activity feed passes 'sm' so a comment card's avatar matches the marker rows' inline
+   * avatars, without compacting the rest of the card via `density`.
+   */
+  avatarSize?: 'sm' | 'md' | 'lg';
   /** Caller-composed slot pinned to the band's right edge (e.g. a Resolved tag). */
   bandEnd?: React.ReactNode;
   className?: string;
@@ -29,6 +35,7 @@ export function CommentCard({
   createdAt,
   body,
   density = 'comfortable',
+  avatarSize,
   bandEnd,
   className,
   'data-testid': testId,
@@ -42,7 +49,11 @@ export function CommentCard({
       aria-label={ariaLabel}
     >
       <header className={styles.band} data-testid="pr-comment-meta">
-        <Avatar src={avatarUrl} login={author} size={density === 'compact' ? 'sm' : 'md'} />
+        <Avatar
+          src={avatarUrl}
+          login={author}
+          size={avatarSize ?? (density === 'compact' ? 'sm' : 'md')}
+        />
         <span className={styles.author}>{author}</span>
         <time className={styles.time} dateTime={createdAt}>
           {new Date(createdAt).toLocaleDateString()}

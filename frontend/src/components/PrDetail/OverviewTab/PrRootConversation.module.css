@@ -1,85 +1,6 @@
-.prRootConversation {
-  display: flex;
-  flex-direction: column;
-}
-
-/* Vertical comment timeline. */
-.timeline {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-}
-
-.item {
-  display: grid;
-  grid-template-columns: 24px minmax(0, 1fr);
-  column-gap: var(--s-3);
-}
-
-.item + .item {
-  margin-top: var(--s-3);
-}
-
-/*
- * Rail gutter: a single continuous line + an accent node per card. The line
- * starts at the node's center and extends `bottom: calc(-1 * var(--s-3))` so it
- * bridges the inter-card gap (= the .item margin-top) into the next card; it is
- * hidden on the last comment. The node carries a ring in the section color so the
- * line appears to pass behind it.
- *
- * Vertical alignment has a single source of truth, `--rail-node-y`: the node's
- * center and the line's start both sit at that y (≈ the band's optical center:
- * band padding-top var(--s-2)=8px + ~half the --text-xs line-box). The line
- * starts there so it emerges from the node center; the node is offset up by half
- * its height (--rail-node-size / 2). Re-tune only `--rail-node-y` if the band
- * padding or --text-xs changes (verified at the B1 visual gate).
- */
-.rail {
-  position: relative;
-  /* Grid items are blockified by spec, but set display explicitly so the rail
-     cell reliably stretches to the row height and the ::before line + .node
-     anchor to a full-height box. */
-  display: block;
-  --rail-node-size: 9px;
-  /* band padding-top (var(--s-2)) + half the 24px md avatar that now sets the band
-     height; re-tuned for #127 (was var(--s-2) + 8px for the text-only band).
-     PROVISIONAL — confirm/adjust against the rendered band at the B1 gate. */
-  --rail-node-y: calc(var(--s-2) + 12px);
-}
-
-.rail::before {
-  content: '';
-  position: absolute;
-  left: 50%;
-  transform: translateX(-50%);
-  top: var(--rail-node-y);
-  bottom: calc(-1 * var(--s-3));
-  width: 2px;
-  background: var(--border-2);
-}
-
-.item:last-child .rail::before {
-  display: none;
-}
-
-.node {
-  position: absolute;
-  left: 50%;
-  transform: translateX(-50%);
-  top: calc(var(--rail-node-y) - var(--rail-node-size) / 2);
-  width: var(--rail-node-size);
-  height: var(--rail-node-size);
-  border-radius: 50%;
-  background: var(--accent);
-  box-shadow: 0 0 0 3px var(--surface-1);
-}
-
+/* The composer is the FIRST element of the activity card; its separator now lives in ActivityFeed
+   (rendered AFTER the composer), so this block no longer draws a top border/spacing of its own. */
 .prRootConversationActions {
-  margin-top: var(--s-3);
-  padding-top: var(--s-3);
-  border-top: 1px solid var(--border-1);
   display: flex;
   flex-direction: column;
   gap: var(--s-3);
@@ -89,11 +10,4 @@
   display: flex;
   align-items: center;
   gap: var(--s-2);
-}
-
-.prRootConversationFooter {
-  font-size: var(--text-xs);
-  margin-top: var(--s-3);
-  padding-top: var(--s-3);
-  border-top: 1px solid var(--border-1);
 }

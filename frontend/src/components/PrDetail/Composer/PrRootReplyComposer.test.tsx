@@ -12,11 +12,13 @@ function Harness({
   initialBody = '',
   initialDraftId = null,
   onClose = () => undefined,
+  onPosted,
   readOnly = false,
 }: {
   initialBody?: string;
   initialDraftId?: string | null;
   onClose?: () => void;
+  onPosted?: () => void;
   readOnly?: boolean;
 }) {
   const [draftId, setDraftId] = useState<string | null>(initialDraftId);
@@ -30,6 +32,7 @@ function Harness({
       onDraftIdChange={setDraftId}
       registerOpenComposer={() => cleanup}
       onClose={onClose}
+      onPosted={onPosted}
       readOnly={readOnly}
     />
   );
@@ -136,6 +139,72 @@ describe('PrRootReplyComposer — Post flow', () => {
     // flush precedes post; post precedes close.
     expect(order.indexOf('flush')).toBeLessThan(order.indexOf('post'));
     expect(order.indexOf('post')).toBeLessThan(order.indexOf('close'));
+  });
+
+  it('calls onPosted before onClose on a successful post (#620 refetch bridge)', async () => {
+    const order: string[] = [];
+    vi.spyOn(draftApi, 'sendPatch').mockResolvedValue({
+      ok: true,
+      status: 200,
+      data: { id: 'uuid-existing' },
+    } as never);
+    vi.spyOn(rootCommentApi, 'postRootComment').mockResolvedValue({ ok: true });
+    const onPosted = vi.fn(() => order.push('posted'));
+    const onClose = vi.fn(() => order.push('close'));
+
+    render(
+      <Harness
+        initialDraftId="uuid-existing"
+        initialBody="ready to ship"
+        onClose={onClose}
+        onPosted={onPosted}
+      />,
+    );
+    fireEvent.click(postButton());
+    await settle(0);
+
+    expect(onPosted).toHaveBeenCalledTimes(1);
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(order).toEqual(['posted', 'close']);
+  });
+
+  it('does NOT call onPosted on discard (only fires on a successful post)', async () => {
+    vi.spyOn(draftApi, 'sendPatch').mockResolvedValue({
+      ok: true,
+      status: 200,
+      data: { id: 'uuid-existing' },
+    } as never);
+    const onPosted = vi.fn();
+    render(<Harness initialDraftId="uuid-existing" initialBody="text" onPosted={onPosted} />);
+    fireEvent.keyDown(editorTextarea(), { key: 'Escape' });
+
+    const modalDiscard = screen
+      .getAllByRole('button', { name: 'Discard' })
+      .find((b) => b.getAttribute('data-modal-role') === 'primary');
+    fireEvent.click(modalDiscard!);
+    await settle(0);
+
+    expect(onPosted).not.toHaveBeenCalled();
+  });
+
+  it('does NOT call onPosted when the post fails', async () => {
+    vi.spyOn(draftApi, 'sendPatch').mockResolvedValue({
+      ok: true,
+      status: 200,
+      data: { id: 'uuid-existing' },
+    } as never);
+    vi.spyOn(rootCommentApi, 'postRootComment').mockResolvedValue({
+      ok: false,
+      code: 'github-network-error',
+      message: 'network down',
+    });
+    const onPosted = vi.fn();
+
+    render(<Harness initialDraftId="uuid-existing" initialBody="ship me" onPosted={onPosted} />);
+    fireEvent.click(postButton());
+    await settle(0);
+
+    expect(onPosted).not.toHaveBeenCalled();
   });
 
   it('Ctrl+Enter triggers Post', async () => {

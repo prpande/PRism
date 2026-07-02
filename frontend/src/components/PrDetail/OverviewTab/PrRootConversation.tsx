@@ -1,5 +1,4 @@
-import type { DraftCommentDto, IssueCommentDto, PrReference } from '../../../api/types';
-import { CommentCard } from '../Comment/CommentCard';
+import type { DraftCommentDto, PrReference } from '../../../api/types';
 import { CollapsedComposerAffordance } from '../Composer/CollapsedComposerAffordance';
 import { PrRootReplyComposer } from '../Composer/PrRootReplyComposer';
 import { MarkAllReadButton } from './MarkAllReadButton';
@@ -20,55 +19,20 @@ export interface PrRootConversationReplyContext {
   readOnly?: boolean;
 }
 
-interface PrRootConversationProps {
-  comments: IssueCommentDto[];
-  // When omitted, the conversation renders read-only (no Reply button, no
-  // Mark-all-read, the legacy S3 footer copy is shown). OverviewTab provides
-  // it once S4 PR5 is wired up.
-  replyContext?: PrRootConversationReplyContext;
-}
-
-export function PrRootConversation({ comments, replyContext }: PrRootConversationProps) {
-  return (
-    <section className={`overview-card ${styles.prRootConversation}`}>
-      {comments.length > 0 && (
-        <ol className={styles.timeline} aria-label="PR comments">
-          {comments.map((comment) => (
-            <li key={comment.id} className={styles.item}>
-              <span className={styles.rail} aria-hidden="true">
-                <span className={styles.node} />
-              </span>
-              <CommentCard
-                author={comment.author}
-                avatarUrl={comment.avatarUrl}
-                createdAt={comment.createdAt}
-                body={comment.body}
-                density="comfortable"
-                data-testid="pr-root-comment"
-                aria-label={`Comment by ${comment.author}`}
-              />
-            </li>
-          ))}
-        </ol>
-      )}
-
-      {replyContext ? (
-        <PrRootConversationActions replyContext={replyContext} />
-      ) : (
-        // Rendered when the conversation is mounted in a read-only context
-        // (e.g., a future Drafts-tab preview slot).
-        <p className={`${styles.prRootConversationFooter} muted`}>
-          Composer not available in this context.
-        </p>
-      )}
-    </section>
-  );
-}
-
-function PrRootConversationActions({
+// #620 — the PR-root composer (Reply affordance + Mark-all-read), lifted out of the retired
+// PrRootConversation comment-list wrapper. ActivityFeed now renders the PR-root comments
+// themselves (merged into the unified timeline); OverviewTab passes this component as
+// ActivityFeed's `composerSlot` so the composer still lives visually with the conversation.
+export function PrRootConversationActions({
   replyContext,
+  onPosted,
 }: {
   replyContext: PrRootConversationReplyContext;
+  // Fires after the composer's own POST succeeds (same-tab, immediate feedback). The caller
+  // bridges this into ActivityFeed's refetchNewest so the just-posted comment appears without
+  // waiting on the SSE/poll backstop (refetchNewest dedups by id, so a later SSE-driven refetch
+  // doesn't duplicate it).
+  onPosted?: () => void;
 }) {
   const { prRef, prState, existingPrRootDraft, registerOpenComposer, onComposerClose, readOnly } =
     replyContext;
@@ -111,6 +75,7 @@ function PrRootConversationActions({
           onDraftIdChange={setDraftId}
           registerOpenComposer={registerOpenComposer}
           onClose={handleClose}
+          onPosted={onPosted}
           readOnly={readOnly ?? false}
         />
       )}

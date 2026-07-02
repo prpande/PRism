@@ -222,6 +222,20 @@ public static class ServiceCollectionExtensions
                 () => config.Current.Github.Host);
         });
 
+        // PR-detail full activity feed (#620): single-PR paginated timeline reader. Same
+        // late-bound token/host seam as the activity-rail reader above, so a github.com → GHES
+        // host change takes effect without restart.
+        services.AddSingleton<PRism.Core.Activity.IPrTimelineFeedReader>(sp =>
+        {
+            var tokens = sp.GetRequiredService<ITokenStore>();
+            var factory = sp.GetRequiredService<IHttpClientFactory>();
+            var config = sp.GetRequiredService<IConfigStore>();
+            return new PRism.GitHub.Activity.GitHubPrTimelineFeedReader(
+                factory,
+                () => tokens.ReadAsync(CancellationToken.None),
+                () => config.Current.Github.Host);
+        });
+
         // Feedback always targets github.com (the feedback repo lives there),
         // independent of the user's configured host (§4.1).
         services.AddHttpClient(GitHubFeedbackSubmitter.ClientName, client =>

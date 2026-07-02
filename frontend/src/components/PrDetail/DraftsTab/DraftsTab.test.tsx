@@ -96,6 +96,7 @@ function makeValue(onSelectSubTab: PrDetailContextValue['onSelectSubTab']): PrDe
     toggleViewed: vi.fn(),
     reload: vi.fn(),
     isLoading: false,
+    prUpdatedSignal: 0,
   };
 }
 
