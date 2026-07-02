@@ -45,3 +45,39 @@ test('cold start: real boot-time rehydrator paints the stale inbox, then live-re
   await expect(loadingBar).toHaveAttribute('data-active', 'false', { timeout: 20_000 });
   await expect(page.locator('[data-testid="inbox-row"]').first()).toBeVisible();
 });
+
+// Regression guard for the refreshing-bar restore: while the rehydrated snapshot is stale and
+// its revalidation is still in flight, the top LoadingBar must be pinned ON (over content, not
+// the skeleton). The server-side reconcile is near-instant under the fake backend, so we hold the
+// browser-visible snapshot stale via a route override — a deterministic stand-in for the seconds
+// a real GitHub pull takes — to observe the bar without racing the reconcile.
+test('cold start: refreshing bar is pinned on over content while the snapshot stays stale', async ({
+  page,
+  request,
+}) => {
+  const seedRes = await request.post(`${ORIGIN}/test/seed-inbox-store-only`, {
+    headers: { Origin: ORIGIN },
+  });
+  expect(seedRes.ok(), `seed-inbox-store-only failed: ${seedRes.status()}`).toBeTruthy();
+
+  // Force every browser-visible /api/inbox GET to report stale:true, so the FE never leaves the
+  // "revalidating" state (the server's own poller reconciles independently — this only pins what
+  // the browser observes). failing stays false until the 30s reachability watchdog, so the bar
+  // holds ON the whole time.
+  await page.route('**/api/inbox', async (route) => {
+    if (route.request().method() !== 'GET') return route.continue();
+    const resp = await route.fetch();
+    const json = await resp.json();
+    json.stale = true;
+    await route.fulfill({ response: resp, json });
+  });
+
+  await page.goto('/');
+
+  // Content, not skeleton — the bar overlays the real rehydrated rows.
+  await expect(page.locator('[data-testid="inbox-row"]').first()).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator('[data-testid="inbox-skeleton"]')).toHaveCount(0);
+  await expect(page.getByTestId('inbox-loading-bar')).toHaveAttribute('data-active', 'true', {
+    timeout: 15_000,
+  });
+});
