@@ -20,4 +20,7 @@ public sealed record ActivePrPollSnapshot(
     IReadOnlyList<Reviewer>? ChangesRequestedBy = null,
     IReadOnlyList<Reviewer>? AwaitingReviewers = null,
     // #655 surfaced from GraphQL isDraft so later tasks can skip fast-polling draft PRs.
-    bool IsDraft = false);
+    bool IsDraft = false,
+    // Root PR issue-comment total (comments{ totalCount }). Distinct from CommentCount, which is the
+    // per-inline-review-comment count. Drives root-comment live-refresh (#620). REST path leaves it 0.
+    int IssueCommentCount = 0);

@@ -139,7 +139,7 @@ if (builder.Environment.IsEnvironment("Test")
              {
                  typeof(IReviewAuth), typeof(IPrDiscovery), typeof(IPrReader), typeof(IReviewSubmitter),
                  typeof(PRism.Core.Inbox.ISectionQueryRunner), typeof(PRism.Core.Inbox.IPrBatchReader), typeof(PRism.Core.Inbox.ICiFailingDetector),
-                 typeof(PRism.Core.IPrChecksReader),
+                 typeof(PRism.Core.IPrChecksReader), typeof(PRism.Core.Activity.IPrTimelineFeedReader),
              })
     {
         // RemoveAll (vs. removing the first match) in case any of these were registered
@@ -157,6 +157,10 @@ if (builder.Environment.IsEnvironment("Test")
     builder.Services.AddSingleton<PRism.Core.IPrChecksReader, FakePrChecksReader>();
     builder.Services.RemoveAll<PRism.Core.Activity.IActivityProvider>();
     builder.Services.AddSingleton<PRism.Core.Activity.IActivityProvider, PRism.Web.TestHooks.FakeActivityProvider>();
+    // #620 e2e-fidelity gap: without this swap the real GitHubPrTimelineFeedReader
+    // resolves and 502s (no GitHub token in e2e), so the Overview feed always
+    // rendered its error state under Playwright. See FakePrTimelineFeedReader.cs.
+    builder.Services.AddSingleton<PRism.Core.Activity.IPrTimelineFeedReader, PRism.Web.TestHooks.FakePrTimelineFeedReader>();
 }
 
 // Test env + REAL_INJECT: attach TestFailureInjectionHandler to the "github" named HttpClient.

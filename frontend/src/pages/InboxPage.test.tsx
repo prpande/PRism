@@ -35,12 +35,21 @@ vi.mock('../hooks/useAuth', () => ({
     refetch: vi.fn(),
   }),
 }));
+// #619 follow-up — the stale-onset loading bar keys on this hook's `failing` value.
+// Mocked so a test can pick "revalidating" (failing:false) vs "given up / offline"
+// (failing:true) without driving the real 30s watchdog timer. Defaults failing:false,
+// inert for the stale:false majority of tests.
+vi.mock('../hooks/useGitHubReachability', () => ({
+  useGitHubReachability: vi.fn(() => ({ failing: false })),
+  STALE_FAILING_AFTER_MS: 30_000,
+}));
 
 import { useInbox } from '../hooks/useInbox';
 import { useInboxUpdates } from '../hooks/useInboxUpdates';
 import { useCapabilities } from '../hooks/useCapabilities';
 import { usePreferences } from '../hooks/usePreferences';
 import { useAiGate } from '../hooks/useAiGate';
+import { useGitHubReachability } from '../hooks/useGitHubReachability';
 
 // The global setup mock returns matches:false. The rail now also requires a
 // >=1180px viewport, so rail-visible tests must opt into a wide viewport.
@@ -472,9 +481,22 @@ describe('InboxPage', () => {
     expect(screen.getByTestId('inbox-stale-status')).toHaveTextContent('Showing saved inbox');
   });
 
-  it('does not pin the LoadingBar on while stale (offline failing revalidation)', () => {
-    // isFetching:false simulates the retry loop having finished with no fresh data.
-    // The bar must be OFF even though stale:true is still set — it must not spin forever.
+  it('pins the LoadingBar on while stale and revalidation is still in flight', () => {
+    // A rehydrated snapshot (stale:true) is served while the background poller revalidates.
+    // The client's own fetch already resolved (isFetching:false), but the bar must reflect
+    // the in-flight server-side revalidation so the "refreshing" affordance is not lost —
+    // matching the pre-cache behavior where the cold bar covered the whole pull.
+    vi.mocked(useGitHubReachability).mockReturnValue({ failing: false });
+    setHooks({ data: staleInbox(), isLoading: false, isFetching: false });
+    renderPage();
+    expect(screen.getByTestId('inbox-loading-bar')).toHaveAttribute('data-active', 'true');
+  });
+
+  it('clears the LoadingBar once the stale revalidation is deemed failing (offline)', () => {
+    // The reachability watchdog flips `failing` after the snapshot stays stale past its
+    // threshold (offline launch: revalidation never succeeds). The bar must turn OFF then —
+    // it must not spin forever — and the "Couldn't reach GitHub" snackbar takes over.
+    vi.mocked(useGitHubReachability).mockReturnValue({ failing: true });
     setHooks({ data: staleInbox(), isLoading: false, isFetching: false });
     renderPage();
     expect(screen.getByTestId('inbox-loading-bar')).toHaveAttribute('data-active', 'false');

@@ -3,6 +3,7 @@ using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.Http.HttpResults;
 using Microsoft.AspNetCore.Mvc;
 using PRism.Core;
+using PRism.Core.Activity;
 using PRism.Core.Contracts;
 using PRism.Core.PrDetail;
 using PRism.Core.State;
@@ -296,6 +297,24 @@ internal static partial class PrDetailEndpoints
                 var prRef = new PrReference(owner, repo, number);
                 var result = await checks.ReadAsync(prRef, sha, ct).ConfigureAwait(false);
                 return Results.Ok(result);
+            });
+
+        // Unified newest-first PR activity timeline (#620). pageSize is fixed server-side —
+        // not client-bound — so a caller can't request an oversized page. Degraded reads
+        // surface as 502 rather than a false-empty 200 (see TimelinePage.Degraded).
+        app.MapGet("/api/pr/{owner}/{repo}/{number:int}/timeline",
+            async (string owner, string repo, int number,
+                   [FromQuery] string? cursor,
+                   IPrTimelineFeedReader timeline, CancellationToken ct) =>
+            {
+                if (!SharedRegexes.OwnerRepo().IsMatch(owner) || !SharedRegexes.OwnerRepo().IsMatch(repo))
+                    return Results.Problem(type: "/owner-repo/invalid", statusCode: 422);
+
+                var prRef = new PrReference(owner, repo, number);
+                var page = await timeline.ReadPageAsync(prRef, cursor, pageSize: 30, ct).ConfigureAwait(false);
+                if (page.Degraded)
+                    return Results.Problem(type: "/timeline/upstream-unavailable", statusCode: 502);
+                return Results.Ok(page);
             });
 
         // Re-run a single check (#636). Write path; inherits OriginCheckMiddleware +

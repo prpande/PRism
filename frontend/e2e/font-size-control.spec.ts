@@ -53,7 +53,7 @@ test.describe('#135 content font-size scaling', () => {
     await expectScales(page.getByTestId('pr-description-title'), 'in-tab title');
     await expectScales(page.getByTestId('stats-tile-value'), 'stats value');
     await expectScales(page.getByTestId('stats-tile-label'), 'stats label');
-    await expectScales(page.getByTestId('pr-root-comment').locator('p').first(), 'comment body');
+    await expectScales(page.getByTestId('timeline-comment').locator('p').first(), 'comment body');
 
     await setScale(page, 'xl');
     for (let i = 0; i < present.length; i++) {

@@ -169,4 +169,45 @@ describe('useActivePrUpdates', () => {
     });
     expect(result.current.approvers).toEqual([{ login: 'octocat', avatarUrl: null }]);
   });
+
+  it('#620 — bumps prUpdatedSignal on every pr-updated frame, even with NO mergeability change (regression guard)', async () => {
+    const { result } = renderHook(() =>
+      useActivePrUpdates({ owner: 'acme', repo: 'api', number: 1 }),
+    );
+    await waitFor(() => expect(listeners['pr-updated']?.length).toBeGreaterThan(0));
+
+    expect(result.current.prUpdatedSignal).toBe(0);
+
+    // A bare-comment / review-request / approval frame: mergeReadinessChanged=false,
+    // no mergeReadiness field at all. If the counter were bumped from inside the
+    // mergeReadinessChanged branch instead of unconditionally, this frame would
+    // never advance it — silently defeating ActivityFeed's live-refresh.
+    act(() => {
+      fireSse('pr-updated', {
+        prRef: 'acme/api/1',
+        headShaChanged: false,
+        baseShaChanged: false,
+        commentCountDelta: 1,
+        isMerged: false,
+        isClosed: false,
+        mergeReadinessChanged: false,
+      });
+    });
+    expect(result.current.prUpdatedSignal).toBe(1);
+    expect(result.current.mergeReadiness).toBeUndefined();
+
+    // A second, unrelated frame bumps it again.
+    act(() => {
+      fireSse('pr-updated', {
+        prRef: 'acme/api/1',
+        headShaChanged: false,
+        baseShaChanged: false,
+        commentCountDelta: 1,
+        isMerged: false,
+        isClosed: false,
+        mergeReadinessChanged: false,
+      });
+    });
+    expect(result.current.prUpdatedSignal).toBe(2);
+  });
 });
