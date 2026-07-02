@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type { PrInboxItem, InboxItemEnrichment } from '../../api/types';
 import { useOpenTabs } from '../../contexts/OpenTabsContext';
@@ -44,7 +45,14 @@ interface Props {
   settled: ReadonlySet<string>;
 }
 
-export function InboxRow({
+// #671 — memoized so an unrelated InboxPage re-render (SSE inbox-updated frame,
+// activity-rail poll, refresh flag) skips every row whose props are unchanged,
+// instead of re-running the per-row work (glyph state, aria concatenation, DiffBar,
+// ReadinessBadge, Avatar) for the whole list. Props are value-stable on those
+// triggers: `pr`/`enrichment` come from the memoized inbox snapshot, `maxDiff`/
+// `settled` are memoized in InboxPage, and the rest are primitives. Default shallow
+// prop comparison is exactly right here.
+export const InboxRow = memo(function InboxRow({
   pr,
   enrichment,
   showCategoryChip,
@@ -277,4 +285,4 @@ export function InboxRow({
       </span>
     </button>
   );
-}
+});

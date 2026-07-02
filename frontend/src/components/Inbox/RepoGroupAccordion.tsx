@@ -1,9 +1,13 @@
-import { useState } from 'react';
+import { memo, useState } from 'react';
 import type { InboxItemEnrichment } from '../../api/types';
 import { type RepoGroup, prId } from './groupByRepo';
 import { InboxRow } from './InboxRow';
 import { InboxCaret } from './InboxCaret';
 import styles from './RepoGroupAccordion.module.css';
+
+// #671 — shared stable default; see InboxSection's EMPTY_SETTLED for why a
+// `= new Set()` default parameter would defeat the row memo.
+const EMPTY_SETTLED: ReadonlySet<string> = new Set();
 
 interface Props {
   group: RepoGroup;
@@ -15,13 +19,16 @@ interface Props {
   settled?: ReadonlySet<string>;
 }
 
-export function RepoGroupAccordion({
+// #671 — memoized so an unrelated InboxSection re-render (SSE frame / rail poll)
+// skips the accordion subtree when its props are unchanged. Effective now that
+// InboxSection memoizes `groups`, so the `group` identity is stable.
+export const RepoGroupAccordion = memo(function RepoGroupAccordion({
   group,
   enrichments,
   showCategoryChip,
   maxDiff,
   defaultOpen,
-  settled = new Set<string>(),
+  settled = EMPTY_SETTLED,
 }: Props) {
   // defaultOpen seeds the initial state only — it derives from a static
   // !isRecentlyClosed flag that can't change at runtime, so the snapshot
@@ -75,4 +82,4 @@ export function RepoGroupAccordion({
       )}
     </div>
   );
-}
+});

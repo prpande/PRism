@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { InboxSection as InboxSectionDto, InboxItemEnrichment } from '../../api/types';
 // Aliased: the `groupByRepo` prop (#219 toggle) would otherwise shadow this fold helper.
 import { groupByRepo as buildRepoGroups, prId } from './groupByRepo';
@@ -9,6 +9,12 @@ import { RecentlyClosedFooter } from './RecentlyClosedFooter';
 import styles from './InboxSection.module.css';
 
 const RECENTLY_CLOSED = 'recently-closed';
+
+// #671 — a module-level empty set shared as the `settled` default. Using
+// `= new Set()` as a default *parameter* re-evaluates on every render where the
+// prop is omitted, minting a fresh identity that flows into the rows and defeats
+// InboxRow's React.memo. One frozen-by-convention instance keeps the identity stable.
+const EMPTY_SETTLED: ReadonlySet<string> = new Set();
 
 const EmptyCopy: Record<string, string> = {
   'review-requested': 'No reviews requested right now.',
@@ -40,7 +46,7 @@ export function InboxSection({
   defaultOpen = true,
   forceOpen,
   groupByRepo = true,
-  settled = new Set<string>(),
+  settled = EMPTY_SETTLED,
 }: Props) {
   // A filter-revealed section opens expanded (forceOpen), but a manual collapse
   // during the session still wins. Once the filter releases the section
@@ -67,7 +73,12 @@ export function InboxSection({
   const isRecentlyClosed = section.id === RECENTLY_CLOSED;
   // #219 skip the grouping allocation entirely when the toggle is off — the flat
   // path renders section.items directly and never reads `groups`.
-  const groups = groupByRepo ? buildRepoGroups(section.items) : [];
+  // #671 — memoized so an unrelated re-render doesn't re-run the O(n) fold and mint
+  // fresh RepoGroup identities that would defeat RepoGroupAccordion's React.memo.
+  const groups = useMemo(
+    () => (groupByRepo ? buildRepoGroups(section.items) : []),
+    [groupByRepo, section.items],
+  );
   const repoDefaultOpen = !isRecentlyClosed;
   // group only when the toggle is on AND there's more than one repo to group
   // (a single repo always flattens — a one-child accordion is pointless).

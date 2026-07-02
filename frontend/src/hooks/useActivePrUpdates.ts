@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { apiClient } from '../api/client';
 import type { MergeReadiness, PrReference, Reviewer } from '../api/types';
 import { snapshot } from '../utils/snapshotMerge';
@@ -156,7 +156,10 @@ export function useActivePrUpdates(prRef: PrReference): ActivePrUpdates {
     };
   }, [stream, refStr]);
 
-  const clear = () => setState(initial);
+  // #671 — stable identity so consumers that pass `clear` as a prop (BannerRefresh
+  // onDismiss) or list it in a memo dep array can actually bail out. setState's own
+  // identity is stable and `initial` is a module constant, so the empty dep is correct.
+  const clear = useCallback(() => setState(initial), []);
 
   return { ...state, subscribed, prUpdatedSignal, clear };
 }
