@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useDismissableMenu } from '../../hooks/useDismissableMenu';
 import { useEffectiveLocation } from '../../hooks/useEffectiveLocation';
 import { useOpenTabs, type OpenTab } from '../../contexts/OpenTabsContext';
 import { prRefKey, type PrReference } from '../../api/types';
@@ -77,34 +78,20 @@ function PrTabStripBody() {
 
   const [menuOpen, setMenuOpen] = useState(false);
   const overflowRef = useRef<HTMLDivElement | null>(null);
+  const moreButtonRef = useRef<HTMLButtonElement | null>(null);
 
   const inline = openTabs.slice(0, INLINE_TAB_CAP);
   const overflowed = openTabs.slice(INLINE_TAB_CAP);
 
-  // Click-outside + Escape dismiss + focus return.
-  useEffect(() => {
-    if (!menuOpen) return;
-    const triggerEl = overflowRef.current?.querySelector(`.${styles.more}`) as HTMLElement | null;
-    const onMouseDown = (e: MouseEvent) => {
-      if (overflowRef.current && !overflowRef.current.contains(e.target as Node)) {
-        setMenuOpen(false);
-      }
-    };
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        e.preventDefault();
-        e.stopPropagation();
-        setMenuOpen(false);
-        triggerEl?.focus();
-      }
-    };
-    document.addEventListener('mousedown', onMouseDown);
-    document.addEventListener('keydown', onKeyDown);
-    return () => {
-      document.removeEventListener('mousedown', onMouseDown);
-      document.removeEventListener('keydown', onKeyDown);
-    };
-  }, [menuOpen]);
+  // Click-outside + Escape dismiss + focus return (#328 shared hook). Focus
+  // returns to the chevron (via its ref) on Escape only; outside-click leaves
+  // focus where the click put it.
+  useDismissableMenu({
+    open: menuOpen,
+    rootRef: overflowRef,
+    returnFocusRef: moreButtonRef,
+    onClose: () => setMenuOpen(false),
+  });
 
   // Auto-close when the overflow set drains.
   useEffect(() => {
@@ -208,6 +195,7 @@ function PrTabStripBody() {
         {overflowed.length > 0 && (
           <div className={styles.overflow} ref={overflowRef}>
             <button
+              ref={moreButtonRef}
               type="button"
               className={styles.more}
               onClick={() => setMenuOpen((v) => !v)}

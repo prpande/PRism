@@ -5,7 +5,15 @@
 // last. Compose for a nested tweak: makePrDetailDto({ pr: makePr({ headSha:
 // 'feedface' }) }). Defaults are generic, so each test overrides exactly the
 // fields it asserts on — no hidden coupling to a default value.
-import type { PrDetailDto, PrDetailPr, PrReference } from '../../src/api/types';
+// `iter`/`commit` (#328) are the shared copies of the factories the pinned
+// IterationTabStrip/ComparePicker/CommitMultiSelectPicker tests still inline.
+import type {
+  CommitDto,
+  IterationDto,
+  PrDetailDto,
+  PrDetailPr,
+  PrReference,
+} from '../../src/api/types';
 
 const DEFAULT_REF: PrReference = { owner: 'octocat', repo: 'hello', number: 42 };
 
@@ -29,6 +37,26 @@ export function makePr(overrides: Partial<PrDetailPr> = {}): PrDetailPr {
     mergedAt: null,
     closedAt: null,
     ...overrides,
+  };
+}
+
+export function iter(n: number, hasResolvableRange = true): IterationDto {
+  return {
+    number: n,
+    beforeSha: `before${n}`,
+    afterSha: `after${n}`,
+    commits: [],
+    hasResolvableRange,
+  };
+}
+
+export function commit(sha: string, message = `Commit ${sha}`): CommitDto {
+  return {
+    sha,
+    message,
+    committedDate: '2026-05-01T00:00:00Z',
+    additions: 10,
+    deletions: 5,
   };
 }
 

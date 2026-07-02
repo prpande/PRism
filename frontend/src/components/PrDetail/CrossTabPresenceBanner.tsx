@@ -1,5 +1,3 @@
-import styles from './CrossTabPresenceBanner.module.css';
-
 interface CrossTabPresenceBannerProps {
   visible: boolean;
   // True when a peer tab has CLAIMED ownership of this PR via the take-over
@@ -42,8 +40,8 @@ export function CrossTabPresenceBanner({
       aria-live="assertive"
       className={`banner ${readOnly ? 'banner-warning' : ''}`.trim()}
     >
-      <span className={styles.crossTabPresenceBannerMessage}>{message}</span>
-      <div className={styles.crossTabPresenceBannerActions}>
+      <span className="banner-message">{message}</span>
+      <div className="banner-actions">
         <button type="button" className="btn btn-secondary btn-sm" onClick={onSwitchToOther}>
           Switch to other tab
         </button>
