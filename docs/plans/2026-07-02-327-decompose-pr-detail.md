@@ -344,3 +344,8 @@ export function useSubmitFlow(opts: {
 - Spec §Slice 2 → Tasks 8-14 (matchMedia caveat → T8 step 1 runs BEFORE consumer swap by design; buildTree → T9; optimistic → T10; composer lifecycle → T11; composite key + render-count a/b → T12; replyContext + (c) → T13; conventions → T14).
 - Spec §Slice 3 → Tasks 15-17.
 - Deferred questions resolved here: repo-wide stub upgrade = YES (T8); `useIsSplitCapable` wrapper = YES; reply open/close stays widget-local (T13 verifies); `DiffTruncationBanner` prop renames (T6).
+
+## Slice-2 deviations (recorded at execution time)
+
+- **Task 10:** `useOptimisticComments` exposes `optimisticByThread` as a `Record<string, OptimisticComment[]>` (not a `Map`, matching ExistingCommentWidget's existing type) and has no `bumpRefetchGen` — the only increment site moved inside the prune effect, so the generation counter is fully hook-internal. Task 12 later added a `newInlinePlaceholders` accessor (memoized, un-deduped `threadId === null` entries) instead of exposing the raw optimistic array.
+- **Tasks 12/13:** the planned per-row `isComposerLocation: boolean` became `composerStamp: string | null`. A location-only signal couldn't re-render the row on post-now's same-line composer→placeholder swap once Task 13 removed the replyContext churn that had masked it (two pre-existing integration tests went red without the stamp). Key format: `${filePath}:${lineNumber}=${stamp}` entries joined by `|`, where stamp is `'c'` (open composer) and/or `'+'`-joined placeholder clientIds; single producer (FilesTab's `activeComposerKey`) + single parser (UnifiedDiffBody).
