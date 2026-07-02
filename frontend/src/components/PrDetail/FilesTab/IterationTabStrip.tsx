@@ -1,5 +1,6 @@
-import { useState } from 'react';
+import { useId, useRef, useState } from 'react';
 import type { IterationDto } from '../../../api/types';
+import { useDismissableMenu } from '../../../hooks/useDismissableMenu';
 import styles from './IterationTabStrip.module.css';
 
 export interface IterationTabStripProps {
@@ -28,6 +29,20 @@ export function IterationTabStrip({
   onRangeChange,
 }: IterationTabStripProps) {
   const [dropdownOpen, setDropdownOpen] = useState(false);
+  const overflowRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const id = useId();
+  const dropdownId = `${id}-iteration-dropdown`;
+
+  // Esc + outside-pointerdown dismissal (#328 shared hook). The boundary is
+  // the overflow wrapper (trigger + dropdown), NOT the whole strip — clicking
+  // an inline iteration tab counts as outside and closes the dropdown.
+  useDismissableMenu({
+    open: dropdownOpen,
+    rootRef: overflowRef,
+    returnFocusRef: triggerRef,
+    onClose: () => setDropdownOpen(false),
+  });
 
   const inlineIters = iterations.slice(-INLINE_COUNT);
   const overflowIters = iterations.length > INLINE_COUNT ? iterations.slice(0, -INLINE_COUNT) : [];
@@ -76,14 +91,20 @@ export function IterationTabStrip({
       </button>
 
       {hasOverflow && (
-        <div className={`iteration-tab-overflow ${styles.iterationTabOverflow}`}>
+        <div ref={overflowRef} className={`iteration-tab-overflow ${styles.iterationTabOverflow}`}>
           <button
+            ref={triggerRef}
             className={
               `iteration-tab iteration-tab--more ` +
               `${styles.iterationTab} ${styles.iterationTabMore}`
             }
             onClick={() => setDropdownOpen((o) => !o)}
+            aria-haspopup="menu"
             aria-expanded={dropdownOpen}
+            // Only reference the dropdown while it's mounted — aria-controls
+            // pointing at an absent id fails axe's aria-valid-attr-value
+            // (cf. DiffSettingsMenu / HelpModal).
+            aria-controls={dropdownOpen ? dropdownId : undefined}
             aria-label={`Show ${overflowIters.length} more iterations`}
           >
             <span className={`iteration-chip-num ${styles.iterationChipNum}`}>
@@ -95,6 +116,8 @@ export function IterationTabStrip({
           </button>
           {dropdownOpen && (
             <div
+              id={dropdownId}
+              role="menu"
               className={`iteration-dropdown ${styles.iterationDropdown}`}
               aria-label="All iterations"
             >
@@ -174,11 +197,12 @@ function IterationOption({
   return (
     <button
       type="button"
+      role="menuitemradio"
       className={
         `iteration-option${disabled ? ' iteration-option--disabled' : ''} ` +
         `${styles.iterationOption}${disabled ? ` ${styles.iterationOptionDisabled}` : ''}`
       }
-      aria-selected={isActive}
+      aria-checked={isActive}
       disabled={disabled}
       onClick={onSelect}
     >

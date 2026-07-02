@@ -1,5 +1,6 @@
 // DiffSettingsMenu.tsx
-import { useState, useRef, useEffect, useId, useCallback } from 'react';
+import { useState, useRef, useId } from 'react';
+import { useDismissableMenu } from '../../../hooks/useDismissableMenu';
 import { GearIcon } from './diffIcons';
 import styles from './DiffSettingsMenu.module.css';
 
@@ -31,35 +32,18 @@ export function DiffSettingsMenu({
   const panelId = `${instanceId}-diff-settings-panel`;
   const helperId = `${instanceId}-full-file-helper`;
 
-  const close = useCallback(() => {
-    setOpen(false);
-    // Defer focus so it lands after any click-sequence that triggered close
-    // (outside-click: pointerdown fires before mouseup/click steal focus to body).
-    setTimeout(() => triggerRef.current?.focus(), 0);
-  }, []);
-
-  // Outside-click close — net-new vs CommitMultiSelectPicker, which has none.
-  useEffect(() => {
-    if (!open) return;
-    const onPointerDown = (e: PointerEvent) => {
-      if (rootRef.current && !rootRef.current.contains(e.target as Node)) close();
-    };
-    document.addEventListener('pointerdown', onPointerDown);
-    return () => document.removeEventListener('pointerdown', onPointerDown);
-  }, [open, close]);
-
-  // Escape from anywhere in the component (trigger OR panel) closes it. We do
-  // NOT auto-move focus into the panel on open: a mouse user keeps their place
-  // and a keyboard user tabs in. The APG disclosure pattern does not require
-  // moving focus on open, and auto-focusing would jump the cursor for mouse
-  // users. Putting onKeyDown on the root (which wraps the trigger) is what lets
-  // Escape work whether focus is on the gear or on a panel control.
-  const onKeyDown = (e: React.KeyboardEvent) => {
-    if (open && e.key === 'Escape') {
-      e.stopPropagation();
-      close();
-    }
-  };
+  // Esc + outside-pointerdown dismissal (#328 shared hook). We do NOT auto-move
+  // focus into the panel on open: a mouse user keeps their place and a keyboard
+  // user tabs in (APG disclosure pattern). returnFocusOnOutsideClose is this
+  // menu's pinned behavior: outside-click close refocuses the gear (deferred a
+  // tick so it lands after the click sequence steals focus to body).
+  useDismissableMenu({
+    open,
+    rootRef,
+    returnFocusRef: triggerRef,
+    onClose: () => setOpen(false),
+    returnFocusOnOutsideClose: true,
+  });
 
   // Effective non-default state — a view-blocked full-file preference produces
   // no visible effect, so it must not light the indicator (spec: blocked/forced
@@ -75,7 +59,6 @@ export function DiffSettingsMenu({
     <div
       ref={rootRef}
       className={`diff-settings-menu ${styles.root}`}
-      onKeyDown={onKeyDown}
       data-testid="diff-settings-menu"
     >
       <button
@@ -86,7 +69,7 @@ export function DiffSettingsMenu({
         aria-controls={open ? panelId : undefined}
         aria-label={isModified ? 'Diff settings (modified)' : 'Diff settings'}
         title="Diff settings"
-        onClick={() => (open ? close() : setOpen(true))}
+        onClick={() => setOpen((o) => !o)}
         data-testid="diff-settings-trigger"
       >
         <GearIcon />

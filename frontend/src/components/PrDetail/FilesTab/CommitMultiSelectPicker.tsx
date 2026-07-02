@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, useCallback, useMemo, useId } from 'react';
 import type { CommitDto } from '../../../api/types';
+import { useDismissableMenu } from '../../../hooks/useDismissableMenu';
 import styles from './CommitMultiSelectPicker.module.css';
 
 export interface CommitMultiSelectPickerProps {
@@ -15,8 +16,20 @@ export function CommitMultiSelectPicker({
 }: CommitMultiSelectPickerProps) {
   const [open, setOpen] = useState(false);
   const [focusIndex, setFocusIndex] = useState(-1);
+  const rootRef = useRef<HTMLDivElement>(null);
   const listboxRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
+
+  // Esc + outside-pointerdown dismissal (#328 shared hook). Esc refocuses the
+  // trigger (deferred a tick); outside-click leaves focus where the click put
+  // it. Arrow/Home/End/Enter stay in the local handleKeyDown below — only the
+  // dismissal behavior is shared.
+  useDismissableMenu({
+    open,
+    rootRef,
+    returnFocusRef: triggerRef,
+    onClose: () => setOpen(false),
+  });
 
   const sorted = useMemo(
     () =>
@@ -56,10 +69,6 @@ export function CommitMultiSelectPicker({
     (e: React.KeyboardEvent) => {
       const totalItems = sorted.length + 1;
       switch (e.key) {
-        case 'Escape':
-          setOpen(false);
-          triggerRef.current?.focus();
-          break;
         case 'ArrowDown':
           e.preventDefault();
           setFocusIndex((i) => (i + 1) % totalItems);
@@ -100,6 +109,7 @@ export function CommitMultiSelectPicker({
 
   return (
     <div
+      ref={rootRef}
       className={`commit-multi-select-picker ${styles.commitMultiSelectPicker}`}
       data-testid="commit-multi-select-picker"
     >

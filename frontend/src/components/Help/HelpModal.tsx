@@ -1,6 +1,7 @@
-import { useEffect, useId, useRef, useState, type PointerEvent, type ReactElement } from 'react';
+import { useId, useRef, useState, type ReactElement } from 'react';
 import { createPortal } from 'react-dom';
 import { Link, type Location } from 'react-router-dom';
+import { useModalFocusTrap, useScrimDismiss } from '../../hooks/useModalFocusTrap';
 import { InboxCaret } from '../Inbox/InboxCaret';
 import { HelpIcon } from '../Header/HelpIcon';
 import {
@@ -12,9 +13,6 @@ import {
   ChatIcon,
 } from './HelpSectionIcons';
 import styles from './HelpModal.module.css';
-
-const FOCUSABLE =
-  'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
 export interface HelpModalProps {
   onClose: () => void;
@@ -54,10 +52,6 @@ export function HelpModal({
   settingsBackground,
 }: HelpModalProps) {
   const dialogRef = useRef<HTMLDivElement | null>(null);
-  const previouslyFocused = useRef<HTMLElement | null>(null);
-  const scrimDownTarget = useRef<EventTarget | null>(null);
-  const fallbackRef = useRef(restoreFocusFallbackSelector);
-  fallbackRef.current = restoreFocusFallbackSelector;
   const titleId = useId();
   // Stable per-instance prefix for accordion body ids (mirrors titleId's useId so
   // two concurrent instances can't collide on a static literal).
@@ -75,65 +69,22 @@ export function HelpModal({
     });
   };
 
-  useEffect(() => {
-    previouslyFocused.current = document.activeElement as HTMLElement | null;
-    const dialog = dialogRef.current;
-    const target = dialog?.querySelector<HTMLElement>(FOCUSABLE);
-    target?.focus();
-    return () => {
-      // Trigger-opened → restore to the opener. Cold deep-link (body had focus)
-      // → move to the background landmark, never bare <body>.
-      const opener = previouslyFocused.current;
-      if (opener && opener !== document.body) opener.focus();
-      else if (fallbackRef.current)
-        document.querySelector<HTMLElement>(fallbackRef.current)?.focus();
-    };
-    // Run once on mount/unmount; the fallback selector is read via fallbackRef so
-    // the empty dep array is intentional and exhaustive-deps-clean — the effect
-    // closes over only refs, which react-hooks treats as stable. (#331 wired the
-    // plugin; no disable directive is needed because there is no violation here.)
-  }, []);
-
-  useEffect(() => {
-    const handleKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        e.preventDefault();
-        onClose();
-        return;
-      }
-      if (e.key === 'Tab' && dialogRef.current) {
-        const f = Array.from(dialogRef.current.querySelectorAll<HTMLElement>(FOCUSABLE));
-        if (f.length === 0) return;
-        const first = f[0];
-        const last = f[f.length - 1];
-        const active = document.activeElement;
-        if (e.shiftKey && (active === first || !dialogRef.current.contains(active))) {
-          e.preventDefault();
-          last.focus();
-        } else if (!e.shiftKey && (active === last || !dialogRef.current.contains(active))) {
-          e.preventDefault();
-          first.focus();
-        }
-      }
-    };
-    document.addEventListener('keydown', handleKey);
-    return () => document.removeEventListener('keydown', handleKey);
-  }, [onClose]);
-
-  const onScrimPointerDown = (e: PointerEvent) => {
-    scrimDownTarget.current = e.target;
-  };
-  const onScrimPointerUp = (e: PointerEvent) => {
-    if (e.target === e.currentTarget && scrimDownTarget.current === e.currentTarget) onClose();
-    scrimDownTarget.current = null;
-  };
+  // Focus capture/trap/restore + Esc (#328 shared hook). The modal is mounted
+  // only while open, so `active: true` keys the trap to mount/unmount.
+  // Restore semantics: see restoreFallbackSelector on useModalFocusTrap.
+  useModalFocusTrap(dialogRef, {
+    active: true,
+    onEscape: onClose,
+    restoreFallbackSelector: restoreFocusFallbackSelector,
+  });
+  const scrim = useScrimDismiss(onClose);
 
   return createPortal(
     <div
       className={styles.scrim}
       data-testid="help-scrim"
-      onPointerDown={onScrimPointerDown}
-      onPointerUp={onScrimPointerUp}
+      onPointerDown={scrim.onPointerDown}
+      onPointerUp={scrim.onPointerUp}
     >
       <div
         ref={dialogRef}
