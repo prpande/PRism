@@ -88,7 +88,7 @@ Reuse the `ClaudeCodeSummarizer` lifecycle with **analogous** constructor deps (
 After `CompleteAsync` returns text:
 
 1. **Parse** the first top-level JSON array of `{ path, score, rationale }` (tolerate fenced blocks / leading prose).
-2. **Validate** each entry: `path` matches a file in the resolved diff (unknown paths **dropped** — never invented); `score` ∈ {high,medium,low} (case-insensitive → kebab enum); `rationale` trimmed, non-empty, length-capped (cap = **160 chars**, ellipsized at the boundary).
+2. **Validate** each entry: `path` matches a file in the resolved diff (unknown paths **dropped** — never invented); `score` ∈ {high,medium,low} (case-insensitive → kebab enum); `rationale` trimmed, non-empty, length-capped (cap = **160 chars**, ellipsized at the boundary). *(Superseded: the cap was raised 160 → 600 on 2026-06-14, then removed outright by #560 — the ranker prompt's sentence budget is now the sole length limiter; sanitize + trim remain.)*
 3. **Dedup:** if a path appears more than once, **last valid entry wins** (LLMs repeat under fenced/streamed output); record a debug log.
 4. **Coverage backfill:** every changed file must appear; a file **absent** from the (deduped) result defaults to `medium` with rationale "Not individually ranked." **Backfill fills only absent paths — it never overwrites a real high/low score.**
 5. **Retry once** if parse fails or yields zero valid entries — one re-prompt with a terse "return ONLY the JSON array" reminder.
@@ -167,7 +167,7 @@ Mirror the `IPrSummarizer` factory in `ServiceCollectionExtensions.cs`: `AddSing
 ## 12. Testing strategy
 
 - **Backend** (`dotnet test`, `-p:NuGetAudit=false`, `--settings .runsettings`):
-  - Harness: valid parse; fenced/prose-wrapped JSON; invalid score normalized/dropped; unknown path dropped; **duplicate path → last-wins**; **absent file → medium backfill that does not overwrite a real score**; retry-then-success; retry-then-**all-medium-fallback (`Fallback: true`, cached, no in-session re-rank)**; empty array / non-array / huge rationale (capped).
+  - Harness: valid parse; fenced/prose-wrapped JSON; invalid score normalized/dropped; unknown path dropped; **duplicate path → last-wins**; **absent file → medium backfill that does not overwrite a real score**; retry-then-success; retry-then-**all-medium-fallback (`Fallback: true`, cached, no in-session re-rank)**; empty array / non-array / huge rationale (capped; since #560: huge rationale survives uncapped).
   - Empty-body rename/delete → scored `low` by rule (no provider call for them).
   - Cache: `baseSha` discriminates (same head, different base = MISS); **fallback IS stored** as a `FileFocusResult` with `Fallback: true` (cleared only by eviction on base/head move, not on next view, no in-session Retry); real result stored under R7.
   - Eviction on head/base via a real `ReviewEventBus`; R7 compare-and-set (store/skip/null-snapshot).
