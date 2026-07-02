@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import { ExistingCommentWidget } from './ExistingCommentWidget';
 import { annotationRows } from './AnnotationRows';
 import { SplitDiffLineRow } from './SplitDiffLineRow';
@@ -8,7 +9,12 @@ import styles from './DiffPane.module.css';
 // emitWidgetAndComposerRows helper) with its captured scope made explicit as
 // props. Renders the <tr> list; the <tbody> element stays in DiffPane so the
 // table skeleton is unchanged.
-export function SplitDiffBody({
+//
+// Memoized so a body-irrelevant DiffPane re-render (scroll capture, nav state)
+// skips the whole row-building loop when every prop is referentially stable.
+// Default shallow compare is correct: the output is a pure function of these
+// props, and DiffPane memoizes every derived structure it passes down.
+export const SplitDiffBody = memo(function SplitDiffBody({
   selectedPath,
   lines,
   threadsByLine,
@@ -175,4 +181,4 @@ export function SplitDiffBody({
     }
   }
   return <>{rows}</>;
-}
+});

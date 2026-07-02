@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import type { DiffLine } from '../../../../api/types';
 import { annotationRows } from './AnnotationRows';
 import { DiffLineRow } from './DiffLineRow';
@@ -19,7 +20,12 @@ function findAdjacentPair(lines: DiffLine[], idx: number): DiffLine | null {
 // Unified-mode diff body: the former renderUnifiedRows closure with its
 // captured scope made explicit as props. Renders the <tr> list; the <tbody>
 // element stays in DiffPane so the table skeleton is unchanged.
-export function UnifiedDiffBody({
+//
+// Memoized so a body-irrelevant DiffPane re-render (scroll capture, nav state)
+// skips the whole row-building loop when every prop is referentially stable.
+// Default shallow compare is correct: the output is a pure function of these
+// props, and DiffPane memoizes every derived structure it passes down.
+export const UnifiedDiffBody = memo(function UnifiedDiffBody({
   selectedPath,
   lines,
   threadsByLine,
@@ -105,4 +111,4 @@ export function UnifiedDiffBody({
     );
   }
   return <>{rows}</>;
-}
+});
