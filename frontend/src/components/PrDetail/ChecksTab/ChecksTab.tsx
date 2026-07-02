@@ -13,6 +13,10 @@ const TIER_ACTION_REQUIRED = 1;
 const TIER_IN_PROGRESS = 2;
 const TIER_NEUTRAL = 3;
 const TIER_PASSING = 4;
+// Skipped sorts BELOW passing (#690): it carries no actionable signal, so it belongs at the
+// end. The rest of the neutral family (neutral / stale / startup-failure / null) stays at
+// TIER_NEUTRAL — reclassifying those is #305, deliberately out of scope here.
+const TIER_SKIPPED = 5;
 
 function isFailing(c: CheckRun): boolean {
   return c.conclusion != null && FAILING_CONCLUSIONS.has(c.conclusion);
@@ -23,7 +27,8 @@ function tierOf(c: CheckRun): number {
   if (isFailing(c)) return TIER_FAILING;
   if (c.conclusion === 'action-required') return TIER_ACTION_REQUIRED;
   if (c.conclusion === 'success') return TIER_PASSING;
-  return TIER_NEUTRAL; // skipped / neutral / stale / startup-failure / null
+  if (c.conclusion === 'skipped') return TIER_SKIPPED;
+  return TIER_NEUTRAL; // neutral / stale / startup-failure / null
 }
 
 function sortChecks(checks: CheckRun[]): CheckRun[] {
