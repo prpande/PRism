@@ -21,8 +21,8 @@ import { CommitMultiSelectPicker } from './CommitMultiSelectPicker';
 import { buildAllRange } from '../range';
 import { buildTree, flattenPaths } from './treeBuilder';
 import { InlineCommentComposer } from '../Composer/InlineCommentComposer';
-import type { InlineAnchor } from '../Composer/InlineCommentComposer';
 import { usePrDetailContext } from '../prDetailContext';
+import { useInlineComposer } from './useInlineComposer';
 import { useIsSplitCapable } from './useIsSplitCapable';
 import { computeAnyOtherDraftsStaged } from '../../../hooks/useDraftSession';
 import { useOptimisticComments } from './useOptimisticComments';
@@ -331,84 +331,25 @@ export function FilesTab() {
   // UnresolvedPanel, and per-tab consumers). Files tab pulls it through
   // `usePrDetailContext` rather than re-instantiating its own hook.
 
-  // Active inline composer state. activeAnchor + composerDraftId together
-  // describe "the composer the user is currently in".
-  const [activeAnchor, setActiveAnchor] = useState<InlineAnchor | null>(null);
-  const [composerDraftId, setComposerDraftId] = useState<string | null>(null);
-  // #299 — holds the active composer's flush so a line switch can persist a
-  // pending debounced edit before the composer is swapped out (the modal that
-  // used to bridge that gap is gone). The composer (un)registers it itself.
-  const activeComposerFlushRef = useRef<(() => Promise<string | null>) | null>(null);
+  // #327 slice 2 — the inline-composer lifecycle (active anchor/draft-id
+  // state, flush ref, existing-draft lookup, open/click/close handlers) lives
+  // in useInlineComposer.ts. handleLineClick has a stable identity there
+  // (latest-ref pattern) so it can cross the memoized DiffPane boundary.
+  const {
+    activeAnchor,
+    composerDraftId,
+    setComposerDraftId,
+    flushRef: activeComposerFlushRef,
+    findExistingDraft,
+    handleLineClick,
+    handleComposerClose,
+  } = useInlineComposer({ draftSession, prDetail });
 
   // #302 Task 11b / #603 item C — optimistic placeholders for just-posted
   // comments (state, prune effect, refetch generation, thread grouping and the
   // per-line filter live in the hook; see useOptimisticComments.ts).
   const { optimisticByThread, placeholdersForLine, notePosted, noteReplyPosted } =
     useOptimisticComments(prDetail.reviewComments);
-
-  function findExistingDraft(anchor: InlineAnchor): { id: string; bodyMarkdown: string } | null {
-    const session = draftSession.session;
-    if (!session) return null;
-    const match = session.draftComments.find(
-      (d) =>
-        d.filePath === anchor.filePath &&
-        d.lineNumber === anchor.lineNumber &&
-        d.side === anchor.side,
-    );
-    return match ? { id: match.id, bodyMarkdown: match.bodyMarkdown } : null;
-  }
-
-  function openComposerAt(rawAnchor: InlineAnchor) {
-    // DiffPane sends back an empty anchoredSha. PoC simplification: stamp
-    // prDetail.pr.headSha for every right-side click. This is correct for
-    // the "All changes" iteration range (afterSha === headSha) but wrong
-    // for older iteration views — the iteration's afterSha would be the
-    // right anchor. Deferred (see deferrals doc); DiffPane only allows
-    // right-side clicks so the SHA is always a valid HEAD anchor.
-    const anchor: InlineAnchor = { ...rawAnchor, anchoredSha: prDetail.pr.headSha };
-    const existing = findExistingDraft(anchor);
-    setActiveAnchor(anchor);
-    setComposerDraftId(existing?.id ?? null);
-  }
-
-  function handleLineClick(rawAnchor: InlineAnchor) {
-    // Same-anchor click → no-op (composer already mounted there).
-    if (
-      activeAnchor &&
-      activeAnchor.filePath === rawAnchor.filePath &&
-      activeAnchor.lineNumber === rawAnchor.lineNumber &&
-      activeAnchor.side === rawAnchor.side
-    ) {
-      return;
-    }
-    // #299 — drafts auto-save as the author types, so switching lines never
-    // needs a "keep or discard?" prompt: whatever was being drafted is already
-    // persisted. Flush any pending (sub-debounce) edit of the current composer
-    // first so a fast line switch doesn't drop the last keystrokes, then open
-    // the composer at the new line. A saved draft left behind stays persisted
-    // (and reappears via findExistingDraft when the user clicks back to its
-    // line); discarding it is an explicit action on the composer's Discard
-    // button. The flush is fire-and-forget — it reads the latest body before
-    // the composer unmounts, and onSaved refetches when it lands. We don't
-    // block the switch on it, but a rejection is logged rather than swallowed:
-    // the unmounted composer has no badge to surface the failure, and the
-    // dropped edit is otherwise invisible (the draft's last-saved state stays
-    // intact).
-    activeComposerFlushRef.current?.().catch((err) => {
-      console.error('[FilesTab] flush on line-switch failed; latest edit may be unsaved', err);
-    });
-    openComposerAt(rawAnchor);
-  }
-
-  function handleComposerClose() {
-    setActiveAnchor(null);
-    setComposerDraftId(null);
-    // Own-tab mutations are filtered by useStateChangedSubscriber, so the
-    // SSE channel won't trigger a refetch for changes this tab made.
-    // Refresh on close so the next click at the same anchor sees the
-    // just-saved/just-deleted state and avoids creating a duplicate draft.
-    void draftSession.refetch();
-  }
 
   // #299 — refresh the shared draft session after each successful auto-save so
   // the Drafts tab reflects the just-saved draft live, without waiting for the
