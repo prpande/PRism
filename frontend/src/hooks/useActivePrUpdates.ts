@@ -24,6 +24,11 @@ export interface ActivePrUpdates {
   approvers?: Reviewer[] | null;
   changesRequestedBy?: Reviewer[] | null;
   awaitingReviewers?: Reviewer[] | null;
+  // #620 — monotonically-increasing counter bumped on EVERY pr-updated frame for this PR (not
+  // gated on mergeReadinessChanged or any other field). Surfaced through prDetailContext so
+  // ActivityFeed's useTimelineFeed can live-refresh on a bare approval, review-request, or root
+  // comment — frames that carry mergeReadinessChanged=false and would otherwise never be observed.
+  prUpdatedSignal: number;
   clear(): void;
 }
 
@@ -49,6 +54,10 @@ export function useActivePrUpdates(prRef: PrReference): ActivePrUpdates {
   const stream = useEventSource();
   const [state, setState] = useState(initial);
   const [subscribed, setSubscribed] = useState(false);
+  // #620 — bumped once per pr-updated frame, regardless of what changed. See the
+  // ActivePrUpdates.prUpdatedSignal doc comment for why this must NOT gate on
+  // mergeReadinessChanged.
+  const [prUpdatedSignal, setPrUpdatedSignal] = useState(0);
   const refStr = `${prRef.owner}/${prRef.repo}/${prRef.number}`;
 
   useEffect(() => {
@@ -69,6 +78,11 @@ export function useActivePrUpdates(prRef: PrReference): ActivePrUpdates {
 
     const unsubscribe = stream.on('pr-updated', (event) => {
       if (event.prRef !== refStr) return;
+      // #620 — bump on EVERY frame for this PR, before any field-specific gating below.
+      // Do NOT move this inside a mergeReadinessChanged branch: a bare approval, a
+      // review-request, or a root comment all carry mergeReadinessChanged=false and would
+      // never bump the signal, silently defeating ActivityFeed's live-refresh.
+      setPrUpdatedSignal((n) => n + 1);
       setState((s) => ({
         hasUpdate: true,
         headShaChanged: s.headShaChanged || event.headShaChanged,
@@ -144,5 +158,5 @@ export function useActivePrUpdates(prRef: PrReference): ActivePrUpdates {
 
   const clear = () => setState(initial);
 
-  return { ...state, subscribed, clear };
+  return { ...state, subscribed, prUpdatedSignal, clear };
 }

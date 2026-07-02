@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Logging.Abstractions;
 using PRism.Core.Contracts;
+using PRism.Core.Events;
 using PRism.Core.Inbox;
 using PRism.Core.PrDetail;
 
@@ -31,8 +32,17 @@ public class ActivePrPollerTests
         MergeReadiness readiness,
         bool isDraft,
         string headSha = "h1",
-        PrState prState = PrState.Open) =>
-        new(headSha, "b", "UNKNOWN", prState, 0, 0, readiness, IsDraft: isDraft);
+        PrState prState = PrState.Open,
+        int issueComments = 0,
+        int? approvals = null,
+        int? changesRequested = null,
+        string[]? awaiting = null) =>
+        new(headSha, "b", "UNKNOWN", prState, 0, 0, readiness,
+            IsDraft: isDraft,
+            Approvals: approvals,
+            ChangesRequested: changesRequested,
+            AwaitingReviewers: awaiting?.Select(l => new Reviewer(l)).ToArray(),
+            IssueCommentCount: issueComments);
 
     [Fact]
     public async Task UnknownReadiness_schedules_fast_retry_and_survives_success_reset()
@@ -97,5 +107,62 @@ public class ActivePrPollerTests
         var state = poller.PeekState(Pr(1));
         Assert.Equal(rearmAt.AddSeconds(1), state.NextRetryAt);   // re-armed at FastBackoff(0) = 1s
         Assert.Equal(1, state.FastRetryCount);                    // was reset to 0, then incremented after scheduling
+    }
+
+    // #620: a new ROOT PR comment (comments{ totalCount }) is the feed's primary content, but it
+    // bumps neither HeadSha, CommentCount (inline-review-thread comments only), PrState, nor
+    // MergeReadiness. Without a dedicated gate term the poller would publish nothing and the
+    // live timeline would never refresh on a plain root comment.
+    [Fact]
+    public async Task Publishes_when_only_root_comments_change()
+    {
+        var registry = new ActivePrSubscriberRegistry();
+        var batch = new FakeActivePrBatchReader();
+        var bus = new FakeReviewEventBus();
+        var poller = new ActivePrPoller(
+            registry, new FakePollerReviewService(), batch, bus, new ActivePrCache(registry),
+            NullLogger<ActivePrPoller>.Instance,
+            new FakeHostEnvironment("Production"));
+        var pr = Pr(1);
+        registry.Add("sub1", pr);
+
+        batch.SetSnapshot(pr, MakeSnapshot(readiness: MergeReadiness.Ready, isDraft: false, issueComments: 2));
+        await poller.TickAsync(T0, CancellationToken.None);          // firstPoll — seeds state, emits
+        bus.Clear();
+
+        batch.SetSnapshot(pr, MakeSnapshot(readiness: MergeReadiness.Ready, isDraft: false, issueComments: 3));
+        await poller.TickAsync(T0.AddSeconds(30), CancellationToken.None); // only the root-comment count changed
+
+        Assert.Single(bus.Published.OfType<ActivePrUpdated>());
+    }
+
+    // #620: an approval/changes-request/review-request delta rides the frame's Approvals /
+    // ChangesRequested / AwaitingReviewers fields but never triggered the gate on its own — a
+    // reviewer approving with no other change (head/inline-comment/state/readiness) published
+    // nothing today.
+    [Fact]
+    public async Task Publishes_when_only_approvals_change()
+    {
+        var registry = new ActivePrSubscriberRegistry();
+        var batch = new FakeActivePrBatchReader();
+        var bus = new FakeReviewEventBus();
+        var poller = new ActivePrPoller(
+            registry, new FakePollerReviewService(), batch, bus, new ActivePrCache(registry),
+            NullLogger<ActivePrPoller>.Instance,
+            new FakeHostEnvironment("Production"));
+        var pr = Pr(1);
+        registry.Add("sub1", pr);
+
+        batch.SetSnapshot(pr, MakeSnapshot(readiness: MergeReadiness.Ready, isDraft: false,
+            approvals: 0, changesRequested: 0, awaiting: new[] { "lee" }));
+        await poller.TickAsync(T0, CancellationToken.None);
+        bus.Clear();
+
+        batch.SetSnapshot(pr, MakeSnapshot(readiness: MergeReadiness.Ready, isDraft: false,
+            approvals: 1, changesRequested: 0, awaiting: new[] { "lee" }));
+        await poller.TickAsync(T0.AddSeconds(30), CancellationToken.None); // only approvals changed; awaiting held constant
+
+        var evt = Assert.Single(bus.Published.OfType<ActivePrUpdated>());
+        Assert.Equal(1, evt.Approvals);
     }
 }

@@ -7,7 +7,13 @@ import { MemoryRouter, Routes, Route, Outlet } from 'react-router-dom';
 import { OverviewTab } from '../src/components/PrDetail/OverviewTab/OverviewTab';
 import { PrDetailContextProvider } from '../src/components/PrDetail/prDetailContext';
 import type { PrDetailContextValue } from '../src/components/PrDetail/prDetailContext';
-import type { PrDetailDto, DiffDto, PrReference, ReviewSessionDto } from '../src/api/types';
+import type {
+  PrDetailDto,
+  DiffDto,
+  PrReference,
+  ReviewSessionDto,
+  TimelinePage,
+} from '../src/api/types';
 import type { UseDraftSessionResult } from '../src/hooks/useDraftSession';
 
 function emptySession(): ReviewSessionDto {
@@ -93,6 +99,8 @@ const sampleDiff: DiffDto = {
 
 const emptyDiff: DiffDto = { range: 'basedef..headabc', files: [], truncated: false };
 
+const emptyTimeline: TimelinePage = { events: [], olderCursor: null, hasOlder: false };
+
 interface MockOptions {
   detail?: PrDetailDto;
   diff?: DiffDto;
@@ -101,6 +109,9 @@ interface MockOptions {
   aiSummary?: { body: string; category: string } | null;
   draftSession?: UseDraftSessionResult;
   viewedPaths?: Set<string>;
+  // #620 — ActivityFeed now sources its comments/events from this endpoint
+  // instead of prDetail.rootComments; defaults to an empty page.
+  timeline?: TimelinePage;
 }
 
 function mockFetch(opts: MockOptions = {}) {
@@ -108,6 +119,7 @@ function mockFetch(opts: MockOptions = {}) {
   const aiPreview = opts.aiPreview ?? false;
   const capsOn = opts.capabilitiesOn ?? aiPreview;
   const summary = opts.aiSummary;
+  const timeline = opts.timeline ?? emptyTimeline;
 
   return vi.fn().mockImplementation((path: string) => {
     if (path.startsWith('/api/preferences')) {
@@ -158,6 +170,9 @@ function mockFetch(opts: MockOptions = {}) {
     if (path.includes('/diff')) {
       return Promise.resolve(jsonResponse(diff));
     }
+    if (path.includes('/timeline')) {
+      return Promise.resolve(jsonResponse(timeline));
+    }
     if (path.includes('/ai/summary')) {
       return summary
         ? Promise.resolve(jsonResponse(summary))
@@ -195,6 +210,7 @@ function providerValue(
     toggleViewed: vi.fn(),
     reload: vi.fn(),
     isLoading: false,
+    prUpdatedSignal: 0,
   };
 }
 
@@ -281,10 +297,42 @@ describe('OverviewTab', () => {
     expect(screen.getByLabelText('Viewed: 1 of 2 files')).toBeInTheDocument();
   });
 
-  it('renders PrRootConversation with the rootComments plus the PR5 actions (Reply + Mark all read)', async () => {
-    mountOverview();
+  it('renders ActivityFeed (with the lifted composer actions) instead of PrRootConversation', async () => {
+    // #620 — comments now come from ActivityFeed's own /timeline fetch, not
+    // prDetail.rootComments; the deleted PrRootConversation comment-list must
+    // not render (no `pr-root-comment` testid), and the composer actions
+    // (Reply + Mark all read) must still be present, now as ActivityFeed's
+    // composerSlot.
+    mountOverview({
+      timeline: {
+        events: [
+          {
+            id: 'r1',
+            verb: 'commented',
+            actor: { login: 'reviewer1', avatarUrl: null, isBot: false },
+            timestamp: '2026-05-08T14:00:00Z',
+            body: 'Looks good.',
+            commitCount: null,
+            subject: null,
+          },
+          {
+            id: 'r2',
+            verb: 'commented',
+            actor: { login: 'reviewer2', avatarUrl: null, isBot: false },
+            timestamp: '2026-05-08T15:00:00Z',
+            body: 'Also LGTM.',
+            commitCount: null,
+            subject: null,
+          },
+        ],
+        olderCursor: null,
+        hasOlder: false,
+      },
+    });
     await screen.findByText('reviewer1');
     expect(screen.getByText('reviewer2')).toBeInTheDocument();
+    expect(screen.getByTestId('activity-feed')).toBeInTheDocument();
+    expect(screen.queryByTestId('pr-root-comment')).not.toBeInTheDocument();
     // S3 footer placeholder is gone — S4 PR5 wires real actions.
     expect(screen.queryByText(/Composer not available in this context\./)).not.toBeInTheDocument();
     expect(
@@ -359,6 +407,7 @@ describe('OverviewTab', () => {
         );
       }
       if (path.includes('/diff')) return diffPromise;
+      if (path.includes('/timeline')) return Promise.resolve(jsonResponse(emptyTimeline));
       return Promise.resolve(jsonResponse({}, 204));
     });
     vi.spyOn(globalThis, 'fetch').mockImplementation(fetchMock as typeof fetch);
@@ -432,6 +481,7 @@ describe('OverviewTab', () => {
         );
       }
       if (path.includes('/diff')) return Promise.reject(new Error('network down'));
+      if (path.includes('/timeline')) return Promise.resolve(jsonResponse(emptyTimeline));
       return Promise.resolve(jsonResponse({}, 204));
     });
     vi.spyOn(globalThis, 'fetch').mockImplementation(fetchMock as typeof fetch);

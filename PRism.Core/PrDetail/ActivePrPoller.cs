@@ -295,10 +295,25 @@ public sealed partial class ActivePrPoller : BackgroundService, IImmediateRefres
             // tick), so `last != new` with non-None new never fires on a steady Ready→Ready tick.
             var readinessChanged = snapshot.MergeReadiness != MergeReadiness.None
                 && state.LastMergeReadiness != snapshot.MergeReadiness;
+            // #620: a root PR comment is the feed's primary content but bumps none of the terms
+            // above (CommentCount is inline-review-thread comments only). Gate on the root
+            // issue-comment total fetched separately (GitHubActivePrBatchReader.IssueCommentCount).
+            var issueCommentChanged =
+                state.LastIssueCommentCount is { } lic && lic != snapshot.IssueCommentCount;
+            // #620: reviewer name-lists ride the frame (Approvals/ChangesRequested/AwaitingReviewers)
+            // but never triggered the gate on their own. AwaitingReviewers is nullable
+            // (IReadOnlyList<Reviewer>?) — `?.Count ?? 0` guards the REST path where it is null.
+            // Known limitation: this compares reviewer COUNTS, not reviewer IDENTITY — a same-count
+            // reviewer swap (e.g. one approver replaced by another) won't trip the gate on its own.
+            // Subsumed by the per-event SSE-streaming follow-up, which will diff identities directly.
+            var reviewersChanged =
+                (state.LastApprovals is { } laApprovals && laApprovals != snapshot.Approvals) ||
+                (state.LastChangesRequested is { } laCr && laCr != snapshot.ChangesRequested) ||
+                (state.LastAwaitingCount is { } laAwait && laAwait != (snapshot.AwaitingReviewers?.Count ?? 0));
 
             LogPollSnapshot(_logger, prRef, snapshot.HeadSha, state.LastHeadSha, firstPoll, headChanged, baseChanged, commentChanged, stateChanged);
 
-            if (firstPoll || headChanged || baseChanged || commentChanged || stateChanged || readinessChanged)
+            if (firstPoll || headChanged || baseChanged || commentChanged || stateChanged || readinessChanged || issueCommentChanged || reviewersChanged)
             {
                 var commentDelta = state.LastCommentCount is { } prior ? snapshot.CommentCount - prior : 0;
                 // Load-bearing ordering: Publish MUST precede _cache.Update. The bus is synchronous,
@@ -330,6 +345,10 @@ public sealed partial class ActivePrPoller : BackgroundService, IImmediateRefres
             // baseline and cause a redundant re-publish on the next None→Ready flap.
             if (snapshot.MergeReadiness != MergeReadiness.None)
                 state.LastMergeReadiness = snapshot.MergeReadiness;
+            state.LastIssueCommentCount = snapshot.IssueCommentCount;
+            state.LastApprovals = snapshot.Approvals;
+            state.LastChangesRequested = snapshot.ChangesRequested;
+            state.LastAwaitingCount = snapshot.AwaitingReviewers?.Count ?? 0;
             state.ConsecutiveErrors = 0;
             // Fast-retry scheduling: if this PR's derived readiness is transiently None (GitHub
             // still computing mergeStateStatus) and the burst budget is not yet exhausted, schedule

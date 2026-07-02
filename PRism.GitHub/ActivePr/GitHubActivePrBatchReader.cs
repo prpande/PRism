@@ -72,7 +72,7 @@ public sealed class GitHubActivePrBatchReader : IActivePrBatchReader
     // inbox selection (no diff-stat / pushedAt / viewer-last-review; has baseRefOid/state +
     // reviewThreads comment counts). Byte-identity pinned by GitHubActivePrBatchReaderTests.
     private const string ActiveSelection =
-        "headRefOid baseRefOid state isDraft mergeable mergeStateStatus reviewDecision " +
+        "headRefOid baseRefOid state isDraft mergeable mergeStateStatus reviewDecision comments{ totalCount } " +
         "reviewThreads(first:100){ nodes{ comments{ totalCount } } } reviews{ totalCount } " +
         "latestReviews(first:20){ nodes{ author{ login avatarUrl } state } } " +
         "reviewRequests(first:20){ nodes{ requestedReviewer{ ... on User{ login avatarUrl } ... on Team{ name } } } }";
@@ -111,7 +111,8 @@ public sealed class GitHubActivePrBatchReader : IActivePrBatchReader
             Approvers: approvers,
             ChangesRequestedBy: changesRequestedBy,
             AwaitingReviewers: awaitingReviewers,
-            IsDraft: isDraft);
+            IsDraft: isDraft,
+            IssueCommentCount: TotalCount("comments"));
         return true;
     }
 

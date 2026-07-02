@@ -452,6 +452,7 @@ export function PrDetailView({
       reload,
       isLoading,
       liveMergeReadiness: updates.mergeReadiness,
+      prUpdatedSignal: updates.prUpdatedSignal,
     }),
     [
       prRef,
@@ -461,6 +462,7 @@ export function PrDetailView({
       updates.subscribed,
       updates.baseShaChanged,
       updates.mergeReadiness,
+      updates.prUpdatedSignal,
       selectSubTab,
       fileFocus,
       checks,
