@@ -3,6 +3,15 @@
   width: min(80%, var(--pr-detail-content-max));
   margin: 0 auto;
   padding: var(--s-4) 0;
+  /* #690: fill the bounded checks slot ([data-detail-active] [data-subtab] — a
+     viewport-height scroller with the header + sub-tab strip pinned above) so the
+     list and detail panes can scroll INDEPENDENTLY inside it instead of the whole
+     slot scrolling. That keeps the selected check's detail always in view — you can
+     scroll a long list on the left while the detail stays put on the right. */
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
 }
 
 .row {
@@ -189,7 +198,12 @@
   gap: var(--s-3);
   align-items: flex-start;
   width: min(95%, var(--pr-detail-content-max));
-  margin: var(--s-4) auto;
+  margin: 0 auto;
+  /* #690: fill the remaining slot height (below the degraded banner, if any) so the
+     panes have a definite box to cap against. min-height:0 lets it shrink so the
+     panes' internal overflow engages instead of pushing the slot to scroll. */
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 .listPane {
@@ -206,6 +220,18 @@
 .detailPane {
   flex: 1 1 0;
   min-width: 0;
+}
+
+/* #690: both panes scroll INTERNALLY when they overflow the slot, so a long list
+   or a long check body never pushes the other pane off-screen — the selected
+   detail stays reachable. align-items:flex-start on .masterDetail keeps each pane
+   content-sized (no tall empty box) when short; the cap engages only on overflow.
+   (min-height:0 is unneeded here — these are row-axis flex items, so the cross-axis
+   min resolves to 0 already; the load-bearing min-height:0 is on .masterDetail.) */
+.listPane,
+.detailPane {
+  max-height: 100%;
+  overflow-y: auto;
 }
 
 .detail {
@@ -265,6 +291,12 @@
 
 /* Narrow: stack vertically */
 @media (max-width: 640px) {
+  /* #690: stacked panes should not each own an internal scroller — revert to natural
+     document/slot flow so the whole stacked list+detail scrolls as one on mobile. */
+  .checks {
+    height: auto;
+    display: block;
+  }
   .masterDetail {
     flex-direction: column;
   }
@@ -272,6 +304,11 @@
     flex: none;
     width: 100%;
     min-width: unset;
+  }
+  .listPane,
+  .detailPane {
+    max-height: none;
+    overflow-y: visible;
   }
 }
 
