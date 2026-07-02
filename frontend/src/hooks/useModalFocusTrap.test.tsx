@@ -12,7 +12,12 @@ interface TrapHarnessProps {
 
 // Dialog stays mounted while inactive (keep-alive shape) so the inert case can
 // assert the hook does nothing for a mounted-but-inactive dialog.
-function TrapHarness({ active, onEscape, restoreFallbackSelector, initialFocus }: TrapHarnessProps) {
+function TrapHarness({
+  active,
+  onEscape,
+  restoreFallbackSelector,
+  initialFocus,
+}: TrapHarnessProps) {
   const dialogRef = useRef<HTMLDivElement>(null);
   useModalFocusTrap(dialogRef, { active, onEscape, restoreFallbackSelector, initialFocus });
   return (

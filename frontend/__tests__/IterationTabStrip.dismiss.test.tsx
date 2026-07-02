@@ -60,9 +60,7 @@ describe('IterationTabStrip — dropdown dismissal (#328)', () => {
 
   it('keeps the dropdown open when clicking inside it on a disabled option', async () => {
     const iterations = [iter(1, false), iter(2), iter(3), iter(4), iter(5)];
-    render(
-      <IterationTabStrip iterations={iterations} activeRange="all" onRangeChange={vi.fn()} />,
-    );
+    render(<IterationTabStrip iterations={iterations} activeRange="all" onRangeChange={vi.fn()} />);
     await userEvent.click(screen.getByRole('button', { name: /show 2 more iterations/i }));
     // Pointer-down on a disabled option is still inside the boundary; the
     // dropdown only closes via selection, Esc, outside click, or the trigger.
