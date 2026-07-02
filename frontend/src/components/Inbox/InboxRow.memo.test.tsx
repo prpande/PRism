@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { OpenTabsProvider } from '../../contexts/OpenTabsContext';
@@ -47,7 +47,7 @@ function makeSection(id: string, items: PrInboxItem[]): InboxSectionDto {
   return { id, label: id, items };
 }
 
-function shell(children: React.ReactNode) {
+function shell(children: ReactNode) {
   return (
     <MemoryRouter>
       <OpenTabsProvider>{children}</OpenTabsProvider>

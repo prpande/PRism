@@ -14,7 +14,7 @@ export function prId(pr: PrInboxItem): string {
 // re-evaluates every render where the prop is omitted, minting a fresh identity that
 // flows into the rows and defeats InboxRow's React.memo. One shared instance (the set
 // is never mutated) keeps that identity stable across InboxSection and RepoGroupAccordion.
-export const EMPTY_SETTLED: ReadonlySet<string> = new Set();
+export const EMPTY_SETTLED: ReadonlySet<string> = new Set<string>();
 
 /**
  * Fold a flat PR list into per-repo groups, preserving first-seen repo order and

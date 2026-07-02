@@ -91,6 +91,10 @@ export function PrDetailView({
 
   const { data, isLoading, error, reload } = usePrDetail(prRef);
   const updates = useActivePrUpdates(prRef);
+  // #671 — `clear` is a stable useCallback([]), but `updates` (spread return) is a fresh
+  // object each render. Bind the stable member to a local so callbacks can list it in
+  // their dep arrays directly, no exhaustive-deps suppression needed.
+  const clearUpdates = updates.clear;
 
   // The SINGLE shared file-focus fetch (spec §8): owned here, consumed by both
   // the Files-tree dots and the HotspotsTab via prDetailContext — no duplicate
@@ -114,7 +118,7 @@ export function PrDetailView({
   const prRefresh = usePrDetailRefresh({
     prRef,
     reload,
-    clearUpdates: updates.clear,
+    clearUpdates,
     onError: (message) => toast.show({ kind: 'error', message }),
   });
 
@@ -142,12 +146,11 @@ export function PrDetailView({
   useSingleCommentPostedSubscriber({ prRef, onPosted: reload });
   // #566: reload PR detail when a lifecycle action (close/reopen/draft toggle) succeeds, and
   // clear the transition latch first so the acting tab does NOT flash the "PR was closed —
-  // Reload" banner for its own action (mirrors handleReload's updates.clear() + reload()).
+  // Reload" banner for its own action (mirrors handleReload's clearUpdates() + reload()).
   const handleLifecycleChanged = useCallback(() => {
-    updates.clear();
+    clearUpdates();
     reload();
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- updates.clear is a stable useCallback([]) since #671, but the `updates` object identity is fresh each render (spread return), so we can't list it; reload is a stable useCallback from usePrDetail (#331)
-  }, [reload]);
+  }, [reload, clearUpdates]);
   useLifecycleChangedSubscriber({ prRef, onChanged: handleLifecycleChanged });
   // #392: when a review is submitted, reload PR detail (so the just-posted inline
   // threads + Overview comment surface) AND refetch the draft session (so the
@@ -231,7 +234,7 @@ export function PrDetailView({
     clearUnread(refKey);
     // OQ8: the focus-refetch supersedes any latched "PR updated" banner — drop
     // it so it doesn't linger as a redundant Reload affordance.
-    updates.clear();
+    clearUpdates();
   });
 
   // Sub-tab state replaces the URL-derived activeTab. `visited` seeds with
@@ -378,7 +381,7 @@ export function PrDetailView({
   useSlotScrollMemory({ rootRef: pageRef, refKey, subTab: effectiveSubTab, active });
 
   const handleReload = () => {
-    updates.clear();
+    clearUpdates();
     reload();
     // Skip the reconcile leg when a peer tab claimed cross-tab ownership;
     // POST /reload is a mutating write and would race the claiming tab.
@@ -593,7 +596,7 @@ export function PrDetailView({
           commentCountDelta={updates.commentCountDelta}
           currentIterationNumber={currentIter}
           onReload={handleReload}
-          onDismiss={updates.clear}
+          onDismiss={clearUpdates}
         />
       )}
       <UnresolvedPanel
