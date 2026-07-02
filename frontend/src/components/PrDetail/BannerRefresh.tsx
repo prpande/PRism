@@ -24,8 +24,8 @@ export function BannerRefresh({
 
   return (
     <div role="status" aria-live="polite" className="banner" data-testid="reload-banner">
-      <span className={styles.bannerRefreshMessage}>{message}</span>
-      <div className={styles.bannerRefreshActions}>
+      <span className="banner-message">{message}</span>
+      <div className="banner-actions">
         <button type="button" className="btn btn-primary btn-sm" onClick={onReload}>
           Reload
         </button>
