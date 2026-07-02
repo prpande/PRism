@@ -56,6 +56,32 @@ describe('ChecksTab', () => {
     expect(screen.getAllByTestId('check-name')[0]).toHaveTextContent('canc');
   });
 
+  it('skipped checks sort to the end, after passing (#690)', () => {
+    renderTab({
+      ...base,
+      status: 'ok',
+      checks: [
+        run({ name: 'skip', conclusion: 'skipped' }),
+        run({ name: 'pass', conclusion: 'success' }),
+      ],
+    });
+    const names = screen.getAllByTestId('check-name').map((n) => n.textContent);
+    expect(names).toEqual(['pass', 'skip']);
+  });
+
+  it('neutral-family checks stay above passing — only skipped moves to the end (#690, boundary of #305)', () => {
+    renderTab({
+      ...base,
+      status: 'ok',
+      checks: [
+        run({ name: 'pass', conclusion: 'success' }),
+        run({ name: 'neut', conclusion: 'neutral' }),
+      ],
+    });
+    const names = screen.getAllByTestId('check-name').map((n) => n.textContent);
+    expect(names).toEqual(['neut', 'pass']);
+  });
+
   it('renders empty state', () => {
     renderTab({ ...base, status: 'empty', checks: [] });
     expect(screen.getByText(/no checks have been reported for this commit/i)).toBeInTheDocument();
