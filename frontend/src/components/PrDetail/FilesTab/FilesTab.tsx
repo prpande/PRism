@@ -23,6 +23,7 @@ import { buildTree, flattenPaths } from './treeBuilder';
 import { InlineCommentComposer } from '../Composer/InlineCommentComposer';
 import type { InlineAnchor } from '../Composer/InlineCommentComposer';
 import { usePrDetailContext } from '../prDetailContext';
+import { useIsSplitCapable } from './useIsSplitCapable';
 import { computeAnyOtherDraftsStaged } from '../../../hooks/useDraftSession';
 import {
   pruneOptimistic,
@@ -68,18 +69,6 @@ function isRangeUnreachable(error: Error | null): boolean {
     body !== null &&
     (body as { type?: unknown }).type === '/diff/range-unreachable'
   );
-}
-
-function useViewportWidth() {
-  const [width, setWidth] = useState(typeof window !== 'undefined' ? window.innerWidth : 1200);
-
-  useEffect(() => {
-    const handler = () => setWidth(window.innerWidth);
-    window.addEventListener('resize', handler);
-    return () => window.removeEventListener('resize', handler);
-  }, []);
-
-  return width;
 }
 
 export function effectiveCollapsed(
@@ -155,8 +144,8 @@ export function FilesTab() {
   // so it can include the file.status + file.hunks.length gates. This keeps the
   // effective flag passed to DiffPane consistent with the gear menu's helper text.
 
-  const viewportWidth = useViewportWidth();
-  const effectiveDiffMode: DiffMode = viewportWidth < 900 ? 'unified' : diffMode;
+  const isSplitCapable = useIsSplitCapable();
+  const effectiveDiffMode: DiffMode = !isSplitCapable ? 'unified' : diffMode;
 
   const handleRangeChange = useCallback((range: string) => {
     setActiveRange(range);
@@ -333,9 +322,9 @@ export function FilesTab() {
   }, [fileList, selectedPath]);
 
   const handleToggleDiffMode = useCallback(() => {
-    if (viewportWidth < 900) return;
+    if (!isSplitCapable) return;
     setDiffMode((prev) => (prev === 'side-by-side' ? 'unified' : 'side-by-side'));
-  }, [viewportWidth]);
+  }, [isSplitCapable]);
 
   const handleWholeFileFailed = useCallback(
     (reason: string) => {
@@ -704,7 +693,7 @@ export function FilesTab() {
         <DiffViewToggle
           diffMode={effectiveDiffMode}
           onDiffModeChange={setDiffMode}
-          splitDisabled={viewportWidth < 900}
+          splitDisabled={!isSplitCapable}
           splitDisabledReason="Side-by-side needs a wider window."
         />
         <DiffSettingsMenu
