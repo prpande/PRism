@@ -57,10 +57,13 @@ export interface DiffPaneProps {
   // content appears, moves, or disappears. Optional (default null) so DiffPane
   // test harnesses without a composer are unaffected.
   activeComposerKey?: string | null;
-  // Bound by FilesTab from its `useDraftSession`. Forwarded verbatim to each
-  // `<ExistingCommentWidget>` so per-thread Reply buttons can mount a
-  // `<ReplyComposer>`. Absent → DiffPane test harnesses render threads
-  // read-only.
+  // #327 Task 13 — the STABLE reply-callbacks bag built by FilesTab (latest-ref
+  // idiom; identity changes only on prRef/prState/readOnly). Forwarded verbatim
+  // to each `<ExistingCommentWidget>` so per-thread Reply buttons can mount a
+  // `<ReplyComposer>`. The churning per-thread DATA (draft arrays,
+  // optimisticByThread) does NOT ride this prop — it flows through
+  // ReplyDataContext, consumed inside the widget. Absent → DiffPane test
+  // harnesses render threads read-only.
   replyContext?: ExistingCommentWidgetReplyContext;
   // Collapse controller for review threads. Forwarded verbatim to each
   // `<ExistingCommentWidget>`. Absent → all threads render expanded (default).

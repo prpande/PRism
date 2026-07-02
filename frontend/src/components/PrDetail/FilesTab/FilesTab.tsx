@@ -28,7 +28,11 @@ import { computeAnyOtherDraftsStaged } from '../../../hooks/useDraftSession';
 import { useOptimisticComments } from './useOptimisticComments';
 import { CommentCard } from '../Comment/CommentCard';
 import styles from './FilesTab.module.css';
-import type { ThreadCollapseControl } from './DiffPane/ExistingCommentWidget';
+import type {
+  ExistingCommentWidgetReplyContext,
+  ThreadCollapseControl,
+} from './DiffPane/ExistingCommentWidget';
+import { ReplyDataProvider, type ReplyData } from './ReplyDataContext';
 
 // True when the diff fetch failed specifically because the requested commit
 // range is no longer reachable on GitHub (force-push GC'd the commits). The
@@ -358,22 +362,37 @@ export function FilesTab() {
 
   // #327 Task 12 — composite key of every location where renderComposerForLine
   // returns content: the open composer's line plus each UN-deduped new-inline
-  // placeholder's line, as sorted `${filePath}:${lineNumber}` entries joined
-  // with '|', or null when none. renderComposerForLine below is identity-stable,
-  // so this key is the ONLY channel that breaks the memoized diff bodies when
-  // composer content appears, moves, or disappears (open, move, close, post,
-  // prune). CRITICAL: the format must stay identical to UnifiedDiffBody's
-  // per-row `${filePath}:${lineNumber}` membership test — a mismatch silently
-  // defeats the mechanism (guarded by FilesTab.renderCount.perf.test.tsx's
-  // inverse assertions).
+  // placeholder's line, as sorted `${filePath}:${lineNumber}=${stamp}` entries
+  // joined with '|', or null when none. The `stamp` names WHAT renders there —
+  // 'c' for the open composer plus each placeholder's clientId — because
+  // renderComposerForLine below is identity-stable, so this key is the ONLY
+  // channel that breaks the memoized diff bodies when composer content appears,
+  // moves, disappears, OR is replaced in place (post-now closes the composer
+  // and drops an optimistic placeholder at the SAME line — a location-only key
+  // would compare equal and strand the stale composer; caught by
+  // FilesTabComposer.test.tsx once Task 13 stabilized replyContext, which had
+  // masked it by churning the rows on every refetch). CRITICAL: the format
+  // must stay identical to UnifiedDiffBody's per-row stamp parse — a mismatch
+  // silently defeats the mechanism (guarded by
+  // FilesTab.renderCount.perf.test.tsx's inverse assertions). Stamps never
+  // contain '=' (clientIds are UUIDs / counter strings), so the parser can
+  // split each entry at its LAST '=' even for exotic file paths.
   const activeComposerKey = useMemo(() => {
-    const locs = new Set<string>();
-    if (activeAnchor) locs.add(`${activeAnchor.filePath}:${activeAnchor.lineNumber}`);
+    const stamps = new Map<string, string>();
+    if (activeAnchor) stamps.set(`${activeAnchor.filePath}:${activeAnchor.lineNumber}`, 'c');
     // anchorKey format is `${filePath}:${lineNumber}:${side}` (see
     // optimisticComment.ts) — strip the trailing :side segment.
-    for (const o of newInlinePlaceholders)
-      if (o.anchorKey) locs.add(o.anchorKey.slice(0, o.anchorKey.lastIndexOf(':')));
-    return locs.size ? [...locs].sort().join('|') : null;
+    for (const o of newInlinePlaceholders) {
+      if (!o.anchorKey) continue;
+      const loc = o.anchorKey.slice(0, o.anchorKey.lastIndexOf(':'));
+      const prev = stamps.get(loc);
+      stamps.set(loc, prev ? `${prev}+${o.clientId}` : o.clientId);
+    }
+    if (stamps.size === 0) return null;
+    return [...stamps.entries()]
+      .map(([loc, stamp]) => `${loc}=${stamp}`)
+      .sort()
+      .join('|');
   }, [activeAnchor, newInlinePlaceholders]);
 
   // #299 — refresh the shared draft session after each successful auto-save so
@@ -505,22 +524,6 @@ export function FilesTab() {
     [activeComposerFlushRef],
   );
 
-  // Per-thread reply composer wiring (Task 40 Step 3). Each
-  // ExistingCommentWidget receives the bag and self-manages composer state
-  // (one open reply per thread, multiple threads can host open replies
-  // simultaneously — matches the GitHub UX precedent).
-  //
-  // Memoized so the bag's reference is stable across renders that don't
-  // touch its inputs. `ReplyComposer`'s `registerOpenComposer` useEffect
-  // re-runs whenever the registry function reference changes; without
-  // memoization, every parent render would tear down and re-register the
-  // refcount entry, briefly dropping the diff-and-prefer merge protection
-  // for the open draft.
-  const handleReplyComposerClose = useCallback(() => {
-    void draftSession.refetch();
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- depends on the stable draftSession.refetch useCallback, not the per-render draftSession object literal (#331)
-  }, [draftSession.refetch]);
-
   const [collapseOverrides, setCollapseOverrides] = useState<Record<string, boolean>>({});
   const collapse = useMemo<ThreadCollapseControl>(
     () => ({
@@ -532,47 +535,80 @@ export function FilesTab() {
     [collapseOverrides],
   );
 
-  const replyContext = useMemo(
+  // #327 Task 13 — the reply wiring is SPLIT (Task 40 Step 3 grew both halves
+  // into one churning bag):
+  //
+  //   (A) `replyContext` — the STABLE callbacks bag (+ the rarely-changing
+  //       prRef/prState/readOnly scalars). Every callback is created once and
+  //       reads its live inputs through a ref updated each render (latest-ref
+  //       pattern — the same idiom as renderComposerForLine above), so the bag
+  //       can cross the memoized diff rows (DiffLineRow / the body memos)
+  //       without breaking their bail on any autosave refetch. Stability also
+  //       keeps `ReplyComposer`'s `registerOpenComposer` useEffect from
+  //       tearing down and re-registering the refcount entry every render,
+  //       which would briefly drop the diff-and-prefer merge protection for
+  //       the open draft.
+  //   (B) `replyData` (below) — the REACTIVE per-thread data channel.
+  const replyCallbackDeps = {
+    registerOpenComposer: draftSession.registerOpenComposer,
+    refetch: draftSession.refetch,
+    beginPosting: draftSession.beginPosting,
+    endPosting: draftSession.endPosting,
+    noteReplyPosted,
+  };
+  const replyCallbackDepsRef = useRef(replyCallbackDeps);
+  replyCallbackDepsRef.current = replyCallbackDeps;
+
+  const replyContext = useMemo<ExistingCommentWidgetReplyContext>(
     () => ({
       prRef,
       prState,
-      draftComments: draftSession.session?.draftComments ?? [],
-      draftReplies: draftSession.session?.draftReplies ?? [],
-      postingInProgress: draftSession.postingInProgress,
-      registerOpenComposer: draftSession.registerOpenComposer,
-      onReplyComposerClose: handleReplyComposerClose,
+      readOnly,
+      registerOpenComposer: (draftId, ownerKey) =>
+        replyCallbackDepsRef.current.registerOpenComposer(draftId, ownerKey),
+      // Refetch after the reply composer closes (mirrors the on-close path the
+      // inline composer uses for the own-tab refresh-after-write case).
+      onReplyComposerClose: () => {
+        void replyCallbackDepsRef.current.refetch();
+      },
       // #302 — post-now wiring (Task 11a). The reply's own draft id is known
       // inside ExistingCommentWidget when it mounts the ReplyComposer, so the
-      // anyOtherDraftsStaged check is computed there from the raw pieces above
+      // anyOtherDraftsStaged check is computed there from the replyData channel
       // (computeAnyOtherDraftsStaged) rather than threaded as a closure here.
-      beginPosting: draftSession.beginPosting,
-      endPosting: draftSession.endPosting,
+      beginPosting: () => replyCallbackDepsRef.current.beginPosting(),
+      endPosting: () => replyCallbackDepsRef.current.endPosting(),
       // #302 Task 11b — stash an optimistic placeholder for the thread, then
       // refetch. The placeholder is de-duped against the refetched comment by
       // databaseId (postedCommentId), in the hook and at render in
       // ExistingCommentWidget.
-      onReplyPosted: (threadId: string, postedCommentId: number, body: string) => {
-        noteReplyPosted(threadId, postedCommentId, body);
-        void draftSession.refetch();
+      onReplyPosted: (threadId, postedCommentId, body) => {
+        replyCallbackDepsRef.current.noteReplyPosted(threadId, postedCommentId, body);
+        void replyCallbackDepsRef.current.refetch();
       },
-      optimisticByThread,
-      readOnly,
     }),
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- deps narrow to the specific draftSession members read; the draftSession object is a fresh literal each render, so depending on it would re-create the memo every render (#331)
+    [prRef, prState, readOnly],
+  );
+
+  // #327 Task 13 — (B) the reactive per-thread data channel. `useDraftSession`'s
+  // merge rebuilds the draft arrays on every refetch, so this value's identity
+  // changes on each autosave — which is exactly why it flows through
+  // ReplyDataContext (consumed inside ExistingCommentWidget's ThreadView,
+  // below the row memos) instead of riding the rows' props: only thread
+  // widgets re-render, and a cross-tab draft-reply arrival still hydrates the
+  // affected thread (a ref read would go stale there). Guarded by
+  // FilesTab.renderCount.perf.test.tsx assertions (a) and (c2).
+  const replyData = useMemo<ReplyData>(
+    () => ({
+      draftComments: draftSession.session?.draftComments ?? [],
+      draftReplies: draftSession.session?.draftReplies ?? [],
+      postingInProgress: draftSession.postingInProgress,
+      optimisticByThread,
+    }),
     [
-      prRef,
-      prState,
       draftSession.session?.draftComments,
       draftSession.session?.draftReplies,
       draftSession.postingInProgress,
-      draftSession.registerOpenComposer,
-      draftSession.beginPosting,
-      draftSession.endPosting,
-      draftSession.refetch,
-      handleReplyComposerClose,
-      noteReplyPosted,
       optimisticByThread,
-      readOnly,
     ],
   );
 
@@ -674,28 +710,30 @@ export function FilesTab() {
           className={`files-tab-diff ${styles.filesTabDiff}`}
           data-testid="files-tab-diff"
         >
-          <DiffPane
-            prRef={prRef}
-            selectedPath={selectedPath}
-            file={selectedFile}
-            diffMode={effectiveDiffMode}
-            truncated={diff.data?.truncated ?? false}
-            reviewThreads={fileThreads}
-            htmlUrl={htmlUrl}
-            onLineClick={handleLineClick}
-            renderComposerForLine={renderComposerForLine}
-            activeComposerKey={activeComposerKey}
-            replyContext={replyContext}
-            collapse={collapse}
-            isLoading={diff.isLoading}
-            wholeFileEnabled={wholeFileEnabled}
-            onWholeFileFailed={handleWholeFileFailed}
-            onWholeFileRetry={handleWholeFileRetry}
-            headSha={prDetail.pr.headSha}
-            baseSha={prDetail.pr.baseSha}
-            lineWrap={lineWrap}
-            annotations={aiHunkAnnotations.annotations}
-          />
+          <ReplyDataProvider value={replyData}>
+            <DiffPane
+              prRef={prRef}
+              selectedPath={selectedPath}
+              file={selectedFile}
+              diffMode={effectiveDiffMode}
+              truncated={diff.data?.truncated ?? false}
+              reviewThreads={fileThreads}
+              htmlUrl={htmlUrl}
+              onLineClick={handleLineClick}
+              renderComposerForLine={renderComposerForLine}
+              activeComposerKey={activeComposerKey}
+              replyContext={replyContext}
+              collapse={collapse}
+              isLoading={diff.isLoading}
+              wholeFileEnabled={wholeFileEnabled}
+              onWholeFileFailed={handleWholeFileFailed}
+              onWholeFileRetry={handleWholeFileRetry}
+              headSha={prDetail.pr.headSha}
+              baseSha={prDetail.pr.baseSha}
+              lineWrap={lineWrap}
+              annotations={aiHunkAnnotations.annotations}
+            />
+          </ReplyDataProvider>
         </div>
       </div>
     </div>

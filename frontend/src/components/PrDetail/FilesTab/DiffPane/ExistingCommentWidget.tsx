@@ -14,13 +14,21 @@ import {
 } from '../../../../hooks/useDraftSession';
 import { useDraftBackedDisclosure } from '../../../../hooks/useDraftBackedDisclosure';
 import type { OptimisticComment } from '../optimisticComment';
+import { useReplyData } from '../ReplyDataContext';
 import { ThreadDisclosureHeader } from './ThreadDisclosureHeader';
 import { stripMarkdown } from '../../HotspotsTab/stripMarkdown';
 
+// #327 Task 13 — the STABLE half of the split reply wiring: identity-stable
+// callbacks plus the rarely-changing scalars (prRef/prState/readOnly). FilesTab
+// builds it once (latest-ref-backed callbacks) so it can cross the memoized
+// diff rows without breaking their React.memo bail on every autosave refetch.
+// The per-thread DATA (draftComments/draftReplies/postingInProgress/
+// optimisticByThread) flows through the reactive ReplyDataContext channel
+// instead; the data fields below remain as an OPTIONAL no-provider fallback so
+// pure-rendering unit tests can pass everything through this one prop.
 export interface ExistingCommentWidgetReplyContext {
   prRef: PrReference;
   prState: 'open' | 'closed' | 'merged';
-  draftReplies: DraftReplyDto[];
   registerOpenComposer: (draftId: string, ownerKey: ComposerOwnerKey) => () => void;
   // Called after the reply composer closes so the parent can refetch the
   // session (mirrors the on-close path the inline composer uses for the
@@ -28,23 +36,26 @@ export interface ExistingCommentWidgetReplyContext {
   onReplyComposerClose: () => void;
   // Spec § 5.7a. Forwarded to ReplyComposer; disables textarea + save.
   readOnly?: boolean;
-  // #302 — post-now wiring (Task 11a). The staged-check needs this reply's own
-  // draft id, which only exists here (inside ThreadView). So the parent hands
-  // down the raw pieces and ThreadView calls computeAnyOtherDraftsStaged with
-  // its draftReplyId. All optional so pure-rendering tests can omit them.
-  draftComments?: DraftCommentDto[];
-  postingInProgress?: boolean;
   beginPosting?: () => void;
   endPosting?: () => void;
   // Fired after a successful post-now so the parent refetches the session and
   // the just-posted comment surfaces. 11b passes the posted body so the parent
   // can stash an optimistic placeholder for this thread.
   onReplyPosted?: (threadId: string, postedCommentId: number, body: string) => void;
+
+  // ---- No-provider data fallback (unit tests only; ignored when a
+  // ReplyDataProvider is mounted — FilesTab supplies the live data there) ----
+  draftReplies?: DraftReplyDto[];
+  // #302 — post-now wiring (Task 11a). The staged-check needs this reply's own
+  // draft id, which only exists here (inside ThreadView). So the parent hands
+  // down the raw pieces and ThreadView calls computeAnyOtherDraftsStaged with
+  // its draftReplyId.
+  draftComments?: DraftCommentDto[];
+  postingInProgress?: boolean;
   // #302 Task 11b — optimistic reply placeholders, keyed by threadId. Each
   // thread renders its entries (dimmed) AFTER its real comments, filtered to
   // exclude any whose postedCommentId already matches a real comment's
-  // databaseId (de-dup by databaseId — see optimisticComment.ts). Optional so
-  // pure-rendering tests can omit it.
+  // databaseId (de-dup by databaseId — see optimisticComment.ts).
   optimisticByThread?: Record<string, OptimisticComment[]>;
 }
 
@@ -92,12 +103,24 @@ function ThreadView({
   replyContext: ExistingCommentWidgetReplyContext | undefined;
   collapse: ThreadCollapseControl | undefined;
 }) {
+  // #327 Task 13 — per-thread reply DATA arrives through the reactive
+  // ReplyDataContext channel (provided by FilesTab above DiffPane); the
+  // replyContext prop is the stable callbacks bag. The consumer sits HERE —
+  // below the memoized DiffLineRow — so a draft-session refetch re-renders
+  // only thread widgets, never bailed diff rows. Falls back to the prop's
+  // optional data fields when no provider is mounted (unit-test harnesses).
+  const replyData = useReplyData();
+  const draftReplies = replyData?.draftReplies ?? replyContext?.draftReplies ?? [];
+  const draftComments = replyData?.draftComments ?? replyContext?.draftComments ?? [];
+  const postingInProgress = replyData?.postingInProgress ?? replyContext?.postingInProgress;
+  const optimisticByThread = replyData?.optimisticByThread ?? replyContext?.optimisticByThread;
+
   // Hydrate from any existing draft reply against this thread. A user who
   // returns to the page mid-flow sees a "Reply (saved draft)" affordance
   // and the composer pre-populated with the persisted body when opened.
-  const existingDraft = replyContext?.draftReplies.find(
-    (r) => r.parentThreadId === thread.threadId,
-  );
+  const existingDraft = replyContext
+    ? draftReplies.find((r) => r.parentThreadId === thread.threadId)
+    : undefined;
 
   // The composer auto-mounts when there is already a saved draft for this
   // thread (incl. cross-tab arrivals after mount); otherwise the user opens it
@@ -119,7 +142,7 @@ function ThreadView({
   // any whose postedCommentId already appears as a real comment's databaseId
   // (belt-and-suspenders with FilesTab's cleanup effect; the de-dup key is
   // databaseId, never body text).
-  const optimisticForThread = (replyContext?.optimisticByThread?.[thread.threadId] ?? []).filter(
+  const optimisticForThread = (optimisticByThread?.[thread.threadId] ?? []).filter(
     (o) => !thread.comments.some((c) => c.databaseId != null && c.databaseId === o.postedCommentId),
   );
 
@@ -196,10 +219,10 @@ function ThreadView({
               onClose={handleComposerClose}
               readOnly={replyContext.readOnly ?? false}
               anyOtherDraftsStaged={computeAnyOtherDraftsStaged(
-                replyContext.draftComments ?? [],
-                replyContext.draftReplies,
+                draftComments,
+                draftReplies,
                 draftReplyId,
-                replyContext.postingInProgress ?? false,
+                postingInProgress ?? false,
               )}
               beginPosting={replyContext.beginPosting}
               endPosting={replyContext.endPosting}

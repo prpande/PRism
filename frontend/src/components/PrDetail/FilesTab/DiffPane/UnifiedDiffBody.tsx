@@ -42,20 +42,30 @@ export const UnifiedDiffBody = memo(function UnifiedDiffBody({
   changeStartMap,
   changeEndMap,
 }: DiffBodyProps) {
-  // #327 Task 12 — per-row composer-location membership. The key is parsed
-  // once per body render into a Set of `${filePath}:${lineNumber}` entries;
-  // each row gets a derived boolean, NEVER the raw key (the raw key would
-  // break every row's memo on each composer move — the boolean re-renders
-  // exactly the rows that join or leave the composer-location set). CRITICAL:
+  // #327 Task 12 — per-row composer-content stamp. The key is parsed once per
+  // body render into a location → stamp map (`${filePath}:${lineNumber}=${stamp}`
+  // entries; the stamp is 'c' for the open composer plus placeholder clientIds);
+  // each row gets its own stamp (or null), NEVER the raw key (the raw key would
+  // break every row's memo on each composer move — the per-row stamp re-renders
+  // exactly the rows whose composer content appears, changes, or leaves; a mere
+  // boolean would miss the same-line composer→placeholder swap after post-now).
+  // Stamps never contain '=' so each entry splits at its LAST '='. CRITICAL:
   // `${path}:${commentLineNum}` below must stay format-identical to the key
   // builder in FilesTab's activeComposerKey memo; a mismatch silently defeats
   // the whole mechanism (guarded by FilesTab.renderCount.perf.test.tsx).
-  const composerLocations =
-    activeComposerKey === null ? null : new Set(activeComposerKey.split('|'));
-  const isComposerLocation = (commentLineNum: number | null): boolean =>
-    commentLineNum !== null &&
-    composerLocations !== null &&
-    composerLocations.has(`${path}:${commentLineNum}`);
+  const composerStamps =
+    activeComposerKey === null
+      ? null
+      : new Map(
+          activeComposerKey.split('|').map((entry) => {
+            const eq = entry.lastIndexOf('=');
+            return [entry.slice(0, eq), entry.slice(eq + 1)] as const;
+          }),
+        );
+  const composerStampFor = (commentLineNum: number | null): string | null =>
+    commentLineNum === null || composerStamps === null
+      ? null
+      : (composerStamps.get(`${path}:${commentLineNum}`) ?? null);
 
   const rows: React.ReactNode[] = [];
   let hunkCounter = -1;
@@ -80,7 +90,7 @@ export const UnifiedDiffBody = memo(function UnifiedDiffBody({
             syntax={syntax}
             onLineClick={onLineClick}
             renderComposerForLine={renderComposerForLine}
-            isComposerLocation={isComposerLocation(commentLineNum)}
+            composerStamp={composerStampFor(commentLineNum)}
             replyContext={replyContext}
             collapse={collapse}
           />,
@@ -114,7 +124,7 @@ export const UnifiedDiffBody = memo(function UnifiedDiffBody({
         dataChangeEnd={changeEndMap.get(idx)}
         onLineClick={onLineClick}
         renderComposerForLine={renderComposerForLine}
-        isComposerLocation={isComposerLocation(commentLineNum)}
+        composerStamp={composerStampFor(commentLineNum)}
         replyContext={replyContext}
         collapse={collapse}
       />,

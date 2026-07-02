@@ -1,11 +1,10 @@
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { MemoryRouter, Routes, Route, Outlet } from 'react-router-dom';
-import { useRef } from 'react';
 import { FilesTab } from './FilesTab';
 import { PrDetailContextProvider } from '../prDetailContext';
 import { __resetTabIdForTest } from '../../../api/draft';
-import { useDraftSession, type UseDraftSessionResult } from '../../../hooks/useDraftSession';
+import { useDraftSession } from '../../../hooks/useDraftSession';
 import { makePrDetailDto, makePr } from '../../../../__tests__/helpers/prDetail';
 import type {
   DiffDto,
@@ -30,7 +29,13 @@ import type {
 //       FilesTab and the per-row normalization in UnifiedDiffBody, which would
 //       silently defeat the whole mechanism);
 //   (c) reply-path INVERSE: an `optimisticByThread` change (posting a reply)
-//       surfaces in the affected ExistingCommentWidget.
+//       surfaces in the affected ExistingCommentWidget;
+//   (c2) #327 Task 13 — a draft reply arriving via an autosave refetch
+//       (cross-tab hydration) surfaces in the affected thread's widget through
+//       the REACTIVE ReplyDataContext channel (a ref-read channel would stay
+//       stale here), while (a)-style row bail still holds for unrelated
+//       DiffLineRows (the replyContext prop is now the STABLE callbacks bag,
+//       so draft-array churn never reaches the memoized rows).
 
 // Count HighlightedLine renders without source instrumentation (same harness
 // pattern as DiffPane.rowMemo.perf.test.tsx): a DiffLineRow that bails
@@ -166,7 +171,10 @@ function sessionWithDraftReply(): ReviewSessionDto {
 
 const POSTED_COMMENT_ID = 777;
 
-function makeRouteHandler(diff: DiffDto, session: ReviewSessionDto) {
+// `session` accepts a getter so (c2) can swap the served session mid-test
+// (simulating a cross-tab draft arrival surfaced by the next GET /draft).
+function makeRouteHandler(diff: DiffDto, session: ReviewSessionDto | (() => ReviewSessionDto)) {
+  const sessionOf = () => (typeof session === 'function' ? session() : session);
   return vi.fn().mockImplementation((url: string, init?: RequestInit) => {
     const method = init?.method ?? 'GET';
     const json = (payload: unknown) =>
@@ -178,7 +186,7 @@ function makeRouteHandler(diff: DiffDto, session: ReviewSessionDto) {
       );
     if (typeof url === 'string') {
       if (url.includes('/diff')) return json(diff);
-      if (url.endsWith('/draft') && method === 'GET') return json(session);
+      if (url.endsWith('/draft') && method === 'GET') return json(sessionOf());
       if (url.endsWith('/draft') && method === 'PUT') return json({});
       if (url.endsWith('/comment/post') && method === 'POST') {
         return json({ postedCommentId: POSTED_COMMENT_ID });
@@ -202,37 +210,9 @@ function countGetDraft(handler: ReturnType<typeof makeRouteHandler>): number {
 // the tree — otherwise its "zero row re-renders" would be vacuous.
 const wrapperRenders = { count: 0 };
 
-// HARNESS-ONLY identity pin for the draft-session arrays. `useDraftSession`'s
-// merge rebuilds `draftComments`/`draftReplies` on every refetch (fresh arrays
-// even when content is unchanged), and FilesTab's `replyContext` memo keys on
-// them, so its identity churns on every autosave refetch and reaches every
-// unified-mode DiffLineRow as a prop. Fixing that channel is Task 13's scope
-// (spec § "replyContext identity" — stable-callbacks bag + per-thread data
-// channel). Pinning the first-seen array identities here isolates assertion
-// (a) to THIS task's seam (stable renderComposerForLine + activeComposerKey):
-// without the pin, (a) would stay red until Task 13 for a reason this task
-// does not touch. The scenarios never add/remove drafts mid-measurement, so
-// the pin is behaviorally inert. Task 13 extends assertion (c) and should
-// remove this pin.
-function usePinnedDraftArrays(raw: UseDraftSessionResult): UseDraftSessionResult {
-  const pinned = useRef<{ comments: DraftCommentDto[]; replies: DraftReplyDto[] } | null>(null);
-  if (raw.session && pinned.current === null) {
-    pinned.current = { comments: raw.session.draftComments, replies: raw.session.draftReplies };
-  }
-  const session =
-    raw.session && pinned.current
-      ? {
-          ...raw.session,
-          draftComments: pinned.current.comments,
-          draftReplies: pinned.current.replies,
-        }
-      : raw.session;
-  return { ...raw, session };
-}
-
 function Wrapper({ prDetail }: { prDetail: PrDetailDto }) {
   wrapperRenders.count += 1;
-  const draftSession = usePinnedDraftArrays(useDraftSession(ref));
+  const draftSession = useDraftSession(ref);
   return (
     <PrDetailContextProvider
       value={{
@@ -364,5 +344,53 @@ describe('FilesTab render-count guard — activeComposerKey + stable renderCompo
     const optimistic = await screen.findByTestId('inline-comment-card-optimistic');
     expect(optimistic).toHaveTextContent(REPLY_BODY);
     expect(optimistic.className).toContain('comment-card--posting');
+  });
+
+  it('(c2) a draft reply arriving via an autosave refetch surfaces in the affected thread widget while unrelated rows still bail (#327 Task 13)', async () => {
+    // Served session starts WITHOUT a draft reply; the getter lets the test
+    // swap it mid-flight to simulate a cross-tab arrival on the next refetch.
+    let session = sessionWithSavedDraft();
+    const handler = makeRouteHandler(onefileDiff, () => session);
+    globalThis.fetch = handler as unknown as typeof fetch;
+    render(<App prDetail={prDetailWithThread} />);
+    await selectFileUnified();
+
+    // Open the line-1 composer (hydrates from the saved draft) — its debounce
+    // autosave is the refetch trigger we ride.
+    fireEvent.click(await screen.findByRole('button', { name: 'Add comment on line 1' }));
+    const textarea = (await screen.findByLabelText('Comment body')) as HTMLTextAreaElement;
+    expect(textarea.value).toBe(SEED_BODY);
+
+    // Thread t3 has no draft reply yet — no auto-mounted ReplyComposer.
+    expect(screen.queryByTestId('reply-composer')).not.toBeInTheDocument();
+
+    await act(async () => {});
+    hl.count = 0;
+    const rendersBefore = wrapperRenders.count;
+    const getDraftBefore = countGetDraft(handler);
+
+    // The cross-tab arrival: from now on GET /draft also returns t3's draft
+    // reply (server-only entry — the diff-and-prefer merge adds it verbatim).
+    session = { ...sessionWithSavedDraft(), draftReplies: sessionWithDraftReply().draftReplies };
+
+    // Type → 250ms debounce autosave → onSaved → draftSession.refetch() →
+    // the merged session gains t3's draft reply.
+    fireEvent.change(textarea, { target: { value: `${SEED_BODY} — trigger refetch` } });
+    await waitFor(() => expect(countGetDraft(handler)).toBeGreaterThan(getDraftBefore));
+
+    // The affected thread's widget REFLECTS the arrival: useDraftBackedDisclosure
+    // auto-mounts its ReplyComposer, pre-populated with the drafted body. This is
+    // the reactivity half of the Task 13 contract — a ref-read data channel would
+    // stay stale here and the composer would never appear.
+    await screen.findByTestId('reply-composer');
+    expect((screen.getByLabelText('Reply body') as HTMLTextAreaElement).value).toBe(REPLY_BODY);
+
+    // Sanity: the refetch really re-rendered the tree.
+    expect(wrapperRenders.count).toBeGreaterThan(rendersBefore);
+    // The stability half: (a)-style row bail still holds — the draft-array
+    // churn travelled ONLY through the reactive channel, never through the
+    // rows' replyContext prop, so no DiffLineRow with unchanged thread and
+    // composer data re-rendered.
+    expect(hl.count).toBe(0);
   });
 });
