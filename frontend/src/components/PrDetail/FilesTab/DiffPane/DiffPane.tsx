@@ -18,7 +18,7 @@ import {
 } from './ExistingCommentWidget';
 import { DiffTruncationBanner } from './DiffTruncationBanner';
 import { WordDiffOverlay } from './WordDiffOverlay';
-import { AiHunkAnnotation } from './AiHunkAnnotation';
+import { annotationRows } from './AnnotationRows';
 import { useWholeFileContent } from '../../../../hooks/useWholeFileContent';
 import { useLockedPaneScroll } from '../../../../hooks/useLockedPaneScroll';
 import { useDiffViewportWidthVar } from '../../../../hooks/useDiffViewportWidthVar';
@@ -543,15 +543,7 @@ export function DiffPane({
           );
           const annotations = annotationsForFile?.get(hunkCounter);
           if (annotations) {
-            for (let aidx = 0; aidx < annotations.length; aidx++) {
-              rows.push(
-                <tr key={`ann-${idx}-${aidx}`} className={styles.aiHunkRow}>
-                  <td colSpan={colSpan}>
-                    <AiHunkAnnotation annotation={annotations[aidx]} />
-                  </td>
-                </tr>,
-              );
-            }
+            rows.push(...annotationRows({ annotations, colSpan, keyPrefix: `ann-${idx}` }));
           }
         }
         // Whole-file ok mode: emit nothing for the hunk-header itself.
@@ -562,15 +554,7 @@ export function DiffPane({
       if (wholeFileEnabled && wholeFile.fetchStatus === 'ok' && annotationsByRowIdx) {
         const ann = annotationsByRowIdx.get(idx);
         if (ann) {
-          for (let aidx = 0; aidx < ann.length; aidx++) {
-            rows.push(
-              <tr key={`ann-${idx}-${aidx}`} className={styles.aiHunkRow}>
-                <td colSpan={colSpan}>
-                  <AiHunkAnnotation annotation={ann[aidx]} />
-                </td>
-              </tr>,
-            );
-          }
+          rows.push(...annotationRows({ annotations: ann, colSpan, keyPrefix: `ann-${idx}` }));
         }
       }
 
@@ -660,15 +644,7 @@ export function DiffPane({
           );
           const annotations = annotationsForFile?.get(hunkCounter);
           if (annotations) {
-            for (let aidx = 0; aidx < annotations.length; aidx++) {
-              rows.push(
-                <tr key={`ann-${idx}-${aidx}`} className={styles.aiHunkRow}>
-                  <td colSpan={colSpan}>
-                    <AiHunkAnnotation annotation={annotations[aidx]} />
-                  </td>
-                </tr>,
-              );
-            }
+            rows.push(...annotationRows({ annotations, colSpan, keyPrefix: `ann-${idx}` }));
           }
         }
         continue;
@@ -678,15 +654,7 @@ export function DiffPane({
       if (wholeFileEnabled && wholeFile.fetchStatus === 'ok' && annotationsByRowIdx) {
         const ann = annotationsByRowIdx.get(idx);
         if (ann) {
-          for (let aidx = 0; aidx < ann.length; aidx++) {
-            rows.push(
-              <tr key={`ann-${idx}-${aidx}`} className={styles.aiHunkRow}>
-                <td colSpan={colSpan}>
-                  <AiHunkAnnotation annotation={ann[aidx]} />
-                </td>
-              </tr>,
-            );
-          }
+          rows.push(...annotationRows({ annotations: ann, colSpan, keyPrefix: `ann-${idx}` }));
         }
       }
 
