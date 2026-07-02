@@ -1,4 +1,41 @@
+import type { InlineAnchor } from '../../Composer/InlineCommentComposer';
 import styles from './DiffPane.module.css';
+
+// Shared builder for the gutter comment-affordance click handlers. All four
+// diff-row click sites build the same anchor shape; they differ only in which
+// text becomes anchoredLineContent (and the row-level gates that decide
+// whether a handler exists at all — those stay at the call sites). Returns
+// undefined when no onLineClick is bound so callers can pass the result
+// straight to NewGutterCell's optional onComment.
+export function makeGutterClick({
+  onLineClick,
+  filePath,
+  lineNumber,
+  side,
+  anchoredLineContent,
+}: {
+  onLineClick: ((anchor: InlineAnchor) => void) | undefined;
+  filePath: string;
+  lineNumber: number;
+  side: InlineAnchor['side'];
+  anchoredLineContent: string;
+}): (() => void) | undefined {
+  if (!onLineClick) return undefined;
+  return () => {
+    onLineClick({
+      filePath,
+      lineNumber,
+      side,
+      // anchoredSha is left empty here — DiffPane has no PR-detail context.
+      // FilesTab.openComposerAt fills it in (PoC simplification: always
+      // prDetail.pr.headSha; iteration-relative anchoring is deferred and
+      // only right-side clicks are enabled, so headSha is always a valid
+      // anchor for the right side).
+      anchoredSha: '',
+      anchoredLineContent,
+    });
+  };
+}
 
 // New-side gutter cell. #554: the line number is ALWAYS rendered as visible flow
 // text; the comment affordance is an additive hover glyph (a filled, accent-colored
