@@ -61,6 +61,29 @@ const STABLE_PR = prFor('acme', 'api', 1);
 const STABLE_SETTLED: ReadonlySet<string> = new Set();
 
 describe('InboxRow memoization (#671)', () => {
+  it('DOES re-render when its pr prop changes — the memo must not mask real content changes', () => {
+    // Guards the must-re-render direction: default shallow compare re-renders on a new
+    // `pr` reference. A future custom comparator keying on only `pr.reference` (or a
+    // move to in-place mutation of the inbox snapshot) would wrongly skip this and
+    // freeze the row's displayed CI/age/readiness — this test fails if that happens.
+    function Harness() {
+      const [ci, setCi] = useState<PrInboxItem['ci']>('none');
+      const pr: PrInboxItem = { ...prFor('acme', 'api', 1), ci };
+      return (
+        <>
+          <button onClick={() => setCi('failing')}>flip</button>
+          <InboxRow pr={pr} showCategoryChip={false} maxDiff={100} settled={STABLE_SETTLED} />
+        </>
+      );
+    }
+    render(shell(<Harness />));
+    const baseline = diffBarRenders.mock.calls.length;
+
+    fireEvent.click(screen.getByRole('button', { name: /flip/i }));
+    // ci none → failing hands the row a new `pr` object → the memo must let it re-render.
+    expect(diffBarRenders.mock.calls.length).toBe(baseline + 1);
+  });
+
   it('does not re-render when a parent re-renders with referentially stable props', () => {
     function Harness() {
       const [n, setN] = useState(0);
