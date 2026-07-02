@@ -220,6 +220,10 @@ export const InboxRow = memo(function InboxRow({
             <span className={styles.dotsep}>·</span>
             <span className={styles.mono}>{commitLabel}</span>
             <span className={styles.dotsep}>·</span>
+            {/* #671 — relative age is time-derived (not a prop), so under the row memo it
+                refreshes when this PR's data reloads, not on every unrelated InboxPage
+                re-render (rail poll / SSE frame). Intended: a periodic refresh would
+                re-introduce the full-list re-renders the memo exists to remove. */}
             <span>{formatAge(pr.updatedAt)}</span>
           </span>
         </span>
