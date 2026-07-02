@@ -23,6 +23,15 @@ interface DiffLineRowProps {
   dataChangeEnd?: number;
   onLineClick?: (anchor: InlineAnchor) => void;
   renderComposerForLine?: (filePath: string, lineNumber: number) => React.ReactNode;
+  // #327 Task 12 — true when this row's line is in the active composer-location
+  // set (open composer line or a new-inline optimistic placeholder line),
+  // derived per row by UnifiedDiffBody from activeComposerKey. Declared ONLY so
+  // it participates in React.memo's shallow compare: renderComposerForLine is
+  // identity-stable, so this flipping is what re-renders the row (and its
+  // ComposerSlot) when composer content arrives at or leaves this line. The
+  // render body deliberately does not read it — ComposerSlot already asks
+  // renderComposerForLine for the line's content on every row render.
+  isComposerLocation?: boolean;
   replyContext?: ExistingCommentWidgetReplyContext;
   collapse?: ThreadCollapseControl;
 }

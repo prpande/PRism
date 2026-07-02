@@ -348,8 +348,33 @@ export function FilesTab() {
   // #302 Task 11b / #603 item C — optimistic placeholders for just-posted
   // comments (state, prune effect, refetch generation, thread grouping and the
   // per-line filter live in the hook; see useOptimisticComments.ts).
-  const { optimisticByThread, placeholdersForLine, notePosted, noteReplyPosted } =
-    useOptimisticComments(prDetail.reviewComments);
+  const {
+    optimisticByThread,
+    newInlinePlaceholders,
+    placeholdersForLine,
+    notePosted,
+    noteReplyPosted,
+  } = useOptimisticComments(prDetail.reviewComments);
+
+  // #327 Task 12 — composite key of every location where renderComposerForLine
+  // returns content: the open composer's line plus each UN-deduped new-inline
+  // placeholder's line, as sorted `${filePath}:${lineNumber}` entries joined
+  // with '|', or null when none. renderComposerForLine below is identity-stable,
+  // so this key is the ONLY channel that breaks the memoized diff bodies when
+  // composer content appears, moves, or disappears (open, move, close, post,
+  // prune). CRITICAL: the format must stay identical to UnifiedDiffBody's
+  // per-row `${filePath}:${lineNumber}` membership test — a mismatch silently
+  // defeats the mechanism (guarded by FilesTab.renderCount.perf.test.tsx's
+  // inverse assertions).
+  const activeComposerKey = useMemo(() => {
+    const locs = new Set<string>();
+    if (activeAnchor) locs.add(`${activeAnchor.filePath}:${activeAnchor.lineNumber}`);
+    // anchorKey format is `${filePath}:${lineNumber}:${side}` (see
+    // optimisticComment.ts) — strip the trailing :side segment.
+    for (const o of newInlinePlaceholders)
+      if (o.anchorKey) locs.add(o.anchorKey.slice(0, o.anchorKey.lastIndexOf(':')));
+    return locs.size ? [...locs].sort().join('|') : null;
+  }, [activeAnchor, newInlinePlaceholders]);
 
   // #299 — refresh the shared draft session after each successful auto-save so
   // the Drafts tab reflects the just-saved draft live, without waiting for the
@@ -368,72 +393,117 @@ export function FilesTab() {
       ? 'closed'
       : 'open';
 
-  function renderComposerForLine(filePath: string, lineNumber: number): React.ReactNode {
-    const composerHere =
-      activeAnchor !== null &&
-      activeAnchor.filePath === filePath &&
-      activeAnchor.lineNumber === lineNumber;
+  // #327 Task 12 — renderComposerForLine crosses the memoized diff-body
+  // boundary, so it is created ONCE (useCallback, no deps) and reads every
+  // input through a ref updated each render (latest-ref pattern — the same
+  // idiom as useInlineComposer's handleLineClick and DiffPane's n/p navRef).
+  // Its rendered output for any (filePath, lineNumber) is unchanged; only the
+  // function identity is stabilized. The memoized bodies re-render on composer
+  // location changes via activeComposerKey (above), never via this function's
+  // identity.
+  const composerRenderDeps = {
+    activeAnchor,
+    placeholdersForLine,
+    findExistingDraft,
+    prState,
+    composerDraftId,
+    setComposerDraftId,
+    draftSession,
+    handleComposerClose,
+    handleComposerSaved,
+    readOnly,
+    notePosted,
+    prRef,
+  };
+  const composerRenderDepsRef = useRef(composerRenderDeps);
+  composerRenderDepsRef.current = composerRenderDeps;
 
-    // #302 Task 11b — new-inline optimistic placeholders for this line
-    // (anchor-key match + databaseId de-dup live in useOptimisticComments).
-    const placeholdersHere = placeholdersForLine(filePath, lineNumber);
+  const renderComposerForLine = useCallback(
+    (filePath: string, lineNumber: number): React.ReactNode => {
+      const {
+        activeAnchor,
+        placeholdersForLine,
+        findExistingDraft,
+        prState,
+        composerDraftId,
+        setComposerDraftId,
+        draftSession,
+        handleComposerClose,
+        handleComposerSaved,
+        readOnly,
+        notePosted,
+        prRef,
+      } = composerRenderDepsRef.current;
 
-    if (!composerHere && placeholdersHere.length === 0) return null;
+      const composerHere =
+        activeAnchor !== null &&
+        activeAnchor.filePath === filePath &&
+        activeAnchor.lineNumber === lineNumber;
 
-    const placeholderCards = placeholdersHere.map((o) => (
-      <CommentCard
-        key={o.clientId}
-        author={o.author}
-        createdAt={o.createdAt}
-        body={o.body}
-        density="compact"
-        className="comment-card--posting"
-        data-testid="inline-comment-card-optimistic"
-      />
-    ));
+      // #302 Task 11b — new-inline optimistic placeholders for this line
+      // (anchor-key match + databaseId de-dup live in useOptimisticComments).
+      const placeholdersHere = placeholdersForLine(filePath, lineNumber);
 
-    if (!composerHere) {
-      return <>{placeholderCards}</>;
-    }
+      if (!composerHere && placeholdersHere.length === 0) return null;
 
-    // composerHere guarantees activeAnchor is non-null; capture it so the
-    // closures below (and TS) see a non-nullable anchor.
-    const anchor = activeAnchor!;
-    const existing = findExistingDraft(anchor);
-    return (
-      <>
-        {placeholderCards}
-        <InlineCommentComposer
-          prRef={prRef}
-          prState={prState}
-          anchor={anchor}
-          initialBody={existing?.bodyMarkdown ?? ''}
-          draftId={composerDraftId}
-          onDraftIdChange={setComposerDraftId}
-          registerOpenComposer={draftSession.registerOpenComposer}
-          onClose={handleComposerClose}
-          onSaved={handleComposerSaved}
-          flushRef={activeComposerFlushRef}
-          readOnly={readOnly}
-          anyOtherDraftsStaged={computeAnyOtherDraftsStaged(
-            draftSession.session?.draftComments ?? [],
-            draftSession.session?.draftReplies ?? [],
-            composerDraftId,
-            draftSession.postingInProgress,
-          )}
-          beginPosting={draftSession.beginPosting}
-          endPosting={draftSession.endPosting}
-          onPosted={(postedCommentId, body) => {
-            // New inline thread — no server thread id yet. The hook anchors the
-            // placeholder to this line so renderComposerForLine can place it
-            // after the composer closes.
-            notePosted(anchor, postedCommentId, body);
-            void draftSession.refetch();
-          }}
+      const placeholderCards = placeholdersHere.map((o) => (
+        <CommentCard
+          key={o.clientId}
+          author={o.author}
+          createdAt={o.createdAt}
+          body={o.body}
+          density="compact"
+          className="comment-card--posting"
+          data-testid="inline-comment-card-optimistic"
         />
-      </>
-    );
-  }
+      ));
+
+      if (!composerHere) {
+        return <>{placeholderCards}</>;
+      }
+
+      // composerHere guarantees activeAnchor is non-null; capture it so the
+      // closures below (and TS) see a non-nullable anchor.
+      const anchor = activeAnchor!;
+      const existing = findExistingDraft(anchor);
+      return (
+        <>
+          {placeholderCards}
+          <InlineCommentComposer
+            prRef={prRef}
+            prState={prState}
+            anchor={anchor}
+            initialBody={existing?.bodyMarkdown ?? ''}
+            draftId={composerDraftId}
+            onDraftIdChange={setComposerDraftId}
+            registerOpenComposer={draftSession.registerOpenComposer}
+            onClose={handleComposerClose}
+            onSaved={handleComposerSaved}
+            flushRef={activeComposerFlushRef}
+            readOnly={readOnly}
+            anyOtherDraftsStaged={computeAnyOtherDraftsStaged(
+              draftSession.session?.draftComments ?? [],
+              draftSession.session?.draftReplies ?? [],
+              composerDraftId,
+              draftSession.postingInProgress,
+            )}
+            beginPosting={draftSession.beginPosting}
+            endPosting={draftSession.endPosting}
+            onPosted={(postedCommentId, body) => {
+              // New inline thread — no server thread id yet. The hook anchors the
+              // placeholder to this line so renderComposerForLine can place it
+              // after the composer closes.
+              notePosted(anchor, postedCommentId, body);
+              void draftSession.refetch();
+            }}
+          />
+        </>
+      );
+    },
+    // Ref-only dep: activeComposerFlushRef is a useRef object (stable identity
+    // for the life of useInlineComposer), so the callback identity never changes.
+    [activeComposerFlushRef],
+  );
 
   // Per-thread reply composer wiring (Task 40 Step 3). Each
   // ExistingCommentWidget receives the bag and self-manages composer state
@@ -614,6 +684,7 @@ export function FilesTab() {
             htmlUrl={htmlUrl}
             onLineClick={handleLineClick}
             renderComposerForLine={renderComposerForLine}
+            activeComposerKey={activeComposerKey}
             replyContext={replyContext}
             collapse={collapse}
             isLoading={diff.isLoading}

@@ -13,6 +13,14 @@ import type { DiffBodyProps } from './diffBodyProps';
 // skips the whole row-building loop when every prop is referentially stable.
 // Default shallow compare is correct: the output is a pure function of these
 // props, and DiffPane memoizes every derived structure it passes down.
+//
+// #327 Task 12 — `activeComposerKey` (DiffBodyProps) is deliberately NOT
+// destructured here: composer rows are emitted at BODY level (ComposerSlot in
+// emitWidgetAndComposerRows), so the memo's shallow compare on the key — which
+// covers every prop, destructured or not — already re-runs this loop exactly
+// when composer content appears, moves, or disappears. No per-row threading
+// needed (unlike UnifiedDiffBody, where the composer slot lives inside
+// DiffLineRow).
 export const SplitDiffBody = memo(function SplitDiffBody({
   selectedPath: path,
   lines,

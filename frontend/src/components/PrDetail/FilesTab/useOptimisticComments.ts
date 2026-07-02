@@ -37,6 +37,9 @@ type ReviewThreadLike = { comments: ReadonlyArray<RealCommentLike> };
 
 export function useOptimisticComments(reviewThreads: ReadonlyArray<ReviewThreadLike>): {
   optimisticByThread: Record<string, OptimisticComment[]>;
+  // #327 Task 12 — the UN-DEDUPED new-inline placeholders (threadId === null,
+  // still awaiting their real comment). Feeds FilesTab's activeComposerKey.
+  newInlinePlaceholders: OptimisticComment[];
   placeholdersForLine: (filePath: string, lineNumber: number) => OptimisticComment[];
   notePosted: (
     anchor: Pick<InlineAnchor, 'filePath' | 'lineNumber' | 'side'>,
@@ -96,6 +99,17 @@ export function useOptimisticComments(reviewThreads: ReadonlyArray<ReviewThreadL
     }
     return map;
   }, [optimistic]);
+
+  // #327 Task 12 — new-inline placeholders awaiting their real comment,
+  // deliberately UN-deduped (unlike placeholdersForLine): the composer location
+  // must stay marked in activeComposerKey through the placeholder→real handoff
+  // window, so the row hosting the handoff keeps re-rendering until the prune
+  // effect actually drops the placeholder. Memoized so identity is stable while
+  // `optimistic` is unchanged (activeComposerKey's memo keys on it).
+  const newInlinePlaceholders = useMemo(
+    () => optimistic.filter((o) => o.threadId == null),
+    [optimistic],
+  );
 
   // #302 Task 11b — new-inline optimistic placeholders for a diff line. Matched
   // by filePath:lineNumber (side-agnostic for placement; the line is the
@@ -159,5 +173,11 @@ export function useOptimisticComments(reviewThreads: ReadonlyArray<ReviewThreadL
     ]);
   }, []);
 
-  return { optimisticByThread, placeholdersForLine, notePosted, noteReplyPosted };
+  return {
+    optimisticByThread,
+    newInlinePlaceholders,
+    placeholdersForLine,
+    notePosted,
+    noteReplyPosted,
+  };
 }

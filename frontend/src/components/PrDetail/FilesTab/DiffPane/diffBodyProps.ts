@@ -23,10 +23,17 @@ export interface DiffBodyProps {
   syntax: SyntaxTokenMaps;
   onLineClick?: (anchor: InlineAnchor) => void;
   renderComposerForLine?: (filePath: string, lineNumber: number) => React.ReactNode;
+  // #327 Task 12 — composite key of every location where renderComposerForLine
+  // returns content (the open composer's line + each un-deduped new-inline
+  // placeholder's line): sorted `${filePath}:${lineNumber}` entries joined with
+  // '|', or null when none. renderComposerForLine is identity-stable, so this
+  // key is what breaks the body memo when composer content appears, moves, or
+  // disappears. UnifiedDiffBody derives a per-row boolean from it (membership
+  // test) — the raw key must NEVER be passed to rows, or every row's memo
+  // would break on each composer move.
+  activeComposerKey: string | null;
   replyContext?: ExistingCommentWidgetReplyContext;
   collapse?: ThreadCollapseControl;
   changeStartMap: Map<number, number>;
   changeEndMap: Map<number, number>;
-  // slice 2 (Task 12) EXTENDS this interface with: activeComposerKey: string | null
-  // — the body memo wrappers will gain that dep then; don't design it out.
 }
