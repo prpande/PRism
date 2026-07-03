@@ -319,10 +319,9 @@ no harness, so all three imports land up front to avoid a silent runtime break):
 
 - **Scope:** all four primitives in one PR (option B), with the guard isolated as commit 1.
 - **Mechanism:** `.psm1` + `Import-Module` (option A).
-- **New in-scope hardening pending owner sign-off:** the `\\?\` denylist fix (§1.2). It is a scope
-  expansion beyond "de-dup + the 5.1 fix", but sits on the exact destructive-delete surface this PR
-  hardens and is fixed once for both callers. If declined, it drops to a standalone follow-up issue
-  and the spec reverts to preserving the current (vulnerable) denylist behavior.
+- **`\\?\` denylist hardening (§1.2): owner-approved 2026-07-03, in scope.** A scope expansion beyond
+  "de-dup + the 5.1 fix", but it sits on the exact destructive-delete surface this PR hardens and is
+  fixed once for both callers.
 - **Follow-up candidates (not this PR):** `serve-detached` stray-window `ShowWindow=0`; CI-wiring the
   PS harnesses (a pre-existing repo-wide gap noted on #274).
 
