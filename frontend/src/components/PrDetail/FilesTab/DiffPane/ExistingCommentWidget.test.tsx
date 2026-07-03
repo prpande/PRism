@@ -2,6 +2,7 @@ import { render, screen, within } from '@testing-library/react';
 import { describe, it, expect, vi } from 'vitest';
 import userEvent from '@testing-library/user-event';
 import { ExistingCommentWidget } from './ExistingCommentWidget';
+import { ReplyDataProvider } from '../ReplyDataContext';
 import type { ReviewThreadDto } from '../../../../api/types';
 
 function thread(over: Partial<ReviewThreadDto> = {}): ReviewThreadDto {
@@ -50,14 +51,11 @@ describe('ExistingCommentWidget', () => {
 
   it('renders the optimistic comment card at comfortable density', () => {
     render(
-      <ExistingCommentWidget
-        threads={[thread()]}
-        replyContext={{
-          prRef: { owner: 'o', repo: 'r', number: 1 },
-          prState: 'open',
+      <ReplyDataProvider
+        value={{
+          draftComments: [],
           draftReplies: [],
-          registerOpenComposer: () => () => {},
-          onReplyComposerClose: () => {},
+          postingInProgress: false,
           optimisticByThread: {
             t1: [
               {
@@ -71,7 +69,17 @@ describe('ExistingCommentWidget', () => {
             ],
           },
         }}
-      />,
+      >
+        <ExistingCommentWidget
+          threads={[thread()]}
+          replyContext={{
+            prRef: { owner: 'o', repo: 'r', number: 1 },
+            prState: 'open',
+            registerOpenComposer: () => () => {},
+            onReplyComposerClose: () => {},
+          }}
+        />
+      </ReplyDataProvider>,
     );
     const optimistic = screen.getByTestId('inline-comment-card-optimistic');
     expect(optimistic).toHaveAttribute('data-density', 'comfortable');

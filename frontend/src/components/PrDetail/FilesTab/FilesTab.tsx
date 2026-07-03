@@ -1,5 +1,6 @@
 import { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import { ApiError } from '../../../api/client';
+import { useLatestRef } from '../../../hooks/useLatestRef';
 import { useFileDiff } from '../../../hooks/useFileDiff';
 import { useUnionDiff } from '../../../hooks/useUnionDiff';
 import { useFilesTabShortcuts } from '../../../hooks/useFilesTabShortcuts';
@@ -21,36 +22,18 @@ import { CommitMultiSelectPicker } from './CommitMultiSelectPicker';
 import { buildAllRange } from '../range';
 import { buildTree, flattenPaths } from './treeBuilder';
 import { InlineCommentComposer } from '../Composer/InlineCommentComposer';
-import type { InlineAnchor } from '../Composer/InlineCommentComposer';
 import { usePrDetailContext } from '../prDetailContext';
+import { useInlineComposer } from './useInlineComposer';
+import { useIsSplitCapable } from './useIsSplitCapable';
 import { computeAnyOtherDraftsStaged } from '../../../hooks/useDraftSession';
-import {
-  pruneOptimistic,
-  OPTIMISTIC_FALLBACK_MAX_AGE_MS,
-  type OptimisticComment,
-} from './optimisticComment';
+import { useOptimisticComments } from './useOptimisticComments';
 import { CommentCard } from '../Comment/CommentCard';
 import styles from './FilesTab.module.css';
-import type { ThreadCollapseControl } from './DiffPane/ExistingCommentWidget';
-
-// #302 — no viewer login on PrDetailDto; optimistic placeholders are by
-// construction the current user's.
-const VIEWER_LABEL = 'You';
-
-// Unique React key per optimistic placeholder. crypto.randomUUID where
-// available (jsdom + modern browsers), else a small monotonic fallback so the
-// function is total in bare-node test contexts.
-// NOTE: optimisticCounter is a module-scoped fallback only used when
-// crypto.randomUUID is unavailable; a process-global monotonic counter keeps
-// ids unique even across multiple kept-alive FilesTab instances.
-let optimisticCounter = 0;
-function newClientId(): string {
-  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
-    return crypto.randomUUID();
-  }
-  optimisticCounter += 1;
-  return `optimistic-${optimisticCounter}`;
-}
+import type {
+  ExistingCommentWidgetReplyContext,
+  ThreadCollapseControl,
+} from './DiffPane/ExistingCommentWidget';
+import { ReplyDataProvider, type ReplyData } from './ReplyDataContext';
 
 // True when the diff fetch failed specifically because the requested commit
 // range is no longer reachable on GitHub (force-push GC'd the commits). The
@@ -68,18 +51,6 @@ function isRangeUnreachable(error: Error | null): boolean {
     body !== null &&
     (body as { type?: unknown }).type === '/diff/range-unreachable'
   );
-}
-
-function useViewportWidth() {
-  const [width, setWidth] = useState(typeof window !== 'undefined' ? window.innerWidth : 1200);
-
-  useEffect(() => {
-    const handler = () => setWidth(window.innerWidth);
-    window.addEventListener('resize', handler);
-    return () => window.removeEventListener('resize', handler);
-  }, []);
-
-  return width;
 }
 
 export function effectiveCollapsed(
@@ -155,8 +126,8 @@ export function FilesTab() {
   // so it can include the file.status + file.hunks.length gates. This keeps the
   // effective flag passed to DiffPane consistent with the gear menu's helper text.
 
-  const viewportWidth = useViewportWidth();
-  const effectiveDiffMode: DiffMode = viewportWidth < 900 ? 'unified' : diffMode;
+  const isSplitCapable = useIsSplitCapable();
+  const effectiveDiffMode: DiffMode = !isSplitCapable ? 'unified' : diffMode;
 
   const handleRangeChange = useCallback((range: string) => {
     setActiveRange(range);
@@ -305,14 +276,6 @@ export function FilesTab() {
     [prDetail.reviewComments],
   );
 
-  // Hoisted: single flat list of all real comments — used both by the optimistic
-  // cleanup effect and by renderComposerForLine's placeholder filter (avoids an
-  // O(lines×comments) flatMap per render call).
-  const allRealComments = useMemo(
-    () => prDetail.reviewComments.flatMap((t) => t.comments),
-    [prDetail.reviewComments],
-  );
-
   const htmlUrl = prDetail.pr.htmlUrl ?? undefined;
 
   const handleNextFile = useCallback(() => {
@@ -333,9 +296,9 @@ export function FilesTab() {
   }, [fileList, selectedPath]);
 
   const handleToggleDiffMode = useCallback(() => {
-    if (viewportWidth < 900) return;
+    if (!isSplitCapable) return;
     setDiffMode((prev) => (prev === 'side-by-side' ? 'unified' : 'side-by-side'));
-  }, [viewportWidth]);
+  }, [isSplitCapable]);
 
   const handleWholeFileFailed = useCallback(
     (reason: string) => {
@@ -373,125 +336,114 @@ export function FilesTab() {
   // UnresolvedPanel, and per-tab consumers). Files tab pulls it through
   // `usePrDetailContext` rather than re-instantiating its own hook.
 
-  // Active inline composer state. activeAnchor + composerDraftId together
-  // describe "the composer the user is currently in".
-  const [activeAnchor, setActiveAnchor] = useState<InlineAnchor | null>(null);
-  const [composerDraftId, setComposerDraftId] = useState<string | null>(null);
-  // #299 — holds the active composer's flush so a line switch can persist a
-  // pending debounced edit before the composer is swapped out (the modal that
-  // used to bridge that gap is gone). The composer (un)registers it itself.
-  const activeComposerFlushRef = useRef<(() => Promise<string | null>) | null>(null);
+  // #327 slice 2 — the inline-composer lifecycle (active anchor/draft-id
+  // state, flush ref, existing-draft lookup, open/click/close handlers) lives
+  // in useInlineComposer.ts. handleLineClick has a stable identity there
+  // (latest-ref pattern) so it can cross the memoized DiffPane boundary.
+  const {
+    activeAnchor,
+    composerDraftId,
+    setComposerDraftId,
+    flushRef: activeComposerFlushRef,
+    findExistingDraft,
+    handleLineClick,
+    handleComposerClose,
+  } = useInlineComposer({ draftSession, prDetail });
 
-  // #302 Task 11b — optimistic placeholders for just-posted comments. A post-now
-  // pushes an entry here so the comment appears instantly (dimmed) instead of
-  // after the ~300-800ms refetch round-trip. Each entry is dropped once the
-  // refetched reviewComments contain a real comment whose `databaseId` equals
-  // the entry's `postedCommentId` (de-dup keyed on databaseId — body text is
-  // NEVER the key; see optimisticComment.ts).
-  const [optimistic, setOptimistic] = useState<OptimisticComment[]>([]);
+  // #302 Task 11b / #603 item C — optimistic placeholders for just-posted
+  // comments (state, prune effect, refetch generation, thread grouping and the
+  // per-line filter live in the hook; see useOptimisticComments.ts).
+  const {
+    optimisticByThread,
+    newInlineLocations,
+    placeholdersForLine,
+    notePosted,
+    noteReplyPosted,
+  } = useOptimisticComments(prDetail.reviewComments);
 
-  // #603 item C — refetch generation. allRealComments is a fresh array on every
-  // reviewComments refetch, so bumping a counter here lets the cleanup below tell
-  // whether a refetch has landed *since* a given placeholder was created (the
-  // precondition for the bounded fallback eviction).
-  const refetchGenRef = useRef(0);
+  // #302 — the open inline composer's "another draft is staged" gate, shared
+  // by the activeComposerKey stamp below and renderComposerForLine (single
+  // source, so the stamp and the rendered prop can never disagree). It also
+  // folds in postingInProgress (computeAnyOtherDraftsStaged returns false
+  // mid-post), so a posting flip that changes the composer-visible value
+  // changes the stamp too — no separate stamp slot needed.
+  const anyOtherDraftsStaged = useMemo(
+    () =>
+      computeAnyOtherDraftsStaged(
+        draftSession.session?.draftComments ?? [],
+        draftSession.session?.draftReplies ?? [],
+        composerDraftId,
+        draftSession.postingInProgress,
+      ),
+    [
+      draftSession.session?.draftComments,
+      draftSession.session?.draftReplies,
+      composerDraftId,
+      draftSession.postingInProgress,
+    ],
+  );
 
-  // Cleanup effect: when a refetch lands, drop optimistic placeholders. Fast
-  // path is the databaseId === postedCommentId match (ExistingCommentWidget
-  // repeats it at render time as belt-and-suspenders). Fallback (#603 item C):
-  // a posted comment can surface with databaseId === null (real GitHub
-  // responses do), which the fast-path can never match — so once a refetch has
-  // landed after the placeholder was created AND it has aged past the bound,
-  // evict it anyway, preventing a permanent visible duplicate. A one-shot timer
-  // re-runs the prune at the age bound so a databaseId-less placeholder still
-  // evicts even without a further refetch.
-  useEffect(() => {
-    refetchGenRef.current += 1;
-    const gen = refetchGenRef.current;
-    setOptimistic((prev) => pruneOptimistic(prev, allRealComments, gen, Date.now()));
-    const timer = setTimeout(() => {
-      setOptimistic((prev) =>
-        pruneOptimistic(prev, allRealComments, refetchGenRef.current, Date.now()),
+  // #327 Task 12 — composite key of every location where renderComposerForLine
+  // returns content: the open composer's line plus each UN-deduped new-inline
+  // placeholder's line, as sorted `${filePath}:${lineNumber}=${stamp}` entries
+  // joined with NUL ('\0' — the one character git forbids in paths; '|' is
+  // legal and used to shatter the parse), or null when none. The `stamp` names
+  // WHAT renders there — `c:${composerDraftId}:${anyOtherDraftsStaged}` for
+  // the open composer plus each placeholder's clientId — because
+  // renderComposerForLine below is identity-stable, so this key is the ONLY
+  // channel that breaks the memoized diff bodies when composer content appears,
+  // moves, disappears, is replaced in place (post-now closes the composer
+  // and drops an optimistic placeholder at the SAME line — a location-only key
+  // would compare equal and strand the stale composer; caught by
+  // FilesTabComposer.test.tsx once Task 13 stabilized replyContext, which had
+  // masked it by churning the rows on every refetch), OR changes the reactive
+  // content the MOUNTED composer reads: the autosave-assigned draftId (else
+  // Discard/Escape keeps the null branch — silent close, no delete — and
+  // registerOpenComposer never registers the real id) and the post-now gate
+  // input anyOtherDraftsStaged (#302 D3 — the gate must update live while the
+  // composer is open). Those two are exactly the composerRenderDepsRef fields
+  // that can change while the composer is mounted without some OTHER re-render
+  // channel already firing: prRef/prState/readOnly changes re-render every row
+  // via the replyContext prop's identity, initialBody/findExistingDraft matter
+  // only at mount, and the remaining fields are identity-stable callbacks.
+  // CRITICAL: the format must stay identical to UnifiedDiffBody's parse — it
+  // splits the key once per body render into a path-filtered
+  // Map<lineNumber, stamp> — a mismatch silently defeats the mechanism
+  // (guarded by FilesTab.renderCount.perf.test.tsx's inverse assertions).
+  // Stamps never contain '=' or NUL (draft ids / clientIds are UUIDs or
+  // counter strings) and locations split their line number at the LAST ':',
+  // so exotic file paths (containing '=', ':' or '|') parse correctly.
+  const activeComposerKey = useMemo(() => {
+    const stamps = new Map<string, string>();
+    if (activeAnchor) {
+      stamps.set(
+        `${activeAnchor.filePath}:${activeAnchor.lineNumber}`,
+        `c:${composerDraftId ?? ''}:${anyOtherDraftsStaged ? 1 : 0}`,
       );
-    }, OPTIMISTIC_FALLBACK_MAX_AGE_MS);
-    return () => clearTimeout(timer);
-  }, [allRealComments]);
-
-  // Group reply/existing-thread optimistic entries by threadId for the reply
-  // context. New-inline entries (threadId === null) are rendered separately at
-  // their anchor line via renderComposerForLine.
-  const optimisticByThread = useMemo(() => {
-    const map: Record<string, OptimisticComment[]> = {};
-    for (const o of optimistic) {
-      if (o.threadId == null) continue;
-      (map[o.threadId] ??= []).push(o);
     }
-    return map;
-  }, [optimistic]);
-
-  function findExistingDraft(anchor: InlineAnchor): { id: string; bodyMarkdown: string } | null {
-    const session = draftSession.session;
-    if (!session) return null;
-    const match = session.draftComments.find(
-      (d) =>
-        d.filePath === anchor.filePath &&
-        d.lineNumber === anchor.lineNumber &&
-        d.side === anchor.side,
-    );
-    return match ? { id: match.id, bodyMarkdown: match.bodyMarkdown } : null;
-  }
-
-  function openComposerAt(rawAnchor: InlineAnchor) {
-    // DiffPane sends back an empty anchoredSha. PoC simplification: stamp
-    // prDetail.pr.headSha for every right-side click. This is correct for
-    // the "All changes" iteration range (afterSha === headSha) but wrong
-    // for older iteration views — the iteration's afterSha would be the
-    // right anchor. Deferred (see deferrals doc); DiffPane only allows
-    // right-side clicks so the SHA is always a valid HEAD anchor.
-    const anchor: InlineAnchor = { ...rawAnchor, anchoredSha: prDetail.pr.headSha };
-    const existing = findExistingDraft(anchor);
-    setActiveAnchor(anchor);
-    setComposerDraftId(existing?.id ?? null);
-  }
-
-  function handleLineClick(rawAnchor: InlineAnchor) {
-    // Same-anchor click → no-op (composer already mounted there).
-    if (
-      activeAnchor &&
-      activeAnchor.filePath === rawAnchor.filePath &&
-      activeAnchor.lineNumber === rawAnchor.lineNumber &&
-      activeAnchor.side === rawAnchor.side
-    ) {
-      return;
+    // Placeholder locations arrive pre-parsed from useOptimisticComments
+    // (newInlineLocations) — the anchorKey string format stays private there.
+    // clientIds are sorted per location so the stamp is order-stable: two
+    // placeholders on one line must not churn the key when only their
+    // insertion order differs (the stamp is compared by equality only).
+    const clientIdsByLoc = new Map<string, string[]>();
+    for (const o of newInlineLocations) {
+      const loc = `${o.filePath}:${o.lineNumber}`;
+      const ids = clientIdsByLoc.get(loc);
+      if (ids) ids.push(o.clientId);
+      else clientIdsByLoc.set(loc, [o.clientId]);
     }
-    // #299 — drafts auto-save as the author types, so switching lines never
-    // needs a "keep or discard?" prompt: whatever was being drafted is already
-    // persisted. Flush any pending (sub-debounce) edit of the current composer
-    // first so a fast line switch doesn't drop the last keystrokes, then open
-    // the composer at the new line. A saved draft left behind stays persisted
-    // (and reappears via findExistingDraft when the user clicks back to its
-    // line); discarding it is an explicit action on the composer's Discard
-    // button. The flush is fire-and-forget — it reads the latest body before
-    // the composer unmounts, and onSaved refetches when it lands. We don't
-    // block the switch on it, but a rejection is logged rather than swallowed:
-    // the unmounted composer has no badge to surface the failure, and the
-    // dropped edit is otherwise invisible (the draft's last-saved state stays
-    // intact).
-    activeComposerFlushRef.current?.().catch((err) => {
-      console.error('[FilesTab] flush on line-switch failed; latest edit may be unsaved', err);
-    });
-    openComposerAt(rawAnchor);
-  }
-
-  function handleComposerClose() {
-    setActiveAnchor(null);
-    setComposerDraftId(null);
-    // Own-tab mutations are filtered by useStateChangedSubscriber, so the
-    // SSE channel won't trigger a refetch for changes this tab made.
-    // Refresh on close so the next click at the same anchor sees the
-    // just-saved/just-deleted state and avoids creating a duplicate draft.
-    void draftSession.refetch();
-  }
+    for (const [loc, ids] of clientIdsByLoc) {
+      const suffix = ids.sort().join('+');
+      const prev = stamps.get(loc);
+      stamps.set(loc, prev ? `${prev}+${suffix}` : suffix);
+    }
+    if (stamps.size === 0) return null;
+    return [...stamps.entries()]
+      .map(([loc, stamp]) => `${loc}=${stamp}`)
+      .sort()
+      .join('\0'); // NUL entry joiner — the one character git forbids in paths
+  }, [activeAnchor, newInlineLocations, composerDraftId, anyOtherDraftsStaged]);
 
   // #299 — refresh the shared draft session after each successful auto-save so
   // the Drafts tab reflects the just-saved draft live, without waiting for the
@@ -510,110 +462,116 @@ export function FilesTab() {
       ? 'closed'
       : 'open';
 
-  function renderComposerForLine(filePath: string, lineNumber: number): React.ReactNode {
-    const composerHere =
-      activeAnchor !== null &&
-      activeAnchor.filePath === filePath &&
-      activeAnchor.lineNumber === lineNumber;
+  // #327 Task 12 — renderComposerForLine crosses the memoized diff-body
+  // boundary, so it is created ONCE (useCallback, no deps) and reads every
+  // input through a ref updated each render (latest-ref pattern — the same
+  // idiom as useInlineComposer's handleLineClick and DiffPane's n/p navRef).
+  // Its rendered output for any (filePath, lineNumber) is unchanged; only the
+  // function identity is stabilized. The memoized bodies re-render on composer
+  // location changes via activeComposerKey (above), never via this function's
+  // identity.
+  const composerRenderDepsRef = useLatestRef({
+    activeAnchor,
+    placeholdersForLine,
+    findExistingDraft,
+    prState,
+    composerDraftId,
+    setComposerDraftId,
+    draftSession,
+    handleComposerClose,
+    handleComposerSaved,
+    readOnly,
+    notePosted,
+    prRef,
+    anyOtherDraftsStaged,
+  });
 
-    // #302 Task 11b — new-inline optimistic placeholders for this line. Matched
-    // by filePath:lineNumber (side-agnostic for placement; the line is the
-    // anchor the user sees). De-dup by databaseId vs the now-real reviewComments
-    // (so the placeholder vanishes the instant the refetch lands its comment).
-    // allRealComments is a hoisted useMemo (closure capture) — no per-line flatMap.
-    const placeholdersHere = optimistic.filter(
-      (o) =>
-        o.threadId == null &&
-        o.anchorKey != null &&
-        o.anchorKey.startsWith(`${filePath}:${lineNumber}:`) &&
-        !allRealComments.some((c) => c.databaseId != null && c.databaseId === o.postedCommentId),
-    );
+  const renderComposerForLine = useCallback(
+    (filePath: string, lineNumber: number): React.ReactNode => {
+      const {
+        activeAnchor,
+        placeholdersForLine,
+        findExistingDraft,
+        prState,
+        composerDraftId,
+        setComposerDraftId,
+        draftSession,
+        handleComposerClose,
+        handleComposerSaved,
+        readOnly,
+        notePosted,
+        prRef,
+        anyOtherDraftsStaged,
+      } = composerRenderDepsRef.current;
 
-    if (!composerHere && placeholdersHere.length === 0) return null;
+      const composerHere =
+        activeAnchor !== null &&
+        activeAnchor.filePath === filePath &&
+        activeAnchor.lineNumber === lineNumber;
 
-    const placeholderCards = placeholdersHere.map((o) => (
-      <CommentCard
-        key={o.clientId}
-        author={o.author}
-        createdAt={o.createdAt}
-        body={o.body}
-        density="compact"
-        className="comment-card--posting"
-        data-testid="inline-comment-card-optimistic"
-      />
-    ));
+      // #302 Task 11b — new-inline optimistic placeholders for this line
+      // (anchor-key match + databaseId de-dup live in useOptimisticComments).
+      const placeholdersHere = placeholdersForLine(filePath, lineNumber);
 
-    if (!composerHere) {
-      return <>{placeholderCards}</>;
-    }
+      if (!composerHere && placeholdersHere.length === 0) return null;
 
-    // composerHere guarantees activeAnchor is non-null; capture it so the
-    // closures below (and TS) see a non-nullable anchor.
-    const anchor = activeAnchor!;
-    const existing = findExistingDraft(anchor);
-    return (
-      <>
-        {placeholderCards}
-        <InlineCommentComposer
-          prRef={prRef}
-          prState={prState}
-          anchor={anchor}
-          initialBody={existing?.bodyMarkdown ?? ''}
-          draftId={composerDraftId}
-          onDraftIdChange={setComposerDraftId}
-          registerOpenComposer={draftSession.registerOpenComposer}
-          onClose={handleComposerClose}
-          onSaved={handleComposerSaved}
-          flushRef={activeComposerFlushRef}
-          readOnly={readOnly}
-          anyOtherDraftsStaged={computeAnyOtherDraftsStaged(
-            draftSession.session?.draftComments ?? [],
-            draftSession.session?.draftReplies ?? [],
-            composerDraftId,
-            draftSession.postingInProgress,
-          )}
-          beginPosting={draftSession.beginPosting}
-          endPosting={draftSession.endPosting}
-          onPosted={(postedCommentId, body) => {
-            // New inline thread — no server thread id yet. Anchor the placeholder
-            // to this line so renderComposerForLine can place it after the
-            // composer closes. Keyed by filePath:lineNumber:side.
-            const anchorKey = `${anchor.filePath}:${anchor.lineNumber}:${anchor.side}`;
-            setOptimistic((o) => [
-              ...o,
-              {
-                clientId: newClientId(),
-                threadId: null,
-                anchorKey,
-                body,
-                author: VIEWER_LABEL,
-                createdAt: new Date().toISOString(),
-                createdGen: refetchGenRef.current,
-                postedCommentId,
-              },
-            ]);
-            void draftSession.refetch();
-          }}
+      const placeholderCards = placeholdersHere.map((o) => (
+        <CommentCard
+          key={o.clientId}
+          author={o.author}
+          createdAt={o.createdAt}
+          body={o.body}
+          density="compact"
+          className="comment-card--posting"
+          data-testid="inline-comment-card-optimistic"
         />
-      </>
-    );
-  }
+      ));
 
-  // Per-thread reply composer wiring (Task 40 Step 3). Each
-  // ExistingCommentWidget receives the bag and self-manages composer state
-  // (one open reply per thread, multiple threads can host open replies
-  // simultaneously — matches the GitHub UX precedent).
-  //
-  // Memoized so the bag's reference is stable across renders that don't
-  // touch its inputs. `ReplyComposer`'s `registerOpenComposer` useEffect
-  // re-runs whenever the registry function reference changes; without
-  // memoization, every parent render would tear down and re-register the
-  // refcount entry, briefly dropping the diff-and-prefer merge protection
-  // for the open draft.
-  const handleReplyComposerClose = useCallback(() => {
-    void draftSession.refetch();
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- depends on the stable draftSession.refetch useCallback, not the per-render draftSession object literal (#331)
-  }, [draftSession.refetch]);
+      if (!composerHere) {
+        return <>{placeholderCards}</>;
+      }
+
+      // composerHere guarantees activeAnchor is non-null; capture it so the
+      // closures below (and TS) see a non-nullable anchor.
+      const anchor = activeAnchor!;
+      const existing = findExistingDraft(anchor);
+      return (
+        <>
+          {placeholderCards}
+          <InlineCommentComposer
+            prRef={prRef}
+            prState={prState}
+            anchor={anchor}
+            initialBody={existing?.bodyMarkdown ?? ''}
+            draftId={composerDraftId}
+            onDraftIdChange={setComposerDraftId}
+            registerOpenComposer={draftSession.registerOpenComposer}
+            onClose={handleComposerClose}
+            onSaved={handleComposerSaved}
+            flushRef={activeComposerFlushRef}
+            readOnly={readOnly}
+            // The shared memo above — also folded into the composer's
+            // activeComposerKey stamp, so a change here re-renders the hosting
+            // row and this ref-read is never stale (#302 D3).
+            anyOtherDraftsStaged={anyOtherDraftsStaged}
+            beginPosting={draftSession.beginPosting}
+            endPosting={draftSession.endPosting}
+            onPosted={(postedCommentId, body) => {
+              // New inline thread — no server thread id yet. The hook anchors the
+              // placeholder to this line so renderComposerForLine can place it
+              // after the composer closes.
+              notePosted(anchor, postedCommentId, body);
+              void draftSession.refetch();
+            }}
+          />
+        </>
+      );
+    },
+    // Ref-only deps: activeComposerFlushRef (a useRef from useInlineComposer)
+    // and composerRenderDepsRef (useLatestRef) are stable ref objects, so the
+    // callback identity never changes.
+    [activeComposerFlushRef, composerRenderDepsRef],
+  );
 
   const [collapseOverrides, setCollapseOverrides] = useState<Record<string, boolean>>({});
   const collapse = useMemo<ThreadCollapseControl>(
@@ -626,56 +584,80 @@ export function FilesTab() {
     [collapseOverrides],
   );
 
-  const replyContext = useMemo(
+  // #327 Task 13 — the reply wiring is SPLIT (Task 40 Step 3 grew both halves
+  // into one churning bag):
+  //
+  //   (A) `replyContext` — the STABLE callbacks bag (+ the rarely-changing
+  //       prRef/prState/readOnly scalars). Every callback is created once and
+  //       reads its live inputs through a ref updated each render (latest-ref
+  //       pattern — the same idiom as renderComposerForLine above), so the bag
+  //       can cross the memoized diff rows (DiffLineRow / the body memos)
+  //       without breaking their bail on any autosave refetch. Stability also
+  //       keeps `ReplyComposer`'s `registerOpenComposer` useEffect from
+  //       tearing down and re-registering the refcount entry every render,
+  //       which would briefly drop the diff-and-prefer merge protection for
+  //       the open draft.
+  //   (B) `replyData` (below) — the REACTIVE per-thread data channel.
+  const replyCallbackDepsRef = useLatestRef({
+    registerOpenComposer: draftSession.registerOpenComposer,
+    refetch: draftSession.refetch,
+    beginPosting: draftSession.beginPosting,
+    endPosting: draftSession.endPosting,
+    noteReplyPosted,
+  });
+
+  const replyContext = useMemo<ExistingCommentWidgetReplyContext>(
     () => ({
       prRef,
       prState,
+      readOnly,
+      registerOpenComposer: (draftId, ownerKey) =>
+        replyCallbackDepsRef.current.registerOpenComposer(draftId, ownerKey),
+      // Refetch after the reply composer closes (mirrors the on-close path the
+      // inline composer uses for the own-tab refresh-after-write case).
+      onReplyComposerClose: () => {
+        void replyCallbackDepsRef.current.refetch();
+      },
+      // #302 — post-now wiring (Task 11a). The reply's own draft id is known
+      // inside ExistingCommentWidget when it mounts the ReplyComposer, so the
+      // anyOtherDraftsStaged check is computed there from the replyData channel
+      // (computeAnyOtherDraftsStaged) rather than threaded as a closure here.
+      beginPosting: () => replyCallbackDepsRef.current.beginPosting(),
+      endPosting: () => replyCallbackDepsRef.current.endPosting(),
+      // #302 Task 11b — stash an optimistic placeholder for the thread, then
+      // refetch. The placeholder is de-duped against the refetched comment by
+      // databaseId (postedCommentId), in the hook and at render in
+      // ExistingCommentWidget.
+      onReplyPosted: (threadId, postedCommentId, body) => {
+        replyCallbackDepsRef.current.noteReplyPosted(threadId, postedCommentId, body);
+        void replyCallbackDepsRef.current.refetch();
+      },
+    }),
+    // replyCallbackDepsRef is a stable useLatestRef object — listed only to
+    // satisfy the lint rule; it never invalidates the memo.
+    [prRef, prState, readOnly, replyCallbackDepsRef],
+  );
+
+  // #327 Task 13 — (B) the reactive per-thread data channel. `useDraftSession`'s
+  // merge rebuilds the draft arrays on every refetch, so this value's identity
+  // changes on each autosave — which is exactly why it flows through
+  // ReplyDataContext (consumed inside ExistingCommentWidget's ThreadView,
+  // below the row memos) instead of riding the rows' props: only thread
+  // widgets re-render, and a cross-tab draft-reply arrival still hydrates the
+  // affected thread (a ref read would go stale there). Guarded by
+  // FilesTab.renderCount.perf.test.tsx assertions (a) and (c2).
+  const replyData = useMemo<ReplyData>(
+    () => ({
       draftComments: draftSession.session?.draftComments ?? [],
       draftReplies: draftSession.session?.draftReplies ?? [],
       postingInProgress: draftSession.postingInProgress,
-      registerOpenComposer: draftSession.registerOpenComposer,
-      onReplyComposerClose: handleReplyComposerClose,
-      // #302 — post-now wiring (Task 11a). The reply's own draft id is known
-      // inside ExistingCommentWidget when it mounts the ReplyComposer, so the
-      // anyOtherDraftsStaged check is computed there from the raw pieces above
-      // (computeAnyOtherDraftsStaged) rather than threaded as a closure here.
-      beginPosting: draftSession.beginPosting,
-      endPosting: draftSession.endPosting,
-      // #302 Task 11b — stash an optimistic placeholder for the thread, then
-      // refetch. The placeholder is de-duped against the refetched comment by
-      // databaseId (postedCommentId), here and at render in ExistingCommentWidget.
-      onReplyPosted: (threadId: string, postedCommentId: number, body: string) => {
-        setOptimistic((o) => [
-          ...o,
-          {
-            clientId: newClientId(),
-            threadId,
-            body,
-            author: VIEWER_LABEL,
-            createdAt: new Date().toISOString(),
-            createdGen: refetchGenRef.current,
-            postedCommentId,
-          },
-        ]);
-        void draftSession.refetch();
-      },
       optimisticByThread,
-      readOnly,
     }),
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- deps narrow to the specific draftSession members read; the draftSession object is a fresh literal each render, so depending on it would re-create the memo every render (#331)
     [
-      prRef,
-      prState,
       draftSession.session?.draftComments,
       draftSession.session?.draftReplies,
       draftSession.postingInProgress,
-      draftSession.registerOpenComposer,
-      draftSession.beginPosting,
-      draftSession.endPosting,
-      draftSession.refetch,
-      handleReplyComposerClose,
       optimisticByThread,
-      readOnly,
     ],
   );
 
@@ -704,7 +686,7 @@ export function FilesTab() {
         <DiffViewToggle
           diffMode={effectiveDiffMode}
           onDiffModeChange={setDiffMode}
-          splitDisabled={viewportWidth < 900}
+          splitDisabled={!isSplitCapable}
           splitDisabledReason="Side-by-side needs a wider window."
         />
         <DiffSettingsMenu
@@ -756,6 +738,7 @@ export function FilesTab() {
           ) : (
             <FileTree
               files={files}
+              tree={tree}
               selectedPath={selectedPath}
               onSelectFile={setSelectedPath}
               viewedPaths={viewedPaths}
@@ -776,27 +759,30 @@ export function FilesTab() {
           className={`files-tab-diff ${styles.filesTabDiff}`}
           data-testid="files-tab-diff"
         >
-          <DiffPane
-            prRef={prRef}
-            selectedPath={selectedPath}
-            file={selectedFile}
-            diffMode={effectiveDiffMode}
-            truncated={diff.data?.truncated ?? false}
-            reviewThreads={fileThreads}
-            htmlUrl={htmlUrl}
-            onLineClick={handleLineClick}
-            renderComposerForLine={renderComposerForLine}
-            replyContext={replyContext}
-            collapse={collapse}
-            isLoading={diff.isLoading}
-            wholeFileEnabled={wholeFileEnabled}
-            onWholeFileFailed={handleWholeFileFailed}
-            onWholeFileRetry={handleWholeFileRetry}
-            headSha={prDetail.pr.headSha}
-            baseSha={prDetail.pr.baseSha}
-            lineWrap={lineWrap}
-            annotations={aiHunkAnnotations.annotations}
-          />
+          <ReplyDataProvider value={replyData}>
+            <DiffPane
+              prRef={prRef}
+              selectedPath={selectedPath}
+              file={selectedFile}
+              diffMode={effectiveDiffMode}
+              truncated={diff.data?.truncated ?? false}
+              reviewThreads={fileThreads}
+              htmlUrl={htmlUrl}
+              onLineClick={handleLineClick}
+              renderComposerForLine={renderComposerForLine}
+              activeComposerKey={activeComposerKey}
+              replyContext={replyContext}
+              collapse={collapse}
+              isLoading={diff.isLoading}
+              wholeFileEnabled={wholeFileEnabled}
+              onWholeFileFailed={handleWholeFileFailed}
+              onWholeFileRetry={handleWholeFileRetry}
+              headSha={prDetail.pr.headSha}
+              baseSha={prDetail.pr.baseSha}
+              lineWrap={lineWrap}
+              annotations={aiHunkAnnotations.annotations}
+            />
+          </ReplyDataProvider>
         </div>
       </div>
     </div>
