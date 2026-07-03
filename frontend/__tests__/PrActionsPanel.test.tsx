@@ -209,9 +209,7 @@ describe('PrActionsPanel', () => {
     await user.keyboard('{Escape}');
     expect(screen.queryByText(/close this pr\?/i)).not.toBeInTheDocument();
     // The hook's deferred focus return lands on the (remounted) Close trigger.
-    await waitFor(() =>
-      expect(screen.getByRole('button', { name: /^close$/i })).toHaveFocus(),
-    );
+    await waitFor(() => expect(screen.getByRole('button', { name: /^close$/i })).toHaveFocus());
   });
 
   it('the plain Close button shows the pending label while a close is in flight', () => {
