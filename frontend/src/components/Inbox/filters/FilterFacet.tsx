@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { useDismissableMenu } from '../../../hooks/useDismissableMenu';
 import styles from './filters.module.css';
 
 interface Props {
@@ -16,34 +17,20 @@ export function FilterFacet({ name, values, selected, onToggle, triggerLabel }: 
   const ref = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
 
-  const close = useCallback(() => {
-    setOpen(false);
-    // Defer focus so it lands after any click-sequence that triggered close
-    // (outside-click: pointerdown fires before mouseup/click steal focus to body).
-    setTimeout(() => triggerRef.current?.focus(), 0);
-  }, []);
+  // Esc + outside-pointerdown dismissal (#705 shared hook). Esc refocuses the
+  // trigger; an outside click leaves focus where it landed.
+  useDismissableMenu({
+    open,
+    rootRef: ref,
+    returnFocusRef: triggerRef,
+    onClose: () => setOpen(false),
+  });
 
   // Reset in-popover search query when closing so a stale-filtered list is
   // never shown on re-open.
   useEffect(() => {
     if (!open) setQ('');
   }, [open]);
-
-  useEffect(() => {
-    if (!open) return;
-    const onDoc = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) close();
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') close();
-    };
-    document.addEventListener('mousedown', onDoc);
-    document.addEventListener('keydown', onKey);
-    return () => {
-      document.removeEventListener('mousedown', onDoc);
-      document.removeEventListener('keydown', onKey);
-    };
-  }, [open, close]);
 
   const label = triggerLabel ?? (selected.length > 0 ? `${name} (${selected.length})` : name);
   const showSearch = values.length > 8;

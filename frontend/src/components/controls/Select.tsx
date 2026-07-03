@@ -7,6 +7,7 @@ import {
   type KeyboardEvent,
   type ReactNode,
 } from 'react';
+import { useDismissableMenu } from '../../hooks/useDismissableMenu';
 import styles from './Select.module.css';
 
 export interface SelectOption<T extends string | number> {
@@ -151,15 +152,16 @@ export function Select<T extends string | number>({
   // Clear any pending type-ahead buffer-reset timer on unmount.
   useEffect(() => () => window.clearTimeout(typeahead.current.timer), []);
 
-  // Outside-click dismiss (net-new vs CommitMultiSelectPicker).
-  useEffect(() => {
-    if (!open) return;
-    const onPointerDown = (e: PointerEvent) => {
-      if (rootRef.current && !rootRef.current.contains(e.target as Node)) close(false);
-    };
-    document.addEventListener('pointerdown', onPointerDown);
-    return () => document.removeEventListener('pointerdown', onPointerDown);
-  }, [open, close]);
+  // Outside-pointerdown dismiss via the shared hook (#705). The hook's document
+  // Escape is inert here: the combobox root's onKeyDown handles Escape first
+  // and stopPropagations it (so an open Select inside a dialog closes without
+  // closing the dialog) — the event never reaches the hook's document listener.
+  useDismissableMenu({
+    open,
+    rootRef,
+    returnFocusRef: triggerRef,
+    onClose: () => close(false),
+  });
 
   const activeId = open && activeIndex >= 0 ? `${instanceId}-opt-${activeIndex}` : undefined;
 
