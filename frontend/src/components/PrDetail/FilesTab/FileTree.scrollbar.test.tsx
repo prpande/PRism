@@ -5,6 +5,7 @@
 import { describe, it, expect } from 'vitest';
 import { render } from '@testing-library/react';
 import { FileTree } from './FileTree';
+import { treeProps } from '../../../../__tests__/helpers/fileTree';
 import type { FileChange } from '../../../api/types';
 
 const file = (path: string): FileChange => ({ path, status: 'modified', hunks: [] });
@@ -12,7 +13,7 @@ const file = (path: string): FileChange => ({ path, status: 'modified', hunks: [
 function renderTree(files: FileChange[]) {
   return render(
     <FileTree
-      files={files}
+      {...treeProps(files)}
       selectedPath={null}
       onSelectFile={() => {}}
       viewedPaths={new Set()}
@@ -51,7 +52,7 @@ describe('FileTree synthetic horizontal scrollbar (#214)', () => {
   it('keeps the leading rail spacer present so it aligns under the tree column (width gated by CSS)', () => {
     const { getByTestId } = render(
       <FileTree
-        files={[file('a.cs')]}
+        {...treeProps([file('a.cs')])}
         selectedPath={null}
         onSelectFile={() => {}}
         viewedPaths={new Set()}

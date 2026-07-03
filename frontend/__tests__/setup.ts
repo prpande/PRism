@@ -29,15 +29,30 @@ if (typeof window !== 'undefined' && typeof window.matchMedia !== 'function') {
   Object.defineProperty(window, 'matchMedia', {
     writable: true,
     configurable: true,
-    value: (query: string) => ({
-      matches: false,
-      media: query,
-      onchange: null,
-      addListener: () => {},
-      removeListener: () => {},
-      addEventListener: () => {},
-      removeEventListener: () => {},
-      dispatchEvent: () => false,
-    }),
+    value: (query: string) => {
+      // Evaluate simple width queries against window.innerWidth at call time so
+      // width-gated hooks (useMediaQuery) see the test's viewport. Every other
+      // query keeps the historical `matches: false`. Listeners stay no-ops:
+      // tests that change innerWidth mid-test must remount (or install their
+      // own matchMedia mock) to observe the new width. Only the FIRST width
+      // clause of a compound query (e.g. `(min-width: X) and (max-width: Y)`)
+      // is evaluated — extend the regex if a compound query ever appears.
+      const m = /\((min|max)-width:\s*([\d.]+)px\)/.exec(query);
+      const matches = m
+        ? m[1] === 'min'
+          ? window.innerWidth >= parseFloat(m[2])
+          : window.innerWidth <= parseFloat(m[2])
+        : false;
+      return {
+        matches,
+        media: query,
+        onchange: null,
+        addListener: () => {},
+        removeListener: () => {},
+        addEventListener: () => {},
+        removeEventListener: () => {},
+        dispatchEvent: () => false,
+      };
+    },
   });
 }
