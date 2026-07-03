@@ -66,7 +66,15 @@ $probePath = Join-Path ([System.IO.Path]::GetTempPath()) ("run-ps1-binding-probe
 # host run.ps1 actually runs under. -Command "& '<probe>' <args>" reproduces the exact
 # in-session invocation path (`./run.ps1 <args>`) -- NOT `pwsh -File`, whose arg parser
 # handles `--tokens` differently and would not reproduce the bug.
+# (Get-Process).Path is normally the host exe, but can be empty in some sandboxes /
+# pwsh-on-POSIX; fall back to the host under $PSHOME, then a bare name for a PATH lookup
+# (mirrors run-desktop.ps1's Get-PowerShellHostPath intent).
 $hostExe = (Get-Process -Id $PID).Path
+if ([string]::IsNullOrWhiteSpace($hostExe)) {
+    $leaf = if ($PSVersionTable.PSEdition -eq 'Desktop') { 'powershell.exe' } else { 'pwsh' }
+    $fromPsHome = Join-Path $PSHOME $leaf
+    $hostExe = if (Test-Path -LiteralPath $fromPsHome) { $fromPsHome } else { $leaf }
+}
 
 function Invoke-Binding {
     # Returns { Ok; Result } where Result is the parsed JSON object (or $null on a

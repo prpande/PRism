@@ -66,12 +66,14 @@ cd desktop && npm ci && npm run lint && npm run build && npm run test:unit && cd
 cd frontend && npx playwright test
 
 # 7. PowerShell launcher harnesses — run when your change touches run.ps1 or
-#    scripts/*.ps1. Plain assertion harnesses (no Pester); they run on both pwsh 7 and
-#    Windows PowerShell 5.1 and are NOT wired into CI, so run them locally.
-#    run.Tests.ps1 covers run.ps1 parameter binding (#274); run-desktop.Tests.ps1
-#    covers the desktop launcher's pure helpers.
+#    scripts/*.ps1. Plain assertion harnesses (no Pester); host-agnostic and NOT wired
+#    into CI, so run them locally. run.Tests.ps1 covers run.ps1 parameter binding (#274);
+#    run-desktop.Tests.ps1 covers the desktop launcher's pure helpers. On Windows, also
+#    run run.Tests.ps1 under Windows PowerShell 5.1 — that is where PS parameter binding
+#    historically diverges (the 5.1 line below is Windows-only; skip it on macOS/Linux).
 pwsh -File scripts/run.Tests.ps1
 pwsh -File scripts/run-desktop.Tests.ps1
+powershell.exe -File scripts/run.Tests.ps1   # Windows PowerShell 5.1 (Windows only)
 ```
 
 ## Tooling caveats (false-green traps)
