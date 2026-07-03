@@ -240,8 +240,8 @@ export function PrHeader({
     closeDialog,
     pillDiscardModalOpen,
     pillDiscardError,
-    setPillDiscardModalOpen,
-    setPillDiscardError,
+    openPillDiscardModal,
+    cancelPillDiscard,
     patchVerdict,
     onResume,
     onSubmit,
@@ -250,6 +250,7 @@ export function PrHeader({
     onDiscardForeignPendingReview,
     onDiscardAllDrafts,
     handlePillDiscard,
+    onDialogDiscardSuccess,
   } = useSubmitFlow({ reference, session, onSessionRefetch, show });
 
   const [discardAllModalOpen, setDiscardAllModalOpen] = useState(false);
@@ -406,10 +407,7 @@ export function PrHeader({
               onPatchVerdict={patchVerdict}
               onOpenSubmit={openDialog}
               onResume={onResume}
-              onDiscardPending={() => {
-                setPillDiscardError(null);
-                setPillDiscardModalOpen(true);
-              }}
+              onDiscardPending={openPillDiscardModal}
               onDiscardAllDrafts={() => setDiscardAllModalOpen(true)}
             />
           </div>
@@ -468,7 +466,7 @@ export function PrHeader({
           getPrRootHolder={getPrRootHolder}
           discardOwnPendingReview={discardOwnPendingReview}
           discardInFlight={discardInFlight}
-          onDiscardSuccess={() => show({ kind: 'info', message: 'Pending review discarded' })}
+          onDiscardSuccess={onDialogDiscardSuccess}
           onClose={closeDialog}
           onSubmit={onSubmit}
           onRetry={onRetry}
@@ -481,11 +479,7 @@ export function PrHeader({
           the dialog is closed, so the pill can't reuse it (spec § 4.9). */}
       <DiscardPendingReviewConfirmationModal
         open={pillDiscardModalOpen}
-        onCancel={() => {
-          if (discardInFlight) return;
-          setPillDiscardModalOpen(false);
-          setPillDiscardError(null);
-        }}
+        onCancel={cancelPillDiscard}
         onDiscard={() => void handlePillDiscard()}
         discardInFlight={discardInFlight}
         errorMessage={pillDiscardError}

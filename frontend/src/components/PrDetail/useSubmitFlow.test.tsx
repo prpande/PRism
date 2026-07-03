@@ -135,11 +135,8 @@ describe('useSubmitFlow — resume flow (R3)', () => {
 
   it('surfaces a generic error toast when submit throws a non-SubmitConflictError', async () => {
     submitReviewMock.mockRejectedValue(new Error('network down'));
-    const { show } = await (async () => {
-      const s = setup({ session: session({ pendingReviewId: 'PRR_x' }) });
-      await act(async () => s.result.current.onResume());
-      return s;
-    })();
+    const { result, show } = setup({ session: session({ pendingReviewId: 'PRR_x' }) });
+    await act(async () => result.current.onResume());
     await waitFor(() =>
       expect(show).toHaveBeenCalledWith({
         kind: 'error',
@@ -274,7 +271,8 @@ describe('useSubmitFlow — pill discard (spec § 4.9)', () => {
   it('success closes the pill modal, clears the error, and shows the optimistic toast', async () => {
     discardOwnMock.mockResolvedValue({ ok: true });
     const { result, show } = setup();
-    act(() => result.current.setPillDiscardModalOpen(true));
+    act(() => result.current.openPillDiscardModal());
+    expect(result.current.pillDiscardModalOpen).toBe(true);
     await act(async () => result.current.handlePillDiscard());
     expect(result.current.pillDiscardModalOpen).toBe(false);
     expect(result.current.pillDiscardError).toBeNull();
@@ -288,7 +286,7 @@ describe('useSubmitFlow — pill discard (spec § 4.9)', () => {
       message: 'GitHub said no.',
     });
     const { result, show } = setup();
-    act(() => result.current.setPillDiscardModalOpen(true));
+    act(() => result.current.openPillDiscardModal());
     await act(async () => result.current.handlePillDiscard());
     expect(result.current.pillDiscardModalOpen).toBe(true);
     // The modal appends its own period — a trailing one here would render "..".
@@ -296,16 +294,41 @@ describe('useSubmitFlow — pill discard (spec § 4.9)', () => {
     expect(show).not.toHaveBeenCalled();
   });
 
-  it('setPillDiscardError(null) clears a prior error (modal cancel path)', async () => {
-    discardOwnMock.mockResolvedValue({
+  it('cancelPillDiscard is a no-op mid-discard, then closes the modal and clears the error', async () => {
+    // First attempt fails so there's an error state to clear on cancel.
+    discardOwnMock.mockResolvedValueOnce({
       ok: false,
       code: 'github-forbidden',
       message: 'GitHub said no.',
     });
     const { result } = setup();
+    act(() => result.current.openPillDiscardModal());
     await act(async () => result.current.handlePillDiscard());
     expect(result.current.pillDiscardError).toBe('GitHub said no');
-    act(() => result.current.setPillDiscardError(null));
+
+    // Second attempt held in flight: cancel must leave the modal open.
+    let resolveDiscard!: (r: { ok: false; code: string; message: string }) => void;
+    discardOwnMock.mockReturnValueOnce(
+      new Promise((res) => {
+        resolveDiscard = res;
+      }),
+    );
+    let inFlight!: Promise<void>;
+    act(() => {
+      inFlight = result.current.handlePillDiscard();
+    });
+    expect(result.current.discardInFlight).toBe(true);
+    act(() => result.current.cancelPillDiscard());
+    expect(result.current.pillDiscardModalOpen).toBe(true);
+
+    // Once the discard settles, cancel closes the modal and clears the error.
+    await act(async () => {
+      resolveDiscard({ ok: false, code: 'github-forbidden', message: 'GitHub said no.' });
+      await inFlight;
+    });
+    expect(result.current.discardInFlight).toBe(false);
+    act(() => result.current.cancelPillDiscard());
+    expect(result.current.pillDiscardModalOpen).toBe(false);
     expect(result.current.pillDiscardError).toBeNull();
   });
 });

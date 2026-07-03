@@ -2,7 +2,12 @@ import { useEffect, useState } from 'react';
 import type { DraftVerdict, PrReference, ReviewSessionDto } from '../../api/types';
 import { sendPatch } from '../../api/draft';
 import { SubmitConflictError, discardAllDrafts, submitErrorMessage } from '../../api/submit';
-import { useSubmit, type ResumeSummary, type SubmitState } from '../../hooks/useSubmit';
+import {
+  useSubmit,
+  type ResumeSummary,
+  type SubmitState,
+  type UseSubmitResult,
+} from '../../hooks/useSubmit';
 import type { ToastSpec } from '../Toast';
 
 // PrHeader's submit orchestration, extracted for #327 slice 3. The hook OWNS
@@ -30,16 +35,17 @@ export interface UseSubmitFlowResult {
   lastResume: ResumeSummary | null;
   discardInFlight: boolean;
   // Threaded through to SubmitDialog, which drives its own discard button.
-  discardOwnPendingReview: ReturnType<typeof useSubmit>['discardOwnPendingReview'];
+  discardOwnPendingReview: UseSubmitResult['discardOwnPendingReview'];
   // Dialog state.
   dialogOpen: boolean;
   openDialog: () => void;
   closeDialog: () => void;
-  // Pill-discard modal state (spec § 4.9).
+  // Pill-discard modal state (spec § 4.9). Intent handlers, not raw setters:
+  // open clears any stale error first; cancel is a no-op mid-discard.
   pillDiscardModalOpen: boolean;
   pillDiscardError: string | null;
-  setPillDiscardModalOpen: (open: boolean) => void;
-  setPillDiscardError: (message: string | null) => void;
+  openPillDiscardModal: () => void;
+  cancelPillDiscard: () => void;
   // Moved handlers.
   patchVerdict: (verdict: DraftVerdict | null) => void;
   onResume: () => void;
@@ -51,6 +57,9 @@ export interface UseSubmitFlowResult {
   onDiscardForeignPendingReview: (reviewId: string) => void;
   onDiscardAllDrafts: () => void;
   handlePillDiscard: () => Promise<void>;
+  // SubmitDialog's post-discard success confirmation — the hook owns the toast
+  // copy so it appears once (the pill path in handlePillDiscard shares it).
+  onDialogDiscardSuccess: () => void;
 }
 
 export function useSubmitFlow({
@@ -79,6 +88,21 @@ export function useSubmitFlow({
   // open dialog. `dialogOpen` is the faithful "is the dialog open?" signal.
   const [pillDiscardModalOpen, setPillDiscardModalOpen] = useState(false);
   const [pillDiscardError, setPillDiscardError] = useState<string | null>(null);
+
+  // Opening clears any error left over from a previous attempt so the modal
+  // doesn't reopen mid-complaint.
+  const openPillDiscardModal = () => {
+    setPillDiscardError(null);
+    setPillDiscardModalOpen(true);
+  };
+
+  // Cancel is ignored while the discard POST is in flight — the modal's buttons
+  // are disabled then, and Escape must not close it out from under the request.
+  const cancelPillDiscard = () => {
+    if (submit.discardInFlight) return;
+    setPillDiscardModalOpen(false);
+    setPillDiscardError(null);
+  };
 
   // A successful submit clears the session server-side. The session refetch that
   // reflects the cleared state in the header (verdict picker, recovery badge, Submit
@@ -195,6 +219,11 @@ export function useSubmitFlow({
       });
   };
 
+  // Post-discard success confirmation. Single owner of the toast copy — the
+  // pill path (handlePillDiscard) and the SubmitDialog path (passed through as
+  // onDialogDiscardSuccess) both show this.
+  const showDiscardedToast = () => show({ kind: 'info', message: 'Pending review discarded' });
+
   // Pill-surface discard (spec § 4.9). Mirrors SubmitDialog.handleDiscard (T22):
   // success → close the modal + optimistic toast; failure → surface the error in
   // the modal (which appends its own period, so strip a trailing one to avoid
@@ -207,7 +236,7 @@ export function useSubmitFlow({
       return;
     }
     setPillDiscardModalOpen(false);
-    show({ kind: 'info', message: 'Pending review discarded' });
+    showDiscardedToast();
   };
 
   return {
@@ -220,8 +249,8 @@ export function useSubmitFlow({
     closeDialog,
     pillDiscardModalOpen,
     pillDiscardError,
-    setPillDiscardModalOpen,
-    setPillDiscardError,
+    openPillDiscardModal,
+    cancelPillDiscard,
     patchVerdict,
     onResume,
     onSubmit,
@@ -230,5 +259,6 @@ export function useSubmitFlow({
     onDiscardForeignPendingReview,
     onDiscardAllDrafts,
     handlePillDiscard,
+    onDialogDiscardSuccess: showDiscardedToast,
   };
 }
