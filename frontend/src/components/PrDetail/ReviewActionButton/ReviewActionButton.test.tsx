@@ -88,6 +88,61 @@ describe('ReviewActionButton — menu', () => {
     expect(screen.queryByRole('menu')).not.toBeInTheDocument();
     expect(chevron).toHaveFocus();
   });
+  it('clicking the chevron while the menu is open closes it (no double-toggle)', async () => {
+    render(<ReviewActionButton {...props()} />);
+    const chevron = screen.getByTestId('review-action-chevron');
+    await userEvent.click(chevron);
+    expect(screen.getByRole('menu')).toBeInTheDocument();
+    await userEvent.click(chevron);
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+  });
+  it('clicking the main button in a change face closes the open menu (no double-toggle)', async () => {
+    // viewerReview non-null + no draft verdict + open PR → mainAction 'change':
+    // the main button toggles the same menu the chevron does.
+    render(
+      <ReviewActionButton
+        {...props({
+          viewerReview: {
+            state: 'approved',
+            submittedAt: new Date().toISOString(),
+            commitSha: 'x',
+          },
+        })}
+      />,
+    );
+    const main = screen.getByTestId('review-action-main');
+    await userEvent.click(main);
+    expect(screen.getByRole('menu')).toBeInTheDocument();
+    await userEvent.click(main);
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+  });
+  it('firing the main action (submit face) closes an open drafts menu', async () => {
+    // The main button sits inside the dismissal boundary, so this close is the
+    // explicit setMenuOpen(false) in onMainClick — not the document listener.
+    const h = handlers();
+    render(<ReviewActionButton {...props({ session: session({ draftVerdict: 'approve' }) }, h)} />);
+    await userEvent.click(screen.getByTestId('review-action-chevron'));
+    expect(screen.getByRole('menu')).toBeInTheDocument();
+    await userEvent.click(screen.getByTestId('review-action-main'));
+    expect(h.onOpenSubmit).toHaveBeenCalled();
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+  });
+  it('outside click closes the menu and leaves focus where the click landed', async () => {
+    render(
+      <div>
+        <button>outside</button>
+        <ReviewActionButton {...props()} />
+      </div>,
+    );
+    const chevron = screen.getByTestId('review-action-chevron');
+    await userEvent.click(chevron);
+    expect(screen.getByRole('menu')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'outside' }));
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+    // Flush the deferred focus-return path to prove it does NOT fire on outside close.
+    await new Promise((r) => setTimeout(r, 0));
+    expect(chevron).not.toHaveFocus();
+  });
   it('session not loaded → main + chevron both inert (no patch before session arrives)', async () => {
     const h = handlers();
     render(
@@ -97,6 +152,16 @@ describe('ReviewActionButton — menu', () => {
     );
     expect(screen.getByTestId('review-action-chevron')).toBeDisabled();
     expect(screen.getByTestId('review-action-main')).toBeDisabled();
+  });
+  it('freezing with the menu open drops aria-expanded with the menu (no SR desync)', async () => {
+    const p = props({ session: session({ draftVerdict: 'approve' }) });
+    const { rerender } = render(<ReviewActionButton {...p} />);
+    const chevron = screen.getByTestId('review-action-chevron');
+    await userEvent.click(chevron);
+    expect(chevron).toHaveAttribute('aria-expanded', 'true');
+    rerender(<ReviewActionButton {...p} inSubmitFlow={true} />);
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+    expect(chevron).toHaveAttribute('aria-expanded', 'false');
   });
   it('frozen (inSubmitFlow) disables the chevron — no menu', async () => {
     render(

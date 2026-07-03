@@ -34,15 +34,12 @@ export function DiffSettingsMenu({
 
   // Esc + outside-pointerdown dismissal (#328 shared hook). We do NOT auto-move
   // focus into the panel on open: a mouse user keeps their place and a keyboard
-  // user tabs in (APG disclosure pattern). returnFocusOnOutsideClose is this
-  // menu's pinned behavior: outside-click close refocuses the gear (deferred a
-  // tick so it lands after the click sequence steals focus to body).
+  // user tabs in (APG disclosure pattern).
   useDismissableMenu({
     open,
     rootRef,
     returnFocusRef: triggerRef,
     onClose: () => setOpen(false),
-    returnFocusOnOutsideClose: true,
   });
 
   // Effective non-default state — a view-blocked full-file preference produces

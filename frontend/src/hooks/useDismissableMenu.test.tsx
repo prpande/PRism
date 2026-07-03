@@ -6,11 +6,10 @@ import { useDismissableMenu } from './useDismissableMenu';
 
 interface HarnessProps {
   initialOpen?: boolean;
-  returnFocusOnOutsideClose?: boolean;
   onCloseSpy?: () => void;
 }
 
-function Harness({ initialOpen = true, returnFocusOnOutsideClose, onCloseSpy }: HarnessProps) {
+function Harness({ initialOpen = true, onCloseSpy }: HarnessProps) {
   const [open, setOpen] = useState(initialOpen);
   const rootRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -22,7 +21,6 @@ function Harness({ initialOpen = true, returnFocusOnOutsideClose, onCloseSpy }: 
       onCloseSpy?.();
       setOpen(false);
     },
-    returnFocusOnOutsideClose,
   });
   return (
     <div>
@@ -81,7 +79,7 @@ describe('useDismissableMenu — Escape', () => {
 });
 
 describe('useDismissableMenu — outside pointerdown', () => {
-  it('closes on outside click WITHOUT stealing focus by default', async () => {
+  it('closes on outside click WITHOUT stealing focus', async () => {
     render(<Harness />);
     const outside = screen.getByTestId('outside');
     await userEvent.click(outside);
@@ -89,13 +87,6 @@ describe('useDismissableMenu — outside pointerdown', () => {
     // Flush any (wrongly) deferred focus return before asserting.
     await new Promise((r) => setTimeout(r, 0));
     expect(screen.getByTestId('trigger')).not.toHaveFocus();
-  });
-
-  it('closes on outside click AND returns focus when returnFocusOnOutsideClose is set', async () => {
-    render(<Harness returnFocusOnOutsideClose />);
-    await userEvent.click(screen.getByTestId('outside'));
-    expect(screen.queryByTestId('menu')).toBeNull();
-    await waitFor(() => expect(screen.getByTestId('trigger')).toHaveFocus());
   });
 
   it('ignores pointerdown inside the root boundary', async () => {
