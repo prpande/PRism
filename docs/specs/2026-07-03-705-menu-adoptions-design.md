@@ -179,7 +179,10 @@ byte-faithfulness pin.
 - [x] All four newly-adopted consumers (Select, FilterFacet, ReviewActionButton/Menu,
       PrActionsPanel close-confirm) dismiss via `useDismissableMenu`; no hand-rolled
       document Escape/outside-dismiss listeners remain in them (grep-verified).
-- [x] `returnFocusOnOutsideClose` no longer exists anywhere in the tree (grep-verified).
+- [x] `returnFocusOnOutsideClose` no longer exists in runtime code or tests (grep-verified
+      across `frontend/`). The identifier legitimately remains in the historical #328 design
+      doc (`docs/specs/2026-07-02-328-modal-menu-chrome-design.md`), which records the design
+      as shipped at that time.
 - [x] All eight dismissable surfaces (existing adopters PrTabStrip, DiffSettingsMenu,
       IterationTabStrip, CommitMultiSelectPicker + the four adoptions): outside click
       closes without moving focus; Escape closes and refocuses the trigger.
