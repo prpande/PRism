@@ -92,17 +92,17 @@ scripts\serve-detached.ps1 -Port 5200 -DataDir $env:TEMP\PRism-wt-0
 ./run.ps1 -Reset None -Port 5200 -DataDir $env:TEMP\PRism-wt-0 --no-browser
 ```
 
-- Name `-Reset None` when you pass `--no-browser` (or any pass-through app arg):
-  `$Reset` is `run.ps1`'s position-0 parameter, so a bare leading `--no-browser`
-  with no named `-Reset` binds to it and fails its validation. `None` is the
-  no-op reset.
+- Pass-through app args (`--no-browser`, or anything after them) flow straight to
+  `dotnet run` — `run.ps1` sets `PositionalBinding=$false`, so both
+  `./run.ps1 --no-browser` and `./run.ps1 -Reset None --no-browser` work and
+  `-Port`/`-DataDir` bind only when named (issue #274). `None` is the no-op reset.
 - `run.ps1` passes `--no-launch-profile` (so `-Port` is honored over
   `launchSettings.json`'s 5180) and restores `ASPNETCORE_ENVIRONMENT=Development`
   (so the SPA bundle serves — Production via `dotnet run` would serve an empty
   bundle). It prints `PRism listening on http://localhost:5200 (dataDir: …)`.
 - Two instances with distinct `(port, dataDir)` run concurrently with no lockfile
-  contention. Defaults are unchanged: `./run.ps1 -Reset None --no-browser` is
-  still `5180` + `%LocalApplicationData%\PRism` + Development.
+  contention. Defaults are unchanged: `./run.ps1 --no-browser` is still `5180` +
+  `%LocalApplicationData%\PRism` + Development.
 
 ## Run the frontend Playwright suite
 
