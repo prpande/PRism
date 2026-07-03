@@ -1,4 +1,5 @@
 import { useId } from 'react';
+import type { ReactNode } from 'react';
 import { AiComposerAssistant } from '../../Ai/AiComposerAssistant';
 import type { ComposerSaveBadge } from '../../../hooks/useComposerAutoSave';
 import { ComposerStatusBadge } from './ComposerStatusBadge';
@@ -20,6 +21,7 @@ export interface ComposerActionsBarProps {
   onDiscardClick: () => void;
   onSaveClick: () => void;
   onPostNow: () => void;
+  extraActionStart?: ReactNode;
 }
 
 export function ComposerActionsBar({
@@ -39,6 +41,7 @@ export function ComposerActionsBar({
   onDiscardClick,
   onSaveClick,
   onPostNow,
+  extraActionStart,
 }: ComposerActionsBarProps) {
   // #390 — on a merged/closed PR the inline "PR is merged …" note is gone. Keep
   // the "posts immediately" context as (a) the button's tooltip for mouse users
@@ -98,6 +101,7 @@ export function ComposerActionsBar({
           {addLabel}
         </button>
       )}
+      {extraActionStart}
       <button
         type="button"
         className="composer-post-now"

@@ -5,6 +5,7 @@ import { ComposerMarkdownPreview } from './ComposerMarkdownPreview';
 import styles from './ReplyComposer.module.css';
 import type { PrReference } from '../../../api/types';
 import type { ComposerOwnerKey } from '../../../hooks/useDraftSession';
+import type { ReactNode } from 'react';
 
 export interface ReplyComposerProps {
   prRef: PrReference;
@@ -21,6 +22,7 @@ export interface ReplyComposerProps {
   beginPosting?: () => void;
   endPosting?: () => void;
   onPosted?: (postedCommentId: number, body: string) => void;
+  extraActionStart?: ReactNode;
 }
 
 function replyAriaLabel(parentThreadId: string): string {
@@ -42,6 +44,7 @@ export function ReplyComposer({
   beginPosting,
   endPosting,
   onPosted,
+  extraActionStart,
 }: ReplyComposerProps) {
   const { editor, actions, modals } = useDraftComposer({
     prRef,
@@ -86,7 +89,7 @@ export function ReplyComposer({
           aria-readonly={editor.readOnly || actions.posting || undefined}
         />
       )}
-      <ComposerActionsBar {...actions} />
+      <ComposerActionsBar {...actions} extraActionStart={extraActionStart} />
       <ComposerModals
         {...modals}
         discardBody="This will remove the saved reply draft on this thread."

@@ -98,4 +98,31 @@ describe('ComposerActionsBar', () => {
     expect(badge).toHaveTextContent('Saving…');
     expect(badge).not.toHaveClass('composer-badge--readonly');
   });
+  it('renders extraActionStart immediately before the post-now button when provided (#571 Task 10)', () => {
+    // Task 12 will pass the thread Resolve control through this slot. It must
+    // land in DOM order right before "Comment" so it reads as the last action
+    // taken before posting.
+    const { container } = render(
+      <ComposerActionsBar
+        {...baseProps}
+        extraActionStart={
+          <button type="button" data-testid="resolve-slot">
+            Resolve
+          </button>
+        }
+      />,
+    );
+    const resolveSlot = screen.getByTestId('resolve-slot');
+    const postNowButton = container.querySelector('.composer-post-now') as HTMLElement;
+    expect(resolveSlot).toBeInTheDocument();
+    expect(postNowButton).toBeInTheDocument();
+    // Node.DOCUMENT_POSITION_FOLLOWING (4): resolveSlot precedes postNowButton.
+    expect(
+      resolveSlot.compareDocumentPosition(postNowButton) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+  });
+  it('renders no extra node when extraActionStart is omitted', () => {
+    render(<ComposerActionsBar {...baseProps} />);
+    expect(screen.queryByTestId('resolve-slot')).toBeNull();
+  });
 });
