@@ -10,7 +10,7 @@ import type {
 import { AiMarker } from '../../Ai/AiMarker';
 import { AI_TREE_ANALYZED_LABEL } from '../../Ai/aiStrings';
 import { fileFocusStatusToMarkerState } from '../../Ai/fileFocusMarkerState';
-import { buildTree, type TreeNode, type FileTreeNode, type DirectoryTreeNode } from './treeBuilder';
+import type { TreeNode, FileTreeNode, DirectoryTreeNode } from './treeBuilder';
 import { useTreeHScroll } from '../../../hooks/useTreeHScroll';
 import { countViewedFiles } from '../../../hooks/useFileViewState';
 import { CommentGlyph } from '../../shared/CommentGlyph';
@@ -20,6 +20,11 @@ import styles from './FileTree.module.css';
 
 export interface FileTreeProps {
   files: FileChange[];
+  // #327 (Task 9) — the tree built from `files` by FilesTab's buildTree memo (it already
+  // needs the tree for its flattened path list), passed down so the tree is built ONCE.
+  // `files` stays alongside it: the empty-state gate, the header viewed tally, and
+  // countViewedFiles all read the flat list.
+  tree: TreeNode[];
   selectedPath: string | null;
   onSelectFile: (path: string) => void;
   viewedPaths: Set<string>;
@@ -136,6 +141,7 @@ function buildRows(
 
 export function FileTree({
   files,
+  tree,
   selectedPath,
   onSelectFile,
   viewedPaths,
@@ -148,7 +154,6 @@ export function FileTree({
   commentStateByPath = null,
   commentCountsByPath = null,
 }: FileTreeProps) {
-  const tree = useMemo(() => buildTree(files), [files]);
   const viewedCount = useMemo(() => countViewedFiles(files, viewedPaths), [files, viewedPaths]);
 
   // Collapse state intentionally persists across `files` changes (e.g. a background

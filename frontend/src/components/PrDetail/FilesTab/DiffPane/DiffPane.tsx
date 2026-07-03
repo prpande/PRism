@@ -51,10 +51,19 @@ export interface DiffPaneProps {
   // FilesTab passes its <InlineCommentComposer> here; DiffPane simply
   // inserts it as a full-width follow-up row analogous to ExistingCommentWidget.
   renderComposerForLine?: (filePath: string, lineNumber: number) => React.ReactNode;
-  // Bound by FilesTab from its `useDraftSession`. Forwarded verbatim to each
-  // `<ExistingCommentWidget>` so per-thread Reply buttons can mount a
-  // `<ReplyComposer>`. Absent → DiffPane test harnesses render threads
-  // read-only.
+  // #327 Task 12 — composite key of every composer-content location (see
+  // diffBodyProps.ts). renderComposerForLine is identity-stable in FilesTab,
+  // so the memoized bodies rely on this key to re-render exactly when composer
+  // content appears, moves, or disappears. Optional (default null) so DiffPane
+  // test harnesses without a composer are unaffected.
+  activeComposerKey?: string | null;
+  // #327 Task 13 — the STABLE reply-callbacks bag built by FilesTab (latest-ref
+  // idiom; identity changes only on prRef/prState/readOnly). Forwarded verbatim
+  // to each `<ExistingCommentWidget>` so per-thread Reply buttons can mount a
+  // `<ReplyComposer>`. The churning per-thread DATA (draft arrays,
+  // optimisticByThread) does NOT ride this prop — it flows through
+  // ReplyDataContext, consumed inside the widget. Absent → DiffPane test
+  // harnesses render threads read-only.
   replyContext?: ExistingCommentWidgetReplyContext;
   // Collapse controller for review threads. Forwarded verbatim to each
   // `<ExistingCommentWidget>`. Absent → all threads render expanded (default).
@@ -100,6 +109,7 @@ export function DiffPane({
   htmlUrl,
   onLineClick,
   renderComposerForLine,
+  activeComposerKey = null,
   replyContext,
   collapse,
   isLoading = false,
@@ -457,6 +467,7 @@ export function DiffPane({
                 syntax={syntax}
                 onLineClick={onLineClick}
                 renderComposerForLine={renderComposerForLine}
+                activeComposerKey={activeComposerKey}
                 replyContext={replyContext}
                 collapse={collapse}
                 changeStartMap={changeStartMap}

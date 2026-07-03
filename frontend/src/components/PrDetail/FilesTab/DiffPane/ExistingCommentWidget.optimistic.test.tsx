@@ -1,6 +1,7 @@
 import { render, screen } from '@testing-library/react';
 import { describe, it, expect } from 'vitest';
 import { ExistingCommentWidget } from './ExistingCommentWidget';
+import { ReplyDataProvider } from '../ReplyDataContext';
 import type { ReviewThreadDto, ReviewCommentDto } from '../../../../api/types';
 import type { ExistingCommentWidgetReplyContext } from './ExistingCommentWidget';
 import type { OptimisticComment } from '../optimisticComment';
@@ -29,20 +30,28 @@ function thread(over: Partial<ReviewThreadDto> = {}): ReviewThreadDto {
   };
 }
 
-// A minimal reply context. The optimistic-card path does not require any of the
-// composer machinery — only that `replyContext` is present (it gates the
-// per-thread render branch) and carries `optimisticByThread`.
-function replyContext(
+// A minimal reply context. The optimistic-card path does not require any of
+// the composer machinery — only that `replyContext` is present (it gates the
+// per-thread render branch). The per-thread DATA (`optimisticByThread`) flows
+// through ReplyDataContext, so each render wraps in a ReplyDataProvider.
+const replyContext: ExistingCommentWidgetReplyContext = {
+  prRef: { owner: 'o', repo: 'r', number: 1 },
+  prState: 'open',
+  registerOpenComposer: () => () => {},
+  onReplyComposerClose: () => {},
+};
+
+function widget(
+  threads: ReviewThreadDto[],
   optimisticByThread: Record<string, OptimisticComment[]>,
-): ExistingCommentWidgetReplyContext {
-  return {
-    prRef: { owner: 'o', repo: 'r', number: 1 },
-    prState: 'open',
-    draftReplies: [],
-    registerOpenComposer: () => () => {},
-    onReplyComposerClose: () => {},
-    optimisticByThread,
-  };
+) {
+  return (
+    <ReplyDataProvider
+      value={{ draftComments: [], draftReplies: [], postingInProgress: false, optimisticByThread }}
+    >
+      <ExistingCommentWidget threads={threads} replyContext={replyContext} />
+    </ReplyDataProvider>
+  );
 }
 
 describe('ExistingCommentWidget — optimistic reply card', () => {
@@ -56,7 +65,7 @@ describe('ExistingCommentWidget — optimistic reply card', () => {
       createdAt: '2026-05-18T12:00:00Z',
       postedCommentId: 4242,
     };
-    render(<ExistingCommentWidget threads={[t]} replyContext={replyContext({ t1: [opt] })} />);
+    render(widget([t], { t1: [opt] }));
 
     const optimisticCard = screen.getByTestId('inline-comment-card-optimistic');
     expect(optimisticCard).toBeInTheDocument();
@@ -88,7 +97,7 @@ describe('ExistingCommentWidget — optimistic reply card', () => {
       createdAt: '2026-05-18T12:00:00Z',
       postedCommentId: 4242,
     };
-    render(<ExistingCommentWidget threads={[t]} replyContext={replyContext({ t1: [opt] })} />);
+    render(widget([t], { t1: [opt] }));
 
     expect(screen.queryByTestId('inline-comment-card-optimistic')).not.toBeInTheDocument();
     // The real comment (now with databaseId) is rendered as a normal card.
@@ -116,12 +125,7 @@ describe('ExistingCommentWidget — optimistic reply card', () => {
     };
 
     // Phase 1: both placeholders visible before refetch lands
-    const { rerender } = render(
-      <ExistingCommentWidget
-        threads={[thread()]}
-        replyContext={replyContext({ t1: [opt4242, opt4243] })}
-      />,
-    );
+    const { rerender } = render(widget([thread()], { t1: [opt4242, opt4243] }));
 
     const allOptimistic = screen.getAllByTestId('inline-comment-card-optimistic');
     expect(allOptimistic).toHaveLength(2);
@@ -131,12 +135,7 @@ describe('ExistingCommentWidget — optimistic reply card', () => {
       comments: [comment(), comment({ commentId: 'c-real', body: SHARED_BODY, databaseId: 4242 })],
     });
 
-    rerender(
-      <ExistingCommentWidget
-        threads={[threadWithReal]}
-        replyContext={replyContext({ t1: [opt4242, opt4243] })}
-      />,
-    );
+    rerender(widget([threadWithReal], { t1: [opt4242, opt4243] }));
 
     // Only the 4243 placeholder remains
     expect(screen.getAllByTestId('inline-comment-card-optimistic')).toHaveLength(1);
@@ -158,7 +157,7 @@ describe('ExistingCommentWidget — optimistic reply card', () => {
       createdAt: '2026-05-18T12:00:00Z',
       postedCommentId: 4242,
     };
-    render(<ExistingCommentWidget threads={[t]} replyContext={replyContext({ t1: [opt] })} />);
+    render(widget([t], { t1: [opt] }));
 
     expect(screen.getByTestId('inline-comment-card-optimistic')).toBeInTheDocument();
   });
