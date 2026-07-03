@@ -79,21 +79,23 @@ function Test-SafeDeleteTarget {
     if ([string]::IsNullOrWhiteSpace($Path)) {
         return [pscustomobject]@{ Safe = $false; Reason = 'Empty'; ResolvedPath = '' }
     }
-    # 5.1-safe absolute check: drive-rooted (C:\ / C:/) or UNC (\\ / //). NOT
-    # IsPathFullyQualified -- that .NET Core API throws under .NET Framework 4.x (WinPS 5.1).
-    if ($Path -notmatch '^[A-Za-z]:[\\/]' -and $Path -notmatch '^[\\/][\\/]') {
-        return [pscustomobject]@{ Safe = $false; Reason = 'NotAbsolute'; ResolvedPath = '' }
-    }
-
-    # Canonicalize away an extended-length device prefix BEFORE resolving, so a \\?\ / \\?\UNC\
-    # form cannot dodge the string-equality denylist below (GetFullPath preserves the prefix,
-    # and its handling of \\?\ differs across .NET editions -- strip first, then resolve a plain
-    # absolute path that both editions normalize identically). (#676 §1.2)
+    # Canonicalize away a \\?\ (extended-length) OR \\.\ (device-namespace) prefix -- incl. their
+    # UNC forms -- BEFORE the absolute check and resolve. GetFullPath preserves such prefixes, so a
+    # device form would string-miss the denylist below (a \\.\%LOCALAPPDATA% wipe); and stripping
+    # first also stops a bare-drive remainder (\\?\C: -> C:) from laundering past the absolute gate
+    # into GetFullPath('C:') (the process current directory). Strip, THEN resolve a plain absolute
+    # path that .NET Framework 4.x and .NET 7 normalize identically. (#676 §1.2)
     $canon = $Path
-    if ($canon -match '^\\\\\?\\UNC\\') {
+    if ($canon -match '^\\\\[.?]\\UNC\\') {
         $canon = '\\' + $canon.Substring(8)   # \\?\UNC\server\share -> \\server\share
-    } elseif ($canon -match '^\\\\\?\\') {
-        $canon = $canon.Substring(4)           # \\?\C:\x -> C:\x
+    } elseif ($canon -match '^\\\\[.?]\\') {
+        $canon = $canon.Substring(4)           # \\?\C:\x or \\.\C:\x -> C:\x
+    }
+    # 5.1-safe absolute check on the CANONICALIZED path: drive-rooted (C:\ / C:/) or UNC (\\ / //).
+    # NOT IsPathFullyQualified -- that .NET Core API throws under .NET Framework 4.x (WinPS 5.1). A
+    # bare-drive remainder like 'C:' (from '\\?\C:') is rejected here rather than resolving to CWD.
+    if ($canon -notmatch '^[A-Za-z]:[\\/]' -and $canon -notmatch '^[\\/][\\/]') {
+        return [pscustomobject]@{ Safe = $false; Reason = 'NotAbsolute'; ResolvedPath = '' }
     }
     $resolved = [System.IO.Path]::GetFullPath($canon)
 
@@ -185,9 +187,14 @@ Write-Host "Test-SafeDeleteTarget -- 5.1 regression (must NOT throw on a valid a
 # On main, run.ps1's guard calls IsPathFullyQualified here and throws under WinPS 5.1.
 Assert-True  (& $run (Join-Path $lad 'PRism')).Safe                 "valid absolute path resolves without throwing (5.1-safe)"
 
-Write-Host "Test-SafeDeleteTarget -- \\?\ device-path canonicalization (#676 §1.2)" -ForegroundColor Cyan
-Assert-Equal 'ProtectedRoot' (& $run ("\\?\" + $prof)).Reason       "\\?\<profile> is canonicalized and rejected"
-Assert-Equal 'ProtectedRoot' (& $run ("\\?\" + $lad)).Reason        "\\?\<localappdata> is canonicalized and rejected"
+Write-Host "Test-SafeDeleteTarget -- device-path canonicalization (#676 §1.2)" -ForegroundColor Cyan
+Assert-Equal 'ProtectedRoot' (& $run ("\\?\" + $prof)).Reason       "\\?\<profile> canonicalized and rejected"
+Assert-Equal 'ProtectedRoot' (& $run ("\\?\" + $lad)).Reason        "\\?\<localappdata> canonicalized and rejected"
+Assert-Equal 'ProtectedRoot' (& $run ("\\.\" + $prof)).Reason       "\\.\<profile> (device ns) canonicalized and rejected"
+Assert-Equal 'ProtectedRoot' (& $run ("\\.\" + $lad)).Reason        "\\.\<localappdata> (device ns) canonicalized and rejected"
+Assert-Equal 'NotAbsolute'   (& $run '\\?\C:').Reason               "\\?\C: bare drive -> NotAbsolute, not the CWD"
+Assert-Equal 'NotAbsolute'   (& $run '\\.\C:').Reason               "\\.\C: bare drive -> NotAbsolute"
+Assert-Equal 'NotAbsolute'   (& $run '\??\C:\Users\x').Reason       "\??\ (NT object ns) -> NotAbsolute (rejected, not laundered)"
 
 Write-Host "Test-SafeDeleteTarget -- run-desktop mode (-RequireLeafName 'PRism')" -ForegroundColor Cyan
 Assert-True  (Test-SafeDeleteTarget -Path (Join-Path $lad 'PRism') -RequireLeafName 'PRism').Safe "LAD\PRism is safe"
@@ -202,11 +209,15 @@ try {
 } finally { Remove-Item -LiteralPath $fake -Recurse -Force -ErrorAction SilentlyContinue }
 
 Write-Host "Test-SafeDeleteTarget -- order-invariance (independent-AND invariant)" -ForegroundColor Cyan
-# The user profile fails ProtectedRoot regardless of which other switches are on/off.
-Assert-True (-not (Test-SafeDeleteTarget -Path $prof).Safe)                                              "profile unsafe (base only)"
-Assert-True (-not (Test-SafeDeleteTarget -Path $prof -RequireLeafName 'PRism').Safe)                     "profile unsafe (+leaf)"
-Assert-True (-not (Test-SafeDeleteTarget -Path $prof -CheckoutBackstop).Safe)                            "profile unsafe (+backstop)"
-Assert-True (-not (Test-SafeDeleteTarget -Path $prof -CheckoutBackstop -RequireLeafName 'PRism' -AdditionalProtectedRoots @($repo)).Safe) "profile unsafe (all switches)"
+# Use a path that is Safe base-only and made unsafe by EXACTLY ONE lever (protected-root), then
+# verify adding orthogonal switches never flips it back to Safe or masks the reason. (A profile
+# path would short-circuit at WrongLeaf under -RequireLeafName and never exercise the invariant --
+# that is the false-passing trap.) Assert the specific Reason, not just -not .Safe.
+$lever = Join-Path $temp 'PRism-order-inv'   # deep, non-existent (so no backstop I/O), leaf 'PRism-order-inv'
+Assert-True  (Test-SafeDeleteTarget -Path $lever).Safe                                                                             "lever path is Safe base-only"
+Assert-Equal 'ProtectedRoot' (Test-SafeDeleteTarget -Path $lever -AdditionalProtectedRoots @($lever)).Reason                      "single lever -> ProtectedRoot"
+Assert-Equal 'ProtectedRoot' (Test-SafeDeleteTarget -Path $lever -AdditionalProtectedRoots @($lever) -CheckoutBackstop).Reason    "+CheckoutBackstop does not mask ProtectedRoot"
+Assert-Equal 'ProtectedRoot' (Test-SafeDeleteTarget -Path $lever -AdditionalProtectedRoots @($lever) -RequireLeafName 'PRism-order-inv').Reason "+matching -RequireLeafName does not flip Safe"
 
 if ($script:Failures -gt 0) {
     Write-Host "$script:Failures test(s) failed" -ForegroundColor Red
@@ -284,17 +295,18 @@ function Test-CleanTargetSafe {
 Run (both hosts each):
 - `pwsh -NoProfile -File scripts/PRismLauncher.Tests.ps1`
 - `pwsh -NoProfile -File scripts/run-desktop.Tests.ps1`  (the 9 `Test-CleanTargetSafe` cases now exercise the adapter → predicate)
-- `pwsh -NoProfile -File scripts/run.Tests.ps1`  (unaffected; confirms the `run.ps1` import didn't break param binding)
+- `pwsh -NoProfile -File scripts/run.Tests.ps1`  (still green; it is AST param-block extraction and never executes `run.ps1`'s body, so the new import is invisible to it — confirm it stays green)
 Repeat the three with `powershell.exe`.
 Expected: all "All tests passed", exit 0.
 
-- [ ] **Step 8: Sanity-load all three scripts (no execution) under both hosts**
+- [ ] **Step 8: Sanity-load the scripts (no execution)**
 
-Run: `pwsh -NoProfile -Command ". { $null = Get-Command -Syntax run.ps1 }"` is not reliable; instead dot-source-parse each in a child that stops before main. Simplest check — confirm each script parses and imports cleanly:
-```
-pwsh -NoProfile -Command "& { \$ErrorActionPreference='Stop'; . '$PWD/scripts/run-desktop.ps1' }"
-```
-(Dot-sourcing runs the top-level import + function defs but the main-guard skips `Invoke-Main`.) Expected: no error, returns to prompt. Repeat for `serve-detached.ps1`. `run.ps1` has no dot-source guard, so instead confirm it imports: `pwsh -NoProfile -Command "Import-Module '$PWD/scripts/PRismLauncher.psm1' -Force; 'ok'"`.
+Dot-sourcing runs a script's top-level import + function defs while the main-guard skips `Invoke-Main`. Confirm each loads cleanly:
+- `run-desktop.ps1` under **both hosts** (it is 5.1-safe): `pwsh -NoProfile -Command "& { \$ErrorActionPreference='Stop'; . '$PWD/scripts/run-desktop.ps1' }"`, then the same with `powershell.exe`.
+- `serve-detached.ps1` under **pwsh only** — it is `#requires -Version 7`, so dot-sourcing under `powershell.exe` 5.1 aborts on the `#requires` (by design, not a regression): `pwsh -NoProfile -Command "& { \$ErrorActionPreference='Stop'; . '$PWD/scripts/serve-detached.ps1' }"`.
+- `run.ps1` has no dot-source main-guard; confirm the module imports instead, under **both hosts**: `pwsh -NoProfile -Command "Import-Module '$PWD/scripts/PRismLauncher.psm1' -Force; 'ok'"`.
+
+Expected: each returns to the prompt / prints `ok` with no error.
 
 - [ ] **Step 9: Commit**
 
@@ -518,7 +530,7 @@ Message: `refactor(#676): share Test-OnWindows + Assert-WindowsWmi via PRismLaun
 - Modify: `scripts/run-desktop.ps1` (inline spawn L341–356 → build command line + startup info, call the shared function)
 
 **Interfaces:**
-- Produces: `Invoke-Win32ProcessCreate -CommandLine <string> -WorkingDirectory <string> [-StartupInfo <CimInstance>]` → `[int]` process id (throws on non-zero `ReturnValue`).
+- Produces: `Invoke-Win32ProcessCreate -CommandLine <string> -WorkingDirectory <string> [-StartupInfo <CimInstance>] [-FailureSuffix <string>]` → `[int]` process id (throws on non-zero `ReturnValue`, appending `-FailureSuffix` to the message).
 
 - [ ] **Step 1: Add the function to the module + export**
 
@@ -533,13 +545,16 @@ function Invoke-Win32ProcessCreate {
     param(
         [Parameter(Mandatory)][string]$CommandLine,
         [Parameter(Mandatory)][string]$WorkingDirectory,
-        $StartupInfo
+        $StartupInfo,
+        [string]$FailureSuffix = ''
     )
     $arguments = @{ CommandLine = $CommandLine; CurrentDirectory = $WorkingDirectory }
     if ($StartupInfo) { $arguments['ProcessStartupInformation'] = $StartupInfo }
     $res = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments $arguments
     if ($res.ReturnValue -ne 0) {
-        throw "WMI Win32_Process.Create refused to spawn the process (ReturnValue=$($res.ReturnValue)). The process was not launched."
+        # Base string matches both callers' current message verbatim; -FailureSuffix carries the
+        # per-caller tail (serve-detached appends " The server was not launched."; run-desktop none).
+        throw ("WMI Win32_Process.Create refused to spawn the wrapper (ReturnValue=$($res.ReturnValue))." + $FailureSuffix)
     }
     return [int]$res.ProcessId
 }
@@ -562,7 +577,8 @@ function Start-DetachedWrapper {
     # #requires -Version 7). No ShowWindow: serve-detached keeps its current window behavior (#676).
     param([string]$WrapperPath, [string]$RepoRoot)
     $cmd = "pwsh -NoProfile -ExecutionPolicy Bypass -File `"$WrapperPath`""
-    return Invoke-Win32ProcessCreate -CommandLine $cmd -WorkingDirectory $RepoRoot
+    return Invoke-Win32ProcessCreate -CommandLine $cmd -WorkingDirectory $RepoRoot `
+        -FailureSuffix ' The server was not launched.'
 }
 ```
 
@@ -666,3 +682,18 @@ Message: `docs(#676): document PRismLauncher.psm1 + refresh mirrored-primitive c
 **2. Placeholder scan:** No TBD/TODO/"add error handling"/"similar to Task N". All code shown in full; all run commands explicit with expected output.
 
 **3. Type consistency:** `Test-SafeDeleteTarget` returns `{ Safe; Reason; ResolvedPath }` — consumed as `.Safe` (both adapters), `.Reason` + `.ResolvedPath` (run.ps1 adapter switch), matching the produced shape. `Assert-WindowsWmi` params `-NotWindowsMessage`/`-WmiUnreachableMessage` match both call sites. `Invoke-Win32ProcessCreate -CommandLine/-WorkingDirectory/-StartupInfo` returns `[int]`, consumed by `Write-LauncherPidfile -ProcessId` (int) and `serve-detached`'s `$wrapperPid`. `Test-OnWindows -OsEnv` matches the test injection. Export list grows monotonically and includes every produced function. Consistent.
+
+## Plan-code review (ce-doc-review) dispositions
+
+A 4-persona pass (coherence, feasibility, security-lens, adversarial) ran against the plan's concrete code + the real scripts. Coherence and security-lens found no forcing issues; feasibility + adversarial found real bugs, all fixed here (the guard fix was **empirically re-validated on pwsh 7.5.5 and WinPS 5.1 in isolation** before locking it in):
+
+| Finding | Reviewer | Disposition |
+|---|---|---|
+| `\\.\` (device namespace) bypassed the denylist → `%LOCALAPPDATA%` wipe (Safe=True on pwsh 7) — my `\\?\`-only strip missed it | adversarial (CRITICAL) | **Fixed** — strip any `^\\[.?]\\` device prefix (incl. UNC) before the absolute check; `\\.\`/`\\.\C:` tests added; validated both hosts |
+| `\\?\C:` bare-drive laundered past the absolute check → `GetFullPath('C:')` = CWD → false Safe | adversarial (MED) | **Fixed** — re-run the absolute check on the *stripped* remainder; bare-drive → `NotAbsolute` |
+| `Invoke-Win32ProcessCreate` throw-string silently standardized "wrapper/server"→"process" | adversarial (MED) | **Fixed** — `-FailureSuffix` param; both callers' messages byte-preserved |
+| order-invariance test false-passed 2/4 cases (profile short-circuits at `WrongLeaf`) | adversarial (MED) | **Fixed** — single-lever path + `.Reason` assertions |
+| Step-8 "both hosts" load-check wrong for `#requires 7` serve-detached | feasibility (LOW) | **Fixed** — serve-detached is pwsh-only for the load-check |
+| §7 residual list inverted (`\??\` is rejected/safe; `\\.\` was the real gap) | adversarial | **Fixed** — spec §7 corrected |
+| 8.3 short-name aliases string-miss the denylist | adversarial (advisory) | **Deferred** — needs filesystem I/O; pre-existing, fail-closed; follow-up in spec §8 |
+| guard validates canonicalized path but `Remove-Item` targets raw `$DataDir` | security-lens (FYI 50) | **Deferred** — pre-existing, fail-closed under `\\?\`; follow-up in spec §8 |

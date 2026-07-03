@@ -38,24 +38,29 @@ Full` (or `-Reset Token` / `-Reset Auth`) throws at the guard before doing anyth
 because the normal `-Reset None` launch path never calls the guard (`run.ps1` L141 gates on `-Reset
 -ne 'None'`), and `run.ps1` has no guard tests. Unifying onto the 5.1-safe regex fixes this.
 
-### 1.2 Latent bug #2 — `\\?\` device paths bypass the protected-root denylist
+### 1.2 Latent bug #2 — device-namespace paths (`\\?\`, `\\.\`) bypass the protected-root denylist
 
-Surfaced by the security review and **empirically confirmed** by running the .NET path APIs. Both
-guards' protected-root check is a string-equality test
+Surfaced by the security + adversarial reviews and **empirically confirmed on both hosts** by running
+the .NET path APIs. Both guards' protected-root check is a string-equality test
 (`$resolved.TrimEnd('\','/').Equals($bad, OrdinalIgnoreCase)`), and `[IO.Path]::GetFullPath` **does
-not strip the `\\?\` extended-length prefix**. So `\\?\C:\Users\<user>\AppData\Local`:
+not strip a `\\?\` (extended-length) or `\\.\` (device-namespace) prefix**. So
+`\\.\C:\Users\<user>\AppData\Local` (and the `\\?\` form):
 
-- passes empty-check, passes absolute-check (both `IsPathFullyQualified` *and* the regex accept it —
-  the UNC branch `^[\\/][\\/]` matches `\\?\…`),
+- passes empty-check, passes absolute-check (the UNC branch `^[\\/][\\/]` matches `\\.\…`/`\\?\…`),
 - passes the too-shallow check (4 segments below the root),
 - **fails to string-match** the plain `C:\Users\<user>\AppData\Local` denylist entry, and
 - has no `.git`/`.sln`/`package.json` to trip the checkout backstop.
 
-Result: `-Reset Full -DataDir '\\?\C:\Users\<user>\AppData\Local'` would `Remove-Item -Recurse
--Force` the user's **entire `%LOCALAPPDATA%`**; the `\\?\C:\Users\<user>` form wipes the whole
-profile. Pre-existing in both guards on `main`. Because this PR exists to harden this exact guard
-and gives it its first shared implementation + dedicated test file, the unified predicate
-canonicalizes away the `\\?\`/`\\?\UNC\` prefix before the denylist compare and gets red→green tests.
+Result: `-Reset Full -DataDir '\\.\C:\Users\<user>\AppData\Local'` would `Remove-Item -Recurse
+-Force` the user's **entire `%LOCALAPPDATA%`** (on pwsh 7 it fails *open* — silent wipe; on WinPS 5.1
+it fails closed-but-ugly); the `\\.\C:\Users\<user>` form wipes the whole profile. Pre-existing in
+both guards on `main`.
+
+Fix: the unified predicate **strips any `\\?\`/`\\.\` device prefix (and their UNC forms) before the
+absolute check + resolve**, so device forms canonicalize to their plain equivalent (caught by the
+denylist) and a bare-drive remainder (`\\?\C:` → `C:`) is rejected as `NotAbsolute` rather than
+resolving to the current directory. NT object paths (`\??\…`) and relative paths are already rejected
+as `NotAbsolute` (they never reach `GetFullPath`). Red→green tests cover all of these on both hosts.
 
 **These two guard fixes (§1.1, §1.2) are the only intentional behavior changes to the guard.** All
 other primitive extractions are behavior-preserving (§2).
@@ -145,8 +150,10 @@ Test-SafeDeleteTarget
   -> [pscustomobject]@{ Safe = <bool>; Reason = <string> }
 ```
 
-- **Canonicalize first:** strip a leading `\\?\` or `\\?\UNC\` extended-length prefix from the
-  `GetFullPath` result before any comparison, so device-path forms can't dodge the denylist (§1.2).
+- **Canonicalize first:** strip a leading `\\?\` or `\\.\` device prefix (and their UNC forms) from
+  the path **before** the absolute check + `GetFullPath`, so device-path forms can't dodge the
+  denylist and a bare-drive remainder (`\\?\C:` → `C:`) can't launder past the absolute gate into the
+  current directory (§1.2).
 - Base protected roots (always): `UserProfile`, `LocalApplicationData`. Callers add more via
   `-AdditionalProtectedRoots`.
 - Absolute check: the **5.1-safe regex** (`^[A-Za-z]:[\\/]` or UNC `^[\\/][\\/]`), never
@@ -294,11 +301,14 @@ no harness, so all three imports land up front to avoid a silent runtime break):
 
 ## 7. Risks & mitigations
 
-- **`\\?\` denylist bypass (§1.2)** was catastrophic and latent. Mitigation: canonicalize the prefix
-  before comparison + explicit `\\?\` rejection tests. Residual: other exotic path forms (NT object
-  paths `\??\`, `GLOBALROOT`) are not normalized by `GetFullPath`; the checkout backstop and the
-  leaf/shallow checks remain as defense-in-depth, and no realistic `-DataDir` uses them — noted, not
-  fixed, to keep the change bounded.
+- **Device-namespace denylist bypass (§1.2)** was catastrophic and latent (`\\.\%LOCALAPPDATA%` wiped
+  the whole store; `\\?\` likewise). Mitigation: strip any `\\?\`/`\\.\` prefix (incl. UNC) before
+  resolving + explicit rejection tests for both, plus the bare-drive (`\\?\C:`) and `\??\` cases, on
+  both hosts. Residual: **8.3 short-name aliases** of a protected root (e.g. `PRATYU~1`) still
+  string-miss the denylist because `GetFullPath` does not expand them — closing this needs a
+  filesystem `Get-Item .FullName` expansion (I/O on a possibly-nonexistent path), so it is deferred to
+  a follow-up (§8) to keep the predicate pure. Pre-existing in both guards; fail-closed for a
+  nonexistent alias.
 - **The module is a 5.1-compatibility surface and a single point of failure** now hard-depended on by
   `run.ps1 -Reset None` (which used zero primitives before). Mitigation: the §3.1 5.1-compat
   invariant + the mandatory `powershell.exe`-5.1 harness run (§6). Accepted residual: a partial/sparse
@@ -323,7 +333,11 @@ no harness, so all three imports land up front to avoid a silent runtime break):
   "de-dup + the 5.1 fix", but it sits on the exact destructive-delete surface this PR hardens and is
   fixed once for both callers.
 - **Follow-up candidates (not this PR):** `serve-detached` stray-window `ShowWindow=0`; CI-wiring the
-  PS harnesses (a pre-existing repo-wide gap noted on #274).
+  PS harnesses (a pre-existing repo-wide gap noted on #274); **8.3 short-name denylist expansion** in
+  the guard (§7 — needs filesystem I/O; pre-existing, low-severity, fail-closed); and the guard
+  validating the *canonicalized* path while `Remove-Item` targets the raw `$DataDir` (a `\\?\`+`..`
+  combo could theoretically diverge — pre-existing, fail-closed since Windows disables `..` under a
+  `\\?\` prefix).
 
 ## 9. `ce-doc-review` findings & dispositions
 
