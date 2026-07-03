@@ -3,6 +3,7 @@ using System.Globalization;
 using System.Net;
 using System.Threading;
 using FluentAssertions;
+using Microsoft.Extensions.Logging.Abstractions;
 using PRism.GitHub.Activity;
 using PRism.GitHub.Tests.TestHelpers;
 using Xunit;
@@ -128,5 +129,30 @@ public sealed class GitHubNotificationsReaderTests
         captured!.RequestUri!.Query.Should().Contain("since=");
         captured.RequestUri.Query.Should().Contain("all=true");
         captured.RequestUri.Query.Should().Contain("per_page=100");
+    }
+
+    [Fact]
+    public async System.Threading.Tasks.Task Later_page_fault_returns_prefix_not_degraded()
+    {
+        // Page 1 = one valid PR notification + a next; page 2 = 500. The reader must return the
+        // page-1 item with Degraded:false (a coherent prefix), NOT Degraded:true — which would
+        // blank the whole activity rail (spec Consumer-semantics section).
+        const string page1 = """
+            [{"subject":{"type":"PullRequest","url":"https://api.github.com/repos/o/r/pulls/5","title":"T"},
+              "repository":{"full_name":"o/r"},"reason":"mention","updated_at":"2026-07-01T00:00:00Z"}]
+            """;
+        var handler = new ScriptedPagesHandler(
+            (HttpStatusCode.OK, page1, "https://api.github.com/notifications?page=2"),
+            (HttpStatusCode.InternalServerError, "", null));
+        var reader = new GitHubNotificationsReader(
+            new FakeHttpClientFactory(handler, new Uri("https://api.github.com/")),
+            () => System.Threading.Tasks.Task.FromResult<string?>("token"),
+            NullLogger<GitHubNotificationsReader>.Instance);
+
+        var result = await reader.ReadAsync(DateTimeOffset.UtcNow.AddDays(-1), CancellationToken.None);
+
+        result.Degraded.Should().BeFalse();          // coherent prefix ⇒ do NOT blank the rail
+        result.Notifications.Should().ContainSingle(n => n.Repo == "o/r" && n.PrNumber == 5);
+        handler.CallCount.Should().Be(2);            // it tried page 2, got 500, kept page 1
     }
 }

@@ -5,6 +5,7 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Extensions.Logging;
 using PRism.Core.Activity;
 
 namespace PRism.GitHub.Activity;
@@ -17,11 +18,15 @@ public sealed partial class GitHubNotificationsReader : INotificationsReader
     private const int PerPage = 100;
     private readonly IHttpClientFactory _httpFactory;
     private readonly Func<Task<string?>> _readToken;
+    private readonly ILogger<GitHubNotificationsReader>? _logger;
 
-    public GitHubNotificationsReader(IHttpClientFactory httpFactory, Func<Task<string?>> readToken)
+    public GitHubNotificationsReader(
+        IHttpClientFactory httpFactory, Func<Task<string?>> readToken,
+        ILogger<GitHubNotificationsReader>? logger = null)
     {
         _httpFactory = httpFactory;
         _readToken = readToken;
+        _logger = logger;
     }
 
     public async Task<NotificationsResult> ReadAsync(DateTimeOffset since, CancellationToken ct)
@@ -29,7 +34,7 @@ public sealed partial class GitHubNotificationsReader : INotificationsReader
         var sinceParam = Uri.EscapeDataString(since.UtcDateTime.ToString("O", CultureInfo.InvariantCulture));
         var url = $"notifications?all=true&since={sinceParam}&per_page={PerPage}";
         var (items, degraded) = await GitHubArrayReader
-            .ReadAsync(_httpFactory, _readToken, url, Parse, ct).ConfigureAwait(false);
+            .ReadAsync(_httpFactory, _readToken, url, Parse, ct, _logger, "notifications").ConfigureAwait(false);
         return new NotificationsResult(items, degraded);
     }
 
