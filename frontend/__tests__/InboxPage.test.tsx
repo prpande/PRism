@@ -89,6 +89,7 @@ function setHooks(
     isFetching: opts.isFetching ?? opts.isLoading ?? false,
     error: opts.error ?? null,
     reload: vi.fn().mockResolvedValue(undefined),
+    revalidate: vi.fn().mockResolvedValue(undefined),
   });
   vi.mocked(useInboxUpdates).mockReturnValue({
     announce: '',
@@ -422,6 +423,7 @@ describe('InboxPage — useAiGate migrations', () => {
       isFetching: false,
       error: null,
       reload: vi.fn().mockResolvedValue(undefined),
+      revalidate: vi.fn().mockResolvedValue(undefined),
     });
     vi.mocked(useInboxUpdates).mockReturnValue({
       announce: '',

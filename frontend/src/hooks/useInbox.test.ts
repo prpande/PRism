@@ -57,6 +57,44 @@ describe('useInbox generation guard (#330)', () => {
     expect(tagOf(result.current.data)).toBe('new');
   });
 
+  it('revalidate updates data on change without flipping the loading flags — #713', async () => {
+    get.mockResolvedValueOnce(tagged('a')); // mount fetch (via reload)
+    const { result } = renderHook(() => useInbox());
+    await waitFor(() => expect(tagOf(result.current.data)).toBe('a'));
+    expect(result.current.isFetching).toBe(false);
+
+    get.mockResolvedValueOnce(tagged('b')); // revalidate returns new content
+    await act(async () => {
+      await result.current.revalidate();
+    });
+    expect(tagOf(result.current.data)).toBe('b');
+    // Silent: neither the cold skeleton flag nor the loading-bar flag flips.
+    expect(result.current.isLoading).toBe(false);
+    expect(result.current.isFetching).toBe(false);
+  });
+
+  it('revalidate skips the state update when the payload is byte-identical — #713/#671', async () => {
+    get.mockResolvedValueOnce(tagged('a')); // mount
+    const { result } = renderHook(() => useInbox());
+    await waitFor(() => expect(tagOf(result.current.data)).toBe('a'));
+
+    // First revalidate seeds the compare ref (the mount used reload(), which doesn't feed it).
+    get.mockResolvedValueOnce(tagged('same'));
+    await act(async () => {
+      await result.current.revalidate();
+    });
+    const ref1 = result.current.data;
+    expect(tagOf(ref1)).toBe('same');
+
+    // Second revalidate returns a fresh object with identical content → the unchanged-guard
+    // must skip setData, so `data` keeps the SAME reference (no re-render, row memo preserved).
+    get.mockResolvedValueOnce(tagged('same'));
+    await act(async () => {
+      await result.current.revalidate();
+    });
+    expect(result.current.data).toBe(ref1);
+  });
+
   it('aborts the 503 retry loop on unmount — no further fetch fires', async () => {
     // Fake timers (not a real sleep): the retry loop is timer-driven, so this stays
     // deterministic and fast. advanceTimersByTimeAsync advances the fake clock AND

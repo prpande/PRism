@@ -88,12 +88,14 @@ function setHooks(
   } = {},
 ) {
   const reload = vi.fn().mockResolvedValue(undefined);
+  const revalidate = vi.fn().mockResolvedValue(undefined);
   vi.mocked(useInbox).mockReturnValue({
     data: opts.data ?? null,
     isLoading: opts.isLoading ?? false,
     isFetching: opts.isFetching ?? opts.isLoading ?? false,
     error: opts.error ?? null,
     reload,
+    revalidate,
   });
   vi.mocked(useInboxUpdates).mockReturnValue({ announce: '' });
   // InboxPage uses useAiGate for the AI gates, and calls usePreferences directly for
@@ -150,7 +152,7 @@ function setHooks(
     if (key === 'inboxEnrichment') return opts.inboxEnrichment ?? false;
     return false;
   });
-  return { reload };
+  return { reload, revalidate };
 }
 
 const sampleData: InboxResponse = {
@@ -272,42 +274,82 @@ describe('InboxPage', () => {
     expect(screen.getByText(/couldn.t load inbox/i)).toBeInTheDocument();
   });
 
-  it('refetches the inbox when the keep-alive host re-shows it (active false→true) — #563/#285', () => {
+  it('refetches the inbox when the host bumps revalidateNonce (return-to-inbox) — #563/#285/#713', () => {
     // Under keep-alive the Inbox isn't remounted on return from a PR, so its
-    // mount-effect GET doesn't re-fire. The page refetches on the hidden→visible
-    // transition so freshness that doesn't ride an inbox-updated frame (e.g. a
-    // mark-viewed unread-bar clear) is picked up. No fire on first mount.
+    // mount-effect GET doesn't re-fire. InboxHost detects the return and bumps
+    // revalidateNonce; the page reloads on that value change so freshness that
+    // doesn't ride an inbox-updated frame (e.g. a mark-viewed unread-bar clear) is
+    // picked up. nonce=0 is the initial mount and must NOT fire (mount fetch covers it).
     const { reload } = setHooks({ data: sampleData });
     const { rerender } = render(
       <MemoryRouter initialEntries={['/']}>
         <OpenTabsProvider>
-          <InboxPage active={false} />
+          <InboxPage active={true} revalidateNonce={0} />
         </OpenTabsProvider>
       </MemoryRouter>,
     );
-    reload.mockClear(); // ignore any incidental mount-time calls; isolate the transition
+    reload.mockClear(); // ignore any incidental mount-time calls; isolate the nonce bump
     rerender(
       <MemoryRouter initialEntries={['/']}>
         <OpenTabsProvider>
-          <InboxPage active={true} />
+          <InboxPage active={true} revalidateNonce={1} />
         </OpenTabsProvider>
       </MemoryRouter>,
     );
     expect(reload).toHaveBeenCalledTimes(1);
   });
 
-  it('does not refetch on first mount when already active (no spurious GET) — #563', () => {
+  it('does not refetch on first mount (nonce=0, already active) — #563', () => {
     const { reload } = setHooks({ data: sampleData });
     render(
       <MemoryRouter initialEntries={['/']}>
         <OpenTabsProvider>
-          <InboxPage active={true} />
+          <InboxPage active={true} revalidateNonce={0} />
         </OpenTabsProvider>
       </MemoryRouter>,
     );
-    // useInbox owns the mount fetch; the activation transition must NOT also fire
-    // on first mount (would double-fetch the inbox on every cold load).
+    // useInbox owns the mount fetch; the nonce refetch must NOT also fire on first
+    // mount (nonce=0 → skipped) or it would double-fetch the inbox on every cold load.
     expect(reload).not.toHaveBeenCalled();
+  });
+
+  it('polls a silent revalidate on an interval while active, and stops when hidden/unmounted — #713', () => {
+    // The poll-while-visible backstop guarantees a missed return-refetch (the concurrent-render
+    // race behind #704) self-heals: while active it silently revalidates on a fixed interval;
+    // while inactive it does not; and the interval is torn down on unmount.
+    vi.useFakeTimers();
+    try {
+      const { revalidate } = setHooks({ data: sampleData });
+      const { rerender, unmount } = render(
+        <MemoryRouter initialEntries={['/']}>
+          <OpenTabsProvider>
+            <InboxPage active={true} revalidateNonce={0} />
+          </OpenTabsProvider>
+        </MemoryRouter>,
+      );
+      expect(revalidate).not.toHaveBeenCalled(); // not before the first tick
+      vi.advanceTimersByTime(8_000);
+      expect(revalidate).toHaveBeenCalledTimes(1);
+      vi.advanceTimersByTime(8_000);
+      expect(revalidate).toHaveBeenCalledTimes(2);
+
+      // Hidden → interval cleared, no further ticks.
+      rerender(
+        <MemoryRouter initialEntries={['/']}>
+          <OpenTabsProvider>
+            <InboxPage active={false} revalidateNonce={0} />
+          </OpenTabsProvider>
+        </MemoryRouter>,
+      );
+      vi.advanceTimersByTime(30_000);
+      expect(revalidate).toHaveBeenCalledTimes(2);
+
+      unmount();
+      vi.advanceTimersByTime(30_000); // no throw / no further calls after teardown
+      expect(revalidate).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('renders sections + rows when data is present', () => {
@@ -521,6 +563,7 @@ describe('InboxPage — useAiGate migrations', () => {
       isFetching: false,
       error: null,
       reload: vi.fn().mockResolvedValue(undefined),
+      revalidate: vi.fn().mockResolvedValue(undefined),
     });
     vi.mocked(useInboxUpdates).mockReturnValue({ announce: '' });
     // These mocks are only needed if InboxPage still calls them directly.
@@ -720,6 +763,7 @@ describe('InboxPage — onboarding overlay gate (#485)', () => {
       isFetching: false,
       error: null,
       reload: vi.fn().mockResolvedValue(undefined),
+      revalidate: vi.fn().mockResolvedValue(undefined),
     });
     vi.mocked(useInboxUpdates).mockReturnValue({ announce: '' });
     vi.mocked(useCapabilities).mockReturnValue({
@@ -822,6 +866,7 @@ describe('InboxPage — onboarding overlay gate (#485)', () => {
       isFetching: true,
       error: null,
       reload: vi.fn().mockResolvedValue(undefined),
+      revalidate: vi.fn().mockResolvedValue(undefined),
     });
     render(
       <MemoryRouter initialEntries={['/']}>
@@ -843,6 +888,7 @@ describe('InboxPage — onboarding overlay gate (#485)', () => {
       isFetching: false,
       error: new Error('boom'),
       reload: vi.fn().mockResolvedValue(undefined),
+      revalidate: vi.fn().mockResolvedValue(undefined),
     });
     render(
       <MemoryRouter initialEntries={['/']}>
