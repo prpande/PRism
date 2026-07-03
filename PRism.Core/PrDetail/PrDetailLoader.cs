@@ -253,7 +253,11 @@ public sealed class PrDetailLoader : IDisposable
             .ToArray();
         var commitShaSet = new HashSet<string>(timeline.Commits.Select(c => c.Sha), StringComparer.Ordinal);
 
-        var (quality, iterations) = DetermineQuality(timeline, commitShaSet);
+        // #281: iteration boundaries need the PR base SHA as iteration 1's exclusive lower
+        // bound. Enrich the timeline here (the sole clustering chokepoint) so both the strategy
+        // and the resolvable-range check read timeline.PrBaseSha.
+        var (quality, iterations) = DetermineQuality(
+            timeline with { PrBaseSha = detail.Pr.BaseSha }, commitShaSet);
 
         var finalDetail = detail with
         {
@@ -397,7 +401,16 @@ public sealed class PrDetailLoader : IDisposable
                 .ToArray(),
             // GC'd SHAs (force-pushes that pruned old objects) produce false; UI renders
             // "Iter N (snapshot lost)" and ComparePicker disables selection. Spec § 6.1 + § 7.2.
-            HasResolvableRange: commitShaSet.Contains(c.BeforeSha) && commitShaSet.Contains(c.AfterSha)))
+            // #281: (a) the PR base is a valid lower bound though it isn't a PR commit — it is
+            // exactly what "All changes" compares against; (b) a degenerate BeforeSha == AfterSha
+            // range yields an empty three-dot compare, so it must read "snapshot lost" rather
+            // than an enabled chip over an empty Files tab.
+            HasResolvableRange:
+                !string.Equals(c.BeforeSha, c.AfterSha, StringComparison.Ordinal)
+                && (commitShaSet.Contains(c.BeforeSha)
+                    || (!string.IsNullOrEmpty(timeline.PrBaseSha)
+                        && string.Equals(c.BeforeSha, timeline.PrBaseSha, StringComparison.Ordinal)))
+                && commitShaSet.Contains(c.AfterSha)))
             .ToArray();
 
         return (ClusteringQuality.Ok, iterations);
