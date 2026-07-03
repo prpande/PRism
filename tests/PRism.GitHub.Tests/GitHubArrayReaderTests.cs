@@ -236,4 +236,31 @@ public sealed class GitHubArrayReaderTests
         items.Should().Equal("a", "b");
         logger.Entries.Should().BeEmpty();           // cycle wins over the budget: no false truncation signal
     }
+
+    [Fact]
+    public async Task Off_host_next_url_is_not_credentialed_and_degrades_to_prefix()
+    {
+        // Page 1 OK (same-host) advertises a WELL-FORMED but OFF-HOST next. Following it must
+        // trip GitHubHttp.ApplyHeaders' scheme+host+port guard (throw HttpRequestException)
+        // BEFORE the request is sent, so the off-host host never receives a credentialed call.
+        var handler = new ScriptedPagesHandler(
+            (HttpStatusCode.OK, """[{"v":"a"}]""", "https://attacker.example/x?page=2"));
+
+        var (items, degraded) = await GitHubArrayReader.ReadAsync(
+            FactoryFor(handler), Token, "x", ParseV, CancellationToken.None);
+
+        items.Should().Equal("a");            // page-1 prefix retained
+        degraded.Should().BeFalse();          // non-empty prefix ⇒ not degraded
+        handler.CallCount.Should().Be(1);     // the off-host page-2 request never reached the handler
+
+        // Positive control: prove the loop actually RECEIVED the off-host next, so CallCount==1
+        // means "ApplyHeaders blocked the credentialed send" — NOT "the parser silently rejected
+        // the URL" or "the loop never followed it" (which would make the assertion green for the
+        // wrong reason if a future refactor host-filtered inside the parser). GitHubLinkHeader
+        // must surface the off-host URL; the block therefore happens downstream at the egress guard.
+        var probe = new HttpResponseMessage(HttpStatusCode.OK);
+        probe.Headers.TryAddWithoutValidation("Link", "<https://attacker.example/x?page=2>; rel=\"next\"");
+        GitHubLinkHeader.TryGetRel(probe, "next", out var surfaced).Should().BeTrue();
+        surfaced.Should().Be("https://attacker.example/x?page=2");
+    }
 }
