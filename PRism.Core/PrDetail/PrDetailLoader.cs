@@ -353,7 +353,7 @@ public sealed class PrDetailLoader : IDisposable
 
     /// <summary>
     /// Tears down the subscriptions wired in the constructor (the <c>_configStore.Changed</c>
-    /// handler plus the four <see cref="IReviewEventBus.Subscribe"/> IDisposables). The loader
+    /// handler plus the <see cref="IReviewEventBus.Subscribe"/> IDisposables). The loader
     /// is a DI singleton, so this runs only on container/app shutdown; it exists so the Subscribe
     /// IDisposables are released rather than held for the process lifetime (Claude PR #150 review
     /// — the raw <c>_configStore.Changed</c> event has no IDisposable, but Subscribe returns one).
