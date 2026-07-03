@@ -65,13 +65,13 @@ jobs:
           # fails until a maintainer re-reviews the new script and updates this hash — the
           # intended behavior for a token-bearing step. Recompute with:
           #   curl -fsSL https://claude.ai/install.sh | sha256sum
-          # (pinned 2026-06-28; claude.ai/install.sh redirects to
+          # (pinned 2026-07-03; claude.ai/install.sh redirects to
           # downloads.claude.ai/claude-code-releases/bootstrap.sh)
           #
           # RESIDUAL (upstream limitation): the bootstrap always downloads the LATEST CLI
           # regardless of any version argument, so the CLI version is not pinnable here —
           # but each binary is still manifest-checksum-verified by the script.
-          CLAUDE_INSTALLER_SHA256: 005ec1a937f32dfbb74f9e810287bcb12cba2d5cae4c9277aa8c6364adbf1787
+          CLAUDE_INSTALLER_SHA256: b3f79015b54c751440a6488f07b1b64f9088742b9052bc1bd356d13108320d2a
         run: |
           set -euo pipefail
           curl -fsSL https://claude.ai/install.sh -o "$RUNNER_TEMP/claude-install.sh"
