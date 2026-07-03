@@ -1,5 +1,4 @@
 using System.Text;
-using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.Http.HttpResults;
 using Microsoft.AspNetCore.Mvc;
 using PRism.Core;
@@ -11,7 +10,7 @@ using PRism.GitHub;
 
 namespace PRism.Web.Endpoints;
 
-internal static partial class PrDetailEndpoints
+internal static class PrDetailEndpoints
 {
     public static IEndpointRouteBuilder MapPrDetail(this IEndpointRouteBuilder app)
     {
@@ -138,14 +137,12 @@ internal static partial class PrDetailEndpoints
                 if (stateStore.IsReadOnlyMode)
                     return Results.Problem(type: "/state/read-only", statusCode: 423);
 
-                // Validate X-PRism-Tab-Id header. Missing or out-of-allowlist values get the
-                // distinct /viewed/tab-id-missing 422 (vs the snapshot/stale-sha 422s above) so
-                // the frontend can surface a "your browser tab is in an unexpected state, reload"
-                // toast for the wire-up regression case without conflating it with PR-detail
-                // staleness. Allowlist is the same [a-zA-Z0-9_-]{1,64} regex used everywhere a
-                // tab id reaches the server (spec § 3).
-                var tabId = httpContext.Request.Headers[TabStamps.TabIdHeader].FirstOrDefault();
-                if (string.IsNullOrEmpty(tabId) || !TabIdAllowlistRegex().IsMatch(tabId))
+                // Validate X-PRism-Tab-Id header (TabStamps § 3 allowlist). Missing or
+                // out-of-allowlist values get the distinct /viewed/tab-id-missing 422 (vs the
+                // snapshot/stale-sha 422s above) so the frontend can surface a "your browser tab
+                // is in an unexpected state, reload" toast for the wire-up regression case without
+                // conflating it with PR-detail staleness.
+                if (!TabStamps.TryValidateTabId(httpContext.Request, out var tabId))
                     return Results.Problem(type: "/viewed/tab-id-missing", statusCode: 422);
 
                 var prRef = new PrReference(owner, repo, number);
@@ -343,13 +340,6 @@ internal static partial class PrDetailEndpoints
     private static bool IsValidGitOid(string s) =>
         // SHA-1 (40 hex) or SHA-256 (64 hex). Anything else → 422 /sha/invalid.
         SharedRegexes.Sha40().IsMatch(s) || SharedRegexes.Sha64().IsMatch(s);
-
-    // Spec § 3 — X-PRism-Tab-Id allowlist. 1-64 chars from [a-zA-Z0-9_-]. Anything else is
-    // rejected with /viewed/tab-id-missing 422 by mark-viewed (Task 4), reload (Task 5),
-    // the test-hook (Task 6), and submit (Task 7). Shared via the partial-class pattern so
-    // the regex source is exactly one literal — analyzer guarantees the compiled-regex shape.
-    [GeneratedRegex(@"^[a-zA-Z0-9_-]{1,64}$")]
-    internal static partial Regex TabIdAllowlistRegex();
 
     private static string? CanonicalizePath(string path)
     {

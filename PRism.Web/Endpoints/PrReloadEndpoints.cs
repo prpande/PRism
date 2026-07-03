@@ -72,13 +72,11 @@ internal static class PrReloadEndpoints
 
         var prRef = new PrReference(owner, repo, number);
         var refKey = prRef.ToString();
-        var sourceTabId = httpContext.Request.Headers[TabStamps.TabIdHeader].FirstOrDefault();
-
-        // Tab id validation (spec § 3) — reload is a write site and must reject missing /
+        // Tab id validation (TabStamps § 3) — reload is a write site and must reject missing /
         // out-of-allowlist tab ids before any state mutation. Distinct /reload/tab-id-missing
         // 422 (vs the head-sha-missing 400 / sha-format-invalid 422 below) so the frontend can
         // surface the "stale browser tab" remedy independently of head-sha failures.
-        if (string.IsNullOrEmpty(sourceTabId) || !PrDetailEndpoints.TabIdAllowlistRegex().IsMatch(sourceTabId))
+        if (!TabStamps.TryValidateTabId(httpContext.Request, out var sourceTabId))
             return Results.UnprocessableEntity(new { error = "reload-tab-id-missing" });
 
         // SECURITY: validate headSha presence + format before touching state. The null
@@ -175,7 +173,7 @@ internal static class PrReloadEndpoints
                     ? DraftVerdictStatus.NeedsReconfirm
                     : current.DraftVerdictStatus;
 
-                // Per-tab stamp write — sourceTabId was validated against TabIdAllowlistRegex
+                // Per-tab stamp write — sourceTabId was validated by TabStamps.TryValidateTabId
                 // at the top of PostReload, so it's safe to use as a state-store key. The
                 // TabStamps.MaxTabStamps cap mirrors the mark-viewed write site (spec § 5.2):
                 // eviction by oldest stamp.

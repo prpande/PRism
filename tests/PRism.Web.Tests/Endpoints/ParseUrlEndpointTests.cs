@@ -153,6 +153,22 @@ public class ParseUrlEndpointTests
     }
 
     [Fact]
+    public async Task Literal_null_body_returns_400_url_required_not_invalid_json()
+    {
+        // A JSON `null` payload parses successfully (Error=None), so it must fall through to the
+        // url-required guard — NOT the invalid-json branch. Pins the WrongContentType-vs-None
+        // seam introduced when the content-type/parse guard moved to HttpJson.TryReadJsonAsync (#666).
+        using var factory = new PRismWebApplicationFactory();
+        var client = factory.CreateClient();
+
+        var resp = await PostParseUrl(client, "null");
+
+        resp.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        var body = await resp.Content.ReadFromJsonAsync<JsonElement>();
+        body.GetProperty("error").GetString().Should().Be("url-required");
+    }
+
+    [Fact]
     public async Task Invalid_json_returns_400_invalid_json()
     {
         using var factory = new PRismWebApplicationFactory();

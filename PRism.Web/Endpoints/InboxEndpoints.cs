@@ -121,22 +121,15 @@ internal static class InboxEndpoints
             IConfigStore config,
             CancellationToken ct) =>
         {
-            // ReadFromJsonAsync throws InvalidOperationException (not JsonException) when the
-            // request lacks a JSON Content-Type, which would otherwise surface as a 500. Pre-check
-            // HasJsonContentType() so missing/wrong Content-Type collapses into the same structured
-            // 400 invalid-json shape callers see for malformed bodies.
-            if (!ctx.Request.HasJsonContentType())
+            // ReadFromJsonAsync throws InvalidOperationException (not JsonException, → 500) when the
+            // request lacks a JSON Content-Type; HttpJson.TryReadJsonAsync single-sources that guard.
+            // A missing/wrong Content-Type and a malformed body both surface as the same structured
+            // 400 invalid-json shape.
+            var read = await HttpJson.TryReadJsonAsync<ParsePrUrlRequest>(ctx.Request, ct).ConfigureAwait(false);
+            if (read.Error != JsonReadError.None)
                 return Results.BadRequest(new InboxError(Error: "invalid-json"));
 
-            ParsePrUrlRequest? body;
-            try
-            {
-                body = await ctx.Request.ReadFromJsonAsync<ParsePrUrlRequest>(ct).ConfigureAwait(false);
-            }
-            catch (System.Text.Json.JsonException)
-            {
-                return Results.BadRequest(new InboxError(Error: "invalid-json"));
-            }
+            var body = read.Value;
             if (body is null || string.IsNullOrWhiteSpace(body.Url))
                 return Results.BadRequest(new InboxError(Error: "url-required"));
 
