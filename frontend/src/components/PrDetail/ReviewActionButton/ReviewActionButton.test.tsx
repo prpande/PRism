@@ -153,6 +153,16 @@ describe('ReviewActionButton — menu', () => {
     expect(screen.getByTestId('review-action-chevron')).toBeDisabled();
     expect(screen.getByTestId('review-action-main')).toBeDisabled();
   });
+  it('freezing with the menu open drops aria-expanded with the menu (no SR desync)', async () => {
+    const p = props({ session: session({ draftVerdict: 'approve' }) });
+    const { rerender } = render(<ReviewActionButton {...p} />);
+    const chevron = screen.getByTestId('review-action-chevron');
+    await userEvent.click(chevron);
+    expect(chevron).toHaveAttribute('aria-expanded', 'true');
+    rerender(<ReviewActionButton {...p} inSubmitFlow={true} />);
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+    expect(chevron).toHaveAttribute('aria-expanded', 'false');
+  });
   it('frozen (inSubmitFlow) disables the chevron — no menu', async () => {
     render(
       <ReviewActionButton

@@ -153,9 +153,9 @@ export function Select<T extends string | number>({
   useEffect(() => () => window.clearTimeout(typeahead.current.timer), []);
 
   // Outside-pointerdown dismiss via the shared hook (#705). The hook's document
-  // Escape is inert here in practice: the combobox root's onKeyDown handles
-  // Escape first and preventDefaults it (so an open Select inside a dialog
-  // closes without closing the dialog), which trips the hook's skip-guard.
+  // Escape is inert here: the combobox root's onKeyDown handles Escape first
+  // and stopPropagations it (so an open Select inside a dialog closes without
+  // closing the dialog) — the event never reaches the hook's document listener.
   useDismissableMenu({
     open,
     rootRef,

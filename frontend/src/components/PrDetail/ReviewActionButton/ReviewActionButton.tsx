@@ -129,7 +129,7 @@ export function ReviewActionButton(props: ReviewActionButtonProps) {
           className={`${styles.chevron} ${styles[`fill-${face.fill}`]}`}
           aria-label="Review actions"
           aria-haspopup="menu"
-          aria-expanded={menuOpen}
+          aria-expanded={menuShown}
           disabled={face.frozen}
           onClick={() => setMenuOpen((v) => !v)}
         >
