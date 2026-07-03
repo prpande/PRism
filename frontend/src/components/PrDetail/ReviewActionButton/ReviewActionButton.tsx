@@ -1,5 +1,6 @@
 import { useCallback, useRef, useState } from 'react';
 import type { DraftVerdict } from '../../../api/types';
+import { useDismissableMenu } from '../../../hooks/useDismissableMenu';
 import { formatAge } from '../../../utils/relativeTime';
 import {
   deriveFace,
@@ -40,20 +41,38 @@ export function ReviewActionButton(props: ReviewActionButtonProps) {
   const face = deriveFace(props);
   const [menuOpen, setMenuOpen] = useState(false);
   const chevronRef = useRef<HTMLButtonElement>(null);
-  // Return focus to the chevron ONLY on intentional keyboard dismissal (Escape)
-  // or after activating a menu item. On Tab / outside-click the menu's document
-  // handler fires before the user's intended target settles, so forcing focus
-  // back to the chevron would steal it (Copilot review). Those paths pass
-  // restoreFocus:false and let the browser's natural focus flow proceed.
+  const rootDivRef = useRef<HTMLDivElement>(null);
+  // Return focus to the chevron ONLY after activating a menu item (Escape's
+  // refocus lives in the shared hook below). On Tab / outside-click no focus is
+  // forced back — the user's intended target keeps it (Copilot review). Those
+  // paths call closeMenu() bare and let the browser's natural focus flow proceed.
   const closeMenu = useCallback((opts?: { restoreFocus?: boolean }) => {
     setMenuOpen(false);
     if (opts?.restoreFocus) chevronRef.current?.focus();
   }, []);
 
+  // Esc + outside-pointerdown dismissal (#705 shared hook). rootDivRef wraps
+  // BOTH toggle-capable triggers (main button in the 'change'/'none' faces,
+  // chevron always) plus the mounted menu, so a pointerdown on either trigger
+  // is never an outside dismissal — each trigger's own onClick owns the toggle.
+  useDismissableMenu({
+    open: menuOpen && !face.frozen,
+    rootRef: rootDivRef,
+    returnFocusRef: chevronRef,
+    onClose: closeMenu,
+  });
+
   const onMainClick = () => {
-    if (face.mainAction === 'submit') props.onOpenSubmit();
-    else if (face.mainAction === 'resume') props.onResume();
-    else setMenuOpen((v) => !v); // 'change' (submitted) and 'none' (closed/merged): main opens the menu
+    // The main-action paths close an open drafts menu explicitly: the main
+    // button sits inside the hook's boundary, so the document listener no
+    // longer closes it for us.
+    if (face.mainAction === 'submit') {
+      setMenuOpen(false);
+      props.onOpenSubmit();
+    } else if (face.mainAction === 'resume') {
+      setMenuOpen(false);
+      props.onResume();
+    } else setMenuOpen((v) => !v); // 'change' (submitted) and 'none' (closed/merged): main toggles the menu
   };
 
   // Spec §4: disabled / aria-disabled / onClick MUST share one predicate so they
@@ -72,7 +91,7 @@ export function ReviewActionButton(props: ReviewActionButtonProps) {
 
   return (
     <div className={styles.wrap} data-testid="review-action-wrap">
-      <div className={styles.root} data-testid="review-action">
+      <div ref={rootDivRef} className={styles.root} data-testid="review-action">
         <button
           type="button"
           data-testid="review-action-main"
@@ -122,7 +141,6 @@ export function ReviewActionButton(props: ReviewActionButtonProps) {
           <ReviewActionMenu
             sections={deriveMenu(props)}
             onClose={closeMenu}
-            triggerRef={chevronRef}
             onSelect={(id, verdict) => {
               if (id.startsWith('verdict:')) {
                 if (!verdict) return; // mis-route guard — fail loud rather than silently clearing

@@ -88,6 +88,50 @@ describe('ReviewActionButton — menu', () => {
     expect(screen.queryByRole('menu')).not.toBeInTheDocument();
     expect(chevron).toHaveFocus();
   });
+  it('clicking the chevron while the menu is open closes it (no double-toggle)', async () => {
+    render(<ReviewActionButton {...props()} />);
+    const chevron = screen.getByTestId('review-action-chevron');
+    await userEvent.click(chevron);
+    expect(screen.getByRole('menu')).toBeInTheDocument();
+    await userEvent.click(chevron);
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+  });
+  it('clicking the main button in a change face closes the open menu (no double-toggle)', async () => {
+    // viewerReview non-null + no draft verdict + open PR → mainAction 'change':
+    // the main button toggles the same menu the chevron does.
+    render(
+      <ReviewActionButton
+        {...props({
+          viewerReview: {
+            state: 'approved',
+            submittedAt: new Date().toISOString(),
+            commitSha: 'x',
+          },
+        })}
+      />,
+    );
+    const main = screen.getByTestId('review-action-main');
+    await userEvent.click(main);
+    expect(screen.getByRole('menu')).toBeInTheDocument();
+    await userEvent.click(main);
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+  });
+  it('outside click closes the menu and leaves focus where the click landed', async () => {
+    render(
+      <div>
+        <button>outside</button>
+        <ReviewActionButton {...props()} />
+      </div>,
+    );
+    const chevron = screen.getByTestId('review-action-chevron');
+    await userEvent.click(chevron);
+    expect(screen.getByRole('menu')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'outside' }));
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+    // Flush the deferred focus-return path to prove it does NOT fire on outside close.
+    await new Promise((r) => setTimeout(r, 0));
+    expect(chevron).not.toHaveFocus();
+  });
   it('session not loaded → main + chevron both inert (no patch before session arrives)', async () => {
     const h = handlers();
     render(
