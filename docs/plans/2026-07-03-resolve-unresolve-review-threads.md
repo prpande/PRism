@@ -295,19 +295,15 @@ internal sealed partial class GitHubReviewThreadWriter : IReviewThreadWriter
 }
 ```
 
-- [ ] **Step 4: Register in DI** (mirror the `IPrLifecycleWriter` block in `ServiceCollectionExtensions.cs`)
+- [ ] **Step 4: Register in DI** (verbatim shape of the adjacent `IPrLifecycleWriter` registration, `ServiceCollectionExtensions.cs:96-106` — three services: `IHttpClientFactory`, `ITokenStore`, host from `IConfigStore.Current.Github.Host`)
 
 ```csharp
-services.AddSingleton<IReviewThreadWriter>(sp =>
-{
-    var httpFactory = sp.GetRequiredService<IHttpClientFactory>();
-    var tokens = sp.GetRequiredService<ITokenStore>(); // whatever IPrLifecycleWriter uses
-    var host = /* same host resolution as the IPrLifecycleWriter registration */;
-    var log = sp.GetService<ILogger<GitHubReviewThreadWriter>>();
-    return new GitHubReviewThreadWriter(httpFactory, () => tokens.ReadAsync(...), host, log);
-});
+services.AddSingleton<IReviewThreadWriter>(sp => new GitHubReviewThreadWriter(
+    sp.GetRequiredService<IHttpClientFactory>(),
+    () => sp.GetRequiredService<ITokenStore>().ReadAsync(CancellationToken.None),
+    sp.GetRequiredService<IConfigStore>().Current.Github.Host,
+    sp.GetRequiredService<ILogger<GitHubReviewThreadWriter>>()));
 ```
-(Copy the exact token/host wiring from the adjacent `IPrLifecycleWriter` registration — do not invent new dependencies.)
 
 - [ ] **Step 5: Run tests + commit**
 
@@ -337,14 +333,14 @@ git commit -m "feat(#571): GitHubReviewThreadWriter (resolve/unresolve GraphQL +
 public async Task Publishing_ReviewThreadResolutionChanged_evicts_the_snapshot()
 {
     var (loader, bus, prRef) = await SeedLoadedSnapshotAsync(); // existing helper pattern
-    Assert.True(loader.HasCached(prRef)); // or: a second GetAsync returns the cached instance
+    loader.TryGetCachedSnapshot(prRef).Should().NotBeNull();
 
     bus.Publish(new ReviewThreadResolutionChanged(prRef));
 
-    Assert.False(loader.HasCached(prRef)); // evicted → next GetAsync re-materializes
+    loader.TryGetCachedSnapshot(prRef).Should().BeNull(); // evicted → next read re-materializes
 }
 ```
-(Mirror the existing `PrLifecycleChanged` invalidation test; use whatever cache-presence assertion that test uses.)
+(Structurally identical to the existing `SingleCommentPostedBusEvent` / `DraftSubmitted` eviction tests in `PrDetailLoaderTests.cs:245-257, 295-298` — `bus.Publish(...)` then assert `TryGetCachedSnapshot` flips `NotBeNull` → `BeNull`. There is no `PrLifecycleChanged` eviction test to mirror; use these.)
 
 - [ ] **Step 2: Run → FAIL** (`ReviewThreadResolutionChanged` undefined).
 
@@ -411,7 +407,9 @@ public void Projects_ReviewThreadResolutionChanged_to_wire()
 ```csharp
 ReviewThreadResolutionChanged e => ("review-thread-resolution-changed", new ReviewThreadResolutionChangedWire(e.PrRef.ToString())),
 // …
-private sealed record ReviewThreadResolutionChangedWire(string PrRef);
+// internal sealed (match the sibling wire records) so the PRism.Web.Tests projection test can
+// cast the returned object payload and read PrRef.
+internal sealed record ReviewThreadResolutionChangedWire(string PrRef);
 ```
 
 - [ ] **Step 4: Subscribe + dispose in `SseChannel`** (mirror `_busPrLifecycleChanged` at `:93,357,438`)
@@ -487,21 +485,23 @@ internal static class PrReviewThreadEndpoints
         app.MapPost("/api/pr/{owner}/{repo}/{number:int:min(1)}/thread/resolve",
             (string owner, string repo, int number, HttpContext http,
              IReviewThreadWriter writer, IReviewEventBus bus, IActivePrCache activePrCache,
-             IPrDetailLoader loader, CancellationToken ct)
+             PrDetailLoader loader, CancellationToken ct)
                 => HandleAsync(owner, repo, number, http, bus, activePrCache, loader,
                                static (w, r, id, c) => w.ResolveAsync(r, id, c), writer, ct));
 
         app.MapPost("/api/pr/{owner}/{repo}/{number:int:min(1)}/thread/unresolve",
             (string owner, string repo, int number, HttpContext http,
              IReviewThreadWriter writer, IReviewEventBus bus, IActivePrCache activePrCache,
-             IPrDetailLoader loader, CancellationToken ct)
+             PrDetailLoader loader, CancellationToken ct)
                 => HandleAsync(owner, repo, number, http, bus, activePrCache, loader,
                                static (w, r, id, c) => w.UnresolveAsync(r, id, c), writer, ct));
     }
 
+    // PrDetailLoader is the concrete type (no IPrDetailLoader — single impl); other endpoints
+    // inject it directly (PrDetailEndpoints.cs:20).
     private static async Task<IResult> HandleAsync(
         string owner, string repo, int number, HttpContext http,
-        IReviewEventBus bus, IActivePrCache activePrCache, IPrDetailLoader loader,
+        IReviewEventBus bus, IActivePrCache activePrCache, PrDetailLoader loader,
         Func<IReviewThreadWriter, PrReference, string, CancellationToken, Task<ReviewThreadResult>> action,
         IReviewThreadWriter writer, CancellationToken ct)
     {
@@ -521,8 +521,11 @@ internal static class PrReviewThreadEndpoints
             return Results.Json(new { code = "thread-id-required" }, statusCode: StatusCodes.Status400BadRequest);
 
         // Gate 3 — ownership binding (spec §5.4): the threadId must belong to THIS PR's snapshot.
-        var snapshot = await loader.GetAsync(prRef, ct).ConfigureAwait(false);
-        if (snapshot is null || !snapshot.ReviewComments.Any(t => t.ThreadId == req.ThreadId))
+        // Hot path is the in-memory cache; re-hydrate via LoadAsync only if a background evict cleared
+        // it (verbatim the PrDetailEndpoints.cs:88-89 hybrid) so a legitimately-evicted snapshot does
+        // NOT spurious-404. ReviewComments lives on snapshot.Detail (PrDetailSnapshot = Detail/HeadSha/Gen).
+        var snapshot = loader.TryGetCachedSnapshot(prRef) ?? await loader.LoadAsync(prRef, ct).ConfigureAwait(false);
+        if (snapshot is null || !snapshot.Detail.ReviewComments.Any(t => t.ThreadId == req.ThreadId))
             return Results.Json(new { code = "thread-not-found" }, statusCode: StatusCodes.Status404NotFound);
 
         var result = await action(writer, prRef, req.ThreadId, ct).ConfigureAwait(false);
@@ -547,7 +550,7 @@ internal static class PrReviewThreadEndpoints
 }
 ```
 
-> **Snapshot access seam.** `loader.GetAsync(prRef, ct)` returning the cached `PrDetailDto` (with `ReviewComments`) is the assumed shape. Confirm the actual `IPrDetailLoader` method name/signature; if it does not expose a prRef-only read, use the method the endpoints already use to obtain a PR-detail snapshot. Do NOT add a new network round-trip — the snapshot is already cached for the PR the user is viewing.
+> **Snapshot access seam (verified).** Inject the **concrete** `PrDetailLoader` (there is no `IPrDetailLoader` — single impl; other endpoints inject the class). Use the hot-path-then-rehydrate hybrid `loader.TryGetCachedSnapshot(prRef) ?? await loader.LoadAsync(prRef, ct)` exactly as `PrDetailEndpoints.cs:88-89` does: `TryGetCachedSnapshot` is a pure in-memory read (free on the hot path), and `LoadAsync` re-hydrates only when a background evict (poller/peer-write/config-reload) cleared the entry — so a legitimately-evicted snapshot is NOT mistaken for a foreign thread and 404'd. `ReviewComments` is `snapshot.Detail.ReviewComments` (`PrDetailSnapshot` = `(Detail, HeadSha, CoefficientsGeneration)`; `PrDetailDto.ReviewComments : IReadOnlyList<ReviewThreadDto>`, `ReviewThreadDto.ThreadId`).
 
 - [ ] **Step 4: Map in `Program.cs`** — add `app.MapPrReviewThreadEndpoints();` next to `app.MapPrLifecycleEndpoints();`.
 
@@ -737,7 +740,8 @@ git commit -m "feat(#571): SSE subscriber hook for thread resolution changes"
 - Produces:
   ```ts
   useThreadResolution(args: {
-    prRef: PrReference; threadId: string; isResolved: boolean;
+    prRef: PrReference | null;     // null in pure-render/read-only (no replyContext) — invoke no-ops
+    threadId: string; isResolved: boolean;
     reload: () => void; clearCollapseOverride: (id: string) => void;
   }): {
     pending: boolean;              // in-flight → spinner + disabled
@@ -747,6 +751,7 @@ git commit -m "feat(#571): SSE subscriber hook for thread resolution changes"
     invoke: () => void;            // toggles based on isResolved
   }
   ```
+  **Rules-of-Hooks note:** `ThreadView` owns the single hook instance (state is shared across the button's two possible positions), so the hook is called **unconditionally**. It must therefore tolerate a `null` `prRef` (pure-render / read-only, where `ThreadView` has no `replyContext`) — `invoke` early-returns when `prRef` is null, and the button isn't rendered in that mode anyway.
 
 **Approach.** A confirm-then-apply clone of `usePrAction`'s single-action path, per-instance, with these #571-specific differences: (a) errors are **inline state** (not a toast); (b) the "target" is `!isResolvedAtClick`; (c) on reconcile release, call `clearCollapseOverride(threadId)`; (d) the fallback-timer path distinguishes reconcile-landed vs reconcile-failed → `reconcileHint`; (e) expose `announce` for the live region. `copyFor` reuses the sibling's `token-cannot-write` / `subscribe-rejected` strings.
 
@@ -794,7 +799,7 @@ function copyFor(code: ThreadResolutionErrorCode | undefined): string {
 export function useThreadResolution({
   prRef, threadId, isResolved, reload, clearCollapseOverride,
 }: {
-  prRef: PrReference; threadId: string; isResolved: boolean;
+  prRef: PrReference | null; threadId: string; isResolved: boolean;
   reload: () => void; clearCollapseOverride: (id: string) => void;
 }) {
   const [pending, setPending] = useState(false);
@@ -826,7 +831,7 @@ export function useThreadResolution({
   useEffect(() => clearTimer, [clearTimer]);
 
   const invoke = useCallback(() => {
-    if (inFlight.current) return;
+    if (!prRef || inFlight.current) return; // null prRef = pure-render/read-only; no-op
     inFlight.current = true;
     const target = !isResolved;
     targetRef.current = target;
@@ -911,7 +916,7 @@ git commit -m "feat(#571): useThreadResolution confirm-then-apply hook"
 
 - [ ] **Step 2: Run → FAIL.**
 
-- [ ] **Step 3: Add the slot** (`ComposerActionsBar.tsx` — before the `composer-post-now` button at `:101`)
+- [ ] **Step 3a: Add the slot to `ComposerActionsBar`** (before the `composer-post-now` button at `ComposerActionsBar.tsx:101`)
 
 ```tsx
 // props: add `extraActionStart?: ReactNode;` (import type { ReactNode } from 'react')
@@ -919,7 +924,15 @@ git commit -m "feat(#571): useThreadResolution confirm-then-apply hook"
 {extraActionStart}
 <button type="button" className="composer-post-now" /* …unchanged… */>
 ```
-Thread `extraActionStart` from `ReplyComposer` (which receives the resolve control node from `ThreadView` in Task 12). `InlineCommentComposer` does not pass it → no resolve concept leaks into the new-comment composer.
+
+- [ ] **Step 3b: Thread the prop through `ReplyComposer`** — `ComposerActionsBar` is rendered by `ReplyComposer` (`ReplyComposer.tsx:89`, `<ComposerActionsBar {...actions} />`). `ReplyComposer` must accept its own `extraActionStart?: ReactNode` prop and forward it:
+
+```tsx
+// ReplyComposerProps: add `extraActionStart?: ReactNode;`
+<ComposerActionsBar {...actions} extraActionStart={extraActionStart} />
+```
+
+- [ ] **Step 3c: Do NOT touch `InlineCommentComposer`.** It also spreads `{...actions}` into `ComposerActionsBar` (`InlineCommentComposer.tsx:111`) but must NOT gain or pass `extraActionStart` — the new-comment composer has no thread/resolve concept, so the slot stays `undefined` there (no leak). `ThreadView` (Task 12) passes the resolve control node as `ReplyComposer`'s `extraActionStart` only when the composer is open.
 
 - [ ] **Step 4: Run → PASS + Step 5: Commit**
 
@@ -1004,6 +1017,8 @@ git commit -m "feat(#571): wire reload + clearCollapseOverride + thread-resoluti
 // - token-cannot-write → full-width role="alert" banner with the scope copy; state unchanged.
 // - reconcileHint → the "resolved — couldn't refresh, reload" hint renders.
 // - readOnly → the control is disabled.
+// - Pure render (NO replyContext): no Resolve/Unresolve button renders and nothing throws
+//   (the hook is called with prRef=null). Keep the existing pure-render ExistingCommentWidget tests green.
 // - Focus: clicking parks focus on the thread root (div[data-thread-id]) before disabling.
 ```
 
@@ -1019,10 +1034,18 @@ git commit -m "feat(#571): wire reload + clearCollapseOverride + thread-resoluti
 - [ ] **Step 3b: Render the control in `ThreadView`** (uses the hook; button in the actions row + composer slot; focus park; sr-only live region; inline banner)
 
 ```tsx
-// inside ThreadView, after computing `thread`:
+// module scope — stable no-op fallbacks so the hook's useCallback deps don't churn:
+const NOOP = () => {};
+
+// inside ThreadView, after computing `thread`. The hook is called UNCONDITIONALLY (Rules of
+// Hooks); it tolerates a null prRef (pure-render / read-only has no replyContext), and the button
+// below is only rendered when replyContext exists, so invoke() is never reachable with a null prRef.
 const { pending, announce, error, reconcileHint, invoke } = useThreadResolution({
-  prRef: replyContext!.prRef, threadId: thread.threadId, isResolved: thread.isResolved,
-  reload: replyContext!.reload, clearCollapseOverride: replyContext!.clearCollapseOverride,
+  prRef: replyContext?.prRef ?? null,
+  threadId: thread.threadId,
+  isResolved: thread.isResolved,
+  reload: replyContext?.reload ?? NOOP,
+  clearCollapseOverride: replyContext?.clearCollapseOverride ?? NOOP,
 });
 const rootRef = useRef<HTMLDivElement>(null);
 const onResolveClick = () => { rootRef.current?.focus(); invoke(); };
