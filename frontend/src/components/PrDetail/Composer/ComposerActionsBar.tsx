@@ -1,5 +1,4 @@
-import { useId } from 'react';
-import type { ReactNode } from 'react';
+import { useId, type ReactNode } from 'react';
 import { AiComposerAssistant } from '../../Ai/AiComposerAssistant';
 import type { ComposerSaveBadge } from '../../../hooks/useComposerAutoSave';
 import { ComposerStatusBadge } from './ComposerStatusBadge';

@@ -19,6 +19,11 @@ import { stripMarkdown } from '../../HotspotsTab/stripMarkdown';
 // churn on every render.
 const NOOP = () => {};
 
+function resolveButtonLabel(pending: boolean, isResolved: boolean): string {
+  if (pending) return isResolved ? 'Unresolving…' : 'Resolving…';
+  return isResolved ? 'Unresolve conversation' : 'Resolve conversation';
+}
+
 // #327 Task 13 — the STABLE half of the split reply wiring: identity-stable
 // callbacks plus the rarely-changing scalars (prRef/prState/readOnly). FilesTab
 // builds it once (latest-ref-backed callbacks) so it can cross the memoized
@@ -164,13 +169,7 @@ function ThreadView({
       aria-busy={pending || undefined}
       onClick={onResolveClick}
     >
-      {pending
-        ? thread.isResolved
-          ? 'Unresolving…'
-          : 'Resolving…'
-        : thread.isResolved
-          ? 'Unresolve conversation'
-          : 'Resolve conversation'}
+      {resolveButtonLabel(pending, thread.isResolved)}
     </button>
   ) : null;
 
