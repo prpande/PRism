@@ -50,20 +50,11 @@ $ErrorActionPreference = 'Stop'
 Import-Module (Join-Path $PSScriptRoot 'PRismLauncher.psm1') -Force
 
 function Assert-Platform {
-    # Windows-only by design (spec section 2): the harness-reaping problem and its
-    # WMI fix are Windows-specific, and Get-NetTCPConnection / taskkill / Win32_Process
-    # do not exist on POSIX. Fail fast with a clear pointer rather than deep inside
-    # the launch with a cryptic cmdlet-not-found.
-    if (-not $IsWindows) {
-        throw "serve-detached.ps1 is Windows-only (see spec section 2 'Out of scope: macOS / Linux'). On POSIX, setsid/nohup already survive; use run.ps1 directly."
-    }
-    # A locked-down sandbox / container may lack WMI. Probe cheaply so the failure
-    # is interpretable rather than surfacing as a launch-time Invoke-CimMethod error.
-    try {
-        $null = Get-CimClass -ClassName Win32_Process -ErrorAction Stop
-    } catch {
-        throw "WMI (Win32_Process) is not reachable in this environment, so the detached launch cannot spawn outside the harness job object. Run run.ps1 in the foreground instead. Underlying error: $($_.Exception.Message)"
-    }
+    # Windows-only by design (spec section 2); WMI-detached spawn requires Win32_Process.
+    # Both messages preserved verbatim; Assert-WindowsWmi appends " Underlying error: ...".
+    Assert-WindowsWmi `
+        -NotWindowsMessage "serve-detached.ps1 is Windows-only (see spec section 2 'Out of scope: macOS / Linux'). On POSIX, setsid/nohup already survive; use run.ps1 directly." `
+        -WmiUnreachableMessage "WMI (Win32_Process) is not reachable in this environment, so the detached launch cannot spawn outside the harness job object. Run run.ps1 in the foreground instead."
 }
 
 function Get-CanonicalDataDir {

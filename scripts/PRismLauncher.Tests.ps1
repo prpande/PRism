@@ -81,6 +81,17 @@ try {
     Assert-Equal 'hello' ([System.IO.File]::ReadAllText($wf)) "round-trips content"
 } finally { Remove-Item -LiteralPath $wf -Force -ErrorAction SilentlyContinue }
 
+Write-Host "Test-OnWindows (5.1-safe platform check)" -ForegroundColor Cyan
+Assert-True  (Test-OnWindows -OsEnv 'Windows_NT')    "Windows_NT -> on Windows (5.1 and 7)"
+Assert-True  (-not (Test-OnWindows -OsEnv ''))       "empty OS env -> not Windows"
+Assert-True  (-not (Test-OnWindows -OsEnv 'Darwin')) "non-Windows OS env -> not Windows"
+Assert-True  (Test-OnWindows)                        "live host is detected as Windows"
+
+Write-Host "Assert-WindowsWmi (message passthrough)" -ForegroundColor Cyan
+$notWin = 'NOT-WINDOWS-MARKER'
+try { Assert-WindowsWmi -NotWindowsMessage $notWin -WmiUnreachableMessage 'x' -ErrorAction Stop; Assert-True $true "reachable on a live Windows+WMI host" }
+catch { Assert-True $false "unexpected throw on a live Windows+WMI host: $($_.Exception.Message)" }
+
 if ($script:Failures -gt 0) {
     Write-Host "$script:Failures test(s) failed" -ForegroundColor Red
     exit 1

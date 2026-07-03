@@ -164,16 +164,6 @@ function Test-CleanTargetSafe {
     return (Test-SafeDeleteTarget -Path $Path -RequireLeafName 'PRism').Safe
 }
 
-function Test-OnWindows {
-    # True when running on Windows, across BOTH Windows PowerShell 5.1 and PowerShell 7+.
-    # `$IsWindows` is a 6+ automatic variable — under 5.1 it is undefined ($null), so the
-    # old `-not $IsWindows` guard threw the macOS message ON Windows. `$env:OS` is
-    # 'Windows_NT' on every Windows host regardless of PowerShell edition, and unset on
-    # macOS/Linux, so it is the edition-agnostic signal. Injectable for testing.
-    param([string]$OsEnv = $env:OS)
-    return $OsEnv -eq 'Windows_NT'
-}
-
 function Get-PowerShellHostPath {
     # Full path to the PowerShell host that should run the detached wrapper. Prefer the
     # host running THIS launcher (Get-Process .Path), so a tester on Windows PowerShell
@@ -189,18 +179,11 @@ function Get-PowerShellHostPath {
 }
 
 function Assert-Platform {
-    if (-not (Test-OnWindows)) {
-        throw "run-desktop.ps1 is the Windows launcher. On macOS run scripts/run-desktop.sh instead."
-    }
-    # The detached launch spawns via WMI (Win32_Process.Create). A locked-down sandbox
-    # or container may lack WMI; probe cheaply and fail HERE (before the multi-minute
-    # build) with a clear message rather than deep inside the launch with a cryptic
-    # Invoke-CimMethod error. Mirrors scripts/serve-detached.ps1:Assert-Platform.
-    try {
-        $null = Get-CimClass -ClassName Win32_Process -ErrorAction Stop
-    } catch {
-        throw "WMI (Win32_Process) is not reachable in this environment, so the detached launch cannot spawn. Underlying error: $($_.Exception.Message)"
-    }
+    # Windows + WMI preflight via the shared module (#676). Both messages preserved
+    # verbatim; Assert-WindowsWmi appends " Underlying error: ..." to the WMI one.
+    Assert-WindowsWmi `
+        -NotWindowsMessage "run-desktop.ps1 is the Windows launcher. On macOS run scripts/run-desktop.sh instead." `
+        -WmiUnreachableMessage "WMI (Win32_Process) is not reachable in this environment, so the detached launch cannot spawn."
 }
 
 function Assert-CommandPresent {

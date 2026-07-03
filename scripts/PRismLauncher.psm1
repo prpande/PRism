@@ -86,4 +86,28 @@ function Write-Utf8NoBom {
     [System.IO.File]::WriteAllText($Path, $Text, [System.Text.UTF8Encoding]::new($false))
 }
 
-Export-ModuleMember -Function Test-SafeDeleteTarget, Write-Utf8NoBom
+function Test-OnWindows {
+    # True on Windows across BOTH Windows PowerShell 5.1 and PowerShell 7+. $IsWindows is a 6+
+    # automatic var (undefined under 5.1); $env:OS == 'Windows_NT' on every Windows host regardless
+    # of edition, and is unset on macOS/Linux. Injectable for testing. (#676)
+    param([string]$OsEnv = $env:OS)
+    return $OsEnv -eq 'Windows_NT'
+}
+
+function Assert-WindowsWmi {
+    # Windows + WMI preflight shared by serve-detached and run-desktop (#676). Fail fast (before a
+    # multi-minute build) with a caller-specific message. Both remediations are per-caller because
+    # both genuinely differ (foreground run.ps1 vs run-desktop.sh; harness-job note vs not).
+    param(
+        [Parameter(Mandatory)][string]$NotWindowsMessage,
+        [Parameter(Mandatory)][string]$WmiUnreachableMessage
+    )
+    if (-not (Test-OnWindows)) { throw $NotWindowsMessage }
+    try {
+        $null = Get-CimClass -ClassName Win32_Process -ErrorAction Stop
+    } catch {
+        throw "$WmiUnreachableMessage Underlying error: $($_.Exception.Message)"
+    }
+}
+
+Export-ModuleMember -Function Test-SafeDeleteTarget, Write-Utf8NoBom, Test-OnWindows, Assert-WindowsWmi

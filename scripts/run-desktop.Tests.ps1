@@ -53,12 +53,8 @@ $dnMsg = Get-DotnetRemediation
 Assert-Match $dnMsg 'Microsoft\.DotNet\.SDK\.10' "dotnet remediation names SDK 10 winget package"
 Assert-Match $dnMsg '\.NET 10' "dotnet remediation names .NET 10"
 
-Write-Host "Test-OnWindows (5.1-safe platform check)" -ForegroundColor Cyan
-Assert-True  (Test-OnWindows -OsEnv 'Windows_NT')        "Windows_NT -> on Windows (5.1 and 7)"
-Assert-True  (-not (Test-OnWindows -OsEnv ''))           "empty OS env (macOS/Linux pwsh) -> not Windows"
-Assert-True  (-not (Test-OnWindows -OsEnv 'Darwin'))     "non-Windows OS env -> not Windows"
-# Real host: this harness only runs on Windows, so the live check must agree.
-Assert-True  (Test-OnWindows)                            "live host is detected as Windows"
+# Test-OnWindows moved to PRismLauncher.Tests.ps1 (the function now lives in the shared
+# module, imported by run-desktop.ps1); its cases are exercised there. (#676)
 
 Write-Host "Get-PowerShellHostPath (current-host spawn, no PS7 needed)" -ForegroundColor Cyan
 # A resolvable host path is returned verbatim (the current pwsh/powershell that launched us).
