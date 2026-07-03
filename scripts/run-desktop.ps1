@@ -40,6 +40,8 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
+Import-Module (Join-Path $PSScriptRoot 'PRismLauncher.psm1') -Force
+
 # ---------------------------------------------------------------------------
 # Pure, dot-sourceable helpers below. The main-guard at the bottom keeps them
 # importable into run-desktop.Tests.ps1 without executing the launch.
@@ -101,8 +103,11 @@ function New-DesktopLauncherWrapper {
     # command line carries NEITHER env vars NOR redirection operators, so the wrapper
     # owns both: it sets PRISM_SIDECAR_BINARY, cd's to desktop/, and runs `electron .`
     # with its own *>> redirection. Single-quote every interpolated path (doubling
-    # embedded quotes) so a space/quote in a path cannot break the script. Same
-    # technique as scripts/serve-detached.ps1:Write-WrapperScript.
+    # embedded quotes) so a space/quote in a path cannot break the script. Wrapper
+    # AUTHORING stays per-script (the wrapper bodies genuinely differ); the shared
+    # launcher primitives it leans on -- the no-BOM writer and the WMI spawn -- now come
+    # from PRismLauncher.psm1 (#676). serve-detached.ps1:Write-WrapperScript is the
+    # sibling authoring function.
     param(
         [string]$ElectronExe,
         [string]$DesktopDir,
@@ -133,7 +138,7 @@ function Get-LauncherPidfilePath {
 
 function Write-LauncherPidfile {
     param([string]$PidfilePath, [int]$ProcessId)
-    [System.IO.File]::WriteAllText($PidfilePath, "$ProcessId", [System.Text.UTF8Encoding]::new($false))
+    Write-Utf8NoBom -Path $PidfilePath -Text "$ProcessId"
 }
 
 function Test-LauncherAlreadyRunning {
@@ -155,41 +160,11 @@ function Test-LauncherAlreadyRunning {
 }
 
 function Test-CleanTargetSafe {
-    # Defense-in-depth guard for -Clean's recursive delete. The data dir is COMPUTED (not
-    # user-supplied), but Remove-Item -Recurse is catastrophic if the path is ever empty,
-    # relative, a protected root, or too shallow (e.g. GetFolderPath returning '' would make
-    # the target a bare relative 'PRism'). Mirrors run.ps1:Assert-SafeResetTarget, trimmed to
-    # the computed-path case. Returns $true ONLY when the path is safe to recursively delete:
-    # absolute, leaf == 'PRism', not a protected root, and >=2 segments below the drive root.
+    # Bool-adapter over the shared guard (PRismLauncher.psm1:Test-SafeDeleteTarget, #676).
+    # run-desktop's target is the COMPUTED %LOCALAPPDATA%\PRism, so lock the leaf to 'PRism';
+    # no repo/temp additions and no checkout backstop (a computed path can be neither).
     param([string]$Path)
-    if ([string]::IsNullOrWhiteSpace($Path)) { return $false }
-    # Absolute-path check that also works on .NET Framework 4.x (Windows PowerShell 5.1),
-    # which lacks Path.IsPathFullyQualified (a .NET Core API — calling it throws under 5.1).
-    # Require a drive root (C:\) or a UNC root (\\…); a bare or drive-relative path is rejected.
-    if ($Path -notmatch '^[A-Za-z]:[\\/]' -and $Path -notmatch '^[\\/][\\/]') { return $false }
-    $resolved = [System.IO.Path]::GetFullPath($Path)
-    if ((Split-Path $resolved -Leaf) -ne 'PRism') { return $false }
-    $trimmed = $resolved.TrimEnd('\', '/')
-    $protected = @(
-        [Environment]::GetFolderPath('UserProfile'),
-        [Environment]::GetFolderPath('LocalApplicationData')
-    ) | Where-Object { $_ } | ForEach-Object { $_.TrimEnd('\', '/') }
-    if ($protected -contains $trimmed) { return $false }
-    $root = [System.IO.Path]::GetPathRoot($resolved)
-    $rel = $resolved.Substring($root.Length)
-    $segments = @($rel -split '[\\/]' | Where-Object { $_ })
-    if ($segments.Count -lt 2) { return $false }
-    return $true
-}
-
-function Test-OnWindows {
-    # True when running on Windows, across BOTH Windows PowerShell 5.1 and PowerShell 7+.
-    # `$IsWindows` is a 6+ automatic variable — under 5.1 it is undefined ($null), so the
-    # old `-not $IsWindows` guard threw the macOS message ON Windows. `$env:OS` is
-    # 'Windows_NT' on every Windows host regardless of PowerShell edition, and unset on
-    # macOS/Linux, so it is the edition-agnostic signal. Injectable for testing.
-    param([string]$OsEnv = $env:OS)
-    return $OsEnv -eq 'Windows_NT'
+    return (Test-SafeDeleteTarget -Path $Path -RequireLeafName 'PRism').Safe
 }
 
 function Get-PowerShellHostPath {
@@ -207,18 +182,11 @@ function Get-PowerShellHostPath {
 }
 
 function Assert-Platform {
-    if (-not (Test-OnWindows)) {
-        throw "run-desktop.ps1 is the Windows launcher. On macOS run scripts/run-desktop.sh instead."
-    }
-    # The detached launch spawns via WMI (Win32_Process.Create). A locked-down sandbox
-    # or container may lack WMI; probe cheaply and fail HERE (before the multi-minute
-    # build) with a clear message rather than deep inside the launch with a cryptic
-    # Invoke-CimMethod error. Mirrors scripts/serve-detached.ps1:Assert-Platform.
-    try {
-        $null = Get-CimClass -ClassName Win32_Process -ErrorAction Stop
-    } catch {
-        throw "WMI (Win32_Process) is not reachable in this environment, so the detached launch cannot spawn. Underlying error: $($_.Exception.Message)"
-    }
+    # Windows + WMI preflight via the shared module (#676). Both messages preserved
+    # verbatim; Assert-WindowsWmi appends " Underlying error: ..." to the WMI one.
+    Assert-WindowsWmi `
+        -NotWindowsMessage "run-desktop.ps1 is the Windows launcher. On macOS run scripts/run-desktop.sh instead." `
+        -WmiUnreachableMessage "WMI (Win32_Process) is not reachable in this environment, so the detached launch cannot spawn."
 }
 
 function Assert-CommandPresent {
@@ -328,7 +296,7 @@ function Invoke-Main {
     $wrapperPath = Join-Path $dataDir 'run-desktop.wrapper.ps1'
     $wrapper     = New-DesktopLauncherWrapper -ElectronExe $electron -DesktopDir $desktopDir `
         -SidecarBinary $sidecar -Log $log -StartedUtc $startedUtc
-    [System.IO.File]::WriteAllText($wrapperPath, $wrapper, [System.Text.UTF8Encoding]::new($false))
+    Write-Utf8NoBom -Path $wrapperPath -Text $wrapper
 
     # Spawn the wrapper with the SAME PowerShell host that is running this launcher, so a
     # tester on the built-in Windows PowerShell 5.1 doesn't need PowerShell 7 installed at
@@ -340,20 +308,17 @@ function Invoke-Main {
     # internal paths use single-quote doubling for defense in depth).
     $hostExe = Get-PowerShellHostPath
     $cmd = "`"$hostExe`" -NoProfile -ExecutionPolicy Bypass -File `"$wrapperPath`""
-    # Hide the wrapper host's console window. WMI's provider host (WmiPrvSE) has no console,
-    # so a console app spawned via Win32_Process.Create gets a FRESH, visible terminal that
-    # lingers for the wrapper's whole life (the host stays alive as electron's parent). The
-    # wrapper needs no console — its output is redirected to the log — so SW_HIDE (ShowWindow=0)
-    # suppresses the stray window. (CreateFlags=CREATE_NO_WINDOW is rejected by the WMI provider
-    # with ReturnValue=21, so ShowWindow is the usable lever; verified on PS 5.1 and 7.)
+    # Hide the wrapper host's console window. WMI's provider host (WmiPrvSE) has no console, so a
+    # console app spawned via Win32_Process.Create gets a FRESH, visible terminal that lingers for
+    # the wrapper's whole life (the host stays alive as electron's parent). The wrapper needs no
+    # console — its output is redirected to the log — so SW_HIDE (ShowWindow=0) suppresses the stray
+    # window. (CreateFlags=CREATE_NO_WINDOW is rejected by the WMI provider with ReturnValue=21, so
+    # ShowWindow is the usable lever; verified on PS 5.1 and 7.) The spawn itself goes through the
+    # shared PRismLauncher.psm1:Invoke-Win32ProcessCreate (#676); no -FailureSuffix -> bare message.
     $startupInfo = New-CimInstance -ClassName Win32_ProcessStartup -ClientOnly `
         -Property @{ ShowWindow = [uint16]0 }
-    $res = Invoke-CimMethod -ClassName Win32_Process -MethodName Create `
-        -Arguments @{ CommandLine = $cmd; CurrentDirectory = $desktopDir; ProcessStartupInformation = $startupInfo }
-    if ($res.ReturnValue -ne 0) {
-        throw "WMI Win32_Process.Create refused to spawn the wrapper (ReturnValue=$($res.ReturnValue))."
-    }
-    Write-LauncherPidfile -PidfilePath $pidfile -ProcessId ([int]$res.ProcessId)
+    $procId = Invoke-Win32ProcessCreate -CommandLine $cmd -WorkingDirectory $desktopDir -StartupInfo $startupInfo
+    Write-LauncherPidfile -PidfilePath $pidfile -ProcessId $procId
 
     Write-Host "PRism desktop launching (detached). The window should appear shortly." -ForegroundColor Green
     Write-Host "  If it stays blank or never appears, inspect: $log" -ForegroundColor DarkGray

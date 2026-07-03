@@ -47,21 +47,14 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
+Import-Module (Join-Path $PSScriptRoot 'PRismLauncher.psm1') -Force
+
 function Assert-Platform {
-    # Windows-only by design (spec section 2): the harness-reaping problem and its
-    # WMI fix are Windows-specific, and Get-NetTCPConnection / taskkill / Win32_Process
-    # do not exist on POSIX. Fail fast with a clear pointer rather than deep inside
-    # the launch with a cryptic cmdlet-not-found.
-    if (-not $IsWindows) {
-        throw "serve-detached.ps1 is Windows-only (see spec section 2 'Out of scope: macOS / Linux'). On POSIX, setsid/nohup already survive; use run.ps1 directly."
-    }
-    # A locked-down sandbox / container may lack WMI. Probe cheaply so the failure
-    # is interpretable rather than surfacing as a launch-time Invoke-CimMethod error.
-    try {
-        $null = Get-CimClass -ClassName Win32_Process -ErrorAction Stop
-    } catch {
-        throw "WMI (Win32_Process) is not reachable in this environment, so the detached launch cannot spawn outside the harness job object. Run run.ps1 in the foreground instead. Underlying error: $($_.Exception.Message)"
-    }
+    # Windows-only by design (spec section 2); WMI-detached spawn requires Win32_Process.
+    # Both messages preserved verbatim; Assert-WindowsWmi appends " Underlying error: ...".
+    Assert-WindowsWmi `
+        -NotWindowsMessage "serve-detached.ps1 is Windows-only (see spec section 2 'Out of scope: macOS / Linux'). On POSIX, setsid/nohup already survive; use run.ps1 directly." `
+        -WmiUnreachableMessage "WMI (Win32_Process) is not reachable in this environment, so the detached launch cannot spawn outside the harness job object. Run run.ps1 in the foreground instead."
 }
 
 function Get-CanonicalDataDir {
@@ -172,12 +165,6 @@ function Invoke-ForcePortReclaim {
     return $true
 }
 
-function Write-Utf8NoBom {
-    # Same helper run.ps1 uses (UTF-8, no BOM), so artifacts are byte-consistent.
-    param([string]$Path, [string]$Text)
-    [System.IO.File]::WriteAllText($Path, $Text, [System.Text.UTF8Encoding]::new($false))
-}
-
 function Write-Pidfile {
     # Per-store JSON pidfile (spec section 4.7). serverPid is filled after the health gate.
     param(
@@ -252,20 +239,16 @@ function Write-WrapperScript {
 }
 
 function Start-DetachedWrapper {
-    # Spawn the wrapper via WMI so it lands OUTSIDE the harness job object and
-    # survives the tool call returning (spec cause 2 + section 4.4). CRITICAL: the
-    # CommandLine carries NO redirection operators -- the wrapper owns those.
-    # -ExecutionPolicy Bypass: the wrapper is an unsigned ephemeral file.
-    # Returns the wrapper PID. Note ReturnValue==0 only means the OS CREATED the
-    # process -- it does NOT prove the wrapper ran or wrote (see the gate diagnostics).
+    # Spawn the wrapper detached via WMI so it lands OUTSIDE the harness job object (spec cause 2 +
+    # section 4.4). CRITICAL: the CommandLine carries NO redirection operators -- the wrapper owns
+    # those. -ExecutionPolicy Bypass: the wrapper is an unsigned ephemeral file. Bare pwsh (this
+    # script is #requires -Version 7); no ShowWindow, so the current window behavior is unchanged.
+    # Returns the wrapper PID; ReturnValue==0 only means the OS CREATED the process -- it does NOT
+    # prove the wrapper ran or wrote (see the gate diagnostics). (#676)
     param([string]$WrapperPath, [string]$RepoRoot)
     $cmd = "pwsh -NoProfile -ExecutionPolicy Bypass -File `"$WrapperPath`""
-    $res = Invoke-CimMethod -ClassName Win32_Process -MethodName Create `
-        -Arguments @{ CommandLine = $cmd; CurrentDirectory = $RepoRoot }
-    if ($res.ReturnValue -ne 0) {
-        throw "WMI Win32_Process.Create refused to spawn the wrapper (ReturnValue=$($res.ReturnValue)). The server was not launched."
-    }
-    return [int]$res.ProcessId
+    return Invoke-Win32ProcessCreate -CommandLine $cmd -WorkingDirectory $RepoRoot `
+        -FailureSuffix ' The server was not launched.'
 }
 
 function Get-LaunchFailureMessage {

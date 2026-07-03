@@ -69,6 +69,8 @@ param(
     [string[]]$DotnetArgs
 )
 
+Import-Module (Join-Path $PSScriptRoot 'scripts/PRismLauncher.psm1') -Force
+
 $ErrorActionPreference = 'Stop'
 
 if ($BuildOnly -and $SkipBuild) {
@@ -81,60 +83,21 @@ if ($BuildOnly -and $SkipBuild) {
 # we use $DataDir throughout to avoid confusion.)
 
 function Assert-SafeResetTarget {
-    # Guard the destructive -Reset modes against a -DataDir whose recursive
-    # deletion would be catastrophic. -Reset Full does `Remove-Item -Recurse
-    # -Force $DataDir`; with a user-supplied path this could wipe a repo or a
-    # home directory. Defense in depth -- each layer is independent:
-    #   1. reject empty/whitespace.
-    #   2. reject RELATIVE paths. A relative value like `.` resolves against the
-    #      caller's current directory (NOT the repo, NOT $PSScriptRoot), so it is
-    #      ambiguous AND dangerous -- demand an absolute path for a destructive op.
-    #   3. reject a denylist of exact protected roots (repo, %USERPROFILE%,
-    #      %LOCALAPPDATA%, %TEMP%) and anything too shallow to be a store.
-    #   4. backstop: refuse to recurse-delete anything that looks like a source
-    #      checkout (contains .git / a .sln / package.json) -- this catches a
-    #      dangerous target even if layers 2-3 somehow miss it.
+    # Throw-adapter over the shared guard (PRismLauncher.psm1:Test-SafeDeleteTarget, #676).
+    # run.ps1's target is user-supplied, so: no leaf lock; deny the repo root + %TEMP% root on
+    # top of the base {UserProfile, %LOCALAPPDATA%} set; and run the checkout backstop.
     # Only runs for -Reset != None, so the normal launch path is untouched.
     param([string]$DataDir)
-
-    if ([string]::IsNullOrWhiteSpace($DataDir)) {
-        throw "-Reset requires a non-empty -DataDir."
-    }
-    if (-not [System.IO.Path]::IsPathFullyQualified($DataDir)) {
-        throw "Refusing -Reset on a non-absolute -DataDir ('$DataDir'): pass a fully-qualified path (e.g. `$env:TEMP\PRism-wt-0) so the target is unambiguous. Relative paths resolve against the current directory, not the repo."
-    }
-
-    $resolved = [System.IO.Path]::GetFullPath($DataDir)
-    $denied = @(
-        $PSScriptRoot,                                              # repo checkout
-        [Environment]::GetFolderPath('UserProfile'),               # %USERPROFILE%
-        [Environment]::GetFolderPath('LocalApplicationData'),      # %LOCALAPPDATA% itself (the \PRism child is fine)
-        [System.IO.Path]::GetTempPath()                            # %TEMP% itself (a \PRism-* child is fine)
-    ) | Where-Object { $_ } | ForEach-Object { $_.TrimEnd('\', '/') }
-
-    foreach ($bad in $denied) {
-        if ($resolved.TrimEnd('\', '/').Equals($bad, [StringComparison]::OrdinalIgnoreCase)) {
-            throw "Refusing -Reset on '$resolved': it is a protected location (repo root, user profile, %LOCALAPPDATA%, or %TEMP% root). Point -DataDir at a dedicated PRism store."
-        }
-    }
-
-    # Reject anything shallower than <drive>\a\b (>= 2 segments below the root),
-    # which blocks `C:\`, `C:\Users`, and bare drive roots from a recursive wipe.
-    $root = [System.IO.Path]::GetPathRoot($resolved)
-    $rel = $resolved.Substring($root.Length).Trim('\', '/')
-    if ([string]::IsNullOrEmpty($rel) -or ($rel -split '[\\/]').Count -lt 2) {
-        throw "Refusing -Reset on '$resolved': path is too shallow (must be at least two levels below a drive root). Point -DataDir at a dedicated PRism store."
-    }
-
-    # Backstop: never recurse-delete a directory that looks like a code checkout.
-    if (Test-Path -LiteralPath $resolved -PathType Container) {
-        $isCheckout =
-            (Test-Path -LiteralPath (Join-Path $resolved '.git')) -or
-            (Test-Path -LiteralPath (Join-Path $resolved 'package.json')) -or
-            [bool](Get-ChildItem -LiteralPath $resolved -Filter '*.sln' -File -Force -ErrorAction SilentlyContinue)
-        if ($isCheckout) {
-            throw "Refusing -Reset on '$resolved': it looks like a source checkout (contains .git, package.json, or a .sln), not a PRism data store."
-        }
+    $guard = Test-SafeDeleteTarget -Path $DataDir -CheckoutBackstop `
+        -AdditionalProtectedRoots @($PSScriptRoot, [System.IO.Path]::GetTempPath())
+    if ($guard.Safe) { return }
+    switch ($guard.Reason) {
+        'Empty'       { throw "-Reset requires a non-empty -DataDir." }
+        'NotAbsolute' { throw "Refusing -Reset on a non-absolute -DataDir ('$DataDir'): pass a fully-qualified path (e.g. `$env:TEMP\PRism-wt-0) so the target is unambiguous. Relative paths resolve against the current directory, not the repo." }
+        'ProtectedRoot'     { throw "Refusing -Reset on '$($guard.ResolvedPath)': it is a protected location (repo root, user profile, %LOCALAPPDATA%, or %TEMP% root). Point -DataDir at a dedicated PRism store." }
+        'TooShallow'        { throw "Refusing -Reset on '$($guard.ResolvedPath)': path is too shallow (must be at least two levels below a drive root). Point -DataDir at a dedicated PRism store." }
+        'LooksLikeCheckout' { throw "Refusing -Reset on '$($guard.ResolvedPath)': it looks like a source checkout (contains .git, package.json, or a .sln), not a PRism data store." }
+        default             { throw "Refusing -Reset on '$($guard.ResolvedPath)': failed the safe-delete guard ($($guard.Reason))." }
     }
 }
 
@@ -144,14 +107,6 @@ if ($Reset -ne 'None') {
 }
 
 $ResetSentinelHost = 'https://prism-reset-stub.invalid'
-
-function Write-Utf8NoBom {
-    # Cross-version replacement for `Set-Content -Encoding utf8NoBOM` (PS 7+ only).
-    # [System.Text.UTF8Encoding]::new($false) -> no BOM. Works in PS 5.1 (.NET
-    # Framework 4.x) and PS 7+ (.NET 5+) identically.
-    param([string]$Path, [string]$Text)
-    [System.IO.File]::WriteAllText($Path, $Text, [System.Text.UTF8Encoding]::new($false))
-}
 
 function Remove-TokenCacheFiles {
     param([string]$DataDir)
