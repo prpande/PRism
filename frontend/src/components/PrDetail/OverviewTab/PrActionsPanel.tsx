@@ -191,7 +191,9 @@ export function PrActionsPanel() {
   // hook), gated on confirmingClose. Escape works with focus anywhere and
   // returns focus to the Close button (the morph's trigger, remounted when the
   // confirm collapses — the hook's deferred setTimeout(0) lands after that
-  // re-render); an outside click leaves focus where it landed.
+  // re-render); an outside click leaves focus where it landed. If the button
+  // remounts disabled (busy window), the deferred focus() no-ops and focus
+  // stays where it was — same as the pre-hook behavior.
   useDismissableMenu({
     open: confirmingClose,
     rootRef: containerRef,

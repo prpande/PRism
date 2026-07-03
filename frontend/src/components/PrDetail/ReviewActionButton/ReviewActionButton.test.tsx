@@ -116,6 +116,17 @@ describe('ReviewActionButton — menu', () => {
     await userEvent.click(main);
     expect(screen.queryByRole('menu')).not.toBeInTheDocument();
   });
+  it('firing the main action (submit face) closes an open drafts menu', async () => {
+    // The main button sits inside the dismissal boundary, so this close is the
+    // explicit setMenuOpen(false) in onMainClick — not the document listener.
+    const h = handlers();
+    render(<ReviewActionButton {...props({ session: session({ draftVerdict: 'approve' }) }, h)} />);
+    await userEvent.click(screen.getByTestId('review-action-chevron'));
+    expect(screen.getByRole('menu')).toBeInTheDocument();
+    await userEvent.click(screen.getByTestId('review-action-main'));
+    expect(h.onOpenSubmit).toHaveBeenCalled();
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+  });
   it('outside click closes the menu and leaves focus where the click landed', async () => {
     render(
       <div>
