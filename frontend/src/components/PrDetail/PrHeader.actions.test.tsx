@@ -4,7 +4,7 @@ import { PrHeader } from './PrHeader';
 import { ToastProvider } from '../Toast/useToast';
 import { ToastContainer } from '../Toast/ToastContainer';
 import { AskAiDrawerProvider } from '../../contexts/AskAiDrawerContext';
-import { SubmitConflictError } from '../../api/submit';
+import { SubmitConflictError, submitErrorMessage } from '../../api/submit';
 import type { ReactNode } from 'react';
 import type {
   AiCapabilities,
@@ -249,8 +249,7 @@ describe('PrHeader — surfacing 4xx errors from /submit (regression: silent swa
   // empty with a comment claiming useSubmitToasts handled the toast — but
   // useSubmitToasts only listens for two SSE events, NOT HTTP errors. Result:
   // every 4xx from /submit (head-sha-drift, unauthorized, no-session, ...)
-  // produced an in-flight "flash" with no user feedback. These tests assert
-  // each known SubmitConflictError code surfaces a useful toast.
+  // produced an in-flight "flash" with no user feedback.
 
   async function clickSubmitAndConfirm() {
     fireEvent.click(screen.getByTestId('review-action-main'));
@@ -258,33 +257,16 @@ describe('PrHeader — surfacing 4xx errors from /submit (regression: silent swa
     fireEvent.click(confirm);
   }
 
-  // Every known SubmitConflictError code → expected toast substring (regex).
-  // The list mirrors KNOWN_SUBMIT_ERROR_CODES in frontend/src/api/submit.ts;
-  // when a code is added there, add a row here so the per-code toast copy is
-  // covered. Each row exists because pre-fix the catch was empty and produced
-  // no toast at all — covering every arm prevents a copy-paste regression in
-  // submitErrorMessage from shipping invisibly.
-  const codeToastCases: ReadonlyArray<readonly [string, RegExp]> = [
-    ['head-sha-drift', /head commit changed.*reload the PR/i],
-    ['head-sha-not-stamped', /PR view hasn't been stamped yet/i],
-    ['unauthorized', /subscription to this PR was lost/i],
-    ['no-session', /no draft session for this PR/i],
-    ['stale-drafts', /stale drafts.*Drafts tab/i],
-    ['verdict-needs-reconfirm', /re-confirm your verdict/i],
-    ['no-content', /Comment-verdict review needs at least one/i],
-    ['verdict-invalid', /verdict must be Approve, Request changes, or Comment/i],
-    ['submit-in-progress', /A submit is already in flight/i],
-  ];
-
-  it.each(codeToastCases)(
-    'surfaces SubmitConflictError(%s) via a per-code toast',
-    async (code, expected) => {
-      submitReviewMock.mockRejectedValueOnce(new SubmitConflictError(code, 'server-supplied'));
-      renderWithToast(<PrHeader {...baseProps} session={readySession} headShaDrift={false} />);
-      await clickSubmitAndConfirm();
-      expect(await screen.findByText(expected)).toBeInTheDocument();
-    },
-  );
+  it('surfaces a rejected submit with a known code as a toast carrying submitErrorMessage(err)', async () => {
+    // Per-code toast copy is covered exhaustively (with a parity guard against
+    // KNOWN_SUBMIT_ERROR_CODES) in frontend/src/api/submit.test.ts; this test
+    // only pins the wiring — SubmitConflictError → surfaceSubmitError → toast.
+    const err = new SubmitConflictError('head-sha-drift', 'server-supplied');
+    submitReviewMock.mockRejectedValueOnce(err);
+    renderWithToast(<PrHeader {...baseProps} session={readySession} headShaDrift={false} />);
+    await clickSubmitAndConfirm();
+    expect(await screen.findByText(submitErrorMessage(err))).toBeInTheDocument();
+  });
 
   it('falls through to the server-supplied message on an unknown SubmitConflictError code', async () => {
     submitReviewMock.mockRejectedValueOnce(
