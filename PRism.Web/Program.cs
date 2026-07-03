@@ -406,6 +406,7 @@ app.MapPrReloadEndpoints();
 app.MapPrRefreshEndpoints();
 app.MapPrSubmitEndpoints();
 app.MapPrLifecycleEndpoints();
+app.MapPrReviewThreadEndpoints();
 app.MapPrRootCommentEndpoints();
 app.MapPrCommentEndpoints();
 app.MapSubmitInFlight();
