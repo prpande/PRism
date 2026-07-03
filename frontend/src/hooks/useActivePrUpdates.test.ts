@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook, act, waitFor } from '@testing-library/react';
 import { useActivePrUpdates } from './useActivePrUpdates';
+import type { PrReference } from '../api/types';
 
 const listeners: Record<string, ((p: unknown) => void)[]> = {};
 // A STABLE stream handle: useActivePrUpdates' effect depends on [stream, refStr]. A fresh object
@@ -209,5 +210,19 @@ describe('useActivePrUpdates', () => {
       });
     });
     expect(result.current.prUpdatedSignal).toBe(2);
+  });
+
+  it('#671 — clear() keeps a stable identity across re-renders so memoized consumers can bail out', async () => {
+    // clear lives in usePrDetailRefresh's `refresh` useCallback dep array (via
+    // PrDetailView's `clearUpdates`). A fresh arrow per render re-created `refresh`
+    // every render — useCallback pins it. A bare re-render (same ref, no SSE event, so
+    // no state change) must return the same clear reference.
+    const ref: PrReference = { owner: 'acme', repo: 'api', number: 1 };
+    const { result, rerender } = renderHook(() => useActivePrUpdates(ref));
+    await waitFor(() => expect(listeners['pr-updated']?.length).toBeGreaterThan(0));
+
+    const first = result.current.clear;
+    rerender();
+    expect(result.current.clear).toBe(first);
   });
 });

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { apiClient } from '../api/client';
 import type { MergeReadiness, PrReference, Reviewer } from '../api/types';
 import { snapshot } from '../utils/snapshotMerge';
@@ -156,7 +156,12 @@ export function useActivePrUpdates(prRef: PrReference): ActivePrUpdates {
     };
   }, [stream, refStr]);
 
-  const clear = () => setState(initial);
+  // #671 — stable identity so consumers that list `clear` in a memo dep array can
+  // actually bail out. Concretely: PrDetailView passes it as usePrDetailRefresh's
+  // `clearUpdates`, which sits in that hook's `refresh` useCallback deps — a fresh
+  // `clear` per render was re-creating `refresh` on every render. setState's own
+  // identity is stable and `initial` is a module constant, so the empty dep is correct.
+  const clear = useCallback(() => setState(initial), []);
 
   return { ...state, subscribed, prUpdatedSignal, clear };
 }

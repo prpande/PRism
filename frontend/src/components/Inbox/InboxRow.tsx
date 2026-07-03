@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type { PrInboxItem, InboxItemEnrichment } from '../../api/types';
 import { useOpenTabs } from '../../contexts/OpenTabsContext';
@@ -44,7 +45,14 @@ interface Props {
   settled: ReadonlySet<string>;
 }
 
-export function InboxRow({
+// #671 — memoized so an unrelated InboxPage re-render (SSE inbox-updated frame,
+// activity-rail poll, refresh flag) skips every row whose props are unchanged,
+// instead of re-running the per-row work (glyph state, aria concatenation, DiffBar,
+// ReadinessBadge, Avatar) for the whole list. Props are value-stable on those
+// triggers: `pr`/`enrichment` come from the memoized inbox snapshot, `maxDiff`/
+// `settled` are memoized in InboxPage, and the rest are primitives. Default shallow
+// prop comparison is exactly right here.
+export const InboxRow = memo(function InboxRow({
   pr,
   enrichment,
   showCategoryChip,
@@ -212,6 +220,10 @@ export function InboxRow({
             <span className={styles.dotsep}>·</span>
             <span className={styles.mono}>{commitLabel}</span>
             <span className={styles.dotsep}>·</span>
+            {/* #671 — relative age is time-derived (not a prop), so under the row memo it
+                refreshes when this PR's data reloads, not on every unrelated InboxPage
+                re-render (rail poll / SSE frame). Intended: a periodic refresh would
+                re-introduce the full-list re-renders the memo exists to remove. */}
             <span>{formatAge(pr.updatedAt)}</span>
           </span>
         </span>
@@ -277,4 +289,4 @@ export function InboxRow({
       </span>
     </button>
   );
-}
+});
