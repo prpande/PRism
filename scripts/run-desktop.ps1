@@ -305,20 +305,17 @@ function Invoke-Main {
     # internal paths use single-quote doubling for defense in depth).
     $hostExe = Get-PowerShellHostPath
     $cmd = "`"$hostExe`" -NoProfile -ExecutionPolicy Bypass -File `"$wrapperPath`""
-    # Hide the wrapper host's console window. WMI's provider host (WmiPrvSE) has no console,
-    # so a console app spawned via Win32_Process.Create gets a FRESH, visible terminal that
-    # lingers for the wrapper's whole life (the host stays alive as electron's parent). The
-    # wrapper needs no console — its output is redirected to the log — so SW_HIDE (ShowWindow=0)
-    # suppresses the stray window. (CreateFlags=CREATE_NO_WINDOW is rejected by the WMI provider
-    # with ReturnValue=21, so ShowWindow is the usable lever; verified on PS 5.1 and 7.)
+    # Hide the wrapper host's console window. WMI's provider host (WmiPrvSE) has no console, so a
+    # console app spawned via Win32_Process.Create gets a FRESH, visible terminal that lingers for
+    # the wrapper's whole life (the host stays alive as electron's parent). The wrapper needs no
+    # console — its output is redirected to the log — so SW_HIDE (ShowWindow=0) suppresses the stray
+    # window. (CreateFlags=CREATE_NO_WINDOW is rejected by the WMI provider with ReturnValue=21, so
+    # ShowWindow is the usable lever; verified on PS 5.1 and 7.) The spawn itself goes through the
+    # shared PRismLauncher.psm1:Invoke-Win32ProcessCreate (#676); no -FailureSuffix -> bare message.
     $startupInfo = New-CimInstance -ClassName Win32_ProcessStartup -ClientOnly `
         -Property @{ ShowWindow = [uint16]0 }
-    $res = Invoke-CimMethod -ClassName Win32_Process -MethodName Create `
-        -Arguments @{ CommandLine = $cmd; CurrentDirectory = $desktopDir; ProcessStartupInformation = $startupInfo }
-    if ($res.ReturnValue -ne 0) {
-        throw "WMI Win32_Process.Create refused to spawn the wrapper (ReturnValue=$($res.ReturnValue))."
-    }
-    Write-LauncherPidfile -PidfilePath $pidfile -ProcessId ([int]$res.ProcessId)
+    $procId = Invoke-Win32ProcessCreate -CommandLine $cmd -WorkingDirectory $desktopDir -StartupInfo $startupInfo
+    Write-LauncherPidfile -PidfilePath $pidfile -ProcessId $procId
 
     Write-Host "PRism desktop launching (detached). The window should appear shortly." -ForegroundColor Green
     Write-Host "  If it stays blank or never appears, inspect: $log" -ForegroundColor DarkGray

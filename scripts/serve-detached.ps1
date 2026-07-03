@@ -239,20 +239,16 @@ function Write-WrapperScript {
 }
 
 function Start-DetachedWrapper {
-    # Spawn the wrapper via WMI so it lands OUTSIDE the harness job object and
-    # survives the tool call returning (spec cause 2 + section 4.4). CRITICAL: the
-    # CommandLine carries NO redirection operators -- the wrapper owns those.
-    # -ExecutionPolicy Bypass: the wrapper is an unsigned ephemeral file.
-    # Returns the wrapper PID. Note ReturnValue==0 only means the OS CREATED the
-    # process -- it does NOT prove the wrapper ran or wrote (see the gate diagnostics).
+    # Spawn the wrapper detached via WMI so it lands OUTSIDE the harness job object (spec cause 2 +
+    # section 4.4). CRITICAL: the CommandLine carries NO redirection operators -- the wrapper owns
+    # those. -ExecutionPolicy Bypass: the wrapper is an unsigned ephemeral file. Bare pwsh (this
+    # script is #requires -Version 7); no ShowWindow, so the current window behavior is unchanged.
+    # Returns the wrapper PID; ReturnValue==0 only means the OS CREATED the process -- it does NOT
+    # prove the wrapper ran or wrote (see the gate diagnostics). (#676)
     param([string]$WrapperPath, [string]$RepoRoot)
     $cmd = "pwsh -NoProfile -ExecutionPolicy Bypass -File `"$WrapperPath`""
-    $res = Invoke-CimMethod -ClassName Win32_Process -MethodName Create `
-        -Arguments @{ CommandLine = $cmd; CurrentDirectory = $RepoRoot }
-    if ($res.ReturnValue -ne 0) {
-        throw "WMI Win32_Process.Create refused to spawn the wrapper (ReturnValue=$($res.ReturnValue)). The server was not launched."
-    }
-    return [int]$res.ProcessId
+    return Invoke-Win32ProcessCreate -CommandLine $cmd -WorkingDirectory $RepoRoot `
+        -FailureSuffix ' The server was not launched.'
 }
 
 function Get-LaunchFailureMessage {

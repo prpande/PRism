@@ -110,4 +110,26 @@ function Assert-WindowsWmi {
     }
 }
 
-Export-ModuleMember -Function Test-SafeDeleteTarget, Write-Utf8NoBom, Test-OnWindows, Assert-WindowsWmi
+function Invoke-Win32ProcessCreate {
+    # The genuinely-shared detached-spawn core (#676): Win32_Process.Create + ReturnValue check.
+    # Callers build their OWN CommandLine and (optionally) StartupInfo -- serve-detached uses a
+    # bare pwsh and no startup info; run-desktop uses a full-path host and a ShowWindow=0 startup
+    # instance. ReturnValue==0 only means the OS CREATED the process, not that it ran.
+    param(
+        [Parameter(Mandatory)][string]$CommandLine,
+        [Parameter(Mandatory)][string]$WorkingDirectory,
+        $StartupInfo,
+        [string]$FailureSuffix = ''
+    )
+    $arguments = @{ CommandLine = $CommandLine; CurrentDirectory = $WorkingDirectory }
+    if ($StartupInfo) { $arguments['ProcessStartupInformation'] = $StartupInfo }
+    $res = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments $arguments
+    if ($res.ReturnValue -ne 0) {
+        # Base string matches both callers' current message verbatim; -FailureSuffix carries the
+        # per-caller tail (serve-detached appends " The server was not launched."; run-desktop none).
+        throw ("WMI Win32_Process.Create refused to spawn the wrapper (ReturnValue=$($res.ReturnValue))." + $FailureSuffix)
+    }
+    return [int]$res.ProcessId
+}
+
+Export-ModuleMember -Function Test-SafeDeleteTarget, Write-Utf8NoBom, Test-OnWindows, Assert-WindowsWmi, Invoke-Win32ProcessCreate
