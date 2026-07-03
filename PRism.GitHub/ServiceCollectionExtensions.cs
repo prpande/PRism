@@ -197,7 +197,8 @@ public static class ServiceCollectionExtensions
             return new PRism.GitHub.Activity.GitHubReceivedEventsReader(
                 factory,
                 () => tokens.ReadAsync(CancellationToken.None),
-                () => Task.FromResult(viewerLogin.Get() is { Length: > 0 } l ? l : null));
+                () => Task.FromResult(viewerLogin.Get() is { Length: > 0 } l ? l : null),
+                sp.GetService<ILogger<PRism.GitHub.Activity.GitHubReceivedEventsReader>>());
         });
 
         // P2 activity readers. Both endpoints (notifications, user/subscriptions) are
@@ -210,7 +211,8 @@ public static class ServiceCollectionExtensions
             var factory = sp.GetRequiredService<IHttpClientFactory>();
             return new PRism.GitHub.Activity.GitHubNotificationsReader(
                 factory,
-                () => tokens.ReadAsync(CancellationToken.None));
+                () => tokens.ReadAsync(CancellationToken.None),
+                sp.GetService<ILogger<PRism.GitHub.Activity.GitHubNotificationsReader>>());
         });
 
         services.AddSingleton<PRism.Core.Activity.IWatchedReposReader>(sp =>
@@ -219,7 +221,8 @@ public static class ServiceCollectionExtensions
             var factory = sp.GetRequiredService<IHttpClientFactory>();
             return new PRism.GitHub.Activity.GitHubWatchedReposReader(
                 factory,
-                () => tokens.ReadAsync(CancellationToken.None));
+                () => tokens.ReadAsync(CancellationToken.None),
+                sp.GetService<ILogger<PRism.GitHub.Activity.GitHubWatchedReposReader>>());
         });
 
         // Activity-rail enrichment: batched GraphQL timeline reader. Needs the host late-bound
