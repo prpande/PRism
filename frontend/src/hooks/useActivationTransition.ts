@@ -13,6 +13,10 @@ export function useActivationTransition(active: boolean, onActivate: () => void)
   useEffect(() => {
     const wasActive = prev.current;
     prev.current = active;
+
+    console.log(
+      `[DBG-ACTIVATION] effect run wasActive=${String(wasActive)} active=${String(active)} fire=${String(wasActive === false && active === true)}`,
+    );
     // null = first mount: record state, never fire.
     if (wasActive === false && active === true) {
       cbRef.current();

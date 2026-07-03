@@ -43,7 +43,12 @@ export function InboxPage({ active = true }: { active?: boolean } = {}) {
   // PrDetailView's refetch-on-activation. useActivationTransition never fires on
   // first mount (useInbox's own mount fetch covers that) and is a no-op for direct
   // callers where `active` is the default-true constant.
-  useActivationTransition(active, () => void reload());
+  useActivationTransition(active, () => {
+    console.log('[DBG-ACTIVATE-CB] inbox activation edge fired → reload()');
+    void reload();
+  });
+
+  console.log(`[DBG-INBOXPAGE] render active=${String(active)}`);
   // #450 — an inbox-updated frame now silently auto-refreshes (debounced) instead of
   // surfacing the old reload banner. `announce` carries the screen-reader signal the
   // removed banner's role=status region used to provide.

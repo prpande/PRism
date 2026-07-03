@@ -28,6 +28,7 @@ export function useInbox() {
   const generationRef = useRef(0);
 
   const reload = useCallback(async () => {
+    console.log('[DBG-INBOX-RELOAD] reload() called → GET /api/inbox');
     const generation = ++generationRef.current;
     const isCurrent = () => generation === generationRef.current;
     setIsLoading(true);

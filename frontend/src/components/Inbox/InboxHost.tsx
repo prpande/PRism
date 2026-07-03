@@ -20,6 +20,8 @@ export function InboxHost() {
   const { pathname } = useEffectiveLocation();
   const onInbox = pathname === '/';
 
+  console.log(`[DBG-HOST] render pathname=${pathname} onInbox=${String(onInbox)}`);
+
   // Lazy mount: render InboxPage only once the Inbox has been visited, then keep
   // it alive forever (hidden toggled, never unmounted). `useState(onInbox)` mounts
   // eagerly when the first paint IS the Inbox (the default route), but a cold
