@@ -20,30 +20,41 @@ internal static class AiInteractionLogReader
         if (!File.Exists(filePath)) return (Array.Empty<LogEntry>(), startOffset);
 
         var entries = new List<LogEntry>();
-        var offset = startOffset;
 
         using var stream = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
-        if (startOffset > stream.Length) return (Array.Empty<LogEntry>(), startOffset); // caller handles truncation
+        var length = stream.Length; // snapshot: a concurrent append is deferred to the next tick
+        if (startOffset > length) return (Array.Empty<LogEntry>(), startOffset); // caller handles truncation
+
+        var remaining = (int)(length - startOffset);
+        if (remaining == 0) return (entries, startOffset); // nothing new since last tick
+
+        // Single read of the new range, then one scan for '\n' boundaries — no per-line file re-open.
         stream.Seek(startOffset, SeekOrigin.Begin);
-        using var reader = new StreamReader(stream, Encoding.UTF8);
-
-        string? line;
-        while ((line = reader.ReadLine()) is not null)
+        var buffer = new byte[remaining];
+        var read = 0;
+        while (read < remaining)
         {
-            // ReadLine returns a non-null string for the final chunk even when it had NO terminator
-            // (a partial mid-write line). Detect that: if the stream position is at EOF AND the raw
-            // bytes we just consumed were not newline-terminated, this is a partial line — stop without
-            // advancing past it.
-            var consumedBytes = Encoding.UTF8.GetByteCount(line);
-            var atEof = stream.Position >= stream.Length && reader.EndOfStream;
-            var terminated = !atEof || EndsWithNewline(filePath, offset + consumedBytes);
-            if (!terminated) break; // partial trailing line — leave for next tick, offset unchanged past it
-
-            var lineBytesWithTerminator = NextLineByteLength(filePath, offset);
-            if (TryParse(line, out var entry)) entries.Add(entry);
-            offset += lineBytesWithTerminator; // advance past complete line (even if it failed to parse)
+            var n = stream.Read(buffer, read, remaining - read);
+            if (n == 0) break; // append-only log never shrinks mid-read; scan whatever we got
+            read += n;
         }
 
+        var offset = startOffset;
+        var lineStart = 0;
+        for (var i = 0; i < read; i++)
+        {
+            if (buffer[i] != (byte)'\n') continue; // a line is complete only when '\n'-terminated
+
+            // Content excludes the terminator: the '\n' and an immediately-preceding '\r' (a \r\n
+            // terminator). The offset advance INCLUDES both terminator bytes.
+            var contentEnd = i > lineStart && buffer[i - 1] == (byte)'\r' ? i - 1 : i;
+            var content = Encoding.UTF8.GetString(buffer, lineStart, contentEnd - lineStart);
+            if (TryParse(content, out var entry)) entries.Add(entry); // malformed/blank lines skip but still advance
+            offset += i - lineStart + 1;
+            lineStart = i + 1;
+        }
+        // Bytes after the last '\n' (lineStart..read) are a partial trailing line: not emitted, offset
+        // stops before them so the next tick re-reads once the write completes.
         return (entries, offset);
     }
 
@@ -65,29 +76,5 @@ internal static class AiInteractionLogReader
         catch (JsonException) { return false; }
         catch (FormatException) { return false; }
         catch (InvalidOperationException) { return false; } // valid JSON but not an object (e.g. array, scalar)
-    }
-
-    // Byte length of the line beginning at byteOffset, INCLUDING its terminator.
-    private static long NextLineByteLength(string filePath, long byteOffset)
-    {
-        using var fs = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
-        fs.Seek(byteOffset, SeekOrigin.Begin);
-        long count = 0;
-        int b;
-        while ((b = fs.ReadByte()) != -1)
-        {
-            count++;
-            if (b == '\n') break; // covers both "\n" and "\r\n"
-        }
-        return count;
-    }
-
-    private static bool EndsWithNewline(string filePath, long byteOffsetAfterText)
-    {
-        using var fs = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
-        if (byteOffsetAfterText >= fs.Length) return false;
-        fs.Seek(byteOffsetAfterText, SeekOrigin.Begin);
-        var b = fs.ReadByte();
-        return b == '\n' || b == '\r';
     }
 }

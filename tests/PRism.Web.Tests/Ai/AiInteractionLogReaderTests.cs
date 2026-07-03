@@ -105,6 +105,90 @@ public sealed class AiInteractionLogReaderTests : IDisposable
         newOffset.Should().Be(new FileInfo(LogPath).Length); // offset advances past the array line
     }
 
+    // ---- byte-precision cases (#542): pin the contract the single-pass rewrite must preserve ----
+
+    [Fact]
+    public void ReadFrom_multibyte_utf8_line_advances_by_byte_length_and_next_line_aligns()
+    {
+        // A non-ASCII code point ("é" = 2 UTF-8 bytes) in line 1: if the reader counted chars
+        // instead of bytes, the offset would land mid-sequence and line 2 would misparse.
+        var l1 = Line("2026-06-19T10:00:00.0000000+00:00", "summary", "ok", "o/café#1", 100);
+        var l2 = Line("2026-06-19T12:00:00.0000000+00:00", "summary", "ok", "o/r#2", 200);
+        File.WriteAllText(LogPath, l1 + "\n" + l2 + "\n"); // UTF-8, no BOM
+
+        var (entries, newOffset) = AiInteractionLogReader.ReadFrom(LogPath, 0);
+
+        entries.Select(e => e.Record.PrRef).Should().Equal("o/café#1", "o/r#2");
+        newOffset.Should().Be(new FileInfo(LogPath).Length);
+    }
+
+    [Fact]
+    public void ReadFrom_offset_past_end_returns_empty_and_unchanged_offset()
+    {
+        Write(Line("2026-06-19T10:00:00.0000000+00:00", "summary", "ok", "o/r#1", 100));
+        var len = new FileInfo(LogPath).Length;
+
+        var (entries, newOffset) = AiInteractionLogReader.ReadFrom(LogPath, len + 100);
+
+        entries.Should().BeEmpty();
+        newOffset.Should().Be(len + 100); // caller handles truncation; offset returned unchanged
+    }
+
+    [Fact]
+    public void ReadFrom_offset_exactly_at_end_returns_empty_and_unchanged_offset()
+    {
+        Write(Line("2026-06-19T10:00:00.0000000+00:00", "summary", "ok", "o/r#1", 100));
+        var len = new FileInfo(LogPath).Length;
+
+        var (entries, newOffset) = AiInteractionLogReader.ReadFrom(LogPath, len);
+
+        entries.Should().BeEmpty();
+        newOffset.Should().Be(len);
+    }
+
+    [Fact]
+    public void ReadFrom_bare_lf_terminators_read_all_lines_and_offset_reaches_end()
+    {
+        // Author \n bytes directly (not Environment.NewLine) so the Windows CI runner also
+        // exercises the bare-\n path.
+        var l1 = Line("2026-06-19T10:00:00.0000000+00:00", "summary", "ok", "o/r#1", 100);
+        var l2 = Line("2026-06-19T12:00:00.0000000+00:00", "summary", "ok", "o/r#2", 200);
+        File.WriteAllText(LogPath, l1 + "\n" + l2 + "\n");
+
+        var (entries, newOffset) = AiInteractionLogReader.ReadFrom(LogPath, 0);
+
+        entries.Select(e => e.Record.PrRef).Should().Equal("o/r#1", "o/r#2");
+        newOffset.Should().Be(new FileInfo(LogPath).Length);
+    }
+
+    [Fact]
+    public void ReadFrom_crlf_terminated_final_line_parses_and_offset_counts_both_bytes()
+    {
+        // Author \r\n directly (independent of Environment.NewLine) so a Linux run also
+        // exercises the \r-strip path: content excludes the trailing \r, offset counts both.
+        var l1 = Line("2026-06-19T10:00:00.0000000+00:00", "summary", "ok", "o/r#1", 100);
+        File.WriteAllText(LogPath, l1 + "\r\n");
+
+        var (entries, newOffset) = AiInteractionLogReader.ReadFrom(LogPath, 0);
+
+        entries.Should().ContainSingle();
+        entries[0].Record.PrRef.Should().Be("o/r#1"); // parsed with the trailing \r stripped
+        newOffset.Should().Be(new FileInfo(LogPath).Length); // both \r and \n counted
+    }
+
+    [Fact]
+    public void ReadFrom_blank_complete_line_between_records_is_skipped_and_offset_advances()
+    {
+        var l1 = Line("2026-06-19T10:00:00.0000000+00:00", "summary", "ok", "o/r#1", 100);
+        var l2 = Line("2026-06-19T12:00:00.0000000+00:00", "summary", "ok", "o/r#2", 200);
+        File.WriteAllText(LogPath, l1 + "\n" + "\n" + l2 + "\n"); // blank line in the middle
+
+        var (entries, newOffset) = AiInteractionLogReader.ReadFrom(LogPath, 0);
+
+        entries.Select(e => e.Record.PrRef).Should().Equal("o/r#1", "o/r#2"); // blank line dropped
+        newOffset.Should().Be(new FileInfo(LogPath).Length); // offset advanced past the blank line
+    }
+
     public void Dispose()
     {
         try { if (Directory.Exists(_dir)) Directory.Delete(_dir, recursive: true); }
