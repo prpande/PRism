@@ -22,6 +22,9 @@ public class WeightedDistanceClusteringStrategyTests
         new(commits, Array.Empty<ClusteringForcePush>(), Array.Empty<ClusteringReviewEvent>(),
             Array.Empty<ClusteringAuthorComment>());
 
+    private static ClusteringInput InputWithBase(string baseSha, params ClusteringCommit[] commits) =>
+        Input(commits) with { PrBaseSha = baseSha };
+
     [Fact]
     public void Empty_commits_returns_empty_array()
     {
@@ -240,5 +243,79 @@ public class WeightedDistanceClusteringStrategyTests
         var commits = new[] { Commit("c0", DateTimeOffset.UtcNow, "src/A.cs") };
         var act = () => NewStrategy().Cluster(Input(commits), Defaults with { FileJaccardWeight = 1.0 });
         act.Should().Throw<ArgumentException>().WithMessage("*FileJaccardWeight*");
+    }
+
+    // ---- #281: iteration boundary SHAs ----
+    // Each iteration's diff is rendered as three-dot compare(BeforeSha...AfterSha). The lower
+    // bound must be the boundary the reviewer last saw (exclusive) — the PR base for iteration 1,
+    // the previous iteration's last commit thereafter — NOT the cluster's own first commit.
+    // Otherwise a single-commit iteration produces compare(x...x) == "identical" == empty Files
+    // tab, and a multi-commit iteration silently drops its first commit's changes.
+
+    [Fact]
+    public void Single_commit_iteration_before_sha_is_pr_base_not_the_commit()
+    {
+        // compare(sha...sha) is empty; a single-commit iteration must span base..commit.
+        var c = Commit("a", DateTimeOffset.UtcNow);
+        var clusters = NewStrategy().Cluster(InputWithBase("base", c), Defaults);
+        clusters.Should().NotBeNull().And.HaveCount(1);
+        clusters![0].BeforeSha.Should().Be("base");
+        clusters[0].AfterSha.Should().Be("a");
+        clusters[0].BeforeSha.Should().NotBe(clusters[0].AfterSha,
+            because: "before == after yields an empty three-dot compare (the #281 empty-Files-tab bug)");
+    }
+
+    [Fact]
+    public void First_multi_commit_iteration_before_sha_is_base_not_its_first_commit()
+    {
+        // Buggy behavior set before = the cluster's own first commit, so compare(first...last)
+        // (merge-base == first) dropped the first commit's changes. Before must be the PR base.
+        var t0 = DateTimeOffset.UtcNow;
+        var commits = new[]
+        {
+            Commit("c0", t0,                "src/A.cs"),
+            Commit("c1", t0.AddSeconds(30), "src/A.cs"),
+            Commit("c2", t0.AddSeconds(60), "src/A.cs"),
+        };
+        var clusters = NewStrategy().Cluster(InputWithBase("base", commits), Defaults);
+        clusters.Should().NotBeNull().And.HaveCount(1);
+        clusters![0].BeforeSha.Should().Be("base");
+        clusters[0].AfterSha.Should().Be("c2");
+        clusters[0].CommitShas.Should().BeEquivalentTo(new[] { "c0", "c1", "c2" });
+    }
+
+    [Fact]
+    public void Each_iteration_before_sha_is_the_previous_boundary()
+    {
+        // Same input as Two_distinct_groups_with_long_gap_split_into_two_iterations.
+        var t0 = DateTimeOffset.UtcNow;
+        var commits = new[]
+        {
+            Commit("c0", t0,                            "src/A.cs"),
+            Commit("c1", t0.AddSeconds(60),             "src/A.cs"),
+            Commit("c2", t0.AddHours(4),                "src/B.cs"),
+            Commit("c3", t0.AddHours(4).AddSeconds(60), "src/B.cs"),
+        };
+        var clusters = NewStrategy().Cluster(InputWithBase("base", commits), Defaults);
+        clusters.Should().NotBeNull().And.HaveCount(2);
+        // iteration 1: base .. last commit of cluster 1
+        clusters![0].BeforeSha.Should().Be("base");
+        clusters[0].AfterSha.Should().Be("c1");
+        // iteration 2: previous iteration's last commit .. last commit of cluster 2
+        clusters[1].BeforeSha.Should().Be("c1",
+            because: "iteration N's lower bound is iteration N-1's last commit, the boundary last reviewed");
+        clusters[1].AfterSha.Should().Be("c3");
+    }
+
+    [Fact]
+    public void Missing_pr_base_falls_back_to_first_commit_for_iteration_one()
+    {
+        // Guard: production always supplies PrBaseSha (PrDetailLoader passes detail.Pr.BaseSha).
+        // Absent it, iteration 1 falls back to its first commit's sha (legacy behavior) rather
+        // than throwing. Input(...) leaves PrBaseSha null.
+        var c = Commit("a", DateTimeOffset.UtcNow);
+        var clusters = NewStrategy().Cluster(Input(c), Defaults);
+        clusters.Should().NotBeNull().And.HaveCount(1);
+        clusters![0].BeforeSha.Should().Be("a");
     }
 }

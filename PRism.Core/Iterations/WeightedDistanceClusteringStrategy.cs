@@ -21,8 +21,22 @@ public sealed class WeightedDistanceClusteringStrategy : IIterationClusteringStr
         if (input.Commits.Count == 0) return Array.Empty<IterationCluster>();
 
         var sorted = input.Commits.OrderBy(c => c.CommittedDate).ToArray();
+        var baseSha = input.PrBaseSha;
+
+        // #281: an iteration's diff is rendered as three-dot compare(BeforeSha...AfterSha). The
+        // lower bound must be the boundary the reviewer last saw (exclusive) — the PR base for
+        // iteration 1, the previous cluster's last commit thereafter — NOT the cluster's own
+        // first commit. The old choice dropped the first commit's changes from every iteration
+        // and collapsed single-commit clusters to compare(x...x), an empty "identical" diff.
+        // Falls back to the first commit's SHA when no base is supplied (tests); production
+        // always supplies it (baseRefOid persists even after base-branch deletion).
+        string LowerBound(int clusterStartIdx) =>
+            clusterStartIdx == 0
+                ? (string.IsNullOrEmpty(baseSha) ? sorted[0].Sha : baseSha)
+                : sorted[clusterStartIdx - 1].Sha;
+
         if (sorted.Length == 1)
-            return new[] { new IterationCluster(1, sorted[0].Sha, sorted[0].Sha, new[] { sorted[0].Sha }) };
+            return new[] { new IterationCluster(1, LowerBound(0), sorted[0].Sha, new[] { sorted[0].Sha }) };
 
         var weighted = new double[sorted.Length - 1];
         var floor = coefficients.HardFloorSeconds;
@@ -81,14 +95,14 @@ public sealed class WeightedDistanceClusteringStrategy : IIterationClusteringStr
             var endIdx = b;
             clusters.Add(new IterationCluster(
                 iterationNumber++,
-                sorted[startIdx].Sha,
+                LowerBound(startIdx),
                 sorted[endIdx].Sha,
                 sorted[startIdx..(endIdx + 1)].Select(c => c.Sha).ToArray()));
             startIdx = endIdx + 1;
         }
         clusters.Add(new IterationCluster(
             iterationNumber,
-            sorted[startIdx].Sha,
+            LowerBound(startIdx),
             sorted[^1].Sha,
             sorted[startIdx..].Select(c => c.Sha).ToArray()));
 
