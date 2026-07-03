@@ -11,6 +11,13 @@ test.describe('inbox unread bar resets on view (#285)', () => {
   });
 
   test('opening the PR and returning clears the row unread bar', async ({ page, request }) => {
+    // #704: raise this test's budget from Playwright's 30s default. The final assertion below
+    // waits up to 15s to ride out the load that makes this flaky, and `row.waitFor` already
+    // allows up to 30s for the seeded inbox to render under that same load — under a saturated
+    // CI runner those could otherwise sum past 30s and convert a slow-but-correct clear into a
+    // hard test-timeout. 60s leaves ample headroom without masking a genuinely stuck state.
+    test.setTimeout(60_000);
+
     // #704 (local-repro unblock): on a reused local server (`reuseExistingServer`), the
     // best-effort `ui.ai.onboardingSeen=true` patch in resetBackendState doesn't always
     // take, so the #485 AI onboarding dialog's modal-backdrop intercepts the row click at
