@@ -11,7 +11,7 @@ internal readonly record struct JsonObjectReadResult(JsonDocument? Document, Jso
 /// payload (which may itself be null for a literal <c>null</c> body) and <see cref="Error"/> is
 /// <see cref="JsonReadError.None"/>. On failure <see cref="Value"/> is default and <see cref="Error"/>
 /// is <see cref="JsonReadError.WrongContentType"/> or <see cref="JsonReadError.InvalidJson"/>.</summary>
-internal readonly record struct JsonReadResult<T>(T? Value, JsonReadError Error);
+internal readonly record struct JsonReadResult<T>(T? Value, JsonReadError Error) where T : class;
 
 internal static class HttpJson
 {
@@ -45,6 +45,7 @@ internal static class HttpJson
     /// default value with <see cref="JsonReadError.WrongContentType"/> / <see cref="JsonReadError.InvalidJson"/>
     /// so the caller maps the error to its own envelope (existing shapes preserved).</summary>
     internal static async Task<JsonReadResult<T>> TryReadJsonAsync<T>(HttpRequest request, CancellationToken ct)
+        where T : class
     {
         if (!request.HasJsonContentType())
             return new JsonReadResult<T>(default, JsonReadError.WrongContentType);
