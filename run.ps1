@@ -108,14 +108,6 @@ if ($Reset -ne 'None') {
 
 $ResetSentinelHost = 'https://prism-reset-stub.invalid'
 
-function Write-Utf8NoBom {
-    # Cross-version replacement for `Set-Content -Encoding utf8NoBOM` (PS 7+ only).
-    # [System.Text.UTF8Encoding]::new($false) -> no BOM. Works in PS 5.1 (.NET
-    # Framework 4.x) and PS 7+ (.NET 5+) identically.
-    param([string]$Path, [string]$Text)
-    [System.IO.File]::WriteAllText($Path, $Text, [System.Text.UTF8Encoding]::new($false))
-}
-
 function Remove-TokenCacheFiles {
     param([string]$DataDir)
     $tokenPath = Join-Path $DataDir 'PRism.tokens.cache'

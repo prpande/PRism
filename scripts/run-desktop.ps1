@@ -135,7 +135,7 @@ function Get-LauncherPidfilePath {
 
 function Write-LauncherPidfile {
     param([string]$PidfilePath, [int]$ProcessId)
-    [System.IO.File]::WriteAllText($PidfilePath, "$ProcessId", [System.Text.UTF8Encoding]::new($false))
+    Write-Utf8NoBom -Path $PidfilePath -Text "$ProcessId"
 }
 
 function Test-LauncherAlreadyRunning {
@@ -310,7 +310,7 @@ function Invoke-Main {
     $wrapperPath = Join-Path $dataDir 'run-desktop.wrapper.ps1'
     $wrapper     = New-DesktopLauncherWrapper -ElectronExe $electron -DesktopDir $desktopDir `
         -SidecarBinary $sidecar -Log $log -StartedUtc $startedUtc
-    [System.IO.File]::WriteAllText($wrapperPath, $wrapper, [System.Text.UTF8Encoding]::new($false))
+    Write-Utf8NoBom -Path $wrapperPath -Text $wrapper
 
     # Spawn the wrapper with the SAME PowerShell host that is running this launcher, so a
     # tester on the built-in Windows PowerShell 5.1 doesn't need PowerShell 7 installed at

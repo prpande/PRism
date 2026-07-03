@@ -71,6 +71,16 @@ Assert-Equal 'ProtectedRoot' (Test-SafeDeleteTarget -Path $lever -AdditionalProt
 Assert-Equal 'ProtectedRoot' (Test-SafeDeleteTarget -Path $lever -AdditionalProtectedRoots @($lever) -CheckoutBackstop).Reason    "+CheckoutBackstop does not mask ProtectedRoot"
 Assert-Equal 'ProtectedRoot' (Test-SafeDeleteTarget -Path $lever -AdditionalProtectedRoots @($lever) -RequireLeafName 'PRism-order-inv').Reason "+matching -RequireLeafName does not flip Safe"
 
+Write-Host "Write-Utf8NoBom" -ForegroundColor Cyan
+$wf = Join-Path $temp ("PRism-utf8-" + [guid]::NewGuid().ToString('N') + ".txt")
+try {
+    Write-Utf8NoBom -Path $wf -Text 'hello'
+    $bytes = [System.IO.File]::ReadAllBytes($wf)
+    Assert-Equal 5 $bytes.Length "no BOM: 'hello' writes exactly 5 bytes"
+    Assert-Equal 'h' ([char]$bytes[0]) "first byte is 'h', not a BOM"
+    Assert-Equal 'hello' ([System.IO.File]::ReadAllText($wf)) "round-trips content"
+} finally { Remove-Item -LiteralPath $wf -Force -ErrorAction SilentlyContinue }
+
 if ($script:Failures -gt 0) {
     Write-Host "$script:Failures test(s) failed" -ForegroundColor Red
     exit 1

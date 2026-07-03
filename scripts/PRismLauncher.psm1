@@ -80,4 +80,10 @@ function Test-SafeDeleteTarget {
     return [pscustomobject]@{ Safe = $true; Reason = ''; ResolvedPath = $resolved }
 }
 
-Export-ModuleMember -Function Test-SafeDeleteTarget
+function Write-Utf8NoBom {
+    # UTF-8, no BOM. Byte-consistent across run.ps1 / serve-detached / run-desktop (#676).
+    param([string]$Path, [string]$Text)
+    [System.IO.File]::WriteAllText($Path, $Text, [System.Text.UTF8Encoding]::new($false))
+}
+
+Export-ModuleMember -Function Test-SafeDeleteTarget, Write-Utf8NoBom

@@ -174,12 +174,6 @@ function Invoke-ForcePortReclaim {
     return $true
 }
 
-function Write-Utf8NoBom {
-    # Same helper run.ps1 uses (UTF-8, no BOM), so artifacts are byte-consistent.
-    param([string]$Path, [string]$Text)
-    [System.IO.File]::WriteAllText($Path, $Text, [System.Text.UTF8Encoding]::new($false))
-}
-
 function Write-Pidfile {
     # Per-store JSON pidfile (spec section 4.7). serverPid is filled after the health gate.
     param(
