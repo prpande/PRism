@@ -20,7 +20,14 @@ vi.mock('../hooks/useActivity', () => ({ useActivity: activitySpy }));
 vi.mock('../hooks/useInbox', () => ({
   useInbox: () =>
     inboxLoadingRef.value
-      ? { data: null, error: null, isLoading: true, reload: vi.fn() }
+      ? {
+          data: null,
+          error: null,
+          isLoading: true,
+          isFetching: false,
+          reload: vi.fn(),
+          revalidate: vi.fn(),
+        }
       : {
           data: {
             sections: [],
@@ -30,7 +37,9 @@ vi.mock('../hooks/useInbox', () => ({
           },
           error: null,
           isLoading: false,
+          isFetching: false,
           reload: vi.fn(),
+          revalidate: vi.fn(),
         },
 }));
 vi.mock('../hooks/useInboxUpdates', () => ({
