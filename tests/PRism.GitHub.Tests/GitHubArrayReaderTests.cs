@@ -3,6 +3,7 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using FluentAssertions;
+using Microsoft.Extensions.Logging;
 using PRism.GitHub;
 using PRism.GitHub.Tests.TestHelpers;
 using Xunit;
@@ -173,5 +174,66 @@ public sealed class GitHubArrayReaderTests
 
         degraded.Should().BeTrue();
         items.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task Stops_at_max_page_budget_and_logs_cap_hit()
+    {
+        // 4 pages, each advertising a next; maxPages: 2 → only 2 requests, then break+log.
+        var handler = new ScriptedPagesHandler(
+            (HttpStatusCode.OK, """[{"v":"a"}]""", "https://api.github.com/x?page=2"),
+            (HttpStatusCode.OK, """[{"v":"b"}]""", "https://api.github.com/x?page=3"),
+            (HttpStatusCode.OK, """[{"v":"c"}]""", "https://api.github.com/x?page=4"),
+            (HttpStatusCode.OK, """[{"v":"d"}]""", null));
+        var logger = new CapturingLogger<GitHubArrayReaderTests>();
+
+        var (items, degraded) = await GitHubArrayReader.ReadAsync(
+            FactoryFor(handler), Token, "x", ParseV, CancellationToken.None,
+            logger, resource: "user/subscriptions", maxPages: 2);
+
+        degraded.Should().BeFalse();
+        items.Should().Equal("a", "b");
+        handler.CallCount.Should().Be(2);
+        logger.Entries.Should().ContainSingle(e =>
+            e.Level == LogLevel.Warning && e.Message.Contains("user/subscriptions"));
+    }
+
+    [Fact]
+    public async Task Repeated_next_url_breaks_without_exhausting_budget()
+    {
+        // Both pages advertise the SAME next URL. The visited guard must stop after the
+        // second fetch (the repeat), NOT loop up to maxPages, and NOT log a cap-hit.
+        var handler = new ScriptedPagesHandler(
+            (HttpStatusCode.OK, """[{"v":"a"}]""", "https://api.github.com/x?page=2"),
+            (HttpStatusCode.OK, """[{"v":"b"}]""", "https://api.github.com/x?page=2"));
+        var logger = new CapturingLogger<GitHubArrayReaderTests>();
+
+        var (items, degraded) = await GitHubArrayReader.ReadAsync(
+            FactoryFor(handler), Token, "x", ParseV, CancellationToken.None,
+            logger, resource: "user/subscriptions", maxPages: 10);
+
+        degraded.Should().BeFalse();
+        items.Should().Equal("a", "b");
+        handler.CallCount.Should().Be(2);            // stopped on the repeat, not at page 10
+        logger.Entries.Should().BeEmpty();           // a cycle is not a budget cap
+    }
+
+    [Fact]
+    public async Task Cycle_at_budget_boundary_does_not_log_cap_hit()
+    {
+        // A cycle that lands EXACTLY on the budget boundary must be treated as exhaustion,
+        // not a cap: the visited-guard is checked before the budget, so no cap-hit is logged.
+        var handler = new ScriptedPagesHandler(
+            (HttpStatusCode.OK, """[{"v":"a"}]""", "https://api.github.com/x?page=2"),
+            (HttpStatusCode.OK, """[{"v":"b"}]""", "https://api.github.com/x?page=2")); // repeat at page 2
+        var logger = new CapturingLogger<GitHubArrayReaderTests>();
+
+        var (items, degraded) = await GitHubArrayReader.ReadAsync(
+            FactoryFor(handler), Token, "x", ParseV, CancellationToken.None,
+            logger, resource: "user/subscriptions", maxPages: 2); // budget == 2, cycle == page 2
+
+        degraded.Should().BeFalse();
+        items.Should().Equal("a", "b");
+        logger.Entries.Should().BeEmpty();           // cycle wins over the budget: no false truncation signal
     }
 }
