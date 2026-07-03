@@ -55,11 +55,13 @@ public class TabStampsTests
     [InlineData("tab with space")]
     [InlineData("tab/with/slash")]
     [InlineData("../../etc/passwd")]
-    public void TryValidateTabId_returns_false_when_header_out_of_allowlist(string headerValue)
+    public void TryValidateTabId_returns_false_and_empty_out_when_header_out_of_allowlist(string headerValue)
     {
         var request = new DefaultHttpContext().Request;
         request.Headers[TabStamps.TabIdHeader] = headerValue;
 
-        TabStamps.TryValidateTabId(request, out _).Should().BeFalse();
+        TabStamps.TryValidateTabId(request, out var tabId).Should().BeFalse();
+        // The invalid value must NOT leak through the out-param — a caller can't accidentally use it.
+        tabId.Should().BeEmpty();
     }
 }

@@ -30,8 +30,16 @@ internal static partial class TabStamps
     /// missing or out-of-allowlist value, so the caller can return its own 4xx envelope.</summary>
     internal static bool TryValidateTabId(HttpRequest request, out string tabId)
     {
-        tabId = request.Headers[TabIdHeader].FirstOrDefault() ?? string.Empty;
-        return IsValidTabId(tabId);
+        var candidate = request.Headers[TabIdHeader].FirstOrDefault();
+        if (IsValidTabId(candidate))
+        {
+            tabId = candidate!;
+            return true;
+        }
+        // Never hand back an unvalidated value: tabId is string.Empty on every failure (missing
+        // OR out-of-allowlist), so a caller can't accidentally use a poisoned tab id after false.
+        tabId = string.Empty;
+        return false;
     }
 
     /// <summary>Returns a new stamp dictionary (the input is not mutated) with tabId set to
