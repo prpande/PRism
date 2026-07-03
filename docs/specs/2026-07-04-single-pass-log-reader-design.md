@@ -38,6 +38,16 @@ today's `FileShare.ReadWrite` open), then scan that buffer once for `\n` boundar
 `\n` ends a complete line; the trailing bytes after the last `\n` are a partial line, left
 for the next tick. No per-line re-open, no rescan.
 
+The per-call read is capped at `DefaultMaxReadBytes` (64 MiB; overridable via a `maxReadBytes`
+parameter for tests). This bounds the transient buffer and keeps `length - startOffset` inside
+a 32-bit size on a multi-GB cold backfill (an unbounded `(int)` cast would overflow and the
+tick would throw and stall forever, never advancing the offset). A capped read simply stops at
+the last `\n` within the cap — the remainder is the ordinary partial-trailing-line case — so
+`AiUsageRollupTailer` drains a large backlog over successive ticks with no special handling
+(its loop already advances only to the returned offset and re-reads from there next tick). The
+cap sits far above the stated worst case (~20 MB) and any single log line, so the common and
+stated-large paths read in one call, unchanged.
+
 Rejected: chunked/streaming scan that assembles lines across read-buffer boundaries. It
 avoids the transient array but reintroduces cross-chunk `\r\n`/line-split edge cases — the
 exact class of bug this seam must not have. The transient array is bounded to the

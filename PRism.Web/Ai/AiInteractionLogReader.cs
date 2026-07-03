@@ -15,20 +15,27 @@ internal static class AiInteractionLogReader
 {
     internal readonly record struct LogEntry(DateTimeOffset Timestamp, AiInteractionRecord Record);
 
-    internal static (IReadOnlyList<LogEntry> Entries, long NewOffset) ReadFrom(string filePath, long startOffset)
+    // Cap on bytes read per call. Bounds the transient buffer (and the int cast below) on a huge
+    // cold-start backfill; the tailer drains any excess over subsequent ticks — a capped read stops
+    // at the last '\n', so the next call resumes cleanly from the returned offset.
+    internal const int DefaultMaxReadBytes = 64 * 1024 * 1024; // 64 MiB
+
+    internal static (IReadOnlyList<LogEntry> Entries, long NewOffset) ReadFrom(
+        string filePath, long startOffset, int maxReadBytes = DefaultMaxReadBytes)
     {
         if (!File.Exists(filePath)) return (Array.Empty<LogEntry>(), startOffset);
-
-        var entries = new List<LogEntry>();
 
         using var stream = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
         var length = stream.Length; // snapshot: a concurrent append is deferred to the next tick
         if (startOffset > length) return (Array.Empty<LogEntry>(), startOffset); // caller handles truncation
 
-        var remaining = (int)(length - startOffset);
-        if (remaining == 0) return (entries, startOffset); // nothing new since last tick
+        // Cap the range so a multi-GB cold backfill neither overflows the int cast nor allocates the
+        // whole file at once; the remainder drains over later ticks (the scan below stops at the last
+        // '\n', leaving a clean resume offset).
+        var remaining = (int)Math.Min(length - startOffset, maxReadBytes);
+        if (remaining == 0) return (Array.Empty<LogEntry>(), startOffset); // nothing new since last tick
 
-        // Single read of the new range, then one scan for '\n' boundaries — no per-line file re-open.
+        // Single read of the (capped) new range, then one scan for '\n' boundaries — no per-line re-open.
         stream.Seek(startOffset, SeekOrigin.Begin);
         var buffer = new byte[remaining];
         var read = 0;
@@ -39,6 +46,7 @@ internal static class AiInteractionLogReader
             read += n;
         }
 
+        var entries = new List<LogEntry>();
         var offset = startOffset;
         var lineStart = 0;
         for (var i = 0; i < read; i++)

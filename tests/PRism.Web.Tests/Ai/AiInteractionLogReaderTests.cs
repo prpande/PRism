@@ -189,6 +189,26 @@ public sealed class AiInteractionLogReaderTests : IDisposable
         newOffset.Should().Be(new FileInfo(LogPath).Length); // offset advanced past the blank line
     }
 
+    [Fact]
+    public void ReadFrom_caps_bytes_per_call_and_resumes_cleanly_on_the_next_call()
+    {
+        // A small maxReadBytes forces a capped read: the first call drains only the lines that fit
+        // (stopping at the last '\n' within the cap), the next call resumes from the returned offset.
+        var l1 = Line("2026-06-19T10:00:00.0000000+00:00", "summary", "ok", "o/r#1", 100);
+        var l2 = Line("2026-06-19T11:00:00.0000000+00:00", "summary", "ok", "o/r#2", 200);
+        var l3 = Line("2026-06-19T12:00:00.0000000+00:00", "summary", "ok", "o/r#3", 300);
+        Write(l1, l2, l3);
+        var firstLineBytes = Encoding.UTF8.GetByteCount(l1) + Encoding.UTF8.GetByteCount(Environment.NewLine);
+
+        var (firstBatch, offsetAfterFirst) = AiInteractionLogReader.ReadFrom(LogPath, 0, maxReadBytes: firstLineBytes);
+        firstBatch.Select(e => e.Record.PrRef).Should().Equal("o/r#1"); // only the line that fit in the cap
+        offsetAfterFirst.Should().Be(firstLineBytes); // stopped at the first line's terminator
+
+        var (rest, offsetAfterRest) = AiInteractionLogReader.ReadFrom(LogPath, offsetAfterFirst);
+        rest.Select(e => e.Record.PrRef).Should().Equal("o/r#2", "o/r#3"); // the remainder drains next call
+        offsetAfterRest.Should().Be(new FileInfo(LogPath).Length);
+    }
+
     public void Dispose()
     {
         try { if (Directory.Exists(_dir)) Directory.Delete(_dir, recursive: true); }
