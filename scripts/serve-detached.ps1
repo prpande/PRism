@@ -47,6 +47,8 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
+Import-Module (Join-Path $PSScriptRoot 'PRismLauncher.psm1') -Force
+
 function Assert-Platform {
     # Windows-only by design (spec section 2): the harness-reaping problem and its
     # WMI fix are Windows-specific, and Get-NetTCPConnection / taskkill / Win32_Process

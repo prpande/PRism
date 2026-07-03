@@ -40,6 +40,8 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
+Import-Module (Join-Path $PSScriptRoot 'PRismLauncher.psm1') -Force
+
 # ---------------------------------------------------------------------------
 # Pure, dot-sourceable helpers below. The main-guard at the bottom keeps them
 # importable into run-desktop.Tests.ps1 without executing the launch.
@@ -155,31 +157,11 @@ function Test-LauncherAlreadyRunning {
 }
 
 function Test-CleanTargetSafe {
-    # Defense-in-depth guard for -Clean's recursive delete. The data dir is COMPUTED (not
-    # user-supplied), but Remove-Item -Recurse is catastrophic if the path is ever empty,
-    # relative, a protected root, or too shallow (e.g. GetFolderPath returning '' would make
-    # the target a bare relative 'PRism'). Mirrors run.ps1:Assert-SafeResetTarget, trimmed to
-    # the computed-path case. Returns $true ONLY when the path is safe to recursively delete:
-    # absolute, leaf == 'PRism', not a protected root, and >=2 segments below the drive root.
+    # Bool-adapter over the shared guard (PRismLauncher.psm1:Test-SafeDeleteTarget, #676).
+    # run-desktop's target is the COMPUTED %LOCALAPPDATA%\PRism, so lock the leaf to 'PRism';
+    # no repo/temp additions and no checkout backstop (a computed path can be neither).
     param([string]$Path)
-    if ([string]::IsNullOrWhiteSpace($Path)) { return $false }
-    # Absolute-path check that also works on .NET Framework 4.x (Windows PowerShell 5.1),
-    # which lacks Path.IsPathFullyQualified (a .NET Core API — calling it throws under 5.1).
-    # Require a drive root (C:\) or a UNC root (\\…); a bare or drive-relative path is rejected.
-    if ($Path -notmatch '^[A-Za-z]:[\\/]' -and $Path -notmatch '^[\\/][\\/]') { return $false }
-    $resolved = [System.IO.Path]::GetFullPath($Path)
-    if ((Split-Path $resolved -Leaf) -ne 'PRism') { return $false }
-    $trimmed = $resolved.TrimEnd('\', '/')
-    $protected = @(
-        [Environment]::GetFolderPath('UserProfile'),
-        [Environment]::GetFolderPath('LocalApplicationData')
-    ) | Where-Object { $_ } | ForEach-Object { $_.TrimEnd('\', '/') }
-    if ($protected -contains $trimmed) { return $false }
-    $root = [System.IO.Path]::GetPathRoot($resolved)
-    $rel = $resolved.Substring($root.Length)
-    $segments = @($rel -split '[\\/]' | Where-Object { $_ })
-    if ($segments.Count -lt 2) { return $false }
-    return $true
+    return (Test-SafeDeleteTarget -Path $Path -RequireLeafName 'PRism').Safe
 }
 
 function Test-OnWindows {
