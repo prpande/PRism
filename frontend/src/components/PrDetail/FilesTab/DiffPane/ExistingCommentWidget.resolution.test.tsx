@@ -107,6 +107,21 @@ describe('ExistingCommentWidget — resolve/unresolve control (#571 Task 12)', (
     expect(status).toHaveTextContent('Resolving…');
   });
 
+  it('keeps the sr-only live region mounted (empty) when idle so AT announces later mutations', () => {
+    // Always-mounted region (mirrors PrActionsPanel): a region inserted already-containing
+    // its text is not reliably announced. When idle it must be present but empty.
+    render(
+      <ExistingCommentWidget
+        threads={[thread({ isResolved: false })]}
+        replyContext={replyContext()}
+        collapse={collapseStub()}
+      />,
+    );
+    const status = screen.getByRole('status');
+    expect(status).toHaveAttribute('aria-atomic', 'true');
+    expect(status).toHaveTextContent('');
+  });
+
   it('error: renders a role=alert .composer-error banner with the copy; button stays present', () => {
     useThreadResolutionMock.mockReturnValue(
       hookState({ error: "PRism can't resolve this conversation. Grant PR-write access." }),

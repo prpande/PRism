@@ -268,11 +268,12 @@ function ThreadView({
         </div>
       )}
 
-      {announce && (
-        <span className="sr-only" role="status" aria-live="polite">
-          {announce}
-        </span>
-      )}
+      {/* Always-mounted live region (mirrors PrActionsPanel.tsx) — screen readers only
+          reliably announce a content mutation inside a region that is ALREADY in the DOM;
+          a region inserted already-containing its text is silent on NVDA/JAWS. */}
+      <span className="sr-only" role="status" aria-live="polite" aria-atomic="true">
+        {announce ?? ''}
+      </span>
       {(error || reconcileHint) && (
         <div className="composer-error" role="alert">
           {error ?? 'Resolved — couldn’t refresh. Reload the PR to see the change.'}
