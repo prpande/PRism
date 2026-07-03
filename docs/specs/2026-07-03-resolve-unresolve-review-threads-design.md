@@ -3,7 +3,7 @@
 - **Issue:** [#571](https://github.com/prpande/PRism/issues/571)
 - **Tier / Risk:** T3 · gated (B1 UI + B2 risk-surface: net-new GitHub write path + PAT scope)
 - **Sibling:** [#566](https://github.com/prpande/PRism/issues/566) (PR lifecycle actions) — shipped the reusable write-path foundation this feature plugs into.
-- **Status:** design — awaiting human spec gate. Incorporates one round of `ce-doc-review` (feasibility, coherence, adversarial, security, design-lens, scope-guardian); dispositions recorded in the PR.
+- **Status:** spec gate PASSED (2026-07-03) — approved to plan; auth binding (§5.4) locked to **BIND**. Incorporates one round of `ce-doc-review` (feasibility, coherence, adversarial, security, design-lens, scope-guardian); dispositions recorded in the PR.
 
 ## 1. Problem
 
@@ -241,13 +241,14 @@ unbound `ParentThreadId`, format-validated only) and is bounded by PRism's singl
 model (GitHub's own token scope is the ultimate authz, and localhost + the tab-id-CSRF preflight prevent a
 foreign origin from reaching the endpoint) — but it is **undocumented** and self-inconsistent.
 
-**Decision (recommended, pending the human gate):** bind it. Thread `prRef` into the writer and, at endpoint
+**Decision (LOCKED at the spec gate, 2026-07-03 — BIND).** Thread `prRef` into the writer and, at endpoint
 gate 3, validate the incoming `threadId` is one of the thread IDs in the PR-detail snapshot already loaded
 for `prRef` (the snapshot carries `reviewComments[].threadId`) before issuing the mutation; reject with 404
 `thread-not-found` otherwise. This is cheap (the snapshot is already loaded for the PR the user is viewing;
 the frontend only ever sends a `threadId` it rendered from that snapshot), follows the `IPrLifecycleWriter`
-convention, and makes the route self-consistent. **Alternative:** accept the inherited single-user-trust-model
-risk and document it explicitly here. Either way the decision is now recorded rather than silently mirrored.
+convention, and makes the route self-consistent. The alternative — accept the inherited single-user-trust-model
+risk and only document it — was **considered and rejected** at the gate: for a B2 write-path surface, binding
+is the correct default and the cost is negligible.
 
 ## 6. Frontend design
 
@@ -448,13 +449,13 @@ collapsed `Resolved` summary; otherwise cover via unit/vitest + the visual mocku
 > Note: the classifier **live-validation** (§5.1) is a **plan/implementation gate**, not a deferral — it must
 > be done before the failure-UX ACs can be trusted.
 
-## 12. Decisions for the human spec gate (B1 + B2)
+## 12. Decisions taken at the human spec gate (B1 + B2) — 2026-07-03
 
-1. **Authorization binding (§5.4, B2)** — recommended: bind `threadId` to `prRef` via a snapshot-membership
-   check. Alternative: accept the single-user-trust-model risk and document it. **Your call.**
-2. **Visual (B1)** — the button placement/appearance/error-surface were validated against the real-token
-   mockup; confirm nothing changed on re-read (Resolve green-outline, Unresolve neutral, Resolve left of the
-   primary Comment when composing).
+1. **Authorization binding (§5.4, B2)** — **RESOLVED: bind.** `threadId` is validated for membership in the
+   PR-detail snapshot loaded for `prRef` before the mutation.
+2. **Visual (B1)** — **APPROVED.** Button placement/appearance/error-surface stand as validated against the
+   real-token mockup (Resolve green-outline, Unresolve neutral, Resolve left of the primary Comment when
+   composing).
 
 All other design decisions (reconcile strategy, scope, PAT-scope handling, deferrals) are settled and
-recorded above.
+recorded above. Spec approved to proceed to `writing-plans`.
