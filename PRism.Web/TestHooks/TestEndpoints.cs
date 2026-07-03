@@ -292,12 +292,12 @@ internal static class TestEndpoints
             if (store is null) return StoreMissing("/test/mark-pr-viewed");
             if (string.IsNullOrEmpty(req.Owner) || string.IsNullOrEmpty(req.Repo))
                 return Results.BadRequest(new { error = "owner-or-repo-missing" });
-            // Spec § 3 — same TabId allowlist as mark-viewed / reload. The test hook is its
+            // TabStamps § 3 — same TabId allowlist as mark-viewed / reload. The test hook is its
             // own request contract (TabId arrives in the JSON body, not the header — Playwright
             // mocked-mode specs read the tab id off window.__prism_test_getTabId and pass it
-            // explicitly), but the validation gate is identical so a typo here behaves the same
-            // way it does for the user-facing endpoints.
-            if (string.IsNullOrEmpty(req.TabId) || !PrDetailEndpoints.TabIdAllowlistRegex().IsMatch(req.TabId))
+            // explicitly), so it validates the body value directly via TabStamps.IsValidTabId; the
+            // gate is identical so a typo here behaves the same way it does for the user-facing endpoints.
+            if (!TabStamps.IsValidTabId(req.TabId))
                 return Results.BadRequest(new { error = "tab-id-missing-or-invalid" });
             var key = $"{req.Owner}/{req.Repo}/{req.Number}";
             var headSha = store.CurrentHeadSha;
