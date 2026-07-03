@@ -28,7 +28,6 @@ export function useInbox() {
   const generationRef = useRef(0);
 
   const reload = useCallback(async () => {
-    console.log('[DBG-INBOX-RELOAD] reload() called → GET /api/inbox');
     const generation = ++generationRef.current;
     const isCurrent = () => generation === generationRef.current;
     setIsLoading(true);
@@ -60,6 +59,36 @@ export function useInbox() {
     setIsLoading(false);
   }, []);
 
+  // #713 — silent background revalidation for the poll-while-visible backstop. Unlike
+  // reload(), it touches NO loading flags (so it can't flicker the loading bar every tick),
+  // swallows failures keeping the current data, and does a single attempt (no 503 retry loop —
+  // the next tick retries). Shares generationRef with reload() so a poll and a reload can't
+  // clobber each other's fresher result. Its sole job is to guarantee the inbox eventually
+  // re-fetches after a return-to-inbox whose nonce refetch was missed by a concurrent-render
+  // timing race (the #704/#713 flake) — no fixed-cadence poller otherwise exists, and
+  // mark-viewed emits no `inbox-updated` SSE frame.
+  //
+  // Unchanged-guard: skip setData when the payload is byte-identical to the last one this hook
+  // stored, so an idle poll (the common case — nothing changed since the last fetch) does NOT
+  // hand every row a fresh object reference and re-render the whole list, which would defeat
+  // the #671 row memoization. Only reload() feeds this ref (revalidate reuses it) — a redundant
+  // re-render on the first tick after a reload is negligible and not worth stringifying there.
+  const lastSerializedRef = useRef<string | null>(null);
+  const revalidate = useCallback(async () => {
+    const generation = ++generationRef.current;
+    try {
+      const next = await inboxApi.get();
+      if (generation !== generationRef.current) return;
+      const serialized = JSON.stringify(next);
+      if (serialized === lastSerializedRef.current) return; // nothing changed → no re-render
+      lastSerializedRef.current = serialized;
+      setData(next);
+      setError(null);
+    } catch {
+      // Silent: keep current data; the next tick (or a manual refresh) retries.
+    }
+  }, []);
+
   useEffect(() => {
     void reload();
     return () => {
@@ -71,5 +100,5 @@ export function useInbox() {
       generationRef.current++;
     };
   }, [reload]);
-  return { data, error, isLoading, isFetching, reload };
+  return { data, error, isLoading, isFetching, reload, revalidate };
 }

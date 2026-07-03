@@ -7,8 +7,12 @@ import { MemoryRouter, useNavigate } from 'react-router-dom';
 // surfaces the `active` prop it receives and a stable DOM node we can identity-
 // check across navigation to prove the host hides (never remounts) the page.
 vi.mock('../../pages/InboxPage', () => ({
-  InboxPage: ({ active }: { active?: boolean }) => (
-    <div data-testid="inbox-page" data-active={String(active)} />
+  InboxPage: ({ active, revalidateNonce }: { active?: boolean; revalidateNonce?: number }) => (
+    <div
+      data-testid="inbox-page"
+      data-active={String(active)}
+      data-nonce={String(revalidateNonce)}
+    />
   ),
 }));
 
@@ -74,6 +78,24 @@ describe('InboxHost', () => {
     navigate('/pr/acme/api/7');
     expect(screen.getByTestId('inbox-page')).toBe(mounted);
     expect(screen.getByTestId('inbox-page')).not.toBeVisible();
+  });
+
+  test('bumps revalidateNonce each time the Inbox becomes visible (return-to-inbox) — #713', () => {
+    // The nonce is the primary return-refetch trigger: it increments on every
+    // onInbox false→true edge so InboxPage reloads on return (the mount fetch covers
+    // the initial visit, so the first paint stays at 0 — no double-fetch on cold load).
+    const { navigate } = renderHostAt('/');
+    expect(screen.getByTestId('inbox-page')).toHaveAttribute('data-nonce', '0');
+
+    navigate('/pr/acme/api/7'); // hidden — no bump
+    expect(screen.getByTestId('inbox-page')).toHaveAttribute('data-nonce', '0');
+
+    navigate('/'); // first return — bump to 1
+    expect(screen.getByTestId('inbox-page')).toHaveAttribute('data-nonce', '1');
+
+    navigate('/pr/acme/api/7');
+    navigate('/'); // second return — bump to 2
+    expect(screen.getByTestId('inbox-page')).toHaveAttribute('data-nonce', '2');
   });
 
   test('stays visible when a Settings modal sits over the Inbox (effective location)', () => {

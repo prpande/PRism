@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useInbox } from '../hooks/useInbox';
 import { useInboxUpdates } from '../hooks/useInboxUpdates';
-import { useActivationTransition } from '../hooks/useActivationTransition';
 import { useInboxRefresh } from '../hooks/useInboxRefresh';
 import { useToast } from '../components/Toast/useToast';
 import { useAiGate } from '../hooks/useAiGate';
@@ -31,24 +30,41 @@ import styles from './InboxPage.module.css';
 // Inbox does not hold live document-level keydown handlers (Modal registers
 // Escape/Tab on `document` keyed on `open`, not on CSS visibility). Defaults true
 // so direct mounts (tests, any non-host caller) behave exactly as before.
-export function InboxPage({ active = true }: { active?: boolean } = {}) {
-  const { data, error, isLoading, isFetching, reload } = useInbox();
+export function InboxPage({
+  active = true,
+  revalidateNonce = 0,
+}: { active?: boolean; revalidateNonce?: number } = {}) {
+  const { data, error, isLoading, isFetching, reload, revalidate } = useInbox();
   const { healthy } = useStreamHealth();
   const { failing } = useGitHubReachability(!!data?.stale);
-  // #563 — under keep-alive the Inbox is no longer remounted on return from a PR,
-  // so its mount-effect GET /api/inbox doesn't re-fire. Refetch when the host
-  // re-shows this page (active false→true) so freshness that does NOT ride an
-  // `inbox-updated` SSE frame — e.g. a PR's unread bar clearing after mark-viewed
-  // (#285) — is picked up, exactly as the old remount-on-return did. Mirrors
-  // PrDetailView's refetch-on-activation. useActivationTransition never fires on
-  // first mount (useInbox's own mount fetch covers that) and is a no-op for direct
-  // callers where `active` is the default-true constant.
-  useActivationTransition(active, () => {
-    console.log('[DBG-ACTIVATE-CB] inbox activation edge fired → reload()');
-    void reload();
-  });
+  // #563/#713 — under keep-alive the Inbox is not remounted on return from a PR, so its
+  // mount-effect GET /api/inbox doesn't re-fire. Two mechanisms restore the return-refetch so
+  // freshness that does NOT ride an `inbox-updated` SSE frame — e.g. a PR's unread bar clearing
+  // after mark-viewed (#285) — is picked up:
+  //   1. Primary (fast): reload when InboxHost's `revalidateNonce` bumps (once per time the
+  //      inbox becomes visible). nonce=0 is the initial mount — covered by useInbox's own mount
+  //      fetch — so it is skipped. Replaces the old in-page useActivationTransition edge; the
+  //      host detects the transition closer to the location source.
+  //   2. Backstop (guarantee): a silent poll while `active` (below). The nonce is still
+  //      edge-based, so it remains subject to the concurrent-render timing race behind #704; the
+  //      poll is what makes the eventual refetch race-proof — a missed nonce self-heals within
+  //      one interval (< the #285 spec's assertion window). Both are no-ops for direct callers
+  //      (active default-true, nonce default-0), so unit tests behave exactly as before.
+  useEffect(() => {
+    if (revalidateNonce > 0) void reload();
+    // reload is a stable useCallback; keying only on the nonce means one refetch per return.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [revalidateNonce]);
+  useEffect(() => {
+    if (!active) return;
+    // 8s: a missed nonce self-heals well within the #285 e2e's assertion window even with a
+    // slow GET under CI load, while staying infrequent enough (with the unchanged-guard) to be
+    // negligible traffic. This is a timer, not a render effect, so it fires regardless of the
+    // concurrent-render race that can drop the nonce — it is the actual guarantee.
+    const id = setInterval(() => void revalidate(), 8_000);
+    return () => clearInterval(id);
+  }, [active, revalidate]);
 
-  console.log(`[DBG-INBOXPAGE] render active=${String(active)}`);
   // #450 — an inbox-updated frame now silently auto-refreshes (debounced) instead of
   // surfacing the old reload banner. `announce` carries the screen-reader signal the
   // removed banner's role=status region used to provide.

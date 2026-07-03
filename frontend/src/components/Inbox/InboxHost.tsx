@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useEffectiveLocation } from '../../hooks/useEffectiveLocation';
 import { useTabScrollMemory } from '../../hooks/useTabScrollMemory';
 import { InboxPage } from '../../pages/InboxPage';
@@ -20,7 +20,20 @@ export function InboxHost() {
   const { pathname } = useEffectiveLocation();
   const onInbox = pathname === '/';
 
-  console.log(`[DBG-HOST] render pathname=${pathname} onInbox=${String(onInbox)}`);
+  // #713 — return-to-inbox revalidation nonce. Incremented each time the inbox becomes the
+  // visible view (onInbox false→true) and passed to InboxPage as a value dependency that
+  // drives useInbox.reload(). This replaces the in-page useActivationTransition edge for the
+  // inbox: detecting the transition HERE (in the always-rendered host, directly subscribed to
+  // the location) rather than through the kept-alive page's `active` prop keeps the primary
+  // refetch closer to the source, and a monotonic nonce is a value dep the consumer can't
+  // coalesce away. This is the fast common-case path; InboxPage's poll-while-visible backstop
+  // is the actual guarantee against the concurrent-render timing race behind #704.
+  const [revalidateNonce, setRevalidateNonce] = useState(0);
+  const wasOnInbox = useRef(onInbox);
+  useEffect(() => {
+    if (onInbox && !wasOnInbox.current) setRevalidateNonce((n) => n + 1);
+    wasOnInbox.current = onInbox;
+  }, [onInbox]);
 
   // Lazy mount: render InboxPage only once the Inbox has been visited, then keep
   // it alive forever (hidden toggled, never unmounted). `useState(onInbox)` mounts
@@ -47,7 +60,7 @@ export function InboxHost() {
   // keyed on `open`, not on CSS visibility. Mirrors PrDetailView's `active` gate.
   return (
     <div hidden={!onInbox} data-inbox-host>
-      <InboxPage active={onInbox} />
+      <InboxPage active={onInbox} revalidateNonce={revalidateNonce} />
     </div>
   );
 }
