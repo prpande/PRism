@@ -43,6 +43,39 @@ public sealed class GitHubArrayReaderTests
     }
 
     [Fact]
+    public async Task Later_page_failure_returns_partial_prefix_not_degraded()
+    {
+        var handler = new ScriptedPagesHandler(
+            (HttpStatusCode.OK, """[{"v":"a"},{"v":"b"}]""", "https://api.github.com/x?page=2"),
+            (HttpStatusCode.InternalServerError, "", null));
+
+        var (items, degraded) = await GitHubArrayReader.ReadAsync(
+            FactoryFor(handler), Token, "x", ParseV, CancellationToken.None);
+
+        degraded.Should().BeFalse();          // coherent prefix must not blank the rail
+        items.Should().Equal("a", "b");       // page-1 items retained
+        handler.CallCount.Should().Be(2);     // it tried page 2, got 500, stopped
+    }
+
+    [Fact]
+    public async Task Later_page_transport_fault_returns_partial_prefix_not_degraded()
+    {
+        // Page 1 OK with a next; page 2 throws (no scripted page → over-call throw is a
+        // transport-style fault the catch filter would NOT cover, so instead script an
+        // explicit page-2 fault via a malformed body caught as JsonException on the SECOND page).
+        var handler = new ScriptedPagesHandler(
+            (HttpStatusCode.OK, """[{"v":"a"}]""", "https://api.github.com/x?page=2"),
+            (HttpStatusCode.OK, "NOT JSON {{{", null));
+
+        var (items, degraded) = await GitHubArrayReader.ReadAsync(
+            FactoryFor(handler), Token, "x", ParseV, CancellationToken.None);
+
+        degraded.Should().BeFalse();
+        items.Should().Equal("a");
+        handler.CallCount.Should().Be(2);
+    }
+
+    [Fact]
     public async Task Parses_array_via_delegate()
     {
         var (items, degraded) = await GitHubArrayReader.ReadAsync(
