@@ -153,8 +153,7 @@ internal sealed class SseChannel : IDisposable
                         // sparse: true selects ApiSparse — this is a sparse re-emit: Approvals/
                         // Approvers/etc. are null only because the frame carries mergeability only.
                         // An explicit null would clobber the frontend's snapshot() full-load values
-                        // via the #621 path. BuildFrame makes the Api/ApiSparse choice explicit and
-                        // named so a future author copying an Api site can't silently drift it (#669).
+                        // via the #621 path.
                         var frame = BuildFrame(evt, sparse: true);
                         // Route through the same helper as the fanout path so this re-emit gets the
                         // 5s per-write timeout + stalled-subscriber eviction + delivery logging — a raw
@@ -366,13 +365,11 @@ internal sealed class SseChannel : IDisposable
         }
     }
 
-    // Single source for the Project → serialize → SSE-frame triple shared by every
-    // projection-based publish path (FanoutProjected, OnActivePrUpdated, OnIdentityChanged,
-    // and the #655 subscribe re-emit). `sparse` makes the serializer-options choice explicit
-    // and named: false ⇒ Api (an explicit null authoritatively clears the field), true ⇒
-    // ApiSparse (a null leaves the field unchanged). Centralizing the choice here stops a
-    // future author from copying an Api site into a sparse re-emit — the exact drift that
-    // forced the #655 re-emit to independently rediscover ApiSparse (#669).
+    // Single source for the Project → serialize → SSE-frame triple used by every
+    // projection-based publish path. `sparse` names the serializer-options choice:
+    // false ⇒ Api (an explicit null authoritatively clears the field), true ⇒ ApiSparse
+    // (a null leaves the field unchanged). Centralizing it stops a future author from
+    // copying an Api site into a sparse re-emit and silently clobbering full-load values (#669).
     private static string BuildFrame(IReviewEvent evt, bool sparse = false)
     {
         var (eventName, payload) = SseEventProjection.Project(evt);
