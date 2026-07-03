@@ -1,3 +1,4 @@
+import { useRef } from 'react';
 import type { PrReference, ReviewThreadDto } from '../../../../api/types';
 import { CommentCard } from '../../Comment/CommentCard';
 import { CollapsedComposerAffordance } from '../../Composer/CollapsedComposerAffordance';
@@ -8,9 +9,15 @@ import {
   type ComposerOwnerKey,
 } from '../../../../hooks/useDraftSession';
 import { useDraftBackedDisclosure } from '../../../../hooks/useDraftBackedDisclosure';
+import { useThreadResolution } from '../../../../hooks/useThreadResolution';
 import { useReplyData } from '../ReplyDataContext';
 import { ThreadDisclosureHeader } from './ThreadDisclosureHeader';
 import { stripMarkdown } from '../../HotspotsTab/stripMarkdown';
+
+// Stable no-op fallbacks for the pure-render / read-only case (no replyContext
+// or collapse control mounted) so useThreadResolution's useCallback deps don't
+// churn on every render.
+const NOOP = () => {};
 
 // #327 Task 13 — the STABLE half of the split reply wiring: identity-stable
 // callbacks plus the rarely-changing scalars (prRef/prState/readOnly). FilesTab
@@ -130,6 +137,43 @@ function ThreadView({
     (o) => !thread.comments.some((c) => c.databaseId != null && c.databaseId === o.postedCommentId),
   );
 
+  // #571 Task 12 — called UNCONDITIONALLY (Rules of Hooks). The widget also
+  // renders in pure-render / read-only mode where replyContext is undefined;
+  // the hook's null-prRef guard makes invoke() a no-op there, and the button
+  // below is only rendered when replyContext exists, so invoke() is never
+  // reachable with a null prRef.
+  const { pending, announce, error, reconcileHint, invoke } = useThreadResolution({
+    prRef: replyContext?.prRef ?? null,
+    threadId: thread.threadId,
+    isResolved: thread.isResolved,
+    reload: replyContext?.reload ?? NOOP,
+    clearCollapseOverride: collapse?.clearCollapseOverride ?? NOOP,
+  });
+  const rootRef = useRef<HTMLDivElement>(null);
+  const onResolveClick = () => {
+    rootRef.current?.focus(); // park focus before the button disables
+    invoke();
+  };
+
+  const resolveButton = replyContext ? (
+    <button
+      type="button"
+      className={`btn btn-sm ${thread.isResolved ? 'btn-secondary' : 'btn-success-outline'}`}
+      disabled={pending || replyContext.readOnly}
+      aria-disabled={pending || replyContext.readOnly || undefined}
+      aria-busy={pending || undefined}
+      onClick={onResolveClick}
+    >
+      {pending
+        ? thread.isResolved
+          ? 'Unresolving…'
+          : 'Resolving…'
+        : thread.isResolved
+          ? 'Unresolve conversation'
+          : 'Resolve conversation'}
+    </button>
+  ) : null;
+
   const collapsed = collapse?.isCollapsed(thread.threadId, thread.isResolved) ?? false;
   const bodyId = `thread-body-${thread.threadId}`;
   const first = thread.comments[0];
@@ -137,6 +181,8 @@ function ThreadView({
 
   return (
     <div
+      ref={rootRef}
+      tabIndex={-1}
       className={`comment-thread${thread.isResolved ? ' comment-thread--resolved' : ''} ${styles.commentThread}`}
       data-thread-id={thread.threadId}
     >
@@ -181,13 +227,16 @@ function ThreadView({
 
           {replyContext && !composerOpen && (
             <div className={`comment-thread-actions ${styles.commentThreadActions}`}>
-              <CollapsedComposerAffordance
-                label={existingDraft ? 'Continue draft…' : 'Reply…'}
-                ariaLabel={`Reply to thread on ${thread.filePath} line ${thread.lineNumber}`}
-                hasDraft={!!existingDraft}
-                readOnly={replyContext.readOnly}
-                onOpen={handleReplyClick}
-              />
+              <div className={styles.replyAffordanceSlot}>
+                <CollapsedComposerAffordance
+                  label={existingDraft ? 'Continue draft…' : 'Reply…'}
+                  ariaLabel={`Reply to thread on ${thread.filePath} line ${thread.lineNumber}`}
+                  hasDraft={!!existingDraft}
+                  readOnly={replyContext.readOnly}
+                  onOpen={handleReplyClick}
+                />
+              </div>
+              {resolveButton}
             </div>
           )}
 
@@ -213,8 +262,20 @@ function ThreadView({
               onPosted={(id, postedBody) =>
                 replyContext.onReplyPosted?.(thread.threadId, id, postedBody)
               }
+              extraActionStart={resolveButton}
             />
           )}
+        </div>
+      )}
+
+      {announce && (
+        <span className="sr-only" role="status" aria-live="polite">
+          {announce}
+        </span>
+      )}
+      {(error || reconcileHint) && (
+        <div className="composer-error" role="alert">
+          {error ?? 'Resolved — couldn’t refresh. Reload the PR to see the change.'}
         </div>
       )}
     </div>
