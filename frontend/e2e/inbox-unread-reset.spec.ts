@@ -11,6 +11,19 @@ test.describe('inbox unread bar resets on view (#285)', () => {
   });
 
   test('opening the PR and returning clears the row unread bar', async ({ page, request }) => {
+    // #704 (local-repro unblock): on a reused local server (`reuseExistingServer`), the
+    // best-effort `ui.ai.onboardingSeen=true` patch in resetBackendState doesn't always
+    // take, so the #485 AI onboarding dialog's modal-backdrop intercepts the row click at
+    // ":row.click". Auto-dismiss it via Escape whenever it appears (Modal has onClose={onEsc},
+    // no disableEscDismiss, so Escape closes it mode-agnostically). No-op on CI where the
+    // patch takes and the dialog never renders.
+    await page.addLocatorHandler(
+      page.getByRole('dialog', { name: 'Set up AI for your reviews' }),
+      async () => {
+        await page.keyboard.press('Escape');
+      },
+    );
+
     // Populate the real-backend inbox with the scenario PR (review-requested, unread).
     const seed = await request.post(`${BACKEND_ORIGIN}/test/seed-inbox`, {
       headers: { Origin: BACKEND_ORIGIN },
@@ -31,19 +44,33 @@ test.describe('inbox unread bar resets on view (#285)', () => {
     );
     await row.click();
     await page.waitForURL('**/pr/acme/api/123**');
-    await markViewed;
+    // #704: assert the stamp actually PERSISTED. mark-viewed is fire-and-forget; a non-204
+    // (e.g. 422 snapshot-evicted, 409 stale-head-sha) leaves lastViewedHeadSha unwritten, so
+    // the inbox overlay below would *correctly* keep the row unread forever — a hard failure
+    // masquerading as a timing flake. Asserting 204 here converts that into an actionable
+    // product-bug signal at the true root instead of a mysterious `:row-unread` timeout.
+    expect((await markViewed).status()).toBe(204);
 
-    // Return to the inbox via SPA history nav (unmount → remount → GET /api/inbox overlay).
+    // Return to the inbox via SPA history nav. The Inbox is keep-alive (InboxHost renders it
+    // `hidden`, never unmounted), so there's no remount GET; instead useActivationTransition
+    // fires useInbox.reload() on the active false→true edge (#285/#563), and the fresh
+    // GET /api/inbox's read-time overlay re-projects the now-current stamp → row not unread.
     await page.goBack();
     await page.waitForURL((url) => url.pathname === '/');
 
-    // The overlay re-projects the fresh stamp → row is no longer unread. This depends on
-    // `GET /api/inbox` being re-issued on the inbox remount (useInbox's mount-effect fetch);
-    // if the frontend ever cached the inbox response across navigation, this could pass on
-    // stale data — the reset is driven by the fresh GET, not client state.
+    // #704: the original flake was a bare 5s toHaveAttribute poll losing a race under CI CPU
+    // load — the activation reload + response + re-render can exceed 5s when the runner is
+    // saturated (reproduced locally only while a sibling `dotnet test` suite pinned every core).
+    // Gate on the OBSERVABLE with a generous timeout rather than a specific GET response:
+    //   - it rides out load, and clears via ANY driver (activation reload, poller, auto-refresh);
+    //   - it can't false-pass on stale client state — the row was asserted data-unread=true above,
+    //     so 'false' can only come from fresh data carrying the stamp;
+    //   - a stuck stamp is already ruled out fast by the 204 assertion, so this can't silently
+    //     mask a mark-viewed failure (that fails earlier, at the true root).
     await expect(page.getByRole('button', { name: /Calc utilities/i })).toHaveAttribute(
       'data-unread',
       'false',
+      { timeout: 15_000 },
     );
   });
 });
