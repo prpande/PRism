@@ -54,17 +54,29 @@ export function useThreadResolution({
     }
   }, []);
 
-  // Release when the reloaded isResolved reaches the target (confirm-then-apply).
+  // Drop the busy/announce/in-flight state. Single owner of these three so every code path
+  // releases identically. It intentionally does NOT touch targetRef, error, reconcileHint, or the
+  // timer — each caller decides those (e.g. the fallback give-up branch leaves targetRef ARMED so a
+  // late reconcile can still land via the release effect).
+  const release = useCallback(() => {
+    setPending(false);
+    setAnnounce(null);
+    inFlight.current = false;
+  }, []);
+
+  // Release when the reloaded isResolved reaches the target (confirm-then-apply). Also clears
+  // reconcileHint: if the fallback gave up (hint=true, targetRef left ARMED) and the reload it
+  // fired then lands the correct isResolved a moment later, this effect completes the reconcile —
+  // drops the stale "couldn't refresh" banner and restores fold governance to isResolved.
   useEffect(() => {
     if (targetRef.current !== null && isResolved === targetRef.current) {
       targetRef.current = null;
       clearTimer();
-      setPending(false);
-      setAnnounce(null);
-      inFlight.current = false;
+      release();
+      setReconcileHint(false); // a late reconcile drops the stale give-up hint
       clearCollapseOverride(threadId); // so isResolved governs the fold again
     }
-  }, [isResolved, clearTimer, clearCollapseOverride, threadId]);
+  }, [isResolved, clearTimer, release, clearCollapseOverride, threadId]);
 
   useEffect(() => clearTimer, [clearTimer]);
 
@@ -83,18 +95,17 @@ export function useThreadResolution({
         if (!r.ok) {
           targetRef.current = null;
           clearTimer();
-          setPending(false);
-          setAnnounce(null);
-          inFlight.current = false;
+          release();
           setError(copyFor(r.code));
           return;
         }
-        // Success — already reconciled (fast SSE)?
+        // Success — already reconciled (fast SSE)? If targetRef is already null the release effect
+        // beat us to it (an external isResolved flip fired first) — it already called
+        // clearCollapseOverride, so bail before calling it a second time.
         if (latestResolved.current === target) {
+          if (targetRef.current === null) return; // effect already reconciled this
           targetRef.current = null;
-          setPending(false);
-          setAnnounce(null);
-          inFlight.current = false;
+          release();
           clearCollapseOverride(threadId);
           return;
         }
@@ -103,13 +114,15 @@ export function useThreadResolution({
         timerRef.current = setTimeout(() => {
           timerRef.current = null;
           const reconciled = latestResolved.current === targetRef.current;
-          targetRef.current = null;
-          setPending(false);
-          setAnnounce(null);
-          inFlight.current = false;
           if (reconciled) {
+            targetRef.current = null;
+            release();
             clearCollapseOverride(threadId);
           } else {
+            // Give up waiting, but leave targetRef ARMED: if the reload below (or any later
+            // isResolved flip) lands the target, the release effect still completes the reconcile
+            // and clears reconcileHint. Nulling targetRef here would forfeit that recovery.
+            release();
             reload(); // one more try to refresh
             setReconcileHint(true); // write ok, reload lagging — tell the user (AC7)
           }
@@ -118,12 +131,10 @@ export function useThreadResolution({
       .catch(() => {
         targetRef.current = null;
         clearTimer();
-        setPending(false);
-        setAnnounce(null);
-        inFlight.current = false;
+        release();
         setError(copyFor(undefined));
       });
-  }, [prRef, threadId, isResolved, reload, clearCollapseOverride, clearTimer]);
+  }, [prRef, threadId, isResolved, reload, clearCollapseOverride, clearTimer, release]);
 
   return { pending, announce, error, reconcileHint, invoke };
 }

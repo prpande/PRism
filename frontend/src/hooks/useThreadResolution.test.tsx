@@ -223,4 +223,132 @@ describe('useThreadResolution', () => {
     expect(resolveThread).not.toHaveBeenCalled();
     expect(unresolveThread).not.toHaveBeenCalled();
   });
+
+  // Fix 1 (review): a LATE reconcile after the fallback gave up must still complete. The fallback
+  // leaves targetRef ARMED, so when the give-up reload finally lands the correct isResolved, the
+  // release effect fires — calling clearCollapseOverride AND dropping the now-stale reconcileHint.
+  it('completes a late reconcile after the fallback gave up: clears the override and drops the stale hint', async () => {
+    vi.useFakeTimers();
+    resolveThread.mockResolvedValueOnce({ ok: true });
+    const reload = vi.fn();
+    const clearCollapseOverride = vi.fn();
+    const { result, rerender } = renderHook(
+      (props: { isResolved: boolean }) =>
+        useThreadResolution({
+          prRef,
+          threadId: 't1',
+          isResolved: props.isResolved,
+          reload,
+          clearCollapseOverride,
+        }),
+      { initialProps: { isResolved: false } },
+    );
+
+    await act(async () => {
+      result.current.invoke();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    // The reload never lands the target within FALLBACK_MS → give up (hint set, targetRef ARMED).
+    act(() => vi.advanceTimersByTime(5000));
+    expect(result.current.reconcileHint).toBe(true);
+    expect(result.current.pending).toBe(false);
+    expect(clearCollapseOverride).not.toHaveBeenCalled(); // give-up path did NOT reconcile
+
+    // The give-up reload's refetch finally arrives and flips isResolved to the target.
+    rerender({ isResolved: true });
+
+    expect(clearCollapseOverride).toHaveBeenCalledWith('t1'); // late reconcile completed
+    expect(result.current.reconcileHint).toBe(false); // stale "couldn't refresh" banner cleared
+  });
+
+  // Re-entrancy guard: a second invoke() while the first request is still in flight must NOT fire a
+  // second POST (the inFlight ref blocks it — the heart of the "clicked twice" bug).
+  it('ignores a second invoke() while the first request is still in flight', () => {
+    resolveThread.mockReturnValue(new Promise(() => {})); // never resolves — stays in flight
+    const { result } = renderHook(() =>
+      useThreadResolution({
+        prRef,
+        threadId: 't1',
+        isResolved: false,
+        reload: vi.fn(),
+        clearCollapseOverride: vi.fn(),
+      }),
+    );
+
+    act(() => result.current.invoke());
+    act(() => result.current.invoke());
+
+    expect(resolveThread).toHaveBeenCalledTimes(1); // second invoke short-circuited by inFlight
+  });
+
+  // A fresh invoke() after a give-up clears reconcileHint synchronously (not only via the effect) —
+  // so re-attempting immediately drops the prior "couldn't refresh" banner.
+  it('a fresh invoke() after a give-up clears reconcileHint synchronously', async () => {
+    vi.useFakeTimers();
+    resolveThread.mockResolvedValueOnce({ ok: true });
+    const { result } = renderHook(() =>
+      useThreadResolution({
+        prRef,
+        threadId: 't1',
+        isResolved: false,
+        reload: vi.fn(),
+        clearCollapseOverride: vi.fn(),
+      }),
+    );
+
+    await act(async () => {
+      result.current.invoke();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    act(() => vi.advanceTimersByTime(5000));
+    expect(result.current.reconcileHint).toBe(true); // gave up
+
+    resolveThread.mockReturnValueOnce(new Promise(() => {})); // second attempt hangs
+    act(() => result.current.invoke());
+
+    expect(result.current.reconcileHint).toBe(false); // reset up-front by the new attempt
+  });
+
+  // Fix 2 (review): if an external isResolved flip + the release effect reconcile BEFORE the POST's
+  // .then() runs, the fast-path branch must not re-call clearCollapseOverride. Guarded by the
+  // `if (targetRef.current === null) return;` check — the effect already handled the reconcile.
+  it('does not double-call clearCollapseOverride when the effect reconciles before .then() runs', async () => {
+    let resolvePost!: (v: { ok: true }) => void;
+    resolveThread.mockReturnValueOnce(
+      new Promise((r) => {
+        resolvePost = r;
+      }),
+    );
+    const clearCollapseOverride = vi.fn();
+    const { result, rerender } = renderHook(
+      (props: { isResolved: boolean }) =>
+        useThreadResolution({
+          prRef,
+          threadId: 't1',
+          isResolved: props.isResolved,
+          reload: vi.fn(),
+          clearCollapseOverride,
+        }),
+      { initialProps: { isResolved: false } },
+    );
+
+    act(() => result.current.invoke());
+
+    // A fast SSE flip lands BEFORE the POST resolves → the release effect reconciles first.
+    rerender({ isResolved: true });
+    expect(clearCollapseOverride).toHaveBeenCalledTimes(1);
+
+    // Now the POST resolves ok and its .then() runs its fast-path branch — it must bail (targetRef
+    // is already null), NOT call clearCollapseOverride a second time.
+    await act(async () => {
+      resolvePost({ ok: true });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(clearCollapseOverride).toHaveBeenCalledTimes(1); // still exactly once
+  });
 });
