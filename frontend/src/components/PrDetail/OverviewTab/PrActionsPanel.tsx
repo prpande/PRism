@@ -2,6 +2,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { usePrDetailContext } from '../prDetailContext';
 import { usePrAction, type PrActionKind } from '../../../hooks/usePrAction';
+import { useDismissableMenu } from '../../../hooks/useDismissableMenu';
 import { PrStateGlyph } from '../../shared/prStateGlyph';
 import { MergeMethodPicker, firstAllowed, allowedList } from './MergeMethodPicker';
 import { ReadinessBadge } from '../../shared/ReadinessBadge';
@@ -54,6 +55,7 @@ export function PrActionsPanel() {
   const [selectedMethod, setSelectedMethod] = useState<MergeMethodWire | null>(null);
   const [refreshing, setRefreshing] = useState(false); // force-fresh re-read in flight (none state)
   const cancelRef = useRef<HTMLButtonElement | null>(null);
+  const closeBtnRef = useRef<HTMLButtonElement | null>(null); // Esc focus-return target for the close-confirm morph
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mergeBtnRef = useRef<HTMLButtonElement | null>(null); // Refresh-link focus target (§4a t3)
   const mergeReasonRef = useRef<HTMLSpanElement | null>(null); // focus target when Refresh → disabled readiness
@@ -185,17 +187,17 @@ export function PrActionsPanel() {
     }
   }, [signature]);
 
-  // Dismiss-on-click-outside (spec decision 2) — mirror ReviewActionMenu.tsx's mousedown pattern.
-  useEffect(() => {
-    if (!confirmingClose) return;
-    const onDocMouseDown = (e: MouseEvent) => {
-      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
-        setConfirmingClose(false);
-      }
-    };
-    document.addEventListener('mousedown', onDocMouseDown);
-    return () => document.removeEventListener('mousedown', onDocMouseDown);
-  }, [confirmingClose]);
+  // Esc + outside-pointerdown dismissal of the close-confirm morph (#705 shared
+  // hook), gated on confirmingClose. Escape works with focus anywhere and
+  // returns focus to the Close button (the morph's trigger, remounted when the
+  // confirm collapses — the hook's deferred setTimeout(0) lands after that
+  // re-render); an outside click leaves focus where it landed.
+  useDismissableMenu({
+    open: confirmingClose,
+    rootRef: containerRef,
+    returnFocusRef: closeBtnRef,
+    onClose: () => setConfirmingClose(false),
+  });
 
   // Suppression: cold-load, readOnly, merged.
   if (!pr || readOnly || pr.isMerged) return null;
@@ -306,6 +308,7 @@ export function PrActionsPanel() {
                 // confirmingClose=false + pending='close' in one batch, so the confirm span unmounts and
                 // the plain Close button is what renders during the in-flight state. (Plan ce-doc-review.)
                 <button
+                  ref={closeBtnRef}
                   className={`btn ${styles.close}`}
                   disabled={siblingsDisabled}
                   onClick={() => setConfirmingClose(true)}
@@ -316,15 +319,7 @@ export function PrActionsPanel() {
               )}
 
               {showClose && confirmingClose && (
-                <span
-                  className={styles.confirm}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Escape') {
-                      e.preventDefault();
-                      setConfirmingClose(false);
-                    }
-                  }}
-                >
+                <span className={styles.confirm}>
                   {/* The visible label says "Confirm close?" to avoid overlapping with the sr-only live
                    region text ("Close this PR? …") — both would otherwise match the test's
                    /close this pr\?/i regex and trip getByText's strict single-match guard. */}
