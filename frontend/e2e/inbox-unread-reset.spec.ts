@@ -59,17 +59,18 @@ test.describe('inbox unread bar resets on view (#285)', () => {
     expect((await markViewed).status()).toBe(204);
 
     // Return to the inbox via SPA history nav. The Inbox is keep-alive (InboxHost renders it
-    // `hidden`, never unmounted), so there's no remount GET; instead useActivationTransition
-    // fires useInbox.reload() on the active false→true edge (#285/#563), and the fresh
-    // GET /api/inbox's read-time overlay re-projects the now-current stamp → row not unread.
+    // `hidden`, never unmounted), so there's no remount GET; instead the return-refetch fires
+    // (#285/#563/#713 — InboxHost's revalidateNonce reload, backed by useInbox's silent
+    // poll-while-visible), and the fresh GET /api/inbox's read-time overlay re-projects the
+    // now-current stamp → row not unread.
     await page.goBack();
     await page.waitForURL((url) => url.pathname === '/');
 
     // #704: the original flake was a bare 5s toHaveAttribute poll losing a race under CI CPU
-    // load — the activation reload + response + re-render can exceed 5s when the runner is
+    // load — the return-refetch + response + re-render can exceed 5s when the runner is
     // saturated (reproduced locally only while a sibling `dotnet test` suite pinned every core).
     // Gate on the OBSERVABLE with a generous timeout rather than a specific GET response:
-    //   - it rides out load, and clears via ANY driver (activation reload, poller, auto-refresh);
+    //   - it rides out load, and clears via ANY driver (nonce reload, silent poll, SSE refresh);
     //   - it can't false-pass on stale client state — the row was asserted data-unread=true above,
     //     so 'false' can only come from fresh data carrying the stamp;
     //   - a stuck stamp is already ruled out fast by the 204 assertion, so this can't silently

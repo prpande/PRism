@@ -51,10 +51,11 @@ export function InboxPage({
   //      one interval (< the #285 spec's assertion window). Both are no-ops for direct callers
   //      (active default-true, nonce default-0), so unit tests behave exactly as before.
   useEffect(() => {
+    // reload is a stable useCallback, so listing it can't cause an extra refetch — the effect
+    // only re-runs when the nonce bumps (once per return-to-inbox). nonce=0 (initial mount) is
+    // skipped; useInbox's own mount fetch covers it.
     if (revalidateNonce > 0) void reload();
-    // reload is a stable useCallback; keying only on the nonce means one refetch per return.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [revalidateNonce]);
+  }, [revalidateNonce, reload]);
   useEffect(() => {
     if (!active) return;
     // 8s: a missed nonce self-heals well within the #285 e2e's assertion window even with a

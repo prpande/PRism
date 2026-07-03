@@ -26,37 +26,48 @@ export function useInbox() {
   // instead of clobbering fresher data. The unmount cleanup bumps it too, so a late
   // resolve can't setState on an unmounted component.
   const generationRef = useRef(0);
+  // True while a loud reload()'s retry loop is running. The silent revalidate() below defers to
+  // it (a reload publishes fresher data and owns the loading flags), and — unlike the generation
+  // bump — this flag lets revalidate coordinate WITHOUT cancelling the reload.
+  const reloadInFlightRef = useRef(false);
 
   const reload = useCallback(async () => {
     const generation = ++generationRef.current;
     const isCurrent = () => generation === generationRef.current;
+    reloadInFlightRef.current = true;
     setIsLoading(true);
     setIsFetching(true);
-    let lastError: unknown = null;
-    for (const delay of RETRY_DELAYS_MS) {
-      if (delay > 0) {
-        await new Promise<void>((resolve) => setTimeout(resolve, delay));
+    try {
+      let lastError: unknown = null;
+      for (const delay of RETRY_DELAYS_MS) {
+        if (delay > 0) {
+          await new Promise<void>((resolve) => setTimeout(resolve, delay));
+        }
+        if (!isCurrent()) return;
+        try {
+          const next = await inboxApi.get();
+          if (!isCurrent()) return;
+          setData(next);
+          setError(null);
+          setIsFetching(false);
+          setIsLoading(false);
+          return;
+        } catch (e) {
+          if (!isCurrent()) return;
+          lastError = e;
+          // Only retry on 503 (backend initializing); all other errors fail fast.
+          if (!(e instanceof ApiError) || e.status !== 503) break;
+        }
       }
       if (!isCurrent()) return;
-      try {
-        const next = await inboxApi.get();
-        if (!isCurrent()) return;
-        setData(next);
-        setError(null);
-        setIsFetching(false);
-        setIsLoading(false);
-        return;
-      } catch (e) {
-        if (!isCurrent()) return;
-        lastError = e;
-        // Only retry on 503 (backend initializing); all other errors fail fast.
-        if (!(e instanceof ApiError) || e.status !== 503) break;
-      }
+      setError(lastError);
+      setIsFetching(false);
+      setIsLoading(false);
+    } finally {
+      // Clear the in-flight flag only if we're still current; a fresher reload that superseded
+      // us (bumped the generation) owns the flag and clears it on its own completion.
+      if (isCurrent()) reloadInFlightRef.current = false;
     }
-    if (!isCurrent()) return;
-    setError(lastError);
-    setIsFetching(false);
-    setIsLoading(false);
   }, []);
 
   // #713 — silent background revalidation for the poll-while-visible backstop. Unlike
@@ -71,14 +82,22 @@ export function useInbox() {
   // Unchanged-guard: skip setData when the payload is byte-identical to the last one this hook
   // stored, so an idle poll (the common case — nothing changed since the last fetch) does NOT
   // hand every row a fresh object reference and re-render the whole list, which would defeat
-  // the #671 row memoization. Only reload() feeds this ref (revalidate reuses it) — a redundant
-  // re-render on the first tick after a reload is negligible and not worth stringifying there.
+  // the #671 row memoization. Only revalidate() feeds this ref (reload() does not stringify —
+  // a redundant re-render on the first poll tick after a reload is negligible and not worth
+  // the hash there).
   const lastSerializedRef = useRef<string | null>(null);
   const revalidate = useCallback(async () => {
-    const generation = ++generationRef.current;
+    // Defer to a loud reload() if one is running — it publishes fresher data and owns the
+    // loading flags. Bumping generationRef here (as reload does) would CANCEL that in-flight
+    // reload mid-retry and strand its isFetching/isLoading flags (revalidate never clears
+    // them), leaving the loading bar stuck. So READ the generation, never bump it.
+    if (reloadInFlightRef.current) return;
+    const generation = generationRef.current;
     try {
       const next = await inboxApi.get();
-      if (generation !== generationRef.current) return;
+      // Bail if a reload started (or the hook unmounted) while our GET was in flight — that
+      // newer request owns the data now.
+      if (generation !== generationRef.current || reloadInFlightRef.current) return;
       const serialized = JSON.stringify(next);
       if (serialized === lastSerializedRef.current) return; // nothing changed → no re-render
       lastSerializedRef.current = serialized;
