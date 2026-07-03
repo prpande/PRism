@@ -3,6 +3,7 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using FluentAssertions;
+using Microsoft.Extensions.Logging;
 using PRism.GitHub;
 using PRism.GitHub.Tests.TestHelpers;
 using Xunit;
@@ -17,11 +18,63 @@ public sealed class GitHubArrayReaderTests
     private static FakeHttpClientFactory Factory(HttpStatusCode code, string? body)
         => new(FakeHttpMessageHandler.Returns(code, body), new Uri("https://api.github.com/"));
 
+    private static FakeHttpClientFactory FactoryFor(HttpMessageHandler handler)
+        => new(handler, new Uri("https://api.github.com/"));
+
     private static Task<string?> Token() => Task.FromResult<string?>("token");
 
     // Projects element { "v": "..." } → its string value; null (skipped) when "v" is absent.
     private static string? ParseV(JsonElement el)
         => el.TryGetProperty("v", out var v) ? v.GetString() : null;
+
+    [Fact]
+    public async Task Follows_link_next_across_pages_and_concatenates()
+    {
+        var handler = new ScriptedPagesHandler(
+            (HttpStatusCode.OK, """[{"v":"a"}]""", "https://api.github.com/x?page=2"),
+            (HttpStatusCode.OK, """[{"v":"b"}]""", "https://api.github.com/x?page=3"),
+            (HttpStatusCode.OK, """[{"v":"c"}]""", null));
+
+        var (items, degraded) = await GitHubArrayReader.ReadAsync(
+            FactoryFor(handler), Token, "x", ParseV, CancellationToken.None);
+
+        degraded.Should().BeFalse();
+        items.Should().Equal("a", "b", "c");
+        handler.CallCount.Should().Be(3);
+    }
+
+    [Fact]
+    public async Task Later_page_failure_returns_partial_prefix_not_degraded()
+    {
+        var handler = new ScriptedPagesHandler(
+            (HttpStatusCode.OK, """[{"v":"a"},{"v":"b"}]""", "https://api.github.com/x?page=2"),
+            (HttpStatusCode.InternalServerError, "", null));
+
+        var (items, degraded) = await GitHubArrayReader.ReadAsync(
+            FactoryFor(handler), Token, "x", ParseV, CancellationToken.None);
+
+        degraded.Should().BeFalse();          // coherent prefix must not blank the rail
+        items.Should().Equal("a", "b");       // page-1 items retained
+        handler.CallCount.Should().Be(2);     // it tried page 2, got 500, stopped
+    }
+
+    [Fact]
+    public async Task Later_page_transport_fault_returns_partial_prefix_not_degraded()
+    {
+        // Page 1 OK with a next; page 2 throws (no scripted page → over-call throw is a
+        // transport-style fault the catch filter would NOT cover, so instead script an
+        // explicit page-2 fault via a malformed body caught as JsonException on the SECOND page).
+        var handler = new ScriptedPagesHandler(
+            (HttpStatusCode.OK, """[{"v":"a"}]""", "https://api.github.com/x?page=2"),
+            (HttpStatusCode.OK, "NOT JSON {{{", null));
+
+        var (items, degraded) = await GitHubArrayReader.ReadAsync(
+            FactoryFor(handler), Token, "x", ParseV, CancellationToken.None);
+
+        degraded.Should().BeFalse();
+        items.Should().Equal("a");
+        handler.CallCount.Should().Be(2);
+    }
 
     [Fact]
     public async Task Parses_array_via_delegate()
@@ -121,5 +174,118 @@ public sealed class GitHubArrayReaderTests
 
         degraded.Should().BeTrue();
         items.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task Stops_at_max_page_budget_and_logs_cap_hit()
+    {
+        // 4 pages, each advertising a next; maxPages: 2 → only 2 requests, then break+log.
+        var handler = new ScriptedPagesHandler(
+            (HttpStatusCode.OK, """[{"v":"a"}]""", "https://api.github.com/x?page=2"),
+            (HttpStatusCode.OK, """[{"v":"b"}]""", "https://api.github.com/x?page=3"),
+            (HttpStatusCode.OK, """[{"v":"c"}]""", "https://api.github.com/x?page=4"),
+            (HttpStatusCode.OK, """[{"v":"d"}]""", null));
+        var logger = new CapturingLogger<GitHubArrayReaderTests>();
+
+        var (items, degraded) = await GitHubArrayReader.ReadAsync(
+            FactoryFor(handler), Token, "x", ParseV, CancellationToken.None,
+            logger, resource: "user/subscriptions", maxPages: 2);
+
+        degraded.Should().BeFalse();
+        items.Should().Equal("a", "b");
+        handler.CallCount.Should().Be(2);
+        logger.Entries.Should().ContainSingle(e =>
+            e.Level == LogLevel.Warning && e.Message.Contains("user/subscriptions"));
+    }
+
+    [Fact]
+    public async Task Repeated_next_url_breaks_without_exhausting_budget()
+    {
+        // Both pages advertise the SAME next URL. The visited guard must stop after the
+        // second fetch (the repeat), NOT loop up to maxPages, and NOT log a cap-hit.
+        var handler = new ScriptedPagesHandler(
+            (HttpStatusCode.OK, """[{"v":"a"}]""", "https://api.github.com/x?page=2"),
+            (HttpStatusCode.OK, """[{"v":"b"}]""", "https://api.github.com/x?page=2"));
+        var logger = new CapturingLogger<GitHubArrayReaderTests>();
+
+        var (items, degraded) = await GitHubArrayReader.ReadAsync(
+            FactoryFor(handler), Token, "x", ParseV, CancellationToken.None,
+            logger, resource: "user/subscriptions", maxPages: 10);
+
+        degraded.Should().BeFalse();
+        items.Should().Equal("a", "b");
+        handler.CallCount.Should().Be(2);            // stopped on the repeat, not at page 10
+        logger.Entries.Should().BeEmpty();           // a cycle is not a budget cap
+    }
+
+    [Fact]
+    public async Task Cycle_at_budget_boundary_does_not_log_cap_hit()
+    {
+        // A cycle that lands EXACTLY on the budget boundary must be treated as exhaustion,
+        // not a cap: the visited-guard is checked before the budget, so no cap-hit is logged.
+        var handler = new ScriptedPagesHandler(
+            (HttpStatusCode.OK, """[{"v":"a"}]""", "https://api.github.com/x?page=2"),
+            (HttpStatusCode.OK, """[{"v":"b"}]""", "https://api.github.com/x?page=2")); // repeat at page 2
+        var logger = new CapturingLogger<GitHubArrayReaderTests>();
+
+        var (items, degraded) = await GitHubArrayReader.ReadAsync(
+            FactoryFor(handler), Token, "x", ParseV, CancellationToken.None,
+            logger, resource: "user/subscriptions", maxPages: 2); // budget == 2, cycle == page 2
+
+        degraded.Should().BeFalse();
+        items.Should().Equal("a", "b");
+        logger.Entries.Should().BeEmpty();           // cycle wins over the budget: no false truncation signal
+    }
+
+    [Fact]
+    public async Task Two_hop_cycle_back_to_initial_page_does_not_refetch_or_duplicate()
+    {
+        // A 2-hop cycle: the initial page A advertises next → B, and B advertises next → A
+        // (the ORIGINAL url). The visited-guard must record every FETCHED url (not just the
+        // advertised next), so the return to A after B is caught after 2 fetches — with no
+        // re-fetch of A and no duplicated items. A 3rd scripted page (a re-fetch of A) is
+        // present ONLY to prove it is never reached; if the guard tracked only advertised
+        // next values, the loop would fetch A a second time and append its items again.
+        var handler = new ScriptedPagesHandler(
+            (HttpStatusCode.OK, """[{"v":"a"}]""", "https://api.github.com/x?page=2"),
+            (HttpStatusCode.OK, """[{"v":"b"}]""", "https://api.github.com/x?page=1"),
+            (HttpStatusCode.OK, """[{"v":"a"}]""", "https://api.github.com/x?page=2")); // must NOT be reached
+        var logger = new CapturingLogger<GitHubArrayReaderTests>();
+
+        var (items, degraded) = await GitHubArrayReader.ReadAsync(
+            FactoryFor(handler), Token, "https://api.github.com/x?page=1", ParseV, CancellationToken.None,
+            logger, resource: "user/subscriptions", maxPages: 10);
+
+        degraded.Should().BeFalse();
+        items.Should().Equal("a", "b");              // NOT ["a","b","a"] — the initial page is not re-fetched
+        handler.CallCount.Should().Be(2);            // stopped when next pointed back to the already-fetched page
+        logger.Entries.Should().BeEmpty();           // a cycle is not a budget cap
+    }
+
+    [Fact]
+    public async Task Off_host_next_url_is_not_credentialed_and_degrades_to_prefix()
+    {
+        // Page 1 OK (same-host) advertises a WELL-FORMED but OFF-HOST next. Following it must
+        // trip GitHubHttp.ApplyHeaders' scheme+host+port guard (throw HttpRequestException)
+        // BEFORE the request is sent, so the off-host host never receives a credentialed call.
+        var handler = new ScriptedPagesHandler(
+            (HttpStatusCode.OK, """[{"v":"a"}]""", "https://attacker.example/x?page=2"));
+
+        var (items, degraded) = await GitHubArrayReader.ReadAsync(
+            FactoryFor(handler), Token, "x", ParseV, CancellationToken.None);
+
+        items.Should().Equal("a");            // page-1 prefix retained
+        degraded.Should().BeFalse();          // non-empty prefix ⇒ not degraded
+        handler.CallCount.Should().Be(1);     // the off-host page-2 request never reached the handler
+
+        // Positive control: prove the loop actually RECEIVED the off-host next, so CallCount==1
+        // means "ApplyHeaders blocked the credentialed send" — NOT "the parser silently rejected
+        // the URL" or "the loop never followed it" (which would make the assertion green for the
+        // wrong reason if a future refactor host-filtered inside the parser). GitHubLinkHeader
+        // must surface the off-host URL; the block therefore happens downstream at the egress guard.
+        var probe = new HttpResponseMessage(HttpStatusCode.OK);
+        probe.Headers.TryAddWithoutValidation("Link", "<https://attacker.example/x?page=2>; rel=\"next\"");
+        GitHubLinkHeader.TryGetRel(probe, "next", out var surfaced).Should().BeTrue();
+        surfaced.Should().Be("https://attacker.example/x?page=2");
     }
 }

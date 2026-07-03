@@ -64,4 +64,21 @@ public sealed class GitHubWatchedReposReaderTests
         result.Degraded.Should().BeFalse();
         result.Repos.Should().ContainSingle().Which.Should().Be("acme/api");
     }
+
+    [Fact]
+    public async System.Threading.Tasks.Task Reads_all_watched_repos_across_pages()
+    {
+        var handler = new ScriptedPagesHandler(
+            (HttpStatusCode.OK, """[{"full_name":"o/r1"}]""", "https://api.github.com/user/subscriptions?page=2"),
+            (HttpStatusCode.OK, """[{"full_name":"o/r2"}]""", null));
+        var reader = new GitHubWatchedReposReader(
+            new FakeHttpClientFactory(handler, new Uri("https://api.github.com/")),
+            () => System.Threading.Tasks.Task.FromResult<string?>("token"),
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<GitHubWatchedReposReader>.Instance);
+
+        var result = await reader.ReadAsync(CancellationToken.None);
+
+        result.Degraded.Should().BeFalse();
+        result.Repos.Should().Equal("o/r1", "o/r2");   // page-2 repo no longer silently truncated
+    }
 }
