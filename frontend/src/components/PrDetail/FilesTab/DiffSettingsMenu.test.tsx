@@ -45,13 +45,15 @@ describe('DiffSettingsMenu — disclosure shell', () => {
     expect(trigger).toHaveFocus();
   });
 
-  it('closes on outside click and returns focus to the gear', async () => {
+  it('closes on outside click and leaves focus where the click landed (#705)', async () => {
     const { getByTestId, queryByTestId } = setup();
     const trigger = getByTestId('diff-settings-trigger');
     await userEvent.click(trigger);
     await userEvent.click(document.body);
     expect(queryByTestId('diff-settings-panel')).toBeNull();
-    expect(trigger).toHaveFocus();
+    // Flush the deferred focus-return path to prove it does NOT fire on outside close.
+    await new Promise((r) => setTimeout(r, 0));
+    expect(trigger).not.toHaveFocus();
   });
 
   it('marks the gear modified when a setting is non-default', () => {

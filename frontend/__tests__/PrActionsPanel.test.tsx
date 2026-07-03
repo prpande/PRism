@@ -195,6 +195,23 @@ describe('PrActionsPanel', () => {
     expect(screen.queryByText(/close this pr\?/i)).not.toBeInTheDocument();
   });
 
+  it('Escape cancels the Close confirm with focus anywhere and refocuses Close (#705)', async () => {
+    const user = userEvent.setup();
+    const ctl: { current: Ctl | null } = { current: null };
+    const open = makePrDetailDto({
+      pr: makePr({ state: 'open', isClosed: false, isDraft: false, isMerged: false }),
+    });
+    render(<Harness initial={{ prDetail: open }} ctl={ctl} />);
+    await user.click(screen.getByRole('button', { name: /^close$/i }));
+    expect(screen.getByText(/close this pr\?/i)).toBeInTheDocument();
+    // Park focus OUTSIDE the panel without a pointerdown (which would dismiss).
+    act(() => screen.getByRole('button', { name: /outside/i }).focus());
+    await user.keyboard('{Escape}');
+    expect(screen.queryByText(/close this pr\?/i)).not.toBeInTheDocument();
+    // The hook's deferred focus return lands on the (remounted) Close trigger.
+    await waitFor(() => expect(screen.getByRole('button', { name: /^close$/i })).toHaveFocus());
+  });
+
   it('the plain Close button shows the pending label while a close is in flight', () => {
     pending = 'close';
     renderPanel({});

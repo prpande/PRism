@@ -1,20 +1,18 @@
 import { useEffect, useRef } from 'react';
-import type React from 'react';
 import type { DraftVerdict } from '../../../api/types';
 import type { ReviewActionMenuSection } from './reviewActionState';
 import styles from './ReviewActionButton.module.css';
 
 interface Props {
   sections: ReviewActionMenuSection[];
-  // restoreFocus tells the parent whether to return focus to the trigger:
-  // true for Escape (intentional keyboard dismiss), false for Tab / outside
-  // click (let the browser's natural focus flow proceed — don't steal focus).
-  onClose: (opts?: { restoreFocus?: boolean }) => void;
+  // Bare close, no focus handling: Escape/outside dismissal (and the Esc focus
+  // return) live in the parent's useDismissableMenu (#705); Tab and empty-menu
+  // close here without refocus so focus flows naturally.
+  onClose: () => void;
   onSelect: (id: string, verdict?: DraftVerdict) => void;
-  triggerRef?: React.RefObject<HTMLElement | null>;
 }
 
-export function ReviewActionMenu({ sections, onClose, onSelect, triggerRef }: Props) {
+export function ReviewActionMenu({ sections, onClose, onSelect }: Props) {
   const ref = useRef<HTMLDivElement>(null);
   const items = sections.flatMap((s) => s.items);
 
@@ -24,29 +22,16 @@ export function ReviewActionMenu({ sections, onClose, onSelect, triggerRef }: Pr
   }, []);
 
   useEffect(() => {
+    // Tab closes the menu without trapping focus (ARIA APG menu pattern) —
+    // do NOT preventDefault and do NOT restore focus, so focus flows naturally
+    // past the control to the next tab stop. Escape + outside-pointerdown are
+    // the parent's useDismissableMenu's job (#705).
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        e.preventDefault();
-        onClose({ restoreFocus: true }); // intentional keyboard dismiss → focus the trigger
-      }
-      // Tab closes the menu without trapping focus (ARIA APG menu pattern) —
-      // do NOT preventDefault and do NOT restore focus, so focus flows naturally
-      // past the control to the next tab stop.
-      else if (e.key === 'Tab') onClose({ restoreFocus: false });
-    };
-    const onDocClick = (e: MouseEvent) => {
-      const t = e.target as Node;
-      if (ref.current && !ref.current.contains(t) && !triggerRef?.current?.contains(t)) {
-        onClose({ restoreFocus: false }); // outside click → don't steal focus from the target
-      }
+      if (e.key === 'Tab') onClose();
     };
     document.addEventListener('keydown', onKey);
-    document.addEventListener('mousedown', onDocClick);
-    return () => {
-      document.removeEventListener('keydown', onKey);
-      document.removeEventListener('mousedown', onDocClick);
-    };
-  }, [onClose, triggerRef]);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [onClose]);
 
   // Empty menu (closed/merged with no drafts) → close via effect, NOT during
   // render (calling a parent state-setter in render is a React anti-pattern).
