@@ -77,6 +77,7 @@ describe('ExistingCommentWidget', () => {
             prState: 'open',
             registerOpenComposer: () => () => {},
             onReplyComposerClose: () => {},
+            reload: () => {},
           }}
         />
       </ReplyDataProvider>,
@@ -98,7 +99,7 @@ describe('ExistingCommentWidget', () => {
 });
 
 function collapseStub(collapsed: boolean, toggle = () => {}) {
-  return { isCollapsed: () => collapsed, toggle };
+  return { isCollapsed: () => collapsed, toggle, clearCollapseOverride: () => {} };
 }
 
 describe('ExistingCommentWidget — collapse', () => {

@@ -268,6 +268,14 @@ function patchesOfKind(patches: Record<string, unknown>[], kind: string): unknow
 // the tree — otherwise its "zero row re-renders" would be vacuous.
 const wrapperRenders = { count: 0 };
 
+// #571 — module-level, so its identity is stable across Wrapper re-renders,
+// mirroring the real usePrDetail.reload (a useCallback with an empty dep
+// array). replyContext's memo now depends on `reload`; a fresh literal here
+// (as opposed to the value object itself, which the comment above
+// deliberately keeps unstable) would invalidate that memo every render and
+// falsely fail the row-level bail assertions below.
+const noopReload = () => {};
+
 function Wrapper({ prDetail }: { prDetail: PrDetailDto }) {
   wrapperRenders.count += 1;
   const draftSession = useDraftSession(ref);
@@ -288,7 +296,7 @@ function Wrapper({ prDetail }: { prDetail: PrDetailDto }) {
         clearPendingFilePath: () => {},
         viewedPaths: new Set(),
         toggleViewed: () => {},
-        reload: () => {},
+        reload: noopReload,
         isLoading: false,
         prUpdatedSignal: 0,
       }}

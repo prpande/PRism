@@ -26,6 +26,7 @@ import { usePrDetailContext } from '../prDetailContext';
 import { useInlineComposer } from './useInlineComposer';
 import { useIsSplitCapable } from './useIsSplitCapable';
 import { computeAnyOtherDraftsStaged } from '../../../hooks/useDraftSession';
+import { useReviewThreadResolutionChangedSubscriber } from '../../../hooks/useReviewThreadResolutionChangedSubscriber';
 import { useOptimisticComments } from './useOptimisticComments';
 import { CommentCard } from '../Comment/CommentCard';
 import styles from './FilesTab.module.css';
@@ -69,6 +70,19 @@ export function nextOverrides(
   return { ...overrides, [threadId]: !(overrides[threadId] ?? isResolved) };
 }
 
+// #571 — drops threadId's override so effectiveCollapsed falls back to
+// isResolved. Returns the SAME object reference when threadId isn't present
+// so callers (setState) don't trigger a needless re-render.
+export function clearOverride(
+  overrides: Record<string, boolean>,
+  threadId: string,
+): Record<string, boolean> {
+  if (!(threadId in overrides)) return overrides;
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars -- destructure-to-omit; _drop is intentionally discarded
+  const { [threadId]: _drop, ...rest } = overrides;
+  return rest;
+}
+
 export function FilesTab() {
   const {
     prRef,
@@ -80,6 +94,7 @@ export function FilesTab() {
     clearPendingFilePath,
     viewedPaths,
     toggleViewed,
+    reload,
   } = usePrDetailContext();
 
   const isLowQuality = prDetail.clusteringQuality === 'low';
@@ -580,9 +595,14 @@ export function FilesTab() {
         effectiveCollapsed(collapseOverrides, threadId, isResolved),
       toggle: (threadId, isResolved) =>
         setCollapseOverrides((m) => nextOverrides(m, threadId, isResolved)),
+      clearCollapseOverride: (threadId) => setCollapseOverrides((m) => clearOverride(m, threadId)),
     }),
     [collapseOverrides],
   );
+
+  // #571 — a resolve/unresolve on any thread (in this tab or another) reloads
+  // PR detail so ThreadView's isResolved reflects the server's state.
+  useReviewThreadResolutionChangedSubscriber({ prRef, onChanged: reload });
 
   // #327 Task 13 — the reply wiring is SPLIT (Task 40 Step 3 grew both halves
   // into one churning bag):
@@ -632,10 +652,15 @@ export function FilesTab() {
         replyCallbackDepsRef.current.noteReplyPosted(threadId, postedCommentId, body);
         void replyCallbackDepsRef.current.refetch();
       },
+      // #571 — reload is a stable function from usePrDetailContext, so adding
+      // it here does not churn this memo (it's listed as a dep, not routed
+      // through replyCallbackDepsRef, since it never changes identity).
+      reload,
     }),
     // replyCallbackDepsRef is a stable useLatestRef object — listed only to
-    // satisfy the lint rule; it never invalidates the memo.
-    [prRef, prState, readOnly, replyCallbackDepsRef],
+    // satisfy the lint rule; it never invalidates the memo. reload is a
+    // stable function from context — same reasoning.
+    [prRef, prState, readOnly, replyCallbackDepsRef, reload],
   );
 
   // #327 Task 13 — (B) the reactive per-thread data channel. `useDraftSession`'s

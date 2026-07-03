@@ -35,11 +35,19 @@ export interface ExistingCommentWidgetReplyContext {
   // the just-posted comment surfaces. 11b passes the posted body so the parent
   // can stash an optimistic placeholder for this thread.
   onReplyPosted?: (threadId: string, postedCommentId: number, body: string) => void;
+  // #571 — reloads PR detail (stable function from usePrDetailContext). Wired
+  // by the thread-resolution control (Task 12) so a resolve/unresolve action
+  // reflects the server's response without waiting on the SSE round-trip.
+  reload: () => void;
 }
 
 export interface ThreadCollapseControl {
   isCollapsed: (threadId: string, isResolved: boolean) => boolean;
   toggle: (threadId: string, isResolved: boolean) => void;
+  // #571 — drops threadId's entry from the collapse-override map so a
+  // resolve/unresolve action falls back to the isResolved default instead of
+  // sticking to whatever the user last toggled.
+  clearCollapseOverride: (threadId: string) => void;
 }
 
 export interface ExistingCommentWidgetProps {

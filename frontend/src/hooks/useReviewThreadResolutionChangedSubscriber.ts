@@ -5,7 +5,7 @@ import { prRefKey, type PrReference } from '../api/types';
 export interface UseReviewThreadResolutionChangedSubscriberOptions {
   prRef: PrReference | null;
   // Fired when the server reports a review-thread resolution change for this PR. Caller
-  // (PrDetailView) reloads PR detail so the thread's resolved state reflects the server.
+  // (FilesTab) reloads PR detail so the thread's resolved state reflects the server.
   onChanged: () => void;
 }
 

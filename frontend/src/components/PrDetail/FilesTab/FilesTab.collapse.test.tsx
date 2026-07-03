@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { effectiveCollapsed, nextOverrides } from './FilesTab';
+import { effectiveCollapsed, nextOverrides, clearOverride } from './FilesTab';
 
 describe('FilesTab collapse model', () => {
   it('default: resolved collapsed, unresolved expanded (empty overrides)', () => {
@@ -17,5 +17,13 @@ describe('FilesTab collapse model', () => {
   });
   it('override is sticky and not cleared when isResolved later differs', () => {
     expect(effectiveCollapsed({ t1: false }, 't1', true)).toBe(false);
+  });
+  it('clearOverride removes the key so effectiveCollapsed falls back to isResolved', () => {
+    expect(clearOverride({ t1: false }, 't1')).toEqual({});
+    expect(effectiveCollapsed(clearOverride({ t1: false }, 't1'), 't1', true)).toBe(true);
+  });
+  it('clearOverride on an absent key returns the same object reference (no needless re-render)', () => {
+    const m = { t2: true };
+    expect(clearOverride(m, 't1')).toBe(m);
   });
 });
