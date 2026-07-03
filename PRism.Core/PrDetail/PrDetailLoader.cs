@@ -387,6 +387,22 @@ public sealed class PrDetailLoader : IDisposable
             return (ClusteringQuality.Low, null);
 
         var commitBySha = timeline.Commits.ToDictionary(c => c.Sha, c => c, StringComparer.Ordinal);
+        // GC'd SHAs (force-pushes that pruned old objects) produce false; UI renders
+        // "Iter N (snapshot lost)" and ComparePicker disables selection. Spec § 6.1 + § 7.2.
+        // #281: (a) the PR base is a valid lower bound though it isn't a PR commit — it is
+        // exactly what "All changes" compares against; (b) a degenerate BeforeSha == AfterSha
+        // range yields an empty three-dot compare, so it must read "snapshot lost" rather
+        // than an enabled chip over an empty Files tab.
+        bool IsRangeResolvable(IterationCluster c)
+        {
+            if (string.Equals(c.BeforeSha, c.AfterSha, StringComparison.Ordinal)) return false;
+            if (!commitShaSet.Contains(c.AfterSha)) return false;
+            var beforeInTimeline = commitShaSet.Contains(c.BeforeSha);
+            var beforeIsPrBase = !string.IsNullOrEmpty(timeline.PrBaseSha)
+                && string.Equals(c.BeforeSha, timeline.PrBaseSha, StringComparison.Ordinal);
+            return beforeInTimeline || beforeIsPrBase;
+        }
+
         var iterations = clusters.Select(c => new IterationDto(
             Number: c.IterationNumber,
             BeforeSha: c.BeforeSha,
@@ -399,18 +415,7 @@ public sealed class PrDetailLoader : IDisposable
                     return new CommitDto(ci.Sha, ci.Message, ci.CommittedDate, ci.Additions, ci.Deletions);
                 })
                 .ToArray(),
-            // GC'd SHAs (force-pushes that pruned old objects) produce false; UI renders
-            // "Iter N (snapshot lost)" and ComparePicker disables selection. Spec § 6.1 + § 7.2.
-            // #281: (a) the PR base is a valid lower bound though it isn't a PR commit — it is
-            // exactly what "All changes" compares against; (b) a degenerate BeforeSha == AfterSha
-            // range yields an empty three-dot compare, so it must read "snapshot lost" rather
-            // than an enabled chip over an empty Files tab.
-            HasResolvableRange:
-                !string.Equals(c.BeforeSha, c.AfterSha, StringComparison.Ordinal)
-                && (commitShaSet.Contains(c.BeforeSha)
-                    || (!string.IsNullOrEmpty(timeline.PrBaseSha)
-                        && string.Equals(c.BeforeSha, timeline.PrBaseSha, StringComparison.Ordinal)))
-                && commitShaSet.Contains(c.AfterSha)))
+            HasResolvableRange: IsRangeResolvable(c)))
             .ToArray();
 
         return (ClusteringQuality.Ok, iterations);

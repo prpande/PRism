@@ -23,8 +23,7 @@ public class WeightedDistanceClusteringStrategyTests
             Array.Empty<ClusteringAuthorComment>());
 
     private static ClusteringInput InputWithBase(string baseSha, params ClusteringCommit[] commits) =>
-        new(commits, Array.Empty<ClusteringForcePush>(), Array.Empty<ClusteringReviewEvent>(),
-            Array.Empty<ClusteringAuthorComment>(), baseSha);
+        Input(commits) with { PrBaseSha = baseSha };
 
     [Fact]
     public void Empty_commits_returns_empty_array()
