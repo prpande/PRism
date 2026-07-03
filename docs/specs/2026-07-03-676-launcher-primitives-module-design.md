@@ -4,6 +4,7 @@
 - **Labels:** `tech-debt`, `area:desktop`, `code-quality`, `priority:p3`
 - **Classification:** gated (risk-surface — touches the destructive recursive-delete guard). Human spec + plan review retained; `ce-doc-review` is the machine pre-pass, not a substitute for the human gate.
 - **Date:** 2026-07-03
+- **Review:** revised after a 5-persona `ce-doc-review` pass (coherence, feasibility, security-lens, adversarial, scope-guardian). Disposition of every finding is in §9.
 
 ## 1. Problem
 
@@ -26,7 +27,7 @@ The guard has already forked into two names **and two implementations** with div
 | Checkout backstop (`.git`/`.sln`/`package.json`) | **yes** | no |
 | Test coverage today | **none** | `run-desktop.Tests.ps1` L75–85 (9 cases) |
 
-### 1.1 Latent bug this surfaces
+### 1.1 Latent bug #1 — `IsPathFullyQualified` throws under WinPS 5.1
 
 `run.ps1`'s guard calls `[System.IO.Path]::IsPathFullyQualified`, a **.NET Core / .NET Standard 2.1
 API that does not exist in .NET Framework 4.x**, i.e. it **throws under Windows PowerShell 5.1**.
@@ -35,207 +36,313 @@ API that does not exist in .NET Framework 4.x**, i.e. it **throws under Windows 
 Consequence: on a machine whose default PowerShell is Windows PowerShell 5.1, **`./run.ps1 -Reset
 Full` (or `-Reset Token` / `-Reset Auth`) throws at the guard before doing anything**. It is latent
 because the normal `-Reset None` launch path never calls the guard (`run.ps1` L141 gates on `-Reset
--ne 'None'`), and `run.ps1` has no guard tests. Unifying onto the 5.1-safe regex **fixes this bug**;
-this is the one intentional behavior change in the whole refactor.
+-ne 'None'`), and `run.ps1` has no guard tests. Unifying onto the 5.1-safe regex fixes this.
 
-### 1.2 The other three primitives
+### 1.2 Latent bug #2 — `\\?\` device paths bypass the protected-root denylist
+
+Surfaced by the security review and **empirically confirmed** by running the .NET path APIs. Both
+guards' protected-root check is a string-equality test
+(`$resolved.TrimEnd('\','/').Equals($bad, OrdinalIgnoreCase)`), and `[IO.Path]::GetFullPath` **does
+not strip the `\\?\` extended-length prefix**. So `\\?\C:\Users\<user>\AppData\Local`:
+
+- passes empty-check, passes absolute-check (both `IsPathFullyQualified` *and* the regex accept it —
+  the UNC branch `^[\\/][\\/]` matches `\\?\…`),
+- passes the too-shallow check (4 segments below the root),
+- **fails to string-match** the plain `C:\Users\<user>\AppData\Local` denylist entry, and
+- has no `.git`/`.sln`/`package.json` to trip the checkout backstop.
+
+Result: `-Reset Full -DataDir '\\?\C:\Users\<user>\AppData\Local'` would `Remove-Item -Recurse
+-Force` the user's **entire `%LOCALAPPDATA%`**; the `\\?\C:\Users\<user>` form wipes the whole
+profile. Pre-existing in both guards on `main`. Because this PR exists to harden this exact guard
+and gives it its first shared implementation + dedicated test file, the unified predicate
+canonicalizes away the `\\?\`/`\\?\UNC\` prefix before the denylist compare and gets red→green tests.
+
+**These two guard fixes (§1.1, §1.2) are the only intentional behavior changes to the guard.** All
+other primitive extractions are behavior-preserving (§2).
+
+### 1.3 The other three primitives
 
 - **No-BOM UTF-8 write** — `[IO.File]::WriteAllText(p, t, [Text.UTF8Encoding]::new($false))`.
   Byte-identical across four sites: named in `run.ps1` L148 and `serve-detached.ps1` L175; inline in
   `run-desktop.ps1` L136 and L331.
 - **Windows + WMI preflight** — the `Get-CimClass Win32_Process` probe is identical
   (`serve-detached.ps1:Assert-Platform` L50, `run-desktop.ps1:Assert-Platform` L209). What differs:
-  the Windows check (`serve-detached` uses `$IsWindows`; `run-desktop` uses `$env:OS -eq 'Windows_NT'`
-  because it must run under 5.1) and the not-Windows remediation message ("use run.ps1" vs "use
-  run-desktop.sh").
-- **Detached WMI spawn** — the `Win32_Process.Create` + `ReturnValue`-check core is shared, but
-  `run-desktop` (L341–356) passes a `Win32_ProcessStartup` with `ShowWindow=0` to hide the stray
-  console window and resolves its host via `Get-PowerShellHostPath` (5.1-capable), whereas
-  `serve-detached` (L254) sets no `ShowWindow` and hardcodes `pwsh` (it is `#requires -Version 7`).
+  the Windows check (`serve-detached` uses `$IsWindows`; `run-desktop` uses `$env:OS -eq
+  'Windows_NT'` because it must run under 5.1) and the two per-caller error messages (not-Windows
+  remediation *and* WMI-unreachable remediation — see §3.2.4).
+- **Detached WMI spawn** — the `Win32_Process.Create` + `ReturnValue`-check core is shared, but the
+  command line and startup info diverge: `run-desktop` (L341–356) passes a `Win32_ProcessStartup`
+  with `ShowWindow=[uint16]0` and resolves its host via `Get-PowerShellHostPath`; `serve-detached`
+  (L262) sets no `ShowWindow` and hardcodes a bare `pwsh`. Only the `Create`+`ReturnValue` line is
+  genuinely common (§3.2.5).
 
 ## 2. Goals / non-goals
 
 **Goals**
-- One real implementation of each of the four primitives, in `scripts/PRismLauncher.psm1`, imported
-  by all three scripts.
-- **Behavior-preserving at every call site**, with the single exception of fixing the `run.ps1`
-  5.1 guard bug (§1.1).
-- First-ever test coverage for the `run.ps1`-mode guard, including a 5.1 regression; existing
-  `run-desktop` guard/helper tests keep passing unchanged as the no-regression net.
+- One real implementation of each shared primitive, in `scripts/PRismLauncher.psm1`, imported by all
+  three scripts.
+- **Behavior-preserving at every call site**, except these explicitly-sanctioned changes:
+  1. the guard's absolute-path check (§1.1, fixes the 5.1 throw);
+  2. the guard's `\\?\` canonicalization (§1.2, fixes the denylist bypass);
+  3. `serve-detached`'s platform check moves from `$IsWindows` to `$env:OS -eq 'Windows_NT'` (via the
+     shared `Test-OnWindows`) — identical on a well-formed Windows environment; the one narrowing is
+     that `$env:OS` is user-mutable where `$IsWindows` was authoritative (§3.2.3). Accepted as
+     negligible; `serve-detached` is still Windows-only.
+- First-ever test coverage for the `run.ps1`-mode guard, including 5.1 and `\\?\` regressions; the
+  existing `run-desktop` guard/helper tests keep passing unchanged as the no-regression net.
+
+**Explicitly NOT changed (behavior preserved despite the extraction):**
+- `serve-detached`'s spawn host stays a **bare `pwsh`** — it does *not* adopt `Get-PowerShellHostPath`
+  (that would change which `pwsh` runs under a multi-install / user-PATH-only setup).
+- Both callers' error strings are preserved by parameterizing *both* the not-Windows and the
+  WMI-unreachable messages (§3.2.4) — no wording is silently standardized.
+- `run-desktop`'s spawn keeps its full-path host and `ShowWindow=[uint16]0` startup info.
 
 **Non-goals**
 - `scripts/run-desktop.sh` (the Bash macOS sibling) is out of scope.
 - No behavior *improvements* to the individual scripts (e.g. **not** adding `ShowWindow=0` to
-  `serve-detached` even though it may have a stray-window issue — that would be an unrequested
-  behavior change; note it as a possible follow-up, do not do it here).
+  `serve-detached` — that would be an unrequested behavior change; note it as a possible follow-up).
 - Full `run-desktop` Electron end-to-end validation needs a published sidecar and stays **manual**
-  (this is issue #369's territory); we validate everything else automatically (§6).
+  (issue #369's territory); everything else is validated automatically (§6).
 
 ## 3. Design
 
 ### 3.1 Module and mechanism
 
 New file `scripts/PRismLauncher.psm1` (the repo's first `.psm1`), ending with an explicit
-`Export-ModuleMember`. Imported with `-Force` (so repeated imports in a single test session reload):
+`Export-ModuleMember`. Imported with `-Force`:
 
 - `run.ps1` (repo root): `Import-Module (Join-Path $PSScriptRoot 'scripts/PRismLauncher.psm1') -Force`
 - `scripts/serve-detached.ps1`: `Import-Module (Join-Path $PSScriptRoot 'PRismLauncher.psm1') -Force`
 - `scripts/run-desktop.ps1`: `Import-Module (Join-Path $PSScriptRoot 'PRismLauncher.psm1') -Force`
 
-Module functions are added to the session command table (not scoped like dot-source), so a script
-that imports the module exposes those commands to a test that dot-sources the script — but tests
-import the module **directly** rather than relying on that transitivity (§5).
+**Hard constraints (load-bearing — see the risks in §7):**
+- **Each import is at the script's top level, outside any `if ($MyInvocation.InvocationName -ne '.')`
+  main-guard**, so a test that dot-sources the script also runs the import (module commands then
+  resolve). Confirmed against `run-desktop.ps1`'s main-guard at L364.
+- **`PRismLauncher.psm1` MUST be Windows PowerShell 5.1-compatible** — no 7-only syntax (`??`, `?.`,
+  ternary `? :`, `&&`/`||`, `$IsWindows`, `-Parallel`). It is a hard dependency of all three
+  launchers, **including `run.ps1 -Reset None`** (the 99% path), which today touches none of these
+  primitives. A 7-only idiom would break the common path under 5.1, and `run.Tests.ps1` cannot catch
+  it (§5).
 
-### 3.2 Exported functions (6)
+Module functions are added to the session command table (not scoped like dot-source), so an imported
+script exposes them to a test that dot-sources it; tests still import the module **directly** (§5).
 
-The four primitives plus the two support helpers they depend on (`Test-OnWindows`,
-`Get-PowerShellHostPath`), which move in from `run-desktop.ps1`.
+### 3.2 Exported functions (5)
+
+Only the genuinely-shared code moves. `Get-PowerShellHostPath` stays in `run-desktop.ps1` (its sole
+user after the spawn redesign — see §3.2.5), avoiding needless module surface.
 
 **1. `Test-SafeDeleteTarget`** — the one real guard, a pure predicate.
 
 ```
 Test-SafeDeleteTarget
   -Path <string>
-  [-RequireLeafName <string>]           # when set, leaf must equal it (run-desktop: 'PRism')
-  [-AdditionalProtectedRoots <string[]>]# extra exact roots to deny (run.ps1: repo root, %TEMP% root)
-  [-CheckoutBackstop]                   # reject a dir containing .git/package.json/*.sln (run.ps1)
+  [-RequireLeafName <string>]            # when set, leaf must equal it (run-desktop: 'PRism')
+  [-AdditionalProtectedRoots <string[]>] # extra exact roots to deny (run.ps1: repo root, %TEMP% root)
+  [-CheckoutBackstop]                    # reject a dir containing .git/package.json/*.sln (run.ps1)
   -> [pscustomobject]@{ Safe = <bool>; Reason = <string> }
 ```
 
+- **Canonicalize first:** strip a leading `\\?\` or `\\?\UNC\` extended-length prefix from the
+  `GetFullPath` result before any comparison, so device-path forms can't dodge the denylist (§1.2).
 - Base protected roots (always): `UserProfile`, `LocalApplicationData`. Callers add more via
   `-AdditionalProtectedRoots`.
 - Absolute check: the **5.1-safe regex** (`^[A-Za-z]:[\\/]` or UNC `^[\\/][\\/]`), never
   `IsPathFullyQualified`.
-- Shallow check: reject `< 2` segments below the drive root.
+- Shallow check: reject `< 2` segments below the drive root, splitting on `[\\/]` and **filtering
+  empty segments** (the `run-desktop` form; `GetFullPath` already collapses doubled separators, so
+  this agrees with `run.ps1`'s unfiltered form in practice — the filtered form is adopted as the
+  slightly stricter one).
+- **Checks are independent boolean predicates over a `$resolved` computed once, ANDed together — not
+  a priority pipeline.** Order determines only which `Reason` surfaces first, never whether `Safe`
+  ends up `$true`. This invariant is stated in a module comment and covered by an order-invariance
+  test (§5), because a future maintainer optimizing the predicate could otherwise break it silently.
 - Evaluation order: empty → not-absolute → wrong-leaf (if `-RequireLeafName`) → protected-root
   (base + additional) → too-shallow → looks-like-checkout (if `-CheckoutBackstop`).
 - `Reason ∈ { 'Empty', 'NotAbsolute', 'WrongLeaf', 'ProtectedRoot', 'TooShallow',
   'LooksLikeCheckout' }`; `Safe = $true` with empty `Reason` when all pass.
+- **Permissive-by-default caveat:** with no narrowing switches the predicate applies only the base
+  protections. Every caller must pass the switches its target demands; a future third caller that
+  omits them silently gets the weakest tier. Documented at the call sites and in §7.
 
-This maps **exactly** onto both current contracts:
-- `run.ps1` passes `-CheckoutBackstop -AdditionalProtectedRoots @($PSScriptRoot,
-  [IO.Path]::GetTempPath())`, no `-RequireLeafName` → same protected set (repo + profile + LAD +
-  temp), same backstop, still allows `PRism-wt-0`. Denying the *Temp root* still permits
-  `$env:TEMP\PRism-wt-0` (2 segments deep), so parallel-agent testing is unaffected.
-- `run-desktop` passes `-RequireLeafName 'PRism'`, no extras, no backstop → same {profile, LAD}
-  protected set + leaf lock, no repo/temp/backstop checks (which it never needed on a computed path).
-
-The **only** behavioral delta vs today is the absolute check, which fixes the 5.1 throw.
+Maps **exactly** onto both current contracts (verified by all five reviewers), the only deltas being
+§1.1 + §1.2:
+- `run.ps1`: `-CheckoutBackstop -AdditionalProtectedRoots @($PSScriptRoot, [IO.Path]::GetTempPath())`,
+  no `-RequireLeafName` → same protected set (repo + profile + LAD + temp), same backstop, still
+  allows `PRism-wt-0`. Denying the *Temp root* still permits a real `%TEMP%\PRism-wt-0` — such a path
+  is several segments below the drive root (e.g. `C:\Users\<u>\AppData\Local\Temp\PRism-wt-0`) and
+  only the exact Temp *root* string is denied, so it is never blocked.
+- `run-desktop`: `-RequireLeafName 'PRism'`, no extras, no backstop → same {profile, LAD} set + leaf
+  lock.
 
 **2. `Write-Utf8NoBom -Path -Text`** — `[IO.File]::WriteAllText($Path, $Text,
 [Text.UTF8Encoding]::new($false))`. Replaces all four copies.
 
 **3. `Test-OnWindows [-OsEnv $env:OS]`** → `$OsEnv -eq 'Windows_NT'` (5.1-safe). Moved verbatim from
-`run-desktop.ps1`. `serve-detached` switches from `$IsWindows` to this — behavior-identical on
-Windows 7+ (and `serve-detached` is `#requires -Version 7`).
+`run-desktop.ps1`. `serve-detached` adopts it (its `Assert-Platform` becomes `Assert-WindowsWmi`),
+switching from `$IsWindows` to `$env:OS` — identical on a well-formed Windows host; §2 records the
+one narrowing (user-mutable env var vs authoritative automatic var).
 
-**4. `Assert-WindowsWmi -NotWindowsMessage <string>`** — `if (-not (Test-OnWindows)) { throw
-$NotWindowsMessage }`, then the `Get-CimClass Win32_Process` probe with a standardized WMI-failure
-throw. Each caller passes its own not-Windows message (run.ps1-foreground vs run-desktop.sh). The
-WMI-failure *wording* is standardized across the two sites — an error-string-only change, not a
-control-flow change.
+**4. `Assert-WindowsWmi -NotWindowsMessage <string> -WmiUnreachableMessage <string>`** — `if (-not
+(Test-OnWindows)) { throw $NotWindowsMessage }`, then the `Get-CimClass Win32_Process` probe, `throw
+$WmiUnreachableMessage` (with the underlying error appended) on failure. **Both** messages are
+per-caller parameters, because both remediations genuinely differ:
+- `serve-detached`: not-Windows → "use `run.ps1` in the foreground"; WMI-unreachable → "…cannot spawn
+  outside the harness job object. Run `run.ps1` in the foreground instead."
+- `run-desktop`: not-Windows → "run `scripts/run-desktop.sh` instead"; WMI-unreachable → its shorter
+  variant.
 
-**5. `Get-PowerShellHostPath [-CurrentHostPath ...]`** — moved verbatim from `run-desktop.ps1`
-(current host path, else `powershell.exe` fallback). `serve-detached`'s spawn adopts this as the
-default host; on a pwsh-7 host it resolves to the same `pwsh` executable it hardcodes today (a full
-path instead of a bare name — same process).
+The two *callers* are `serve-detached.ps1` and `run-desktop.ps1` (the only scripts with a WMI
+preflight); `run.ps1` has no WMI primitive and `run-desktop.sh` is out of scope.
 
-**6. `Start-DetachedWrapper -WrapperPath -WorkingDirectory [-Hidden] [-HostExe
-(Get-PowerShellHostPath)]`** → builds `"<host>" -NoProfile -ExecutionPolicy Bypass -File
-"<wrapper>"`, attaches a `Win32_ProcessStartup{ ShowWindow = 0 }` **only when `-Hidden`**, calls
-`Invoke-CimMethod Win32_Process.Create` with `CommandLine` + `CurrentDirectory` (+
-`ProcessStartupInformation` when hidden), throws on non-zero `ReturnValue`, returns `[int]
-ProcessId`.
-- `serve-detached`: `Start-DetachedWrapper -WrapperPath $paths.Wrapper -WorkingDirectory $repoRoot`
-  (no `-Hidden`; keeps its current visible-window behavior).
-- `run-desktop`: `Start-DetachedWrapper -WrapperPath $wrapperPath -WorkingDirectory $desktopDir
-  -Hidden` (keeps `ShowWindow=0`).
-- Neither caller changes its pidfile handling — the function only spawns and returns the PID.
+**5. `Invoke-Win32ProcessCreate -CommandLine <string> -WorkingDirectory <string> [-StartupInfo
+<CimInstance>]`** → `Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{
+CommandLine; CurrentDirectory = $WorkingDirectory; ProcessStartupInformation = $StartupInfo (only
+when provided) }`; throw on non-zero `ReturnValue`; return `[int] ProcessId`. This is the minimal
+genuinely-shared core (the review rejected a `-Hidden`/`-HostExe` `Start-DetachedWrapper` as a forced
+abstraction that would inject a window-hiding capability into `serve-detached` and change its host
+resolution). **Each caller builds its own command line and startup info:**
+- `serve-detached`: builds `"pwsh -NoProfile -ExecutionPolicy Bypass -File `"$WrapperPath`""` (bare
+  `pwsh`, unchanged), calls `Invoke-Win32ProcessCreate -CommandLine $cmd -WorkingDirectory $repoRoot`
+  (no `-StartupInfo`).
+- `run-desktop`: builds its full-path-host command line via its own `Get-PowerShellHostPath`, builds
+  `$startup = New-CimInstance -ClassName Win32_ProcessStartup -ClientOnly -Property @{ ShowWindow =
+  [uint16]0 }` (the `[uint16]` cast preserved), calls `Invoke-Win32ProcessCreate -CommandLine $cmd
+  -WorkingDirectory $desktopDir -StartupInfo $startup`.
+- Neither caller changes its pidfile handling.
 
 ### 3.3 Call-site adapters (why the two guard names survive)
 
-The rich per-failure throw messages in `run.ps1` are launcher-specific UX and do not belong in a
-shared predicate. So each call site keeps a **thin adapter** over the one real guard:
+The rich per-failure throw messages in `run.ps1` are launcher-specific UX and stay out of the shared
+predicate. Each call site keeps a **thin adapter** over the one real guard:
 
-- `run.ps1:Assert-SafeResetTarget` becomes a throw-adapter: call `Test-SafeDeleteTarget`, `switch`
-  on `.Reason` to throw the existing message strings. Call site (L142) unchanged.
-- `run-desktop.ps1:Test-CleanTargetSafe` becomes a bool-adapter: `return (Test-SafeDeleteTarget
-  -Path $Path -RequireLeafName 'PRism').Safe`. Call site (L279) unchanged — and its existing 9 tests
-  keep passing verbatim, which is the behavior-preservation proof.
+- `run.ps1:Assert-SafeResetTarget` becomes a throw-adapter: call `Test-SafeDeleteTarget`, `switch` on
+  `.Reason` to throw the existing message strings. Call site (L142) unchanged.
+- `run-desktop.ps1:Test-CleanTargetSafe` becomes a bool-adapter: `return (Test-SafeDeleteTarget -Path
+  $Path -RequireLeafName 'PRism').Safe`. Call site (L279) unchanged — **and its existing 9 tests keep
+  passing verbatim**, which is the behavior-preservation proof for the run-desktop mode.
 
 One implementation, two adapters, zero call-site churn.
 
 ## 4. Commit plan
 
-Ordered so the security-sensitive guard is isolated and reviewable on its own, per the scope
-discussion on the issue:
+Ordered so the security-sensitive guard is isolated and reviewable on its own, and so **every commit
+leaves all three scripts loadable at runtime** (not merely "harnesses green" — `serve-detached` has
+no harness, so all three imports land up front to avoid a silent runtime break):
 
-1. **Module + guard.** Add `PRismLauncher.psm1` with `Test-SafeDeleteTarget`; convert
-   `Assert-SafeResetTarget` and `Test-CleanTargetSafe` to adapters; wire the two imports. Add
-   `PRismLauncher.Tests.ps1` with the guard's red→green coverage incl. the 5.1 fix; migrate the 9
-   run-desktop guard cases. (This commit both unifies the guard and fixes the 5.1 bug.)
-2. **`Write-Utf8NoBom`.** Move to the module; replace the two named + two inline copies; import in
-   `run-desktop.ps1`. Test.
-3. **`Test-OnWindows` + `Get-PowerShellHostPath` + `Assert-WindowsWmi`.** Move helpers to the module;
-   convert both `Assert-Platform`s to call `Assert-WindowsWmi`; migrate their tests. Import in
-   `serve-detached.ps1`.
-4. **`Start-DetachedWrapper`.** Move to the module (`-Hidden`/`-WorkingDirectory`/`-HostExe`); wire
-   both spawn sites. Test the arg/command-line construction and the hidden/visible `ProcessStartup`
-   branch (mock `Invoke-CimMethod` — no real spawn in the unit harness).
+1. **Module + guard + all three imports.** Add `PRismLauncher.psm1` with `Test-SafeDeleteTarget`
+   (incl. the `\\?\` canonicalization and 5.1 regex); convert `Assert-SafeResetTarget` and
+   `Test-CleanTargetSafe` to adapters; **add the `Import-Module` line to all three scripts now** (an
+   unused import in `serve-detached`/`run-desktop` is harmless and prevents any later commit from
+   referencing a moved-but-not-yet-imported helper). Add `PRismLauncher.Tests.ps1` with the guard's
+   red→green coverage incl. the 5.1 and `\\?\` regressions and the order-invariance test.
+2. **`Write-Utf8NoBom`.** Move to the module; replace the two named (`run.ps1`, `serve-detached.ps1`)
+   + two inline (`run-desktop.ps1`) copies. Imports already present from commit 1. Test.
+3. **`Test-OnWindows` + `Assert-WindowsWmi`.** Move `Test-OnWindows` to the module; add
+   `Assert-WindowsWmi`; convert both `Assert-Platform`s to call it (each passing its own
+   `-NotWindowsMessage` + `-WmiUnreachableMessage`). Migrate the `Test-OnWindows` tests to
+   `PRismLauncher.Tests.ps1`. (`Get-PowerShellHostPath` stays in `run-desktop.ps1`.)
+4. **`Invoke-Win32ProcessCreate`.** Move the CIM `Create`+`ReturnValue` core to the module; both
+   spawn sites call it, each building its own command line / startup info. Not unit-tested (the CIM
+   call can't be faked from a module-external scope, and the repo never unit-tested the WMI spawn —
+   §5); validated by the `serve-detached` smoke + manual `run-desktop`.
 5. **Docs.** `development-process.md` pre-push step 7 already lists the PS harnesses; add
    `PRismLauncher.Tests.ps1`. Refresh the "Mirrors …" comments that now point at the module.
-
-Each commit keeps all three scripts loadable and all harnesses green.
 
 ## 5. Test strategy
 
 - New `scripts/PRismLauncher.Tests.ps1` — plain assertion harness (repo convention, **no Pester**;
-  mirrors `run.Tests.ps1` / `run-desktop.Tests.ps1`). Imports the module directly with
-  `Import-Module … -Force`. Runs under **both** pwsh 7 and Windows PowerShell 5.1 (the guard's regex
-  and the helpers are exactly where 5.1 vs 7 diverges).
-- **Guard (`Test-SafeDeleteTarget`):** port the 9 run-desktop cases as the `-RequireLeafName 'PRism'`
-  contract; add `run.ps1`-mode cases (`-CheckoutBackstop` + repo/temp denial, `PRism-wt-0` allowed,
-  each `Reason` value); **5.1 regression** — a valid absolute path returns `Safe` under WinPS 5.1
-  where main's `run.ps1` guard throws. The red proof (main's guard throwing under 5.1) is captured in
-  the PR `## Proof`; the permanent green test asserts the unified predicate under both hosts.
-- **Re-home** the `Test-OnWindows` / `Get-PowerShellHostPath` / guard tests from
-  `run-desktop.Tests.ps1` into the new file (their functions moved). `run-desktop.Tests.ps1` keeps a
-  one-line delegation smoke on `Test-CleanTargetSafe` and its script-specific tests
-  (`Get-DotnetSdkMajors`, remediation).
-- **`Start-DetachedWrapper`:** unit-test command-line assembly and the `-Hidden` branch by injecting
-  a fake `Invoke-CimMethod` / asserting the built arguments; do **not** spawn a real detached process
-  in the harness.
+  mirrors `run.Tests.ps1` / `run-desktop.Tests.ps1`). Imports the module directly with `Import-Module
+  … -Force`. Runs under **both** pwsh 7 and Windows PowerShell 5.1.
+- **Guard (`Test-SafeDeleteTarget`):** `run.ps1`-mode cases (`-CheckoutBackstop` + repo/temp denial,
+  `PRism-wt-0` allowed, each `Reason` value); the **5.1 regression** (a valid absolute path returns
+  `Safe` under WinPS 5.1, where `main`'s `run.ps1` guard throws); the **`\\?\` regressions**
+  (`\\?\C:\Users\<u>` and `\\?\C:\Users\<u>\AppData\Local` are rejected as `ProtectedRoot`); an
+  **order-invariance test** (permuting the switch combinations yields the same `Safe` verdict). The
+  existing 9 `run-desktop` guard cases stay in `run-desktop.Tests.ps1` (they call the adapter,
+  proving no regression) — only the `Test-OnWindows` tests move here.
+- **`Write-Utf8NoBom`, `Test-OnWindows`:** pure, param-injected unit tests.
+- **`Assert-WindowsWmi` / `Invoke-Win32ProcessCreate`:** the CIM/`Get-CimClass` calls are **not**
+  unit-tested — a plain function fake defined in the test's scope does not reach a module-internal
+  cmdlet call (the reason Pester needs `InModuleScope`), and the repo has no precedent for
+  shadowing a module-internal cmdlet. This matches the existing "pure helper tested, WMI spawn not"
+  pattern (`New-DesktopLauncherWrapper`/`Write-WrapperScript` are tested; the actual `Create` calls
+  are not). Their behavior is covered by the `serve-detached` headless smoke and the manual
+  `run-desktop` launch (§6). `Test-OnWindows` (the platform half of `Assert-WindowsWmi`) is
+  unit-tested independently.
+- **`run.Tests.ps1` stays green for a specific reason:** it is AST param-block extraction (it grafts
+  `run.ps1`'s `param` block onto a probe; it never dot-sources `run.ps1` or runs the `Import-Module`).
+  Adding an import to `run.ps1`'s body can't affect it — **and therefore it cannot catch a module
+  5.1-break either**, which is why the `powershell.exe`-5.1 run in §6 is mandatory, not optional.
 
 ## 6. Validation plan
 
 - All three harnesses (`run.Tests.ps1`, `run-desktop.Tests.ps1`, `PRismLauncher.Tests.ps1`) green
-  under **pwsh 7 and `powershell.exe` 5.1**.
+  under **pwsh 7 and `powershell.exe` 5.1**. The 5.1 run is **load-bearing**: it is the only harness
+  path that exercises the module under Windows PowerShell 5.1 (§5).
 - `run.ps1 -Reset Full -DataDir $env:TEMP\prism-676-smoke` against a throwaway temp store proven to
-  clean (not throw) under **WinPS 5.1** — the concrete 5.1-bug-fix demonstration.
-- `serve-detached.ps1` headless launch + `-Stop` smoke on a private `(port, dataDir)`.
-- `run-desktop.ps1` full Electron launch is **manual** (needs a published sidecar) — recorded as the
-  one path not auto-validated, consistent with #369. Not a merge blocker for this refactor; the unit
-  harness covers the extracted helpers.
-- CI: the change is PowerShell + docs only (no C#/TS/workflow inputs), and the PS harnesses are not
-  CI-wired, so CI passes trivially; correctness rests on the local both-hosts run above.
+  clean (not throw) under **WinPS 5.1** — the concrete §1.1 fix demonstration. Plus a manual check
+  that `-Reset Full -DataDir '\\?\C:\…\prism-676-smoke-devpath'` is **refused** — the §1.2 fix.
+- `serve-detached.ps1` headless launch + `-Stop` smoke on a private `(port, dataDir)` — exercises the
+  real `Invoke-Win32ProcessCreate` spawn.
+- `run-desktop.ps1` full Electron launch is **manual** (needs a published sidecar), consistent with
+  #369. Not a merge blocker; the unit harness covers the extracted pure helpers.
+- CI: PowerShell + docs only (no C#/TS/workflow inputs), PS harnesses not CI-wired, so CI passes
+  trivially; correctness rests on the local both-hosts run above.
 
 ## 7. Risks & mitigations
 
-- **Behavior drift in the extracted spawn/WMI code** (the highest-risk primitives). Mitigation:
-  parameterize the divergent bits (`-Hidden`, `-HostExe`, `-NotWindowsMessage`) so each site's
-  observable behavior is byte-preserved; unit-test the branch selection; keep the changes in separate
-  commits.
-- **`Start-DetachedWrapper` is the weakest abstraction** (three params to cover divergence). Accepted
-  because the `Create` + `ReturnValue` + `ShowWindow` construction is the fiddliest copy-prone bit;
-  flagged for the reviewer.
-- **`Import-Module` path resolution** differs between the repo-root `run.ps1` and the `scripts/`
-  scripts. Mitigation: `$PSScriptRoot`-relative import paths, verified from all three under both hosts.
-- **First `.psm1` in the repo.** Mitigation: `-Force` import + direct-import tests; the existing
-  dot-source test pattern is preserved for the scripts' remaining functions.
+- **`\\?\` denylist bypass (§1.2)** was catastrophic and latent. Mitigation: canonicalize the prefix
+  before comparison + explicit `\\?\` rejection tests. Residual: other exotic path forms (NT object
+  paths `\??\`, `GLOBALROOT`) are not normalized by `GetFullPath`; the checkout backstop and the
+  leaf/shallow checks remain as defense-in-depth, and no realistic `-DataDir` uses them — noted, not
+  fixed, to keep the change bounded.
+- **The module is a 5.1-compatibility surface and a single point of failure** now hard-depended on by
+  `run.ps1 -Reset None` (which used zero primitives before). Mitigation: the §3.1 5.1-compat
+  invariant + the mandatory `powershell.exe`-5.1 harness run (§6). Accepted residual: a partial/sparse
+  checkout that excludes `scripts/` now breaks `run.ps1` even for `-Reset None`; the repo ships the
+  scripts together, so standalone `run.ps1` extraction is unsupported.
+- **`Test-SafeDeleteTarget` defaults to minimum protection.** Mitigation: the permissive-default
+  caveat is documented at both call sites and here; the order-invariance test also pins the
+  independent-AND invariant so a future refactor can't silently turn it into a fail-open pipeline.
+- **Behavior drift in the extracted platform/spawn code.** Mitigation: parameterize the divergent
+  bits (`-NotWindowsMessage`, `-WmiUnreachableMessage`, per-caller command line + startup info); keep
+  `serve-detached`'s bare `pwsh` host and no-hidden-window behavior; unit-test what's pure, smoke the
+  rest.
+- **First `.psm1` in the repo / import-path resolution** (repo-root `run.ps1` vs `scripts/` scripts).
+  Mitigation: `$PSScriptRoot`-relative import paths, top-level imports, verified from all three under
+  both hosts.
 
 ## 8. Decisions locked (owner)
 
 - **Scope:** all four primitives in one PR (option B), with the guard isolated as commit 1.
 - **Mechanism:** `.psm1` + `Import-Module` (option A).
+- **New in-scope hardening pending owner sign-off:** the `\\?\` denylist fix (§1.2). It is a scope
+  expansion beyond "de-dup + the 5.1 fix", but sits on the exact destructive-delete surface this PR
+  hardens and is fixed once for both callers. If declined, it drops to a standalone follow-up issue
+  and the spec reverts to preserving the current (vulnerable) denylist behavior.
 - **Follow-up candidates (not this PR):** `serve-detached` stray-window `ShowWindow=0`; CI-wiring the
   PS harnesses (a pre-existing repo-wide gap noted on #274).
+
+## 9. `ce-doc-review` findings & dispositions
+
+| # | Reviewer(s) | Finding | Disposition |
+|---|---|---|---|
+| 1 | feasibility (F1), adversarial (F3), scope-guardian | "Inject a fake `Invoke-CimMethod`" can't work from module-external scope; `Start-DetachedWrapper` with `-Hidden`/`-HostExe` is a forced abstraction | **Applied** — replaced with minimal `Invoke-Win32ProcessCreate`; spawn not unit-tested (§3.2.5, §5) |
+| 2 | feasibility (F2), adversarial (F1) | Commit 2 deletes `serve-detached`'s `Write-Utf8NoBom` before its import (commit 3) → silent runtime break (no serve-detached harness) | **Applied** — all three imports moved into commit 1 (§4) |
+| 3 | security (F1) | `\\?\` device paths bypass the protected-root denylist → whole-`%LOCALAPPDATA%`/profile wipe | **Applied** — canonicalize prefix + tests (§1.2, §3.2.1); flagged for owner sign-off (§8) |
+| 4 | adversarial (F2), scope-guardian | `serve-detached` host `pwsh`→`Get-PowerShellHostPath` is a real behavior change, not "same process" | **Applied** — `serve-detached` keeps bare `pwsh`; `Get-PowerShellHostPath` stays in `run-desktop` (§2, §3.2.5) |
+| 5 | adversarial (F4), scope-guardian | Standardizing the WMI-unreachable message drops caller-specific remediation | **Applied** — parameterized `-WmiUnreachableMessage` too (§3.2.4) |
+| 6 | coherence, scope-guardian | §3.2 phrasing named `run.ps1` / out-of-scope `run-desktop.sh` as the WMI callers | **Applied** — corrected to `serve-detached.ps1` / `run-desktop.ps1` (§3.2.4) |
+| 7 | adversarial (F5), feasibility | Module is a 5.1-compat SPOF that `run.ps1 -Reset None` now hard-depends on; `run.Tests.ps1` can't catch a module 5.1-break | **Applied** — §3.1 invariant + §5 explanation + §6 mandatory 5.1 run + §7 risk |
+| 8 | scope-guardian | §2 "single exception" undercounts disclosed deltas | **Applied** — §2 rewritten to enumerate all sanctioned changes |
+| 9 | security (F2) + threat item 3 | Predicate permissive-by-default; independent-AND invariant unstated | **Applied** — caveat + module comment + order-invariance test (§3.2.1, §5, §7) |
+| 10 | adversarial (F3 tail) | `ShowWindow = 0` shorthand drops the `[uint16]` cast | **Applied** — cast preserved (§3.2.5) |
+| 11 | security (minor) | §3.2 "2 segments deep" arithmetic wrong (measured from drive root) | **Applied** — corrected (§3.2.1) |
+| 12 | adversarial (F6) | `$IsWindows`→`$env:OS` downgrades authoritative→mutable; "behavior-identical" overstates | **Applied** — claim softened, narrowing noted (§2, §3.2.3) |
+| 13 | feasibility (minor), adversarial | Too-shallow empty-segment filtering differs (moot post-`GetFullPath`) | **Applied** — unified on the filtered form (§3.2.1) |
+| 14 | adversarial (holds) | `run.Tests.ps1` staying green is asserted but unexplained | **Applied** — explanation added (§5) |
+| 15 | adversarial (F7) | Ship the 5.1 fix as a separate PR to shrink the risky diff | **Skipped** — the fix *is* the regex in the unified predicate; severing means writing it twice (throwaway inline, then adapter) = more churn on the risky path. Owner locked scope B; commit-1 already isolates the guard |
+| 16 | scope-guardian (FYI) | Bundling the guard with 3 mechanical extracts dilutes review | **Acknowledged** — owner-locked (B); mitigated by commit-1 isolation (§4) |
