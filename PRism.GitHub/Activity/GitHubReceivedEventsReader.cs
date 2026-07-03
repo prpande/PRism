@@ -3,6 +3,7 @@ using System.Net.Http;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Extensions.Logging;
 using PRism.Core.Activity;
 
 namespace PRism.GitHub.Activity;
@@ -17,13 +18,16 @@ public sealed class GitHubReceivedEventsReader : IReceivedEventsReader
     private readonly IHttpClientFactory _httpFactory;
     private readonly Func<Task<string?>> _readToken;
     private readonly Func<Task<string?>> _readLogin;
+    private readonly ILogger<GitHubReceivedEventsReader>? _logger;
 
     public GitHubReceivedEventsReader(
-        IHttpClientFactory httpFactory, Func<Task<string?>> readToken, Func<Task<string?>> readLogin)
+        IHttpClientFactory httpFactory, Func<Task<string?>> readToken, Func<Task<string?>> readLogin,
+        ILogger<GitHubReceivedEventsReader>? logger = null)
     {
         _httpFactory = httpFactory;
         _readToken = readToken;
         _readLogin = readLogin;
+        _logger = logger;
     }
 
     public async Task<ReceivedEventsResult> ReadAsync(CancellationToken ct)
@@ -36,7 +40,7 @@ public sealed class GitHubReceivedEventsReader : IReceivedEventsReader
 
         var url = $"users/{Uri.EscapeDataString(login)}/received_events?per_page={PerPage}";
         var (items, degraded) = await GitHubArrayReader
-            .ReadAsync(_httpFactory, _readToken, url, Parse, ct).ConfigureAwait(false);
+            .ReadAsync(_httpFactory, _readToken, url, Parse, ct, _logger, "received_events").ConfigureAwait(false);
         return new ReceivedEventsResult(items, degraded);
     }
 
