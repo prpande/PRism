@@ -39,7 +39,7 @@ The Electron shell wraps those *same* self-contained binaries as a managed sidec
 
 ## Pre-push checklist
 
-Run steps 1–4 locally before every `git push`. They mirror `.github/workflows/ci.yml` so anything CI catches, you catch first. Step 5 (desktop) is conditional on a `desktop/` change; step 6 (Playwright) is conditional — see comments in [`README.md`](../../README.md) § Pre-push checklist.
+Run steps 1–4 locally before every `git push`. They mirror `.github/workflows/ci.yml` so anything CI catches, you catch first. Step 5 (desktop) is conditional on a `desktop/` change; step 6 (Playwright) is conditional — see comments in [`README.md`](../../README.md) § Pre-push checklist. Step 7 (PowerShell launcher harnesses) is conditional on a `run.ps1` / `scripts/*.ps1` change and is **not** mirrored in CI, so run it locally.
 
 ```text
 # 1. Frontend lint (eslint + prettier --check)
@@ -64,6 +64,16 @@ cd desktop && npm ci && npm run lint && npm run build && npm run test:unit && cd
 
 # 6. Frontend e2e (Playwright) — required when README criteria apply
 cd frontend && npx playwright test
+
+# 7. PowerShell launcher harnesses — run when your change touches run.ps1 or
+#    scripts/*.ps1. Plain assertion harnesses (no Pester); host-agnostic and NOT wired
+#    into CI, so run them locally. run.Tests.ps1 covers run.ps1 parameter binding (#274);
+#    run-desktop.Tests.ps1 covers the desktop launcher's pure helpers. On Windows, also
+#    run run.Tests.ps1 under Windows PowerShell 5.1 — that is where PS parameter binding
+#    historically diverges (the 5.1 line below is Windows-only; skip it on macOS/Linux).
+pwsh -File scripts/run.Tests.ps1
+pwsh -File scripts/run-desktop.Tests.ps1
+powershell.exe -File scripts/run.Tests.ps1   # Windows PowerShell 5.1 (Windows only)
 ```
 
 ## Tooling caveats (false-green traps)

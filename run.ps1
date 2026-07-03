@@ -29,6 +29,16 @@
 # but does NOT clear the keychain entry on those platforms. The deferred
 # in-app "Replace token" feature (S6) reuses TokenStore.ClearAsync, which
 # is keychain-aware on every platform.
+
+# PositionalBinding=$false: bind every declared parameter BY NAME only, so an
+# unmatched pass-through token (e.g. `--no-browser`) flows to $DotnetArgs
+# (ValueFromRemainingArguments) instead of being bound positionally. Without this,
+# `./run.ps1 -Reset None --no-browser` bound `--no-browser` to [int]$Port and threw
+# "Cannot convert ... to Int32", and a bare `--no-browser` bound to $Reset and failed
+# its ValidateSet (issue #274). No caller passes -Reset/-Port/-DataDir positionally, so
+# requiring names is behavior-preserving -- and it makes the destructive -Reset modes
+# strictly harder to trigger by accident (an un-named token can no longer become -Reset).
+[CmdletBinding(PositionalBinding = $false)]
 param(
     [ValidateSet('None', 'Token', 'Auth', 'Full')]
     [string]$Reset = 'None',
@@ -51,10 +61,10 @@ param(
     [switch]$SkipBuild,
 
     # MUST stay last: ValueFromRemainingArguments only binds trailing app args
-    # (e.g. --no-browser) correctly when it is the final parameter. (Note: a bare
-    # leading `--no-browser` with no explicit -Reset still binds positionally to
-    # $Reset, so callers passing pass-through args must name -Reset -- the detached
-    # wrapper passes `-Reset None` for exactly this reason.)
+    # (e.g. --no-browser) correctly when it is the final parameter. With
+    # PositionalBinding=$false (above), pass-through args reach $DotnetArgs even when
+    # no other parameter is named -- both `./run.ps1 --no-browser` and
+    # `./run.ps1 -Reset None --no-browser` work (issue #274).
     [Parameter(ValueFromRemainingArguments = $true)]
     [string[]]$DotnetArgs
 )
