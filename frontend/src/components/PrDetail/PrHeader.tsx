@@ -1,6 +1,5 @@
 import { useEffect, useId, useState } from 'react';
 import type {
-  DraftVerdict,
   PrReference,
   Reviewer,
   ReviewSessionDto,
@@ -11,14 +10,7 @@ import { prRefKey } from '../../api/types';
 import { usePrHeaderCollapsed } from '../../hooks/usePrHeaderCollapsed';
 import type { ComposerOwnerKey } from '../../hooks/useDraftSession';
 import { formatAge } from '../../utils/relativeTime';
-import { sendPatch } from '../../api/draft';
-import {
-  SubmitConflictError,
-  discardAllDrafts,
-  isKnownSubmitErrorCode,
-  type KnownSubmitErrorCode,
-} from '../../api/submit';
-import { useSubmit } from '../../hooks/useSubmit';
+import { useSubmitFlow } from './useSubmitFlow';
 import { useAiGate } from '../../hooks/useAiGate';
 import { useSubmitToasts } from '../../hooks/useSubmitToasts';
 import { useToast } from '../Toast';
@@ -223,7 +215,6 @@ export function PrHeader({
     ? CANNED_PRESUBMIT_VALIDATOR_RESULTS
     : [];
 
-  const submit = useSubmit(reference);
   const [collapsed, toggleCollapsed] = usePrHeaderCollapsed(prRefKey(reference));
   // Per-instance id for aria-controls. PrTabHost keeps one PrDetailView (hence
   // one PrHeader) mounted PER OPEN TAB simultaneously (inactive ones hidden), so
@@ -234,25 +225,34 @@ export function PrHeader({
   // Cross-cutting submit toasts: submit-duplicate-marker-detected /
   // submit-orphan-cleanup-failed (spec § 11.4 / § 13.2).
   useSubmitToasts(reference, { showToast: (message) => show({ kind: 'info', message }) });
-  const [dialogOpen, setDialogOpen] = useState(false);
 
-  // Closed-dialog discard surface (spec § 4.9). When the SubmitDialog is shut,
-  // the pill next to Submit offers the same Discard action. It needs its OWN
-  // confirmation-modal instance + open/error state: the dialog's modal is
-  // unmounted while `dialogOpen` is false, so the pill can't share it. The two
-  // surfaces are mutually exclusive (`!dialogOpen` gates the pill), so they
-  // never both drive a discard at once. discardInFlight / discardOwnPendingReview
-  // come from the shared `submit` instance — the single in-flight flag is fine
-  // because only one surface is mounted at a time.
-  //
-  // Deviation from spec § 4.9: the visibility predicate uses PrHeader's local
-  // `dialogOpen` (which actually mounts the SubmitDialog) rather than
-  // `submit.submitDialogOpen`. Task 22 wired the dialog off `dialogOpen` and
-  // never calls openSubmitDialog/closeSubmitDialog, so the hook's flag stays
-  // false here — gating the pill on it would leave the pill visible behind the
-  // open dialog. `dialogOpen` is the faithful "is the dialog open?" signal.
-  const [pillDiscardModalOpen, setPillDiscardModalOpen] = useState(false);
-  const [pillDiscardError, setPillDiscardError] = useState<string | null>(null);
+  // Submit orchestration (#327 slice 3): the useSubmit instance, the dialog +
+  // pill-discard-modal state, and every submit/discard/foreign-review handler
+  // live in useSubmitFlow — PrHeader only renders the returned state slices and
+  // wires the handlers into the layout below.
+  const {
+    submitState,
+    lastResume,
+    discardInFlight,
+    discardOwnPendingReview,
+    dialogOpen,
+    openDialog,
+    closeDialog,
+    pillDiscardModalOpen,
+    pillDiscardError,
+    openPillDiscardModal,
+    cancelPillDiscard,
+    patchVerdict,
+    onResume,
+    onSubmit,
+    onRetry,
+    onResumeForeignPendingReview,
+    onDiscardForeignPendingReview,
+    onDiscardAllDrafts,
+    handlePillDiscard,
+    onDialogDiscardSuccess,
+  } = useSubmitFlow({ reference, session, onSessionRefetch, show });
+
   const [discardAllModalOpen, setDiscardAllModalOpen] = useState(false);
 
   // #501 — header status glyph discriminant (full set: open/merged/closed/draft).
@@ -263,31 +263,7 @@ export function PrHeader({
   // from Confirm through success or failure; the stale-commitOID/failed retry
   // paths re-fire with the last-confirmed verdict, so a mid-flow change would
   // be a no-op) and disables Submit Review (can't open a second dialog).
-  const inSubmitFlow = submit.state.kind !== 'idle';
-
-  // A successful submit clears the session server-side. The session refetch that
-  // reflects the cleared state in the header (verdict picker, recovery badge, Submit
-  // button enable state) is driven by the post-clear `draft-submitted` SSE event
-  // (PrDetailView.useDraftSubmittedSubscriber → draftSession.refetch) — NOT here.
-  // #392: the prior onSessionRefetch() call fired on the submit-progress
-  // Finalize/Succeeded SSE, which the pipeline reports BEFORE ClearSubmittedSession
-  // persists, so it read the un-cleared session and the submitted draft popped back
-  // into the composer. Removing it leaves no gap: `submit.state.kind === 'success'`
-  // is itself SSE-driven (useSubmit), so this effect never had a non-SSE path, and the
-  // post-clear draft-submitted + StateChanged(SourceTabId:null) refetches now own the
-  // composer-clear. clearLastResume stays — it is timing-independent.
-  useEffect(() => {
-    if (submit.state.kind === 'success') {
-      // Imported drafts (if any) were adjudicated + submitted — the post-Resume
-      // banner is moot now.
-      submit.clearLastResume();
-    }
-    // Depend on the transition trigger (`submit.state.kind`) and the stable
-    // `submit.clearLastResume` (useCallback([])), NOT the whole `submit` object —
-    // useSubmit returns a fresh object literal each render, so depending on it would
-    // re-run this effect every render while parked in `success`.
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentionally narrowed to submit.state.kind + the stable submit.clearLastResume; the whole `submit` object is re-created each render (#331)
-  }, [submit.state.kind, submit.clearLastResume]);
+  const inSubmitFlow = submitState.kind !== 'idle';
 
   // Dev-only signal: if a loaded PR (title present) has no htmlUrl, the escape-
   // hatch links silently disappear — surface that so a ParsePr/GraphQL-shape
@@ -301,154 +277,6 @@ export function PrHeader({
       );
     }
   }, [title, htmlUrl, reference]);
-
-  const patchVerdict = (verdict: DraftVerdict | null) => {
-    void sendPatch(reference, { kind: 'draftVerdict', payload: verdict }).then(() => {
-      onSessionRefetch?.();
-    });
-  };
-
-  const closeDialog = () => {
-    setDialogOpen(false);
-    submit.reset();
-  };
-
-  const onResume = () => {
-    // R3 — re-enter the pipeline at Step 1's "match by ID" outcome via the
-    // persisted pendingReviewId; default to Comment if no verdict was set.
-    setDialogOpen(true);
-    void submit.submit(session?.draftVerdict ?? 'comment').catch(surfaceSubmitError);
-  };
-
-  // Maps backend SubmitErrorDto.code values to user-facing toast copy. Keep in
-  // sync with PrSubmitEndpoints.cs (the SubmitAsync rule a–f rejections + the
-  // submit-in-progress 409). An unknown code (forward-compat: server schema
-  // bump arriving before the FE knows about it) falls through to the
-  // server-supplied message so it's still visible, not silent. A *known* code
-  // missing from the switch is a compile-time error — no `default` clause +
-  // exhaustive narrowing via `KnownSubmitErrorCode` enforces parity.
-  // Regression: prior to this map, the catch was empty with a comment claiming
-  // useSubmitToasts handled it — that hook only listens for two SSE events,
-  // not HTTP 4xx, which made every pre-pipeline rejection invisible.
-  const submitErrorMessage = (err: SubmitConflictError): string => {
-    if (!isKnownSubmitErrorCode(err.code)) return err.message;
-    const code: KnownSubmitErrorCode = err.code;
-    switch (code) {
-      case 'head-sha-not-stamped':
-        return "Couldn't submit — the PR view hasn't been stamped yet. Reload the PR and try again.";
-      case 'tab-id-missing':
-        // Cross-tab-stamp slice: the server got no X-PRism-Tab-Id header (or one outside the
-        // allowlist). The remedy is to reload THIS tab so getTabId() mints a fresh id and the
-        // first /mark-viewed call stamps it. "Reload the PR" (the head-sha-not-stamped wording
-        // above) would point the user at the wrong remediation — the PR detail isn't stale,
-        // the tab itself is.
-        return "Couldn't submit — this browser tab is in an unexpected state. Reload the tab and try again.";
-      case 'head-sha-drift':
-        return "Couldn't submit — the PR's head commit changed since you last viewed it. Reload the PR.";
-      case 'unauthorized':
-        return "Couldn't submit — your subscription to this PR was lost. Reload the PR.";
-      case 'no-session':
-        return "Couldn't submit — no draft session for this PR. Reload the PR.";
-      case 'stale-drafts':
-        return "Couldn't submit — there are stale drafts. Resolve or override them in the Drafts tab first.";
-      case 'verdict-needs-reconfirm':
-        return "Couldn't submit — re-confirm your verdict before submitting.";
-      case 'no-content':
-        return "Couldn't submit — a Comment-verdict review needs at least one inline comment, reply, or summary.";
-      case 'verdict-invalid':
-        return "Couldn't submit — verdict must be Approve, Request changes, or Comment.";
-      case 'submit-in-progress':
-        return 'A submit is already in flight for this PR. Wait for it to finish or refresh the page.';
-      case 'pending-review-state-changed':
-        // Normally handled by surfaceForeignReviewError on the Resume/Discard
-        // path. If a submit ever surfaces it (race between submit and a peer
-        // changing pending-review state), fall back to the server message.
-        return err.message;
-      case 'delete-failed':
-        // 502 from cleanup of the foreign pending review on discardAll —
-        // user-visible copy lives in onDiscardAllDrafts; if it ever flows here,
-        // honour the server message.
-        return err.message;
-    }
-  };
-
-  const surfaceSubmitError = (err: unknown) => {
-    if (err instanceof SubmitConflictError) {
-      show({ kind: 'error', message: submitErrorMessage(err) });
-      return;
-    }
-    show({
-      kind: 'error',
-      message: "Couldn't submit — an unexpected error occurred. Try again.",
-    });
-  };
-
-  // Foreign-pending-review prompt (spec § 11). Resume imports the foreign
-  // review's threads as Draft entries (adjudicated from the Drafts tab) and
-  // closes the dialog; Discard deletes it on github.com. A TOCTOU 409
-  // (`pending-review-state-changed`) surfaces a toast and useSubmit resets to
-  // idle (spec § 11.4). Surfaced as `error` because the user's explicit
-  // Resume/Discard action *failed* — a blue info banner reads as confirmation
-  // when the truth is "your action did nothing; retry submit".
-  const surfaceForeignReviewError = (err: unknown) => {
-    if (err instanceof SubmitConflictError && err.code === 'pending-review-state-changed') {
-      show({
-        kind: 'error',
-        message: 'Your pending review state changed during the prompt. Please retry submit.',
-      });
-      return;
-    }
-    // useSubmit has already reset to idle; surface a generic note so the action
-    // doesn't fail silently.
-    show({ kind: 'error', message: 'Could not complete that action on the pending review.' });
-  };
-
-  // Close the dialog synchronously before awaiting — once the resume/discard
-  // POST resolves, useSubmit flips its state to `idle`, and if the dialog were
-  // still mounted that would flash the full submit form (and jump focus) for one
-  // render before the .then unmounts it. The spec also has the dialog close on a
-  // TOCTOU 409 here, so optimistic-close + a toast on failure matches both.
-  const onResumeForeignPendingReview = (reviewId: string) => {
-    setDialogOpen(false);
-    void submit
-      .resumeForeignPendingReview(reviewId)
-      .then(() => onSessionRefetch?.())
-      .catch(surfaceForeignReviewError);
-  };
-
-  const onDiscardForeignPendingReview = (reviewId: string) => {
-    setDialogOpen(false);
-    void submit
-      .discardForeignPendingReview(reviewId)
-      .then(() => onSessionRefetch?.())
-      .catch(surfaceForeignReviewError);
-  };
-
-  // Closed/merged-PR bulk discard (spec § 13). POST /drafts/discard-all clears
-  // all session state and best-effort-deletes the pending review on github.com
-  // (a failure there fans out submit-orphan-cleanup-failed → useSubmitToasts).
-  const onDiscardAllDrafts = () => {
-    void discardAllDrafts(reference)
-      .then(() => onSessionRefetch?.())
-      .catch(() => {
-        show({ kind: 'error', message: 'Could not discard the drafts. Please try again.' });
-      });
-  };
-
-  // Pill-surface discard (spec § 4.9). Mirrors SubmitDialog.handleDiscard (T22):
-  // success → close the modal + optimistic toast; failure → surface the error in
-  // the modal (which appends its own period, so strip a trailing one to avoid
-  // ".."). The pill has no dialog to close on success — only its own modal.
-  const handlePillDiscard = async () => {
-    setPillDiscardError(null);
-    const r = await submit.discardOwnPendingReview();
-    if (!r.ok) {
-      setPillDiscardError(r.message.endsWith('.') ? r.message.slice(0, -1) : r.message);
-      return;
-    }
-    setPillDiscardModalOpen(false);
-    show({ kind: 'info', message: 'Pending review discarded' });
-  };
 
   const submittedReviewStale =
     viewerReview?.commitSha != null && viewerReview.commitSha !== currentHeadSha;
@@ -577,12 +405,9 @@ export function PrHeader({
               viewerReview={viewerReview ?? null}
               submittedReviewStale={submittedReviewStale}
               onPatchVerdict={patchVerdict}
-              onOpenSubmit={() => setDialogOpen(true)}
+              onOpenSubmit={openDialog}
               onResume={onResume}
-              onDiscardPending={() => {
-                setPillDiscardError(null);
-                setPillDiscardModalOpen(true);
-              }}
+              onDiscardPending={openPillDiscardModal}
               onDiscardAllDrafts={() => setDiscardAllModalOpen(true)}
             />
           </div>
@@ -618,11 +443,11 @@ export function PrHeader({
           </button>
         )}
       </div>
-      {submit.lastResume && (
+      {lastResume && (
         <ImportedDraftsBanner
-          snapshotA={submit.lastResume.snapshotA}
-          snapshotB={submit.lastResume.snapshotB}
-          hasResolvedImports={submit.lastResume.hasResolvedImports}
+          snapshotA={lastResume.snapshotA}
+          snapshotB={lastResume.snapshotB}
+          hasResolvedImports={lastResume.hasResolvedImports}
         />
       )}
       {dialogOpen && session && (
@@ -634,21 +459,17 @@ export function PrHeader({
           prState={prState}
           readOnly={readOnly}
           validatorResults={validatorResults}
-          submitState={submit.state}
+          submitState={submitState}
           headShaDrift={headShaDrift}
           currentHeadSha={currentHeadSha}
           registerOpenComposer={registerOpenComposer}
           getPrRootHolder={getPrRootHolder}
-          discardOwnPendingReview={submit.discardOwnPendingReview}
-          discardInFlight={submit.discardInFlight}
-          onDiscardSuccess={() => show({ kind: 'info', message: 'Pending review discarded' })}
+          discardOwnPendingReview={discardOwnPendingReview}
+          discardInFlight={discardInFlight}
+          onDiscardSuccess={onDialogDiscardSuccess}
           onClose={closeDialog}
-          onSubmit={(verdict) => {
-            void submit.submit(verdict).catch(surfaceSubmitError);
-          }}
-          onRetry={() => {
-            void submit.retry().catch(surfaceSubmitError);
-          }}
+          onSubmit={onSubmit}
+          onRetry={onRetry}
           onVerdictChange={patchVerdict}
           onResumeForeignPendingReview={onResumeForeignPendingReview}
           onDiscardForeignPendingReview={onDiscardForeignPendingReview}
@@ -658,13 +479,9 @@ export function PrHeader({
           the dialog is closed, so the pill can't reuse it (spec § 4.9). */}
       <DiscardPendingReviewConfirmationModal
         open={pillDiscardModalOpen}
-        onCancel={() => {
-          if (submit.discardInFlight) return;
-          setPillDiscardModalOpen(false);
-          setPillDiscardError(null);
-        }}
+        onCancel={cancelPillDiscard}
         onDiscard={() => void handlePillDiscard()}
-        discardInFlight={submit.discardInFlight}
+        discardInFlight={discardInFlight}
         errorMessage={pillDiscardError}
       />
       {/* Discard-all confirmation modal — lifted from DiscardAllDraftsButton now
