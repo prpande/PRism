@@ -238,6 +238,31 @@ public sealed class GitHubArrayReaderTests
     }
 
     [Fact]
+    public async Task Two_hop_cycle_back_to_initial_page_does_not_refetch_or_duplicate()
+    {
+        // A 2-hop cycle: the initial page A advertises next → B, and B advertises next → A
+        // (the ORIGINAL url). The visited-guard must record every FETCHED url (not just the
+        // advertised next), so the return to A after B is caught after 2 fetches — with no
+        // re-fetch of A and no duplicated items. A 3rd scripted page (a re-fetch of A) is
+        // present ONLY to prove it is never reached; if the guard tracked only advertised
+        // next values, the loop would fetch A a second time and append its items again.
+        var handler = new ScriptedPagesHandler(
+            (HttpStatusCode.OK, """[{"v":"a"}]""", "https://api.github.com/x?page=2"),
+            (HttpStatusCode.OK, """[{"v":"b"}]""", "https://api.github.com/x?page=1"),
+            (HttpStatusCode.OK, """[{"v":"a"}]""", "https://api.github.com/x?page=2")); // must NOT be reached
+        var logger = new CapturingLogger<GitHubArrayReaderTests>();
+
+        var (items, degraded) = await GitHubArrayReader.ReadAsync(
+            FactoryFor(handler), Token, "https://api.github.com/x?page=1", ParseV, CancellationToken.None,
+            logger, resource: "user/subscriptions", maxPages: 10);
+
+        degraded.Should().BeFalse();
+        items.Should().Equal("a", "b");              // NOT ["a","b","a"] — the initial page is not re-fetched
+        handler.CallCount.Should().Be(2);            // stopped when next pointed back to the already-fetched page
+        logger.Entries.Should().BeEmpty();           // a cycle is not a budget cap
+    }
+
+    [Fact]
     public async Task Off_host_next_url_is_not_credentialed_and_degrades_to_prefix()
     {
         // Page 1 OK (same-host) advertises a WELL-FORMED but OFF-HOST next. Following it must

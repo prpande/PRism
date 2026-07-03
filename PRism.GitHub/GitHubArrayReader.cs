@@ -8,11 +8,15 @@ using Microsoft.Extensions.Logging;
 
 namespace PRism.GitHub;
 
-// Shared degrade-don't-throw GitHub JSON-array fetch (issue #665, sub-task 2).
+// Shared degrade-don't-throw, paginated GitHub JSON-array fetch (issue #665 sub-task 2; paginated in #628).
 // Extracted from the three sibling Activity readers (received-events / notifications /
-// watched-repos), which had each hand-copied this skeleton. ANY non-success status,
-// transport fault, malformed body, or non-array root → (empty, Degraded: true);
-// genuine cancellation propagates. This is the single home of that contract.
+// watched-repos), which had each hand-copied this skeleton. This is the single home of that contract.
+//
+// Degraded ⇔ ZERO usable items. A fault on the FIRST page (non-success status, transport fault,
+// malformed body, non-array root) yields (empty, Degraded: true). But once any page has contributed
+// items, a fault or cap on a LATER page returns the accumulated prefix with Degraded: FALSE — the
+// coherent-prefix rule ActivityRail's all-or-nothing gate depends on (a false Degraded: true would
+// blank the rail). Genuine cancellation propagates.
 internal static partial class GitHubArrayReader
 {
     internal const int DefaultMaxPages = 10;
@@ -45,6 +49,7 @@ internal static partial class GitHubArrayReader
             while (true)
             {
                 page++;
+                visited.Add(currentUrl); // record the url we are about to FETCH, so any next that revisits it is caught
                 using var resp = await GitHubHttp.SendAsync(http, HttpMethod.Get, currentUrl, token, ct).ConfigureAwait(false);
                 if (!resp.IsSuccessStatusCode) return (list, list.Count == 0);
 
@@ -60,7 +65,7 @@ internal static partial class GitHubArrayReader
                 // against the trusted BaseAddress, so the ApplyHeaders absolute-URI egress guard
                 // would never run — a re-derivation bug could silently reopen an off-host PAT leak.
                 if (!GitHubLinkHeader.TryGetRel(resp, "next", out var next)) break;
-                if (!visited.Add(next)) break; // repeated next URL: exhausted, NEVER a cap (check before budget)
+                if (visited.Contains(next)) break; // next revisits an already-fetched page: exhausted, NEVER a cap (check before budget)
                 if (page >= maxPages)
                 {
                     if (logger is not null) Log.ActivityPaginationCapHit(logger, resource ?? "", maxPages);
