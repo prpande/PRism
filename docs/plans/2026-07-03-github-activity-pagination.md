@@ -65,6 +65,7 @@ internal sealed class ScriptedPagesHandler : HttpMessageHandler
 {
     private readonly Queue<(HttpStatusCode Status, string Body, string? NextUrl)> _pages;
     public List<string> RequestedUris { get; } = new();
+    public List<string?> AuthHeaders { get; } = new(); // Authorization header per request (used by Task 5)
     public int CallCount => RequestedUris.Count;
 
     public ScriptedPagesHandler(params (HttpStatusCode Status, string Body, string? NextUrl)[] pages)
@@ -74,6 +75,7 @@ internal sealed class ScriptedPagesHandler : HttpMessageHandler
     {
         ArgumentNullException.ThrowIfNull(req);
         RequestedUris.Add(req.RequestUri!.ToString());
+        AuthHeaders.Add(req.Headers.Authorization?.ToString());
         if (_pages.Count == 0)
             throw new InvalidOperationException(
                 $"ScriptedPagesHandler ran out of scripted pages on request #{CallCount}.");
@@ -122,7 +124,7 @@ Expected: FAIL — only 1 item ("a"), `CallCount == 1` (current code makes a sin
 
 - [ ] **Step 4: Implement the pagination loop**
 
-Rewrite the body of `ReadAsync` in `PRism.GitHub/GitHubArrayReader.cs`. Change the class declaration to `internal static partial class GitHubArrayReader` and add `using PRism.GitHub;` is not needed (same namespace). Add `using Microsoft.Extensions.Logging;` for later tasks now. Replace the method body:
+Rewrite the body of `ReadAsync` in `PRism.GitHub/GitHubArrayReader.cs`. Change the class declaration to `internal static partial class GitHubArrayReader` (it is `internal static class` today). Do **not** add the `Microsoft.Extensions.Logging` using yet — it's added in Task 3 when the `Log` class first uses it. Replace the method body:
 
 ```csharp
     public static async Task<(IReadOnlyList<T> Items, bool Degraded)> ReadAsync<T>(
@@ -305,11 +307,30 @@ Add to `GitHubArrayReaderTests.cs` (`CapturingLogger<T>` is generic — instanti
         handler.CallCount.Should().Be(2);            // stopped on the repeat, not at page 10
         logger.Entries.Should().BeEmpty();           // a cycle is not a budget cap
     }
+
+    [Fact]
+    public async Task Cycle_at_budget_boundary_does_not_log_cap_hit()
+    {
+        // A cycle that lands EXACTLY on the budget boundary must be treated as exhaustion,
+        // not a cap: the visited-guard is checked before the budget, so no cap-hit is logged.
+        var handler = new ScriptedPagesHandler(
+            (HttpStatusCode.OK, """[{"v":"a"}]""", "https://api.github.com/x?page=2"),
+            (HttpStatusCode.OK, """[{"v":"b"}]""", "https://api.github.com/x?page=2")); // repeat at page 2
+        var logger = new CapturingLogger<GitHubArrayReaderTests>();
+
+        var (items, degraded) = await GitHubArrayReader.ReadAsync(
+            FactoryFor(handler), Token, "x", ParseV, CancellationToken.None,
+            logger, resource: "user/subscriptions", maxPages: 2); // budget == 2, cycle == page 2
+
+        degraded.Should().BeFalse();
+        items.Should().Equal("a", "b");
+        logger.Entries.Should().BeEmpty();           // cycle wins over the budget: no false truncation signal
+    }
 ```
 
 - [ ] **Step 3: Run both tests to verify they fail**
 
-Run: `& "C:/Program Files/dotnet/dotnet.exe" test tests/PRism.GitHub.Tests/PRism.GitHub.Tests.csproj --filter "FullyQualifiedName~Stops_at_max_page_budget|FullyQualifiedName~Repeated_next_url" --nologo`
+Run: `& "C:/Program Files/dotnet/dotnet.exe" test tests/PRism.GitHub.Tests/PRism.GitHub.Tests.csproj --filter "FullyQualifiedName~Stops_at_max_page_budget|FullyQualifiedName~Repeated_next_url|FullyQualifiedName~Cycle_at_budget_boundary" --nologo`
 Expected: FAIL — `ReadAsync` has no `logger`/`resource`/`maxPages` params yet (compile error), and no budget check.
 
 - [ ] **Step 4: Add the budget, the log delegate, and the params**
@@ -355,12 +376,12 @@ In `PRism.GitHub/GitHubArrayReader.cs`: ensure `using Microsoft.Extensions.Loggi
                 // against the trusted BaseAddress, so the ApplyHeaders absolute-URI egress guard
                 // would never run — a re-derivation bug could silently reopen an off-host PAT leak.
                 if (!GitHubLinkHeader.TryGetRel(resp, "next", out var next)) break;
+                if (!visited.Add(next)) break; // repeated next URL: exhausted, NEVER a cap (check before budget)
                 if (page >= maxPages)
                 {
                     if (logger is not null) Log.ActivityPaginationCapHit(logger, resource ?? "", maxPages);
                     break;
                 }
-                if (!visited.Add(next)) break; // repeated next URL: treat as exhausted (not a cap)
                 currentUrl = next;
             }
             return (list, false);
@@ -382,7 +403,7 @@ Confirm the class header is `internal static partial class GitHubArrayReader` (t
 
 - [ ] **Step 5: Run both tests to verify they pass**
 
-Run: `& "C:/Program Files/dotnet/dotnet.exe" test tests/PRism.GitHub.Tests/PRism.GitHub.Tests.csproj --filter "FullyQualifiedName~Stops_at_max_page_budget|FullyQualifiedName~Repeated_next_url" --nologo`
+Run: `& "C:/Program Files/dotnet/dotnet.exe" test tests/PRism.GitHub.Tests/PRism.GitHub.Tests.csproj --filter "FullyQualifiedName~Stops_at_max_page_budget|FullyQualifiedName~Repeated_next_url|FullyQualifiedName~Cycle_at_budget_boundary" --nologo`
 Expected: PASS.
 
 - [ ] **Step 6: Run the whole GitHubArrayReader test class**
@@ -428,6 +449,16 @@ Add to `GitHubArrayReaderTests.cs`:
         items.Should().Equal("a");            // page-1 prefix retained
         degraded.Should().BeFalse();          // non-empty prefix ⇒ not degraded
         handler.CallCount.Should().Be(1);     // the off-host page-2 request never reached the handler
+
+        // Positive control: prove the loop actually RECEIVED the off-host next, so CallCount==1
+        // means "ApplyHeaders blocked the credentialed send" — NOT "the parser silently rejected
+        // the URL" or "the loop never followed it" (which would make the assertion green for the
+        // wrong reason if a future refactor host-filtered inside the parser). GitHubLinkHeader
+        // must surface the off-host URL; the block therefore happens downstream at the egress guard.
+        var probe = new HttpResponseMessage(HttpStatusCode.OK);
+        probe.Headers.TryAddWithoutValidation("Link", "<https://attacker.example/x?page=2>; rel=\"next\"");
+        GitHubLinkHeader.TryGetRel(probe, "next", out var surfaced).Should().BeTrue();
+        surfaced.Should().Be("https://attacker.example/x?page=2");
     }
 ```
 
@@ -552,6 +583,40 @@ and forward in `ReadAsync`:
 
 Add `using Microsoft.Extensions.Logging;` to that file.
 
+- [ ] **Step 5b: Lock `degraded:false` on a later-page fault for `GitHubNotificationsReader` (the rail-blank guard)**
+
+This is the reader whose `degraded` flag drives `ActivityRail`'s all-or-nothing gate, so the spec's "coherent prefix must not blank the rail" rule matters most here. The helper-level Task 2 test proves the rule generically; this locks it through the real reader's `Parse` + result-record mapping. Add to `tests/PRism.GitHub.Tests/Activity/GitHubNotificationsReaderTests.cs`:
+
+```csharp
+    [Fact]
+    public async Task Later_page_fault_returns_prefix_not_degraded()
+    {
+        // Page 1 = one valid PR notification + a next; page 2 = 500. The reader must return the
+        // page-1 item with Degraded:false (a coherent prefix), NOT Degraded:true — which would
+        // blank the whole activity rail (spec Consumer-semantics section).
+        const string page1 = """
+            [{"subject":{"type":"PullRequest","url":"https://api.github.com/repos/o/r/pulls/5","title":"T"},
+              "repository":{"full_name":"o/r"},"reason":"mention","updated_at":"2026-07-01T00:00:00Z"}]
+            """;
+        var handler = new ScriptedPagesHandler(
+            (HttpStatusCode.OK, page1, "https://api.github.com/notifications?page=2"),
+            (HttpStatusCode.InternalServerError, "", null));
+        var reader = new GitHubNotificationsReader(
+            new FakeHttpClientFactory(handler, new Uri("https://api.github.com/")),
+            () => Task.FromResult<string?>("token"),
+            NullLogger<GitHubNotificationsReader>.Instance);
+
+        var result = await reader.ReadAsync(DateTimeOffset.UtcNow.AddDays(-1), CancellationToken.None);
+
+        result.Degraded.Should().BeFalse();          // coherent prefix ⇒ do NOT blank the rail
+        result.Notifications.Should().ContainSingle(n => n.Repo == "o/r" && n.PrNumber == 5);
+        handler.CallCount.Should().Be(2);            // it tried page 2, got 500, kept page 1
+    }
+```
+
+Run: `& "C:/Program Files/dotnet/dotnet.exe" test tests/PRism.GitHub.Tests/PRism.GitHub.Tests.csproj --filter "FullyQualifiedName~Later_page_fault_returns_prefix_not_degraded" --nologo`
+Expected: PASS (the behavior comes from Task 1–2's helper rule; this test locks it at the reader that matters). Add `using Microsoft.Extensions.Logging.Abstractions;` to the test file for `NullLogger`.
+
 - [ ] **Step 6: Wire the DI lambdas to pass the logger (null-safe)**
 
 In `PRism.GitHub/ServiceCollectionExtensions.cs`, add `sp.GetService<ILogger<…>>()` as the trailing argument to each of the three `new …Reader(…)` calls (lines ~183, ~197, ~206). `GetService` (not `GetRequiredService`) returns null in a bare container without `AddLogging()`, which the reader tolerates:
@@ -580,15 +645,7 @@ Ensure `using Microsoft.Extensions.Logging;` is present in that file (it likely 
 
 - [ ] **Step 7: Fix the every-page Bearer assertion in the auth-header test**
 
-First, extend `ScriptedPagesHandler` (from Task 1) to record the auth header on every request — add one field and one line in `SendAsync`:
-
-```csharp
-    public List<string?> AuthHeaders { get; } = new();
-    // ...in SendAsync, right after RequestedUris.Add(...):
-    AuthHeaders.Add(req.Headers.Authorization?.ToString());
-```
-
-In `tests/PRism.GitHub.Tests/Activity/GitHubActivityReadersAuthHeaderTests.cs`, the existing reader constructions (~lines 56-60) now need a trailing logger arg — pass `NullLogger<T>.Instance` (import `Microsoft.Extensions.Logging.Abstractions`). Then add a `[Fact]` that drives 2 pages and asserts the Bearer header rode **every** page request:
+`ScriptedPagesHandler` already records `AuthHeaders` (added in Task 1). The existing reader constructions in `GitHubActivityReadersAuthHeaderTests.cs` compile unchanged (the new ctor param defaults to `null`), so **no edit to the existing cases is required**. Add a new `[Fact]` that drives 2 pages and asserts the Bearer header rode **every** page request (import `Microsoft.Extensions.Logging.Abstractions` for `NullLogger`):
 
 ```csharp
     [Fact]
@@ -609,12 +666,12 @@ In `tests/PRism.GitHub.Tests/Activity/GitHubActivityReadersAuthHeaderTests.cs`, 
     }
 ```
 
-- [ ] **Step 8: Fix remaining compile-breaks in reader tests**
+- [ ] **Step 8: Verify the test project builds green (no compile-break sweep needed)**
 
-Run a build to find every direct reader construction that now needs a logger arg:
+Because the new reader ctor param is optional (`ILogger<T>? logger = null`), every existing direct reader construction (`GitHubActivityReadersAuthHeaderTests.cs`, `GitHubNotificationsReaderTests.cs`, `GitHubReceivedEventsReaderTests.cs`, `GitHubWatchedReposReaderTests.cs`) compiles **unchanged**. There is no sweep to do.
 
 Run: `& "C:/Program Files/dotnet/dotnet.exe" build tests/PRism.GitHub.Tests/PRism.GitHub.Tests.csproj --nologo`
-Expected initially: compile errors at `GitHubNotificationsReaderTests.cs:15-18` and `:120-121`, `GitHubReceivedEventsReaderTests.cs`, and any other direct `new …Reader(...)`. For each, add a trailing `NullLogger<T>.Instance` (import `Microsoft.Extensions.Logging.Abstractions`). Because the ctor params default to `null`, only call sites that use positional-only construction with an analyzer requiring all args, or that need a real logger, must change — most compile as-is, but add the arg where the compiler flags it.
+Expected: Build succeeded, 0 errors. If any construction *does* error (e.g. an analyzer requiring all args), add a trailing `NullLogger<T>.Instance` there — but none is anticipated.
 
 - [ ] **Step 9: Build clean, then run the full GitHub test project**
 
