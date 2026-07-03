@@ -60,3 +60,7 @@ public sealed record SingleCommentPostedBusEvent(PrReference PrRef, long ReviewC
 // PrDetailLoader subscription evicts on this event. Fans out per-PR over SSE so the acting
 // tab (and any peer tab on the PR) reloads. prRef only — the FE just needs the reload signal.
 public sealed record PrLifecycleChanged(PrReference PrRef) : IReviewEvent;
+
+// #571 — a review thread was resolved/unresolved. Like PrLifecycleChanged it moves no head SHA,
+// so PrDetailLoader must Invalidate explicitly; SseChannel fans it out to tabs.
+public sealed record ReviewThreadResolutionChanged(PrReference PrRef) : IReviewEvent;

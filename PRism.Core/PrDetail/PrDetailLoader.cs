@@ -51,6 +51,11 @@ public sealed class PrDetailLoader : IDisposable
     // (which OnActivePrUpdated's done-state flip does NOT carry) and makes all four reconcile now.
     private readonly IDisposable _prLifecycleSubscription;
 
+    // #571: evict the PR's snapshot immediately on a review-thread resolve/unresolve — same
+    // head-SHA-stable gotcha as #353/#392/#450/#566; a resolution write moves no head SHA, so
+    // the cache key alone re-serves stale detail.
+    private readonly IDisposable _reviewThreadResolutionSubscription;
+
     // Snapshot cache. PoC: unbounded ConcurrentDictionary; if dogfooding shows growth
     // (rare — user opens many distinct PRs in one process lifetime), introduce a bounded
     // LRU here. The (prRef → most-recent CacheKey) sidecar lets TryGetCachedSnapshot do
@@ -114,6 +119,8 @@ public sealed class PrDetailLoader : IDisposable
         // /file & /viewed 422 window during the evict→reload gap is accepted (spec §2.3).
         _singleCommentSubscription = eventBus.Subscribe<SingleCommentPostedBusEvent>(OnSingleCommentPosted);
         _prLifecycleSubscription = eventBus.Subscribe<PrLifecycleChanged>(OnPrLifecycleChanged);
+        _reviewThreadResolutionSubscription =
+            eventBus.Subscribe<ReviewThreadResolutionChanged>(OnReviewThreadResolutionChanged);
 
         // #392: DraftSubmitted is published only on a full review-submit success, AFTER the
         // pipeline's server-side draft clear (SubmitPipeline ClearSubmittedSession → endpoint
@@ -155,6 +162,9 @@ public sealed class PrDetailLoader : IDisposable
 
     // #566: see the constructor wire-up. Unconditional — fires only on an actual lifecycle write.
     private void OnPrLifecycleChanged(PrLifecycleChanged evt) => Invalidate(evt.PrRef);
+
+    // #571: see the constructor wire-up. Unconditional — fires only on an actual resolve/unresolve.
+    private void OnReviewThreadResolutionChanged(ReviewThreadResolutionChanged evt) => Invalidate(evt.PrRef);
 
     /// <summary>
     /// Loads or refreshes the snapshot for <paramref name="prRef"/>. Polls the active-PR
@@ -356,6 +366,7 @@ public sealed class PrDetailLoader : IDisposable
         _draftSubmittedSubscription.Dispose();
         _singleCommentSubscription.Dispose();
         _prLifecycleSubscription.Dispose();
+        _reviewThreadResolutionSubscription.Dispose();
     }
 
     private (ClusteringQuality Quality, IReadOnlyList<IterationDto>? Iterations) DetermineQuality(
