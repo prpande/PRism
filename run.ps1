@@ -88,16 +88,16 @@ function Assert-SafeResetTarget {
     # top of the base {UserProfile, %LOCALAPPDATA%} set; and run the checkout backstop.
     # Only runs for -Reset != None, so the normal launch path is untouched.
     param([string]$DataDir)
-    $r = Test-SafeDeleteTarget -Path $DataDir -CheckoutBackstop `
+    $guard = Test-SafeDeleteTarget -Path $DataDir -CheckoutBackstop `
         -AdditionalProtectedRoots @($PSScriptRoot, [System.IO.Path]::GetTempPath())
-    if ($r.Safe) { return }
-    switch ($r.Reason) {
+    if ($guard.Safe) { return }
+    switch ($guard.Reason) {
         'Empty'       { throw "-Reset requires a non-empty -DataDir." }
         'NotAbsolute' { throw "Refusing -Reset on a non-absolute -DataDir ('$DataDir'): pass a fully-qualified path (e.g. `$env:TEMP\PRism-wt-0) so the target is unambiguous. Relative paths resolve against the current directory, not the repo." }
-        'ProtectedRoot'     { throw "Refusing -Reset on '$($r.ResolvedPath)': it is a protected location (repo root, user profile, %LOCALAPPDATA%, or %TEMP% root). Point -DataDir at a dedicated PRism store." }
-        'TooShallow'        { throw "Refusing -Reset on '$($r.ResolvedPath)': path is too shallow (must be at least two levels below a drive root). Point -DataDir at a dedicated PRism store." }
-        'LooksLikeCheckout' { throw "Refusing -Reset on '$($r.ResolvedPath)': it looks like a source checkout (contains .git, package.json, or a .sln), not a PRism data store." }
-        default             { throw "Refusing -Reset on '$($r.ResolvedPath)': failed the safe-delete guard ($($r.Reason))." }
+        'ProtectedRoot'     { throw "Refusing -Reset on '$($guard.ResolvedPath)': it is a protected location (repo root, user profile, %LOCALAPPDATA%, or %TEMP% root). Point -DataDir at a dedicated PRism store." }
+        'TooShallow'        { throw "Refusing -Reset on '$($guard.ResolvedPath)': path is too shallow (must be at least two levels below a drive root). Point -DataDir at a dedicated PRism store." }
+        'LooksLikeCheckout' { throw "Refusing -Reset on '$($guard.ResolvedPath)': it looks like a source checkout (contains .git, package.json, or a .sln), not a PRism data store." }
+        default             { throw "Refusing -Reset on '$($guard.ResolvedPath)': failed the safe-delete guard ($($guard.Reason))." }
     }
 }
 
