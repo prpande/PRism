@@ -150,12 +150,11 @@ internal sealed class SseChannel : IDisposable
                             CommentCountDelta: 0,
                             MergeReadiness: readiness,
                             MergeReadinessChanged: true);
-                        var (eventName, payload) = SseEventProjection.Project(evt);
-                        // Use ApiSparse (not Api) — this is a sparse re-emit: Approvals/Approvers/etc.
-                        // are null only because the frame carries mergeability only. An explicit null
-                        // would clobber the frontend's snapshot() full-load values via the #621 path.
-                        var json = JsonSerializer.Serialize(payload, JsonSerializerOptionsFactory.ApiSparse);
-                        var frame = $"event: {eventName}\ndata: {json}\n\n";
+                        // sparse: true selects ApiSparse — this is a sparse re-emit: Approvals/
+                        // Approvers/etc. are null only because the frame carries mergeability only.
+                        // An explicit null would clobber the frontend's snapshot() full-load values
+                        // via the #621 path.
+                        var frame = BuildFrame(evt, sparse: true);
                         // Route through the same helper as the fanout path so this re-emit gets the
                         // 5s per-write timeout + stalled-subscriber eviction + delivery logging — a raw
                         // WriteAsync(CancellationToken.None) here would hang on a stalled pipe until
@@ -313,9 +312,7 @@ internal sealed class SseChannel : IDisposable
     // strings — those stay server-side in the forensic structured log (spec § 3.6).
     private void OnIdentityChanged(IdentityChanged evt)
     {
-        var (eventName, payload) = SseEventProjection.Project(evt);
-        var json = JsonSerializer.Serialize(payload, JsonSerializerOptionsFactory.Api);
-        var frame = $"event: {eventName}\ndata: {json}\n\n";
+        var frame = BuildFrame(evt);
         // Broadcast: iterate every active subscriber, just like OnInboxUpdated. Per-PR
         // registry lookup is irrelevant — this is a global event. prRef passed null so
         // the delivery log is skipped (no PR to attribute the write to).
@@ -332,9 +329,7 @@ internal sealed class SseChannel : IDisposable
         // the budget on headChanged, so this wakes the correct burst tier).
         if (evt.HeadShaChanged) _poller?.RequestImmediateRefresh();
 
-        var (eventName, payload) = SseEventProjection.Project(evt);
-        var json = JsonSerializer.Serialize(payload, JsonSerializerOptionsFactory.Api);
-        var frame = $"event: {eventName}\ndata: {json}\n\n";
+        var frame = BuildFrame(evt);
         // Per-PR fanout — only subscribers that registered for evt.PrRef receive the event.
         foreach (var subscriberId in subscriberList)
         {
@@ -361,15 +356,26 @@ internal sealed class SseChannel : IDisposable
     // _activeRegistry.SubscribersFor lookup so cross-PR information leakage is impossible.
     private void FanoutProjected(IReviewEvent evt, PrReference prRef)
     {
-        var (eventName, payload) = SseEventProjection.Project(evt);
-        var json = JsonSerializer.Serialize(payload, JsonSerializerOptionsFactory.Api);
-        var frame = $"event: {eventName}\ndata: {json}\n\n";
+        var frame = BuildFrame(evt);
         var eventType = evt.GetType().Name;
         foreach (var subscriberId in _activeRegistry.SubscribersFor(prRef))
         {
             if (_subscribers.TryGetValue(subscriberId, out var sub))
                 _ = WriteAndEvictOnFailureAsync(sub, frame, prRef, eventType);
         }
+    }
+
+    // Single source for the Project → serialize → SSE-frame triple used by every
+    // projection-based publish path. `sparse` names the serializer-options choice:
+    // false ⇒ Api (an explicit null authoritatively clears the field), true ⇒ ApiSparse
+    // (a null leaves the field unchanged). Centralizing it stops a future author from
+    // copying an Api site into a sparse re-emit and silently clobbering full-load values (#669).
+    private static string BuildFrame(IReviewEvent evt, bool sparse = false)
+    {
+        var (eventName, payload) = SseEventProjection.Project(evt);
+        var options = sparse ? JsonSerializerOptionsFactory.ApiSparse : JsonSerializerOptionsFactory.Api;
+        var json = JsonSerializer.Serialize(payload, options);
+        return $"event: {eventName}\ndata: {json}\n\n";
     }
 
 #pragma warning disable CA1031 // SSE write failures must not crash the publisher; observe + evict.
