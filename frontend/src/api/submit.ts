@@ -54,8 +54,10 @@ export class SubmitConflictError extends Error {
 // submit-in-progress 409). An unknown code (forward-compat: server schema
 // bump arriving before the FE knows about it) falls through to the
 // server-supplied message so it's still visible, not silent. A *known* code
-// missing from the switch is a compile-time error — no `default` clause +
-// exhaustive narrowing via `KnownSubmitErrorCode` enforces parity.
+// missing from the switch is a compile-time error (TS2366): no `default`
+// clause + the explicit `: string` return type make the function's ending
+// reachable under strictNullChecks. (Verified: deleting a case fails tsc -b.)
+// The parity guard in submit.test.ts additionally pins the per-code copy.
 // Regression: prior to this map, the catch was empty with a comment claiming
 // useSubmitToasts handled it — that hook only listens for two SSE events,
 // not HTTP 4xx, which made every pre-pipeline rejection invisible.
