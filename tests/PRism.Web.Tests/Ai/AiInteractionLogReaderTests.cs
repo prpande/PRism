@@ -209,6 +209,18 @@ public sealed class AiInteractionLogReaderTests : IDisposable
         offsetAfterRest.Should().Be(new FileInfo(LogPath).Length);
     }
 
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    public void ReadFrom_rejects_nonpositive_maxReadBytes(int badCap)
+    {
+        Write(Line("2026-06-19T10:00:00.0000000+00:00", "summary", "ok", "o/r#1", 100));
+
+        var act = () => AiInteractionLogReader.ReadFrom(LogPath, 0, maxReadBytes: badCap);
+
+        act.Should().Throw<ArgumentOutOfRangeException>(); // misuse of the injectable cap fails fast, not a bad alloc
+    }
+
     public void Dispose()
     {
         try { if (Directory.Exists(_dir)) Directory.Delete(_dir, recursive: true); }

@@ -23,6 +23,7 @@ internal static class AiInteractionLogReader
     internal static (IReadOnlyList<LogEntry> Entries, long NewOffset) ReadFrom(
         string filePath, long startOffset, int maxReadBytes = DefaultMaxReadBytes)
     {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxReadBytes); // guard the injectable cap; misuse fails fast
         if (!File.Exists(filePath)) return (Array.Empty<LogEntry>(), startOffset);
 
         using var stream = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
