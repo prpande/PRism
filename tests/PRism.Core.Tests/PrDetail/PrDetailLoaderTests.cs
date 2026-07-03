@@ -540,6 +540,53 @@ public class PrDetailLoaderTests
         snapshot!.Detail.Iterations![0].HasResolvableRange.Should().BeFalse();
     }
 
+    [Fact]
+    public async Task LoadAsync_iteration_with_PR_base_before_sha_is_resolvable()
+    {
+        // #281: iteration 1's BeforeSha is the PR base SHA, which is NOT a PR commit and so is
+        // absent from the timeline's commit set. It must still be resolvable — "All changes"
+        // compares against exactly this base — otherwise iteration 1 falsely renders
+        // "snapshot lost" and becomes non-selectable.
+        var review = new FakePrDetailReviewService();
+        review.DefaultDetailResponse = MakeDetail(baseSha: "base1");
+        review.DefaultTimelineResponse = MakeTimeline(5);
+        var clusters = new[]
+        {
+            new IterationCluster(1, BeforeSha: "base1", AfterSha: "c002",
+                CommitShas: new[] { "c000", "c001", "c002" }),
+        };
+        var clusterer = new RecordingClusterer(new List<string>(), result: clusters);
+        var loader = MakeLoader(review, clusterer: clusterer);
+
+        var snapshot = await loader.LoadAsync(Pr1, CancellationToken.None);
+
+        snapshot!.Detail.Iterations![0].HasResolvableRange.Should().BeTrue(
+            because: "the PR base SHA is what 'All changes' compares against; it is always resolvable");
+    }
+
+    [Fact]
+    public async Task LoadAsync_degenerate_range_before_equals_after_is_not_resolvable()
+    {
+        // Defense-in-depth (#281): compare(x...x) is always empty. An iteration whose boundaries
+        // collapse to the same SHA (e.g. the empty-base single-commit fallback) must render
+        // "snapshot lost" — never an enabled chip over an empty Files tab — even though both
+        // endpoints exist in the commit set.
+        var review = new FakePrDetailReviewService();
+        review.DefaultDetailResponse = MakeDetail(baseSha: "base1");
+        review.DefaultTimelineResponse = MakeTimeline(5);
+        var clusters = new[]
+        {
+            new IterationCluster(1, BeforeSha: "c000", AfterSha: "c000", CommitShas: new[] { "c000" }),
+        };
+        var clusterer = new RecordingClusterer(new List<string>(), result: clusters);
+        var loader = MakeLoader(review, clusterer: clusterer);
+
+        var snapshot = await loader.LoadAsync(Pr1, CancellationToken.None);
+
+        snapshot!.Detail.Iterations![0].HasResolvableRange.Should().BeFalse(
+            because: "a before == after range yields an empty three-dot compare");
+    }
+
     // P2.29 — ConfigStore.Changed wiring.
 
     [Fact]
