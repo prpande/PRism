@@ -66,6 +66,9 @@ internal static class SseEventProjection
     // prRef only — the FE reloads PR detail off the signal (mirrors DraftSubmittedWire).
     internal sealed record PrLifecycleChangedWire(string PrRef);
 
+    // #571 — prRef only; the FE reloads PR detail off the signal (mirrors PrLifecycleChangedWire).
+    internal sealed record ReviewThreadResolutionChangedWire(string PrRef);
+
     // #392 — draft-submitted: prRef only. The submit already posted every thread/reply + the
     // PR-root comment server-side, so the frontend just needs the signal to reload PR detail —
     // no review/comment id is carried (threat-model minimal-payload posture).
@@ -108,6 +111,8 @@ internal static class SseEventProjection
         DraftSubmitted e => ("draft-submitted", new DraftSubmittedWire(e.PrRef.ToString())),
 
         PrLifecycleChanged e => ("pr-lifecycle-changed", new PrLifecycleChangedWire(e.PrRef.ToString())),
+
+        ReviewThreadResolutionChanged e => ("review-thread-resolution-changed", new ReviewThreadResolutionChangedWire(e.PrRef.ToString())),
 
         IdentityChanged _ => ("identity-changed", new IdentityChangedWire("identity-change")),
 
