@@ -49,6 +49,58 @@ export class SubmitConflictError extends Error {
   }
 }
 
+// Maps backend SubmitErrorDto.code values to user-facing toast copy. Keep in
+// sync with PrSubmitEndpoints.cs (the SubmitAsync rule a–f rejections + the
+// submit-in-progress 409). An unknown code (forward-compat: server schema
+// bump arriving before the FE knows about it) falls through to the
+// server-supplied message so it's still visible, not silent. A *known* code
+// missing from the switch is a compile-time error — no `default` clause +
+// exhaustive narrowing via `KnownSubmitErrorCode` enforces parity.
+// Regression: prior to this map, the catch was empty with a comment claiming
+// useSubmitToasts handled it — that hook only listens for two SSE events,
+// not HTTP 4xx, which made every pre-pipeline rejection invisible.
+export function submitErrorMessage(err: SubmitConflictError): string {
+  if (!isKnownSubmitErrorCode(err.code)) return err.message;
+  const code: KnownSubmitErrorCode = err.code;
+  switch (code) {
+    case 'head-sha-not-stamped':
+      return "Couldn't submit — the PR view hasn't been stamped yet. Reload the PR and try again.";
+    case 'tab-id-missing':
+      // Cross-tab-stamp slice: the server got no X-PRism-Tab-Id header (or one outside the
+      // allowlist). The remedy is to reload THIS tab so getTabId() mints a fresh id and the
+      // first /mark-viewed call stamps it. "Reload the PR" (the head-sha-not-stamped wording
+      // above) would point the user at the wrong remediation — the PR detail isn't stale,
+      // the tab itself is.
+      return "Couldn't submit — this browser tab is in an unexpected state. Reload the tab and try again.";
+    case 'head-sha-drift':
+      return "Couldn't submit — the PR's head commit changed since you last viewed it. Reload the PR.";
+    case 'unauthorized':
+      return "Couldn't submit — your subscription to this PR was lost. Reload the PR.";
+    case 'no-session':
+      return "Couldn't submit — no draft session for this PR. Reload the PR.";
+    case 'stale-drafts':
+      return "Couldn't submit — there are stale drafts. Resolve or override them in the Drafts tab first.";
+    case 'verdict-needs-reconfirm':
+      return "Couldn't submit — re-confirm your verdict before submitting.";
+    case 'no-content':
+      return "Couldn't submit — a Comment-verdict review needs at least one inline comment, reply, or summary.";
+    case 'verdict-invalid':
+      return "Couldn't submit — verdict must be Approve, Request changes, or Comment.";
+    case 'submit-in-progress':
+      return 'A submit is already in flight for this PR. Wait for it to finish or refresh the page.';
+    case 'pending-review-state-changed':
+      // Normally handled by surfaceForeignReviewError on the Resume/Discard
+      // path. If a submit ever surfaces it (race between submit and a peer
+      // changing pending-review state), fall back to the server message.
+      return err.message;
+    case 'delete-failed':
+      // 502 from cleanup of the foreign pending review on discardAll —
+      // user-visible copy lives in onDiscardAllDrafts; if it ever flows here,
+      // honour the server message.
+      return err.message;
+  }
+}
+
 function prPath(prRef: PrReference): string {
   return `/api/pr/${prRef.owner}/${prRef.repo}/${prRef.number}`;
 }
