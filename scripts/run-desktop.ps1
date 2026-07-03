@@ -103,8 +103,11 @@ function New-DesktopLauncherWrapper {
     # command line carries NEITHER env vars NOR redirection operators, so the wrapper
     # owns both: it sets PRISM_SIDECAR_BINARY, cd's to desktop/, and runs `electron .`
     # with its own *>> redirection. Single-quote every interpolated path (doubling
-    # embedded quotes) so a space/quote in a path cannot break the script. Same
-    # technique as scripts/serve-detached.ps1:Write-WrapperScript.
+    # embedded quotes) so a space/quote in a path cannot break the script. Wrapper
+    # AUTHORING stays per-script (the wrapper bodies genuinely differ); the shared
+    # launcher primitives it leans on -- the no-BOM writer and the WMI spawn -- now come
+    # from PRismLauncher.psm1 (#676). serve-detached.ps1:Write-WrapperScript is the
+    # sibling authoring function.
     param(
         [string]$ElectronExe,
         [string]$DesktopDir,
