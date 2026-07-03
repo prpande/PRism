@@ -42,21 +42,19 @@ export function ReviewActionButton(props: ReviewActionButtonProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const chevronRef = useRef<HTMLButtonElement>(null);
   const rootDivRef = useRef<HTMLDivElement>(null);
-  // Return focus to the chevron ONLY after activating a menu item (Escape's
-  // refocus lives in the shared hook below). On Tab / outside-click no focus is
-  // forced back — the user's intended target keeps it (Copilot review). Those
-  // paths call closeMenu() bare and let the browser's natural focus flow proceed.
-  const closeMenu = useCallback((opts?: { restoreFocus?: boolean }) => {
-    setMenuOpen(false);
-    if (opts?.restoreFocus) chevronRef.current?.focus();
-  }, []);
+  const closeMenu = useCallback(() => setMenuOpen(false), []);
+  // One derived value gates BOTH the dismissal hook and the menu render below —
+  // if they drifted apart, a rendered menu could have no dismissal listeners.
+  const menuShown = menuOpen && !face.frozen;
 
   // Esc + outside-pointerdown dismissal (#705 shared hook). rootDivRef wraps
   // BOTH toggle-capable triggers (main button in the 'change'/'none' faces,
   // chevron always) plus the mounted menu, so a pointerdown on either trigger
   // is never an outside dismissal — each trigger's own onClick owns the toggle.
+  // Escape's refocus-the-chevron lives in the hook; Tab / outside-click close
+  // without forcing focus back (Copilot review) — the user's target keeps it.
   useDismissableMenu({
-    open: menuOpen && !face.frozen,
+    open: menuShown,
     rootRef: rootDivRef,
     returnFocusRef: chevronRef,
     onClose: closeMenu,
@@ -137,7 +135,7 @@ export function ReviewActionButton(props: ReviewActionButtonProps) {
         >
           <Chevron />
         </button>
-        {menuOpen && !face.frozen && (
+        {menuShown && (
           <ReviewActionMenu
             sections={deriveMenu(props)}
             onClose={closeMenu}
@@ -152,7 +150,8 @@ export function ReviewActionButton(props: ReviewActionButtonProps) {
               else if (id === 'reconfirm-note') return; // non-interactive label
               // Keyboard activation (Enter/Space) unmounts the focused menuitem;
               // restore focus to the chevron so focus never lands on document.body.
-              closeMenu({ restoreFocus: true });
+              closeMenu();
+              chevronRef.current?.focus();
             }}
           />
         )}
