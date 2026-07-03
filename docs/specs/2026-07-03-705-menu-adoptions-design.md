@@ -121,9 +121,10 @@ of scope here).
   outside-click handler).
 - `onClose` prop contract **shrinks to `onClose(): void`** — its remaining callers (Tab,
   empty-menu) both close without refocus, and Esc-refocus moved into the hook. In
-  `ReviewActionButton`, `closeMenu` keeps its `{ restoreFocus }` shape for the `onSelect`
-  activation path (parent-local semantic, unchanged) but the menu receives
-  `onClose={() => closeMenu()}`.
+  `ReviewActionButton`, `closeMenu` flattened to a bare `() => setMenuOpen(false)`
+  (post-/simplify: the `{ restoreFocus }` option-bag had one caller left); the `onSelect`
+  activation path closes and then focuses the chevron inline (parent-local semantic,
+  unchanged behavior).
 - `onMainClick` additionally calls `setMenuOpen(false)` on its `submit`/`resume` branches:
   with the main button now inside the boundary, the document listener no longer closes the
   menu when the main action fires, so the close is made explicit (preserves today's
@@ -175,14 +176,14 @@ byte-faithfulness pin.
 
 ## Acceptance criteria
 
-- [ ] All four newly-adopted consumers (Select, FilterFacet, ReviewActionButton/Menu,
+- [x] All four newly-adopted consumers (Select, FilterFacet, ReviewActionButton/Menu,
       PrActionsPanel close-confirm) dismiss via `useDismissableMenu`; no hand-rolled
-      document Escape/outside-dismiss listeners remain in them.
-- [ ] `returnFocusOnOutsideClose` no longer exists anywhere in the tree.
-- [ ] All eight dismissable surfaces (existing adopters PrTabStrip, DiffSettingsMenu,
+      document Escape/outside-dismiss listeners remain in them (grep-verified).
+- [x] `returnFocusOnOutsideClose` no longer exists anywhere in the tree (grep-verified).
+- [x] All eight dismissable surfaces (existing adopters PrTabStrip, DiffSettingsMenu,
       IterationTabStrip, CommitMultiSelectPicker + the four adoptions): outside click
       closes without moving focus; Escape closes and refocuses the trigger.
-- [ ] Preserved local semantics (Select Tab/combobox model, FilterFacet blur-close,
+- [x] Preserved local semantics (Select Tab/combobox model, FilterFacet blur-close,
       ReviewActionMenu Tab-close + empty-menu close, PrActionsPanel `confirmingClose`
       gating) each pinned by a test.
-- [ ] Full frontend suite green (`tsc -b`, lint, vitest).
+- [x] Full frontend suite green (`tsc -b`, lint, vitest 2775 across 333 files).
