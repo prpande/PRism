@@ -3,9 +3,15 @@ using Microsoft.AspNetCore.Http;
 
 namespace PRism.Web.Endpoints;
 
-internal enum JsonReadError { None, InvalidJson, NotObject }
+internal enum JsonReadError { None, InvalidJson, NotObject, WrongContentType }
 
 internal readonly record struct JsonObjectReadResult(JsonDocument? Document, JsonReadError Error);
+
+/// <summary>Outcome of a typed body read. On success <see cref="Value"/> holds the deserialized
+/// payload (which may itself be null for a literal <c>null</c> body) and <see cref="Error"/> is
+/// <see cref="JsonReadError.None"/>. On failure <see cref="Value"/> is default and <see cref="Error"/>
+/// is <see cref="JsonReadError.WrongContentType"/> or <see cref="JsonReadError.InvalidJson"/>.</summary>
+internal readonly record struct JsonReadResult<T>(T? Value, JsonReadError Error) where T : class;
 
 internal static class HttpJson
 {
@@ -29,5 +35,28 @@ internal static class HttpJson
             return new JsonObjectReadResult(null, JsonReadError.NotObject);
         }
         return new JsonObjectReadResult(doc, JsonReadError.None);
+    }
+
+    /// <summary>Reads and deserializes the request body as <typeparamref name="T"/>, single-sourcing
+    /// the documented trap that <see cref="HttpRequestJsonExtensions.ReadFromJsonAsync{T}"/> throws
+    /// <see cref="InvalidOperationException"/> (→ unhandled 500), NOT <see cref="JsonException"/>, when
+    /// the request lacks a JSON Content-Type. Pre-checks the content type, then catches JSON parse
+    /// errors. Returns the deserialized value with <see cref="JsonReadError.None"/> on success, or a
+    /// default value with <see cref="JsonReadError.WrongContentType"/> / <see cref="JsonReadError.InvalidJson"/>
+    /// so the caller maps the error to its own envelope (existing shapes preserved).</summary>
+    internal static async Task<JsonReadResult<T>> TryReadJsonAsync<T>(HttpRequest request, CancellationToken ct)
+        where T : class
+    {
+        if (!request.HasJsonContentType())
+            return new JsonReadResult<T>(default, JsonReadError.WrongContentType);
+        try
+        {
+            var value = await request.ReadFromJsonAsync<T>(ct).ConfigureAwait(false);
+            return new JsonReadResult<T>(value, JsonReadError.None);
+        }
+        catch (JsonException)
+        {
+            return new JsonReadResult<T>(default, JsonReadError.InvalidJson);
+        }
     }
 }

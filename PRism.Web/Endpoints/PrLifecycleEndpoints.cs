@@ -8,9 +8,8 @@ namespace PRism.Web.Endpoints;
 // #566 Slice 1 — POST /api/pr/{owner}/{repo}/{number:int:min(1)}/{close|reopen|ready-for-review|convert-to-draft}
 //
 // Security gates (mirroring PrSubmitEndpoints.cs exactly — Step 0 source-read confirmed):
-//  1. CSRF custom-header gate: X-PRism-Tab-Id must be present + pass TabIdAllowlistRegex.
-//     On miss → 422 "tab-id-missing". Calls PrDetailEndpoints.TabIdAllowlistRegex() — do NOT
-//     reimplement the regex.
+//  1. CSRF custom-header gate: X-PRism-Tab-Id must be present + pass the TabStamps § 3 allowlist.
+//     On miss → 422 "tab-id-missing". Uses TabStamps.TryValidateTabId — do NOT reimplement the gate.
 //  2. Subscribe gate: RequireSubscribed.Check(activePrCache, prRef, …) returns IResult? —
 //     null = subscribed (proceed); non-null = 403 + code "unauthorized".
 //     Inject IActivePrCache (not an invented ISubscriberRegistry).
@@ -59,20 +58,15 @@ internal static class PrLifecycleEndpoints
                 if (RequireSubscribed.Check(activePrCache, prRef, "Subscribe to this PR before performing lifecycle actions.") is { } notSubscribed)
                     return notSubscribed;
 
-                var tabId = http.Request.Headers[TabStamps.TabIdHeader].FirstOrDefault();
-                if (string.IsNullOrEmpty(tabId) || !PrDetailEndpoints.TabIdAllowlistRegex().IsMatch(tabId))
+                if (!TabStamps.TryValidateTabId(http.Request, out _))
                     return Results.Json(new { code = "tab-id-missing" }, statusCode: StatusCodes.Status422UnprocessableEntity);
 
-                // Content-Type guard FIRST: ReadFromJsonAsync throws InvalidOperationException
-                // (NOT JsonException) on a missing/wrong Content-Type, which the catch below would
-                // miss → unhandled 500. Mirror InboxEndpoints.cs (hardened pattern) and fail closed
-                // as the same 400 "head-sha-required" a bodyless request gets.
-                if (!http.Request.HasJsonContentType())
-                    return Results.Json(new { code = "head-sha-required" }, statusCode: StatusCodes.Status400BadRequest);
-
-                MergeRequest? req;
-                try { req = await http.Request.ReadFromJsonAsync<MergeRequest>(ct).ConfigureAwait(false); }
-                catch (System.Text.Json.JsonException) { req = null; }
+                // ReadFromJsonAsync throws InvalidOperationException (NOT JsonException, → unhandled
+                // 500) on a missing/wrong Content-Type; HttpJson.TryReadJsonAsync single-sources that
+                // guard. A non-JSON content-type and a malformed body both collapse to a null value,
+                // which the head-sha guard below maps to the same 400 "head-sha-required" a bodyless
+                // request gets — so the read error kind is intentionally not inspected here.
+                var req = (await HttpJson.TryReadJsonAsync<MergeRequest>(http.Request, ct).ConfigureAwait(false)).Value;
 
                 // Mandatory head-SHA staleness guard (spec decision #4): never forward a merge with no sha.
                 if (req is null || string.IsNullOrEmpty(req.HeadSha))
@@ -108,10 +102,8 @@ internal static class PrLifecycleEndpoints
         if (RequireSubscribed.Check(activePrCache, prRef, "Subscribe to this PR before performing lifecycle actions.") is { } notSubscribed)
             return notSubscribed;
 
-        // ── CSRF custom-header gate (mirrors PrSubmitEndpoints.cs:120-123 precisely) ─────────
-        // Call PrDetailEndpoints.TabIdAllowlistRegex() — do NOT reimplement the regex.
-        var tabId = http.Request.Headers[TabStamps.TabIdHeader].FirstOrDefault();
-        if (string.IsNullOrEmpty(tabId) || !PrDetailEndpoints.TabIdAllowlistRegex().IsMatch(tabId))
+        // ── CSRF custom-header gate (shared TabStamps § 3 allowlist) ─────────────────────────
+        if (!TabStamps.TryValidateTabId(http.Request, out _))
             return Results.Json(new { code = "tab-id-missing" }, statusCode: StatusCodes.Status422UnprocessableEntity);
 
         // ── Lifecycle write ───────────────────────────────────────────────────────────────────

@@ -117,8 +117,7 @@ internal static class PrSubmitEndpoints
         // "head-sha-not-stamped" the empty-stamp case still emits) so the frontend can
         // distinguish a missing/poisoned tab id (reload the tab) from a wire-up gap (call
         // /mark-viewed). The allowlist is the same shared regex as mark-viewed / reload.
-        var tabId = httpContext.Request.Headers[TabStamps.TabIdHeader].FirstOrDefault();
-        if (string.IsNullOrEmpty(tabId) || !PrDetailEndpoints.TabIdAllowlistRegex().IsMatch(tabId))
+        if (!TabStamps.TryValidateTabId(httpContext.Request, out var tabId))
             return Results.Json(new SubmitErrorDto("tab-id-missing", "Reload this browser tab and try again."),
                 statusCode: StatusCodes.Status422UnprocessableEntity);
 
