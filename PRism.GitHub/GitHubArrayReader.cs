@@ -12,7 +12,7 @@ namespace PRism.GitHub;
 // watched-repos), which had each hand-copied this skeleton. ANY non-success status,
 // transport fault, malformed body, or non-array root → (empty, Degraded: true);
 // genuine cancellation propagates. This is the single home of that contract.
-internal static class GitHubArrayReader
+internal static partial class GitHubArrayReader
 {
     // Fetches `url` as a GitHub JSON array and projects each element via `parse`.
     //
@@ -28,24 +28,33 @@ internal static class GitHubArrayReader
         Func<JsonElement, T?> parse,
         CancellationToken ct) where T : class
     {
+        var list = new List<T>();
+        var visited = new HashSet<string>(StringComparer.Ordinal);
         try
         {
             var token = await readToken().ConfigureAwait(false);
             using var http = httpFactory.CreateClient("github");
-            using var resp = await GitHubHttp.SendAsync(http, HttpMethod.Get, url, token, ct).ConfigureAwait(false);
-            if (!resp.IsSuccessStatusCode) return ([], true);
+            var currentUrl = url;
+            while (true)
+            {
+                using var resp = await GitHubHttp.SendAsync(http, HttpMethod.Get, currentUrl, token, ct).ConfigureAwait(false);
+                if (!resp.IsSuccessStatusCode) return (list, list.Count == 0);
 
-            using var stream = await resp.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
-            using var doc = await JsonDocument.ParseAsync(stream, cancellationToken: ct).ConfigureAwait(false);
-            if (doc.RootElement.ValueKind != JsonValueKind.Array) return ([], true);
+                using var stream = await resp.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
+                using var doc = await JsonDocument.ParseAsync(stream, cancellationToken: ct).ConfigureAwait(false);
+                if (doc.RootElement.ValueKind != JsonValueKind.Array) return (list, list.Count == 0);
 
-            var list = new List<T>(doc.RootElement.GetArrayLength());
-            foreach (var el in doc.RootElement.EnumerateArray())
-                if (parse(el) is { } item) list.Add(item);
+                foreach (var el in doc.RootElement.EnumerateArray())
+                    if (parse(el) is { } item) list.Add(item);
+
+                if (!GitHubLinkHeader.TryGetRel(resp, "next", out var next)) break;
+                if (!visited.Add(next)) break; // repeated next URL: treat as exhausted
+                currentUrl = next; // absolute URL, passed as-is (never stripped to relative)
+            }
             return (list, false);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
         catch (Exception ex) when (ex is HttpRequestException or JsonException or TaskCanceledException)
-        { return ([], true); }
+        { return (list, list.Count == 0); }
     }
 }

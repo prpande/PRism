@@ -17,11 +17,30 @@ public sealed class GitHubArrayReaderTests
     private static FakeHttpClientFactory Factory(HttpStatusCode code, string? body)
         => new(FakeHttpMessageHandler.Returns(code, body), new Uri("https://api.github.com/"));
 
+    private static FakeHttpClientFactory FactoryFor(HttpMessageHandler handler)
+        => new(handler, new Uri("https://api.github.com/"));
+
     private static Task<string?> Token() => Task.FromResult<string?>("token");
 
     // Projects element { "v": "..." } → its string value; null (skipped) when "v" is absent.
     private static string? ParseV(JsonElement el)
         => el.TryGetProperty("v", out var v) ? v.GetString() : null;
+
+    [Fact]
+    public async Task Follows_link_next_across_pages_and_concatenates()
+    {
+        var handler = new ScriptedPagesHandler(
+            (HttpStatusCode.OK, """[{"v":"a"}]""", "https://api.github.com/x?page=2"),
+            (HttpStatusCode.OK, """[{"v":"b"}]""", "https://api.github.com/x?page=3"),
+            (HttpStatusCode.OK, """[{"v":"c"}]""", null));
+
+        var (items, degraded) = await GitHubArrayReader.ReadAsync(
+            FactoryFor(handler), Token, "x", ParseV, CancellationToken.None);
+
+        degraded.Should().BeFalse();
+        items.Should().Equal("a", "b", "c");
+        handler.CallCount.Should().Be(3);
+    }
 
     [Fact]
     public async Task Parses_array_via_delegate()
