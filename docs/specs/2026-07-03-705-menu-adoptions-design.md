@@ -12,9 +12,18 @@ Every lightweight popup menu in the frontend dismisses through one mechanism —
 of them behave identically on outside-click dismissal: **focus stays where the click
 landed**. Escape continues to return focus to the trigger everywhere.
 
+Scope note: the "four remaining hand-rolled menus" are Select, FilterFacet,
+ReviewActionMenu (via ReviewActionButton), and the PrActionsPanel close-confirm morph.
+DiffSettingsMenu — an *existing* adopter — is also modified, but only to drop the removed
+option. The three other existing adopters (PrTabStrip, IterationTabStrip,
+CommitMultiSelectPicker) are untouched.
+
 Non-goals: the merge-confirm morph in `PrActionsPanel` (its Escape/focus flow is #566
 machinery, untouched); any DOM/CSS restructuring (pixel-identical rendering); the
-focus-return unification for *Escape* (already uniform).
+focus-return unification for *Escape* (already uniform); Escape *layering* for stacked
+lightweight surfaces (the hook's never-consume contract means one Escape dismisses every
+open non-consuming surface — see decision 4; changing that is an app-wide owner call, out
+of scope here).
 
 ## Decision record
 
@@ -27,14 +36,18 @@ focus-return unification for *Escape* (already uniform).
    - `FilterFacet` — discovered during recon to be a *second* refocus-on-outside-click menu
      (its `close()` unconditionally refocuses and the outside-`mousedown` handler calls it) —
      **loses that refocus** too. Its Esc-refocus and blur-tab-away behaviors are preserved.
-2. **Trigger is never "outside":** the hook's outside-pointerdown containment check widens
-   from `rootRef.contains(target)` to `rootRef.contains(target) ||
-   returnFocusRef.current?.contains(target)`. Rationale: a pointerdown on the trigger must
-   not count as an outside dismissal — the trigger's own `onClick` owns the open/close
-   toggle, and treating it as outside produces close-then-reopen double-toggling when the
-   trigger sits outside `rootRef` (the `ReviewActionMenu` case). For all existing adopters
-   the trigger is already inside `rootRef`, so this is behavior-neutral for them. This
-   replaces the "small hook extension" the issue anticipated — no API change.
+2. **Trigger(s) inside the boundary via consumer structure, not hook API:** the hook is
+   unchanged apart from the option removal. `ReviewActionButton` — whose menu has TWO
+   toggle-capable triggers (the chevron always; the main button in the 'change' and 'none'
+   faces, `onMainClick`'s `setMenuOpen((v) => !v)` arm) — hosts the hook itself and passes
+   its `.root` wrapper div (containing main button + chevron + mounted menu) as `rootRef`,
+   the same trigger-inside-rootRef shape every existing adopter uses. A pointerdown on
+   either trigger is then never an "outside" dismissal, so each trigger's own `onClick`
+   owns the toggle. This replaces the "small hook extension" the issue anticipated, and it
+   fixes a pre-existing quirk on `main` today: clicking the main button while the drafts
+   menu is open (submitted/closed PRs) closes it via the document listener and immediately
+   reopens it via the toggle — the menu appears stuck open. After adoption the toggle
+   closes it properly (deliberate behavior fix, pinned by a new test).
 3. **`mousedown` → `pointerdown`:** three of the four consumers listen on `mousedown` today;
    the hook uses `pointerdown`. All existing tests drive dismissal via `userEvent.click`
    (which fires pointerdown), so no test churn from the event-type change.
@@ -42,26 +55,28 @@ focus-return unification for *Escape* (already uniform).
    currently `preventDefault()` the Escape that closes them; the hook deliberately does not
    (its contract: skip an Escape someone else consumed, never consume one itself). After
    adoption their Escape matches the four existing adopters. No document-level listener in
-   the app keys on `defaultPrevented` for anything *other* than this hook's own skip-guard,
-   so the only observable effect is unification.
+   the app keys on `defaultPrevented` for anything *other* than this hook's own skip-guard.
+   One acknowledged edge comes with the unification: a keyboard-only user can arm the
+   close-confirm via Enter (no pointerdown fires, so outside-dismissal never disarms it),
+   open another dismissable surface, and a single Escape then closes both, with the two
+   deferred `setTimeout(0)` refocuses racing (last registration wins). Accepted as
+   in-contract for lightweight menus — no data is at risk and focus lands on a reasonable
+   trigger either way; Escape *layering* (topmost-only dismissal) is an app-wide question
+   deliberately out of scope (see Non-goals).
 
 ## Changes by file
 
 ### `frontend/src/hooks/useDismissableMenu.ts`
 
 - Delete `returnFocusOnOutsideClose` (option, doc comment, `close(returnFocusOnOutsideClose)`
-  call site → `close(false)`, effect dep).
-- Outside check becomes: close iff `rootRef.current` is non-null and neither `rootRef` nor
-  `returnFocusRef` contains the target (decision 2).
-- Doc comment updated: focus returns on Esc only; outside-click leaves focus at the target;
-  the trigger is part of the boundary.
+  call site → `close(false)`, effect dep). **No other hook change** (decision 2 keeps the
+  boundary problem in consumer structure).
+- Doc comment updated: focus returns on Esc only; outside-click leaves focus at the target.
 
 ### `frontend/src/hooks/useDismissableMenu.test.tsx`
 
 - Remove the `returnFocusOnOutsideClose` harness prop and its test.
 - Existing "outside click closes without refocus" test stays (it is now the only behavior).
-- New test: pointerdown on a trigger rendered *outside* `rootRef` (harness variant) does not
-  fire `onClose` (decision 2 pin, guards the double-toggle regression).
 
 ### `frontend/src/components/PrDetail/FilesTab/DiffSettingsMenu.tsx` (+ test)
 
@@ -84,31 +99,41 @@ focus-return unification for *Escape* (already uniform).
   `useDismissableMenu({ open, rootRef: ref, returnFocusRef: triggerRef, onClose: () => setOpen(false) })`.
 - `close()` (the unconditional-refocus callback) is deleted; the hook now owns Esc-refocus.
 - The `onBlur` tab-away close and the `q`-reset-on-close effect stay local and unchanged.
-- Behavior deltas: outside click no longer refocuses the trigger (decision 1); Escape now
-  works with focus anywhere in the document, not only inside the facet (hook contract).
+- Behavior deltas: outside click no longer refocuses the trigger (decision 1). Escape's
+  reach is unchanged (the current listener is already document-level); the real Escape
+  delta is the hook's `defaultPrevented` skip-guard (an Escape another widget consumed no
+  longer closes the facet), plus mousedown → pointerdown for outside dismissal (decision 3).
 - Tests (file currently has **no** dismissal coverage — add): Escape closes and refocuses
   the trigger; outside click closes and does **not** refocus the trigger; Tab-away blur
   closes (pins the preserved local semantic).
 
 ### `frontend/src/components/PrDetail/ReviewActionButton/ReviewActionMenu.tsx` (+ parent + test)
 
-- The hook lives **inside `ReviewActionMenu`** (mounted-only-when-open, matching its current
-  self-contained listener structure): `useDismissableMenu({ open: true, rootRef: ref,
-  returnFocusRef: triggerRef ?? noopRef, onClose: () => onClose() })` where `noopRef` is a
-  module-level `{ current: null }` used only when the optional `triggerRef` prop is absent.
-- Delete the local Escape and `mousedown` document listeners. Keep a document `keydown`
-  listener for **Tab only** (close without trapping, no refocus — ARIA APG; the hook does
-  not handle Tab). Keep the empty-menu close effect and roving-focus `moveFocus`.
+- The hook lives in **`ReviewActionButton`** (the owner of the open state):
+  `useDismissableMenu({ open: menuOpen && !face.frozen, rootRef: rootDivRef,
+  returnFocusRef: chevronRef, onClose: () => setMenuOpen(false) })`, where `rootDivRef` is
+  a new ref on the existing `styles.root` wrapper div — main button, chevron, and mounted
+  menu are all inside the boundary (decision 2).
+- In `ReviewActionMenu`: delete the local Escape and `mousedown` document listeners. Keep a
+  document `keydown` listener for **Tab only** (close without trapping, no refocus — ARIA
+  APG; the hook does not handle Tab). Keep the empty-menu close effect and roving-focus
+  `moveFocus`. The `triggerRef` prop is dropped (its only consumer was the deleted
+  outside-click handler).
 - `onClose` prop contract **shrinks to `onClose(): void`** — its remaining callers (Tab,
   empty-menu) both close without refocus, and Esc-refocus moved into the hook. In
   `ReviewActionButton`, `closeMenu` keeps its `{ restoreFocus }` shape for the `onSelect`
   activation path (parent-local semantic, unchanged) but the menu receives
   `onClose={() => closeMenu()}`.
+- `onMainClick` additionally calls `setMenuOpen(false)` on its `submit`/`resume` branches:
+  with the main button now inside the boundary, the document listener no longer closes the
+  menu when the main action fires, so the close is made explicit (preserves today's
+  menu-closes-when-main-action-fires behavior).
 - Behavior preserved: Escape closes + refocuses chevron (existing test stays green via the
-  hook's deferred focus); outside click closes without refocus; chevron pointerdown does not
-  double-toggle (decision 2); Tab closes without refocus.
-- New test: clicking the chevron while the menu is open closes it exactly once (double-toggle
-  guard at the consumer level).
+  hook's deferred focus); outside click closes without refocus; Tab closes without refocus.
+- Behavior fixed (deliberate, decision 2): clicking the main button in a 'change'/'none'
+  face while the menu is open now closes it (was: close-then-reopen, menu stuck open).
+- New tests: clicking the chevron while the menu is open closes it exactly once; clicking
+  the main button in a 'change' (submitted) face while the menu is open closes it.
 
 ### `frontend/src/components/PrDetail/OverviewTab/PrActionsPanel.tsx` (+ test)
 
@@ -134,26 +159,29 @@ focus-return unification for *Escape* (already uniform).
 Red-first per behavior change; mechanical moves ride on existing green tests as the
 byte-faithfulness pin.
 
-1. Hook: add the trigger-outside-boundary test (**red**) → widen containment (**green**).
-2. Hook: remove option + its test; run hook suite.
-3. DiffSettingsMenu: flip the pinned outside-click test (**red**) → drop the option arg
+1. Hook: remove option + its test; run hook suite.
+2. DiffSettingsMenu: flip the pinned outside-click test (**red**) → drop the option arg
    (**green**).
-4. FilterFacet: add the three dismissal tests with the *new* outside-click expectation
+3. FilterFacet: add the three dismissal tests with the *new* outside-click expectation
    (outside-no-refocus **red** against current code) → adopt hook (**green**).
-5. Select: adopt hook; existing suite green (no behavior change).
-6. ReviewActionMenu/Button: add double-toggle guard test (**green already** — pins it),
-   adopt hook + shrink contract; full existing suite green.
-7. PrActionsPanel: add Escape-from-outside + Close-refocus test (**red**) → adopt (**green**).
-8. `grep` guard: no `addEventListener('mousedown'` / hand-rolled Escape-dismiss remains in
+4. Select: adopt hook; existing suite green (no behavior change).
+5. ReviewActionMenu/Button: add the chevron double-toggle guard (**green already** — pins
+   current behavior) and the main-button-closes-open-menu test in a 'change' face (**red**
+   against current code — the stuck-open quirk) → adopt hook in the parent + shrink
+   contract (**green**); full existing suite green.
+6. PrActionsPanel: add Escape-from-outside + Close-refocus test (**red**) → adopt (**green**).
+7. `grep` guard: no `addEventListener('mousedown'` / hand-rolled Escape-dismiss remains in
    the four consumers.
 
 ## Acceptance criteria
 
-- [ ] All four consumers dismiss via `useDismissableMenu`; no hand-rolled document
-      Escape/outside-dismiss listeners remain in them.
+- [ ] All four newly-adopted consumers (Select, FilterFacet, ReviewActionButton/Menu,
+      PrActionsPanel close-confirm) dismiss via `useDismissableMenu`; no hand-rolled
+      document Escape/outside-dismiss listeners remain in them.
 - [ ] `returnFocusOnOutsideClose` no longer exists anywhere in the tree.
-- [ ] All seven menus: outside click closes without moving focus; Escape closes and
-      refocuses the trigger.
+- [ ] All eight dismissable surfaces (existing adopters PrTabStrip, DiffSettingsMenu,
+      IterationTabStrip, CommitMultiSelectPicker + the four adoptions): outside click
+      closes without moving focus; Escape closes and refocuses the trigger.
 - [ ] Preserved local semantics (Select Tab/combobox model, FilterFacet blur-close,
       ReviewActionMenu Tab-close + empty-menu close, PrActionsPanel `confirmingClose`
       gating) each pinned by a test.
