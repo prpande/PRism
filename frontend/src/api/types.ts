@@ -668,6 +668,13 @@ export interface PrLifecycleChangedEvent {
   prRef: string;
 }
 
+// #571 — review-thread-resolution-changed: a review thread's resolved state changed
+// (resolve/unresolve). Frontend reloads PR detail so thread affordances reflect the
+// server-confirmed state.
+export interface ReviewThreadResolutionChangedEvent {
+  prRef: string;
+}
+
 // S5 PR4 — submit-pipeline frontend types.
 
 // IPreSubmitValidator result (spec § 14.1). PoC's NoopPreSubmitValidator

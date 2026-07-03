@@ -5,6 +5,7 @@ import type {
   InboxUpdatedEvent,
   MergeReadiness,
   PrLifecycleChangedEvent,
+  ReviewThreadResolutionChangedEvent,
   Reviewer,
   RootCommentPostedEvent,
   SingleCommentPostedEvent,
@@ -30,6 +31,7 @@ export type {
   SingleCommentPostedEvent,
   DraftSubmittedEvent,
   PrLifecycleChangedEvent,
+  ReviewThreadResolutionChangedEvent,
 };
 
 export type PrUpdatedEvent = {
@@ -75,6 +77,7 @@ export type EventPayloadByType = {
   'single-comment-posted': SingleCommentPostedEvent;
   'draft-submitted': DraftSubmittedEvent;
   'pr-lifecycle-changed': PrLifecycleChangedEvent;
+  'review-thread-resolution-changed': ReviewThreadResolutionChangedEvent;
 };
 
 // SSE event names the EventSource must register listeners for. EventSource only dispatches
@@ -96,6 +99,7 @@ const EVENT_TYPES = [
   'single-comment-posted',
   'draft-submitted',
   'pr-lifecycle-changed',
+  'review-thread-resolution-changed',
 ] as const satisfies readonly (keyof EventPayloadByType)[];
 
 // Cross-provider bridges (spec § 3.2.1 reconnect-replay defense + § 3.1 in-flight

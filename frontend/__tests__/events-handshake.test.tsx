@@ -92,6 +92,15 @@ describe('openEventStream — typed listeners', () => {
     stream.close();
   });
 
+  it('delivers review-thread-resolution-changed events to registered listeners', () => {
+    const stream = openEventStream();
+    const cb = vi.fn();
+    stream.on('review-thread-resolution-changed', cb);
+    FakeEventSource.instance.dispatch('review-thread-resolution-changed', { prRef: 'o/r/1' });
+    expect(cb).toHaveBeenCalledWith({ prRef: 'o/r/1' });
+    stream.close();
+  });
+
   it('multiple listeners for the same event all fire', () => {
     const stream = openEventStream();
     const a = vi.fn();
