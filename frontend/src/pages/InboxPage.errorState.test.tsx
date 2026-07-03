@@ -7,7 +7,14 @@ import { describe, it, expect, vi } from 'vitest';
 // GET /api/preferences that would make this test non-deterministic.
 const { reload } = vi.hoisted(() => ({ reload: vi.fn() }));
 vi.mock('../hooks/useInbox', () => ({
-  useInbox: () => ({ data: null, error: new Error('boom'), isLoading: false, reload }),
+  useInbox: () => ({
+    data: null,
+    error: new Error('boom'),
+    isLoading: false,
+    isFetching: false,
+    reload,
+    revalidate: vi.fn(),
+  }),
 }));
 vi.mock('../hooks/useInboxUpdates', () => ({
   useInboxUpdates: () => ({ announce: '' }),
