@@ -19,11 +19,6 @@ on:
         required: false
         type: string
         default: ''
-      model:
-        description: 'Copilot CLI model override (e.g. gpt-4o). Leave blank to use the Copilot default model (recommended). Set this only to a model your Copilot account has enabled — an unavailable id fails the run (claude-sonnet-4 is not available for this account).'
-        required: false
-        type: string
-        default: ''
       include_macos:
         description: 'Build + attach the macOS .dmg (only if a Mac tester is confirmed).'
         required: false
@@ -92,7 +87,9 @@ jobs:
           head-ref: ${{ github.sha }}  # the SHA being released; the tag may not exist yet
           pr-strategy: github-api  # PRism squash-merges — merge-commits (default) finds nothing
           instructions: .github/release-notes-style.md
-          model: ${{ inputs.model }}  # empty = Action default; see the `model` dispatch input
+          # No model override: the Copilot CLI uses its own default. An explicit
+          # --model must be an id enabled for this account (claude-sonnet-4 is
+          # NOT), so pinning one is deferred until there's a known-good id.
         env:
           COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
           GITHUB_TOKEN: ${{ github.token }}  # PR discovery for the github-api strategy
