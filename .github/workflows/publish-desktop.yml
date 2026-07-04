@@ -24,7 +24,74 @@ permissions:
   contents: write  # required to create/update the draft Release
 
 jobs:
+  # Author human-readable release notes ONCE, then hand them to the build legs.
+  # The build job below is a serialized matrix and both legs call
+  # action-gh-release against the same draft; an inline notes step would run
+  # per-leg and the second leg would clobber the first leg's body. Computing the
+  # notes in a dedicated job (a single Copilot call) and exposing them as an
+  # output keeps the body deterministic and identical across legs.
+  release-notes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: read  # the github-api pr-strategy discovers PRs via the REST API
+    outputs:
+      body: ${{ steps.notes.outputs.release-notes }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # actions/checkout v7.0.0
+        with:
+          fetch-depth: 0  # full history + tags so the previous tag resolves
+      - name: Resolve previous release tag
+        id: prevtag
+        shell: bash
+        env:
+          TAG: ${{ inputs.tag }}  # via env, never interpolated into the script (injection-safe)
+        run: |
+          # Most recent tag reachable from HEAD, excluding the tag being cut now
+          # (the new tag may not exist yet, or may already point at HEAD).
+          prev="$(git describe --tags --abbrev=0 --exclude "$TAG" 2>/dev/null || true)"
+          echo "tag=$prev" >> "$GITHUB_OUTPUT"
+          if [ -z "$prev" ]; then
+            echo "No previous tag found — Copilot notes skipped; the release falls back to GitHub's auto-notes." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "Generating release notes for $prev..${TAG}" >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Generate release notes (Copilot)
+        id: notes
+        if: steps.prevtag.outputs.tag != ''
+        continue-on-error: true  # never block a release if Copilot is unavailable
+        uses: github/copilot-release-notes@9eea0a5e7bcf7d5bdb8942b66d36b4b82dea631b  # github/copilot-release-notes@main (no tagged releases)
+        with:
+          base-ref: ${{ steps.prevtag.outputs.tag }}
+          head-ref: ${{ github.sha }}  # the SHA being released; the tag may not exist yet
+          pr-strategy: github-api  # PRism squash-merges — merge-commits (default) finds nothing
+          instructions: .github/release-notes-style.md
+        env:
+          COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ github.token }}  # PR discovery for the github-api strategy
+      - name: Surface diagnostics for the draft reviewer
+        if: steps.notes.outcome == 'success'
+        shell: bash
+        env:
+          # Env, not inline ${{ }} in the script — these are derived from PR
+          # titles and could otherwise inject shell (GitHub hardening guidance).
+          UNCERTAIN: ${{ steps.notes.outputs.uncertain-entries }}
+          SKIPPED: ${{ steps.notes.outputs.skipped-prs }}
+        run: |
+          {
+            echo "### Copilot release-notes diagnostics"
+            echo "Review these before publishing the draft."
+            echo ""
+            echo "Uncertain entries:"
+            printf '%s\n' "$UNCERTAIN"
+            echo ""
+            echo "Skipped PRs:"
+            printf '%s\n' "$SKIPPED"
+          } >> "$GITHUB_STEP_SUMMARY"
+
   build:
+    needs: release-notes
     strategy:
       fail-fast: false
       # Serialize the legs: both call action-gh-release against the SAME draft
@@ -112,6 +179,13 @@ jobs:
           tag_name: ${{ inputs.tag }}
           name: PRism Desktop ${{ inputs.tag }}
           draft: true
+          # Copilot-authored, human-readable notes on top; softprops prepends
+          # `body` to the auto-generated section. Empty when the notes job's
+          # step failed or there was no previous tag — a graceful fallback to
+          # GitHub's auto-notes alone. draft stays true so a human reviews and
+          # edits before publishing (this is also where Copilot's flagged
+          # "uncertain entries" get checked).
+          body: ${{ needs.release-notes.outputs.body }}
           generate_release_notes: true
           # Newline-separated explicit globs — the proven idiom in publish.yml.
           # Blank-line entries are no-ops, so a job that produces no .dmg is fine.
