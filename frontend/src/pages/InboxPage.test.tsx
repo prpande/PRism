@@ -445,6 +445,34 @@ describe('InboxPage', () => {
     }
   });
 
+  it('does not fire a duplicate immediate revalidate on a redundant visible event — #717', () => {
+    // #717 — the immediate catch-up must fire ONCE per resume-from-hidden, not on every
+    // visibilitychange whose state is 'visible'. Browsers can emit a 'visible' event with no
+    // intervening 'hidden' (focus/blur cycles); that must not trigger an extra /api/inbox GET.
+    vi.useFakeTimers();
+    try {
+      const { revalidate } = setHooks({ data: sampleData });
+      render(
+        <MemoryRouter initialEntries={['/']}>
+          <OpenTabsProvider>
+            <InboxPage active={true} revalidateNonce={0} />
+          </OpenTabsProvider>
+        </MemoryRouter>,
+      );
+      // Mounted visible → interval armed, no immediate call. A spurious visible→visible event
+      // (the poll was never paused) must NOT catch up.
+      Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true });
+      act(() => document.dispatchEvent(new Event('visibilitychange')));
+      expect(revalidate).not.toHaveBeenCalled();
+      // The armed interval still ticks on cadence (it was never double-armed or dropped).
+      vi.advanceTimersByTime(8_000);
+      expect(revalidate).toHaveBeenCalledTimes(1);
+    } finally {
+      Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true });
+      vi.useRealTimers();
+    }
+  });
+
   it('renders sections + rows when data is present', () => {
     setHooks({ data: sampleData });
     renderPage();

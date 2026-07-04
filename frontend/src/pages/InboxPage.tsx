@@ -78,7 +78,10 @@ export function InboxPage({
     };
     const onVisibility = () => {
       if (document.visibilityState === 'visible') {
-        void revalidate(); // catch up immediately on return
+        // Catch up exactly once per resume: only when the poll was actually paused (id cleared).
+        // A redundant 'visible' event with no intervening 'hidden' (browsers can emit these on
+        // focus/blur cycles) leaves id armed, so it fires no extra revalidate.
+        if (id === undefined) void revalidate();
         start();
       } else {
         stop();
