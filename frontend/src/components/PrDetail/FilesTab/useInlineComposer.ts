@@ -56,12 +56,9 @@ export function useInlineComposer({ draftSession, anchorSha }: UseInlineComposer
 
   function openComposerAt(rawAnchor: InlineAnchor) {
     // DiffPane sends back an empty anchoredSha; stamp the after-side commit of
-    // the range on screen (anchorSha). DiffPane only allows right-side clicks,
-    // so this is always the commit whose diff the reviewer is looking at — the
-    // PR head on "All changes", the iteration's afterSha on an older-iteration
-    // view (#723). The post-now path (PrCommentEndpoints) sends this as the
-    // GitHub commit_id, so an older-iteration line must anchor to afterSha or
-    // GitHub rejects/misplaces it.
+    // the displayed range (anchorSha — resolved by anchorShaForRange; see its
+    // doc for the commit_id rationale). DiffPane only allows right-side clicks,
+    // so it is always a valid anchor for the line shown (#723).
     const anchor: InlineAnchor = { ...rawAnchor, anchoredSha: anchorSha };
     const existing = findExistingDraft(anchor);
     setActiveAnchor(anchor);

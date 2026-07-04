@@ -32,6 +32,8 @@ export function buildAllRange(pr: PrDetailDto['pr']): string {
  * the separator.
  */
 export function anchorShaForRange(iterationRange: string | null, headSha: string): string {
-  if (iterationRange === null) return headSha;
-  return iterationRange.split('..')[1] || headSha;
+  // `null` short-circuits to `undefined`, and a value missing the separator
+  // yields `undefined` too — both fall through to head. SHAs are never empty,
+  // so `||` is safe.
+  return iterationRange?.split('..')[1] || headSha;
 }

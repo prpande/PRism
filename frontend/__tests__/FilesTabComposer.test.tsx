@@ -154,6 +154,24 @@ function makeRouteHandler(
   });
 }
 
+function isNewDraftCommentPatch(
+  body: unknown,
+): body is { newDraftComment: Record<string, unknown> } {
+  return typeof body === 'object' && body !== null && 'newDraftComment' in body;
+}
+
+// Wait for exactly one newDraftComment create PUT to land, then return its
+// payload. Shared by the create-path tests (RapidLineSwitch, #723 anchoring).
+async function firstCreatedDraftComment(tracker: {
+  calls: { url: string; body: unknown }[];
+}): Promise<Record<string, unknown>> {
+  await waitFor(() => {
+    expect(tracker.calls.filter((c) => isNewDraftCommentPatch(c.body))).toHaveLength(1);
+  });
+  const create = tracker.calls.find((c) => isNewDraftCommentPatch(c.body))!;
+  return (create.body as { newDraftComment: Record<string, unknown> }).newDraftComment;
+}
+
 function Wrapper({ prDetail }: { prDetail: PrDetailDto }) {
   // Mirrors the host's ownership of the draft session. FilesTab reads
   // prRef/prDetail/session/readOnly from the PrDetail context (Task 2); the
@@ -352,20 +370,7 @@ describe('FilesTab — A2 click-another-line flow (addendum A2)', () => {
     // Switch lines immediately — do NOT wait for the debounce.
     fireEvent.click(screen.getByRole('button', { name: 'Add comment on line 3' }));
 
-    await waitFor(() => {
-      const creates = tracker.calls.filter((c) => {
-        const b = c.body as Record<string, unknown> | null;
-        return !!b && 'newDraftComment' in b;
-      });
-      expect(creates).toHaveLength(1);
-    });
-    const create = tracker.calls.find((c) => {
-      const b = c.body as Record<string, unknown> | null;
-      return !!b && 'newDraftComment' in b;
-    });
-    const payload = (
-      create!.body as { newDraftComment: { bodyMarkdown: string; lineNumber: number } }
-    ).newDraftComment;
+    const payload = await firstCreatedDraftComment(tracker);
     expect(payload.bodyMarkdown).toBe('flush me before switching');
     expect(payload.lineNumber).toBe(1);
   });
@@ -494,21 +499,8 @@ describe('FilesTab — inline comment anchoring (#723)', () => {
     fireEvent.change(textarea, { target: { value: 'comment on the older iteration' } });
     fireEvent.click(screen.getByRole('button', { name: 'Add comment on line 3' }));
 
-    await waitFor(() => {
-      const creates = tracker.calls.filter((c) => {
-        const b = c.body as Record<string, unknown> | null;
-        return !!b && 'newDraftComment' in b;
-      });
-      expect(creates).toHaveLength(1);
-    });
-    const create = tracker.calls.find((c) => {
-      const b = c.body as Record<string, unknown> | null;
-      return !!b && 'newDraftComment' in b;
-    });
-    const payload = (
-      create!.body as { newDraftComment: { anchoredSha: string; lineNumber: number } }
-    ).newDraftComment;
     // The anchor is the iteration's afterSha (mid111), NOT the PR head (headabc).
+    const payload = await firstCreatedDraftComment(tracker);
     expect(payload.anchoredSha).toBe('mid111');
     expect(payload.lineNumber).toBe(1);
   });
