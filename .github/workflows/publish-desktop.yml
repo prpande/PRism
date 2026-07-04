@@ -14,6 +14,11 @@ on:
         description: 'Release tag (e.g., v0.2.0)'
         required: true
         type: string
+      base_ref:
+        description: 'Generate release notes FROM this tag/branch/SHA (overrides the auto-detected previous tag — e.g. span several releases back to an earlier major). Leave blank to diff from the immediately-preceding tag.'
+        required: false
+        type: string
+        default: ''
       include_macos:
         description: 'Build + attach the macOS .dmg (only if a Mac tester is confirmed).'
         required: false
@@ -42,18 +47,30 @@ jobs:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # actions/checkout v7.0.0
         with:
           fetch-depth: 0  # full history + tags so the previous tag resolves
-      - name: Resolve previous release tag
+      - name: Resolve base ref for release notes
         id: prevtag
         shell: bash
         env:
-          TAG: ${{ inputs.tag }}  # via env, never interpolated into the script (injection-safe)
+          TAG: ${{ inputs.tag }}                 # via env, never interpolated into the script (injection-safe)
+          BASE_OVERRIDE: ${{ inputs.base_ref }}  # optional explicit base; blank = auto-detect previous tag
         run: |
-          # Most recent tag reachable from HEAD, excluding the tag being cut now
-          # (the new tag may not exist yet, or may already point at HEAD).
-          prev="$(git describe --tags --abbrev=0 --exclude "$TAG" 2>/dev/null || true)"
+          if [ -n "$BASE_OVERRIDE" ]; then
+            # Explicit base: accept a tag, branch, or SHA that resolves to a commit.
+            if git rev-parse -q --verify "${BASE_OVERRIDE}^{commit}" >/dev/null; then
+              prev="$BASE_OVERRIDE"
+              echo "Using explicit base ref: $prev" >> "$GITHUB_STEP_SUMMARY"
+            else
+              prev="$(git describe --tags --abbrev=0 --exclude "$TAG" 2>/dev/null || true)"
+              echo "WARNING: base_ref '$BASE_OVERRIDE' did not resolve — falling back to the previous tag ($prev)." >> "$GITHUB_STEP_SUMMARY"
+            fi
+          else
+            # Auto: most recent tag reachable from HEAD, excluding the tag being
+            # cut now (the new tag may not exist yet, or may already point at HEAD).
+            prev="$(git describe --tags --abbrev=0 --exclude "$TAG" 2>/dev/null || true)"
+          fi
           echo "tag=$prev" >> "$GITHUB_OUTPUT"
           if [ -z "$prev" ]; then
-            echo "No previous tag found — Copilot notes skipped; the release falls back to GitHub's auto-notes." >> "$GITHUB_STEP_SUMMARY"
+            echo "No base ref found — Copilot notes skipped; the release falls back to GitHub's auto-notes." >> "$GITHUB_STEP_SUMMARY"
           else
             echo "Generating release notes for $prev..${TAG}" >> "$GITHUB_STEP_SUMMARY"
           fi
