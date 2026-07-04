@@ -41,6 +41,10 @@ For each real change, set:
   change in plain language. For example:
   `**Draft PR badge** — draft pull requests are clearly marked on the inbox row
   and the PR-detail header`.
+  - **Every item gets the bold label — 🐛 Fixes and 🔧 Under the hood entries
+    included.** Do not lapse into plain symptom sentences for those sections; a
+    fix still leads with a label, e.g. `**Gutter line numbers** — added files
+    show their line numbers at rest, not only on hover`.
   - Describe the observable benefit, not the implementation ("resolve and
     unresolve review threads directly in the diff", not "added an
     IReviewThreadWriter seam").
@@ -72,6 +76,12 @@ section that has no real content.
 - Fold related pull requests into a single entry when they add up to one
   user-facing change; set `pr` to the most representative one. Do not enumerate
   every PR — the release links a full changelog separately.
+- Skip pull requests with no user-facing effect — branch merges, pure internal
+  refactors that change no behavior, CI/tooling-only changes, version bumps.
+  Put them in `skippedPRs` with a one-line reason, not in the notes. "Merged
+  branch X into main" is never a release-note item; even the 🔧 Under the hood
+  section is for work a user would care about (security, stability, dependency
+  updates), not routine development process.
 - **Vary your phrasing.** Do not start every item — especially fixes — with the
   same words (for example, "Resolve an issue where…"). Describe each one
   directly and differently.
