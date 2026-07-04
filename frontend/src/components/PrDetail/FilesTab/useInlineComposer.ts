@@ -3,7 +3,6 @@ import type { MutableRefObject } from 'react';
 import { useLatestRef } from '../../../hooks/useLatestRef';
 import type { InlineAnchor } from '../Composer/InlineCommentComposer';
 import type { UseDraftSessionResult } from '../../../hooks/useDraftSession';
-import type { PrDetailPr } from '../../../api/types';
 
 // #327 slice 2 — the inline-composer lifecycle extracted from FilesTab. Owns
 // the active-anchor + draft-id state, the flush ref, the existing-draft
@@ -16,12 +15,16 @@ import type { PrDetailPr } from '../../../api/types';
 export interface UseInlineComposerOpts {
   // Exactly what the moved closures read: findExistingDraft reads
   // draftSession.session, handleComposerClose calls draftSession.refetch,
-  // and openComposerAt stamps prDetail.pr.headSha.
+  // and openComposerAt stamps anchorSha.
   draftSession: Pick<UseDraftSessionResult, 'session' | 'refetch'>;
-  prDetail: { pr: Pick<PrDetailPr, 'headSha'> };
+  // The commit a NEW inline comment anchors to — the after-side of the diff
+  // range currently displayed in the Files tab, resolved by the caller via
+  // anchorShaForRange (#723): the PR head on "All changes", the iteration's
+  // afterSha on an older-iteration view.
+  anchorSha: string;
 }
 
-export function useInlineComposer({ draftSession, prDetail }: UseInlineComposerOpts): {
+export function useInlineComposer({ draftSession, anchorSha }: UseInlineComposerOpts): {
   activeAnchor: InlineAnchor | null;
   composerDraftId: string | null;
   setComposerDraftId: (id: string | null) => void;
@@ -52,13 +55,11 @@ export function useInlineComposer({ draftSession, prDetail }: UseInlineComposerO
   }
 
   function openComposerAt(rawAnchor: InlineAnchor) {
-    // DiffPane sends back an empty anchoredSha. PoC simplification: stamp
-    // prDetail.pr.headSha for every right-side click. This is correct for
-    // the "All changes" iteration range (afterSha === headSha) but wrong
-    // for older iteration views — the iteration's afterSha would be the
-    // right anchor. Deferred (see deferrals doc); DiffPane only allows
-    // right-side clicks so the SHA is always a valid HEAD anchor.
-    const anchor: InlineAnchor = { ...rawAnchor, anchoredSha: prDetail.pr.headSha };
+    // DiffPane sends back an empty anchoredSha; stamp the after-side commit of
+    // the displayed range (anchorSha — resolved by anchorShaForRange; see its
+    // doc for the commit_id rationale). DiffPane only allows right-side clicks,
+    // so it is always a valid anchor for the line shown (#723).
+    const anchor: InlineAnchor = { ...rawAnchor, anchoredSha: anchorSha };
     const existing = findExistingDraft(anchor);
     setActiveAnchor(anchor);
     setComposerDraftId(existing?.id ?? null);
