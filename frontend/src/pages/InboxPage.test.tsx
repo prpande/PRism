@@ -414,6 +414,37 @@ describe('InboxPage', () => {
     }
   });
 
+  it('mounts silent while hidden, then arms on first foreground — #717', () => {
+    // #717 — mount-while-hidden path: a keep-alive user reaching the Inbox route while the OS
+    // tab is backgrounded must NOT poll until the tab is foregrounded, at which point the
+    // interval arms and the immediate catch-up revalidate fires (not the mount-time branch).
+    vi.useFakeTimers();
+    try {
+      Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true });
+      const { revalidate } = setHooks({ data: sampleData });
+      render(
+        <MemoryRouter initialEntries={['/']}>
+          <OpenTabsProvider>
+            <InboxPage active={true} revalidateNonce={0} />
+          </OpenTabsProvider>
+        </MemoryRouter>,
+      );
+      // Armed only if visible at mount → a hidden mount stays silent across many ticks.
+      vi.advanceTimersByTime(80_000);
+      expect(revalidate).not.toHaveBeenCalled();
+
+      // First foreground arms the interval AND fires the immediate catch-up.
+      Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true });
+      act(() => document.dispatchEvent(new Event('visibilitychange')));
+      expect(revalidate).toHaveBeenCalledTimes(1);
+      vi.advanceTimersByTime(8_000);
+      expect(revalidate).toHaveBeenCalledTimes(2);
+    } finally {
+      Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true });
+      vi.useRealTimers();
+    }
+  });
+
   it('renders sections + rows when data is present', () => {
     setHooks({ data: sampleData });
     renderPage();
