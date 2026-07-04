@@ -8,6 +8,26 @@ import type { ComposerOwnerKey } from '../../../hooks/useDraftSession';
 import type { PrReference } from '../../../api/types';
 import type React from 'react';
 
+// #571 B1 fix — the resolve/unresolve control the reply composer hosts next to "Comment". The
+// mutation lives in the parent (useThreadResolution); the composer owns only the "post the pending
+// reply first, then resolve" orchestration and the GitHub-faithful label ("Comment and resolve
+// conversation" when there is a postable draft).
+export interface ThreadResolveControl {
+  onResolve: () => void;
+  isResolved: boolean;
+  pending: boolean; // resolve mutation in flight (parent-owned)
+  readOnly: boolean;
+}
+
+// The fully-derived render contract for that button — ComposerActionsBar stays presentational.
+export interface ComposerResolveButton {
+  label: string;
+  busy: boolean; // aria-busy + spinner label
+  disabled: boolean;
+  isResolved: boolean; // green-outline (resolve) vs neutral (unresolve) styling
+  onClick: () => void;
+}
+
 export interface UseDraftComposerParams {
   prRef: PrReference;
   prState: 'open' | 'closed' | 'merged';
@@ -26,6 +46,9 @@ export interface UseDraftComposerParams {
   onPosted?: (postedCommentId: number, body: string) => void;
   onSaved?: () => void;
   flushRef?: React.MutableRefObject<(() => Promise<string | null>) | null>;
+  // #571 B1 fix — when supplied (reply composers only), the actions bar renders a Resolve /
+  // "Comment and resolve conversation" button wired to this control. Omitted for inline comments.
+  resolveControl?: ThreadResolveControl;
 }
 
 export interface UseDraftComposerResult {
@@ -54,6 +77,8 @@ export interface UseDraftComposerResult {
     onDiscardClick: () => void;
     onSaveClick: () => void;
     onPostNow: () => void;
+    // #571 B1 fix — present only when resolveControl was supplied; otherwise no button renders.
+    resolve?: ComposerResolveButton;
   };
   modals: {
     discardModalOpen: boolean;
@@ -85,6 +110,7 @@ export function useDraftComposer(params: UseDraftComposerParams): UseDraftCompos
     onPosted,
     onSaved,
     flushRef,
+    resolveControl,
   } = params;
 
   const [body, setBody] = useState(initialBody);
@@ -215,8 +241,12 @@ export function useDraftComposer(params: UseDraftComposerParams): UseDraftCompos
     ? 'You have a review in progress — submit or discard it to post a single comment.'
     : saveTooltip;
 
-  const handlePostNow = async () => {
-    if (postNowDisabled) return;
+  // Shared post pipeline for "Comment" and "Comment and resolve": flush the draft, POST it, and
+  // report whether the comment actually posted. Returns false on a 404-recovery transition, an
+  // unsaved draft, or a POST failure (the caller then leaves the composer OPEN with its error).
+  // It does NOT close the composer — the caller owns that, so "Comment and resolve" can sequence
+  // the resolve between the post and the close.
+  const postDraft = async (): Promise<boolean> => {
     setPostError(null);
     setPosting(true);
     beginPosting?.(); // synchronous, BEFORE flush (no flicker)
@@ -229,26 +259,71 @@ export function useDraftComposer(params: UseDraftComposerParams): UseDraftCompos
       // draft → a doomed POST plus an inline error stacked behind the recovery
       // modal. Short-circuit on that transition, exactly as handleKeyDown does.
       const id = await flush();
-      if (recoveryModalOpenRef.current) return;
+      if (recoveryModalOpenRef.current) return false;
       if (!id) {
         setPostError('Could not save the draft. Try again.');
-        return;
+        return false;
       }
       const res = await postComment(prRef, id);
       if (res.ok) {
         onPosted?.(res.postedCommentId, body);
-        onClose();
-      } else {
-        setPostError(res.message);
+        return true;
       }
+      setPostError(res.message);
+      return false;
     } finally {
-      // Safe even when onClose() above triggers unmount: endPosting is an
-      // idempotent ref-counter decrement (balanced 1:1 with beginPosting),
-      // and setPosting after unmount is a React-18 no-op.
+      // Balanced 1:1 with beginPosting; setPosting after a later unmount is a React-18 no-op.
       setPosting(false);
       endPosting?.();
     }
   };
+
+  const handlePostNow = async () => {
+    if (postNowDisabled) return;
+    if (await postDraft()) onClose();
+  };
+
+  // #571 B1 fix — the composer's Resolve button. GitHub relabels its resolve button to "Comment
+  // and resolve conversation" the moment the reply box has text and, on click, POSTS the reply
+  // then resolves. Our earlier build shipped a resolve-only button next to "Comment", so typing a
+  // reply and clicking Resolve resolved the thread and DROPPED the comment (it never posted, and
+  // the resolved thread then collapsed, hiding the composer). Here: post first, resolve only if the
+  // post succeeded; a failed post keeps the composer open and does NOT resolve.
+  const handleResolveClick = async () => {
+    if (!resolveControl || resolveControl.pending || posting || resolveControl.readOnly) return;
+    if (resolveControl.isResolved || postNowDisabled) {
+      // Unresolve, or nothing postable in the composer → resolve/unresolve only.
+      resolveControl.onResolve();
+      return;
+    }
+    if (await postDraft()) {
+      resolveControl.onResolve();
+      onClose();
+    }
+  };
+
+  // `postNowDisabled` folds in bodyEmpty / below-threshold / other-drafts-staged / readOnly — so
+  // "postable" is exactly `!postNowDisabled`. Only then is the combined "Comment and resolve"
+  // offered; otherwise the button is a plain Resolve/Unresolve.
+  const canCommentAndResolve = !!resolveControl && !resolveControl.isResolved && !postNowDisabled;
+  const resolveBusy = !!resolveControl && (posting || resolveControl.pending);
+  const resolve: ComposerResolveButton | undefined = resolveControl
+    ? {
+        isResolved: resolveControl.isResolved,
+        busy: resolveBusy,
+        disabled: resolveBusy || resolveControl.readOnly,
+        label: resolveBusy
+          ? resolveControl.isResolved
+            ? 'Unresolving…'
+            : 'Resolving…'
+          : resolveControl.isResolved
+            ? 'Unresolve conversation'
+            : canCommentAndResolve
+              ? 'Comment and resolve conversation'
+              : 'Resolve conversation',
+        onClick: handleResolveClick,
+      }
+    : undefined;
 
   const handleRecoveryRecreate = async () => {
     recoveryModalOpenRef.current = false;
@@ -316,6 +391,7 @@ export function useDraftComposer(params: UseDraftComposerParams): UseDraftCompos
       onDiscardClick: handleDiscardClick,
       onSaveClick: handleSaveClick,
       onPostNow: handlePostNow,
+      resolve,
     },
     modals: {
       discardModalOpen,

@@ -147,7 +147,7 @@ function ThreadView({
   // the hook's null-prRef guard makes invoke() a no-op there, and the button
   // below is only rendered when replyContext exists, so invoke() is never
   // reachable with a null prRef.
-  const { pending, announce, error, reconcileHint, invoke } = useThreadResolution({
+  const { pending, announce, error, invoke } = useThreadResolution({
     prRef: replyContext?.prRef ?? null,
     threadId: thread.threadId,
     isResolved: thread.isResolved,
@@ -261,7 +261,16 @@ function ThreadView({
               onPosted={(id, postedBody) =>
                 replyContext.onReplyPosted?.(thread.threadId, id, postedBody)
               }
-              extraActionStart={resolveButton}
+              // #571 B1 fix — the OPEN composer hosts its own Resolve button (rendered by
+              // ComposerActionsBar) so it can relabel to "Comment and resolve conversation" and
+              // post the pending reply before resolving. The closed-row `resolveButton` above stays
+              // a plain resolve-only control (no open reply box to post).
+              resolveControl={{
+                onResolve: invoke,
+                isResolved: thread.isResolved,
+                pending,
+                readOnly: replyContext.readOnly ?? false,
+              }}
             />
           )}
         </div>
@@ -273,9 +282,9 @@ function ThreadView({
       <span className="sr-only" role="status" aria-live="polite" aria-atomic="true">
         {announce ?? ''}
       </span>
-      {(error || reconcileHint) && (
+      {error && (
         <div className="composer-error" role="alert">
-          {error ?? 'Resolved — couldn’t refresh. Reload the PR to see the change.'}
+          {error}
         </div>
       )}
     </div>

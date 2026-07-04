@@ -345,4 +345,99 @@ describe('useDraftComposer', () => {
       await Promise.resolve();
     });
   });
+
+  // #571 B1 fix — the reply composer's Resolve / "Comment and resolve conversation" button.
+  describe('comment-and-resolve control', () => {
+    const resolveControl = (over: Record<string, unknown> = {}) => ({
+      onResolve: vi.fn(),
+      isResolved: false,
+      pending: false,
+      readOnly: false,
+      ...over,
+    });
+
+    it('exposes no resolve descriptor when resolveControl is absent (inline comments)', () => {
+      const { result } = renderHook(() => useDraftComposer(params()));
+      expect(result.current.actions.resolve).toBeUndefined();
+    });
+
+    it('labels the button "Comment and resolve conversation" when the composer has a postable reply', () => {
+      const { result } = renderHook(() =>
+        useDraftComposer(
+          params({ draftId: 'd1', initialBody: 'a reply', resolveControl: resolveControl() }),
+        ),
+      );
+      expect(result.current.actions.resolve?.label).toBe('Comment and resolve conversation');
+      expect(result.current.actions.resolve?.disabled).toBe(false);
+    });
+
+    it('posts the reply THEN resolves and closes when clicked with a postable draft', async () => {
+      vi.spyOn(draftApi, 'sendPatch').mockResolvedValue({ ok: true, assignedId: null });
+      const postSpy = vi
+        .spyOn(commentApi, 'postComment')
+        .mockResolvedValue({ ok: true, postedCommentId: 42 } as never);
+      const rc = resolveControl();
+      const p = params({ draftId: 'd1', initialBody: 'a reply', resolveControl: rc });
+      const { result } = renderHook(() => useDraftComposer(p));
+
+      await act(async () => {
+        await result.current.actions.resolve!.onClick();
+      });
+
+      expect(postSpy).toHaveBeenCalledTimes(1); // the comment posted
+      expect(rc.onResolve).toHaveBeenCalledTimes(1); // then resolved
+      expect(p.onClose).toHaveBeenCalledTimes(1);
+      expect(result.current.actions.postError).toBeNull();
+    });
+
+    it('does NOT resolve or close when the post fails — the comment is never silently dropped', async () => {
+      vi.spyOn(draftApi, 'sendPatch').mockResolvedValue({ ok: true, assignedId: null });
+      vi.spyOn(commentApi, 'postComment').mockResolvedValue({
+        ok: false,
+        message: 'boom',
+      } as never);
+      const rc = resolveControl();
+      const p = params({ draftId: 'd1', initialBody: 'a reply', resolveControl: rc });
+      const { result } = renderHook(() => useDraftComposer(p));
+
+      await act(async () => {
+        await result.current.actions.resolve!.onClick();
+      });
+
+      expect(rc.onResolve).not.toHaveBeenCalled(); // a failed post must NOT resolve-and-drop
+      expect(p.onClose).not.toHaveBeenCalled();
+      expect(result.current.actions.postError).toBe('boom');
+    });
+
+    it('resolves WITHOUT posting when the composer is empty (plain "Resolve conversation")', async () => {
+      const postSpy = vi.spyOn(commentApi, 'postComment');
+      const rc = resolveControl();
+      const p = params({ draftId: null, initialBody: '', resolveControl: rc });
+      const { result } = renderHook(() => useDraftComposer(p));
+
+      expect(result.current.actions.resolve?.label).toBe('Resolve conversation');
+      await act(async () => {
+        await result.current.actions.resolve!.onClick();
+      });
+
+      expect(postSpy).not.toHaveBeenCalled();
+      expect(rc.onResolve).toHaveBeenCalledTimes(1);
+      expect(p.onClose).not.toHaveBeenCalled(); // resolve-only leaves the composer as-is
+    });
+
+    it('on a resolved thread the button is a plain "Unresolve conversation" and never posts', async () => {
+      const postSpy = vi.spyOn(commentApi, 'postComment');
+      const rc = resolveControl({ isResolved: true });
+      const p = params({ draftId: 'd1', initialBody: 'a reply', resolveControl: rc });
+      const { result } = renderHook(() => useDraftComposer(p));
+
+      expect(result.current.actions.resolve?.label).toBe('Unresolve conversation');
+      await act(async () => {
+        await result.current.actions.resolve!.onClick();
+      });
+
+      expect(postSpy).not.toHaveBeenCalled();
+      expect(rc.onResolve).toHaveBeenCalledTimes(1);
+    });
+  });
 });

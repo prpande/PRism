@@ -1,11 +1,10 @@
-import { useDraftComposer } from './useDraftComposer';
+import { useDraftComposer, type ThreadResolveControl } from './useDraftComposer';
 import { ComposerActionsBar } from './ComposerActionsBar';
 import { ComposerModals } from './ComposerModals';
 import { ComposerMarkdownPreview } from './ComposerMarkdownPreview';
 import styles from './ReplyComposer.module.css';
 import type { PrReference } from '../../../api/types';
 import type { ComposerOwnerKey } from '../../../hooks/useDraftSession';
-import type { ReactNode } from 'react';
 
 export interface ReplyComposerProps {
   prRef: PrReference;
@@ -22,7 +21,7 @@ export interface ReplyComposerProps {
   beginPosting?: () => void;
   endPosting?: () => void;
   onPosted?: (postedCommentId: number, body: string) => void;
-  extraActionStart?: ReactNode;
+  resolveControl?: ThreadResolveControl;
 }
 
 function replyAriaLabel(parentThreadId: string): string {
@@ -44,7 +43,7 @@ export function ReplyComposer({
   beginPosting,
   endPosting,
   onPosted,
-  extraActionStart,
+  resolveControl,
 }: ReplyComposerProps) {
   const { editor, actions, modals } = useDraftComposer({
     prRef,
@@ -62,6 +61,7 @@ export function ReplyComposer({
     onPosted,
     anchor: { kind: 'reply', parentThreadId },
     deletePatchKind: 'deleteDraftReply',
+    resolveControl,
   });
 
   return (
@@ -89,7 +89,7 @@ export function ReplyComposer({
           aria-readonly={editor.readOnly || actions.posting || undefined}
         />
       )}
-      <ComposerActionsBar {...actions} extraActionStart={extraActionStart} />
+      <ComposerActionsBar {...actions} />
       <ComposerModals
         {...modals}
         discardBody="This will remove the saved reply draft on this thread."

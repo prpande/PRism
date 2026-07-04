@@ -55,7 +55,6 @@ function hookState(over: Record<string, unknown> = {}) {
     pending: false,
     announce: null,
     error: null,
-    reconcileHint: false,
     invoke: vi.fn(),
     ...over,
   };
@@ -141,8 +140,10 @@ describe('ExistingCommentWidget — resolve/unresolve control (#571 Task 12)', (
     expect(screen.getByRole('button', { name: 'Resolve conversation' })).toBeInTheDocument();
   });
 
-  it('reconcileHint (no error): renders the "couldn\'t refresh" hint banner', () => {
-    useThreadResolutionMock.mockReturnValue(hookState({ reconcileHint: true }));
+  it('a successful resolve surfaces no error banner (Bug 2: no red flash on success)', () => {
+    // Response-driven reconcile releases on the mutation 200 and never sets an error on success —
+    // the old confirm-then-apply "couldn't refresh" hint banner is gone entirely.
+    useThreadResolutionMock.mockReturnValue(hookState({ error: null }));
     render(
       <ExistingCommentWidget
         threads={[thread({ isResolved: false })]}
@@ -150,11 +151,7 @@ describe('ExistingCommentWidget — resolve/unresolve control (#571 Task 12)', (
         collapse={collapseStub()}
       />,
     );
-    const alert = screen.getByRole('alert');
-    expect(alert).toHaveClass('composer-error');
-    expect(alert).toHaveTextContent(
-      'Resolved — couldn’t refresh. Reload the PR to see the change.',
-    );
+    expect(screen.queryByRole('alert')).toBeNull();
   });
 
   it('readOnly: the control is disabled', () => {

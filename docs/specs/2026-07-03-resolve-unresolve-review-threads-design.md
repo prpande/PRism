@@ -3,7 +3,37 @@
 - **Issue:** [#571](https://github.com/prpande/PRism/issues/571)
 - **Tier / Risk:** T3 · gated (B1 UI + B2 risk-surface: net-new GitHub write path + PAT scope)
 - **Sibling:** [#566](https://github.com/prpande/PRism/issues/566) (PR lifecycle actions) — shipped the reusable write-path foundation this feature plugs into.
-- **Status:** spec gate PASSED (2026-07-03) — approved to plan; auth binding (§5.4) locked to **BIND**. Incorporates one round of `ce-doc-review` (feasibility, coherence, adversarial, security, design-lens, scope-guardian); dispositions recorded in the PR.
+- **Status:** spec gate PASSED (2026-07-03) — approved to plan; auth binding (§5.4) locked to **BIND**. Incorporates one round of `ce-doc-review` (feasibility, coherence, adversarial, security, design-lens, scope-guardian); dispositions recorded in the PR. **AMENDED 2026-07-04 (B1 validation) — see §0.**
+
+## 0. B1-validation amendments (2026-07-04)
+
+Interactive B1 validation of PR #726 against real PRs surfaced two defects, each rooted in a decision
+this spec had *locked*. Both are now reversed. The original text below is kept as-is for history; where
+it conflicts with this section, **this section governs**.
+
+- **Bug 1 — "Comment & resolve" is real, and its absence dropped comments.** The spec rejected a combined
+  action on the premise *"GitHub uses separate adjacent buttons"* (§4 non-goals, §9 deferrals). That premise
+  is **factually wrong**: GitHub relabels its resolve button to **"Comment and resolve conversation"** the
+  moment the reply box has text, and on click it POSTS the reply *then* resolves. Our build shipped a
+  resolve-**only** button inside the reply composer next to "Comment", so a user who typed a reply and clicked
+  Resolve resolved the thread and **dropped the comment** — it never posted, and the now-resolved thread
+  collapsed, hiding the composer. **Reversal:** the composer's Resolve button now relabels to
+  "Comment and resolve conversation" when there is a postable draft and, on click, posts the reply and only
+  resolves if the post succeeds (a failed post keeps the composer open and does NOT resolve). Empty composer →
+  plain "Resolve conversation" (resolve-only). The collapsed-thread action row keeps a plain resolve-only
+  button (no open reply box to post). Implemented in `useDraftComposer` (post-then-resolve orchestration +
+  label) and `ComposerActionsBar` (renders the derived button); the mutation still lives in
+  `useThreadResolution`.
+
+- **Bug 2 — confirm-then-apply flashed a red error on SUCCESS.** The reconcile (§6.3, §7) held the busy
+  state until a full PR-detail reload confirmed the `isResolved` flip, with a 5 s fallback (`AC7`) that set a
+  red `.composer-error` "Resolved — couldn't refresh…" hint. On real PRs the reload routinely exceeds 5 s, so
+  a **successful** resolve flashed that red error before the reload landed. **Reversal:** adopt the previously
+  **deferred targeted-patch reconcile** (§9 deferral #1) — the mutation's HTTP 200 IS the confirmation, so
+  `useThreadResolution` now releases the busy state immediately on the response and fires one `reload()` to
+  pull the new state; the collapse-override cleanup still runs when the flip actually lands. The 5 s fallback
+  timer and the `reconcileHint`/AC7 banner are removed. A genuine non-2xx (or thrown) response still shows the
+  inline error banner; a successful write never does.
 
 ## 1. Problem
 
