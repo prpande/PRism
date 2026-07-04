@@ -33,7 +33,8 @@ jobs:
       contents: read
       pull-requests: read  # the github-api pr-strategy discovers PRs via the REST API
     outputs:
-      body: ${{ steps.notes.outputs['release-notes'] }}  # bracket notation: the action's output key is hyphenated
+      body: ${{ steps.body.outputs.text }}                 # Copilot notes + Full Changelog link, assembled below
+      has_copilot: ${{ steps.body.outputs.has_copilot }}   # 'true' only when Copilot actually produced notes
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # actions/checkout v7.0.0
         with:
@@ -99,6 +100,40 @@ jobs:
             echo "Skipped PRs:"
             printf '%s\n' "$SKIPPED"
           } >> "$GITHUB_STEP_SUMMARY"
+      - name: Assemble release body
+        id: body
+        shell: bash
+        env:
+          COPILOT: ${{ steps.notes.outputs['release-notes'] }}  # bracket notation: hyphenated output key
+          BASE: ${{ steps.prevtag.outputs.tag }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          # When Copilot produced notes: use them + a single Full Changelog link
+          # (NOT the full PR dump). When it didn't: emit an empty body so the
+          # build job falls back to GitHub's generate_release_notes.
+          if [ -n "$COPILOT" ]; then
+            {
+              printf '%s\n' "$COPILOT"
+              if [ -n "$BASE" ]; then
+                printf '\n**Full Changelog**: %s/%s/compare/%s...%s\n' \
+                  "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$BASE" "$TAG"
+              fi
+            } > body.md
+            echo "has_copilot=true" >> "$GITHUB_OUTPUT"
+          else
+            : > body.md
+            echo "has_copilot=false" >> "$GITHUB_OUTPUT"
+          fi
+          # Random per-run delimiter: the body is untrusted (Copilot-authored /
+          # PR-title-derived) text, so a FIXED marker could appear in the content
+          # and truncate/inject the GITHUB_OUTPUT value. openssl is preinstalled
+          # on ubuntu-latest; 16 bytes = 128 bits, unguessable per run.
+          DELIM="PRISM_BODY_EOF_$(openssl rand -hex 16)"
+          {
+            echo "text<<$DELIM"
+            cat body.md
+            echo "$DELIM"
+          } >> "$GITHUB_OUTPUT"
 
   build-and-publish:
     needs: release_notes
@@ -160,11 +195,13 @@ jobs:
           tag_name: ${{ github.event.inputs.tag }}
           name: PRism ${{ github.event.inputs.tag }}
           draft: true
-          # Copilot-authored notes on top (empty on failure / no prior tag —
-          # graceful fallback); GitHub's auto PR list appends below. draft stays
-          # true so a human reviews before publishing.
+          # Copilot-authored notes + a single Full Changelog link (no PR dump).
+          # generate_release_notes is true ONLY when Copilot produced nothing
+          # (has_copilot != 'true'): body is empty then, so softprops falls back
+          # to GitHub's full auto-notes and the release is never left bare. draft
+          # stays true so a human reviews before publishing.
           body: ${{ needs.release_notes.outputs.body }}
-          generate_release_notes: true
+          generate_release_notes: ${{ needs.release_notes.outputs.has_copilot != 'true' }}
           # osx-arm64 line is omitted when include_macos is false; softprops/action-gh-release
           # treats blank lines in `files:` as no-ops, so the expression renders to an empty
           # line at v0.1.0 and to the binary path at v0.1.1+.

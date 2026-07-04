@@ -92,13 +92,12 @@ jobs:
           if [ -z "$COPILOT_BODY" ]; then
             echo "::error::Copilot produced empty notes; leaving the release body unchanged." ; exit 1
           fi
-          # GitHub's auto PR list for the same range, appended below Copilot's
-          # notes (same structure as the release-time body).
-          auto="$(gh api "repos/${GITHUB_REPOSITORY}/releases/generate-notes" \
-            -f tag_name="$TAG" -f previous_tag_name="$PREV" --jq '.body' 2>/dev/null || true)"
+          # Copilot notes + a single Full Changelog link (no full PR dump —
+          # matches the release-time body).
           {
             printf '%s\n' "$COPILOT_BODY"
-            if [ -n "$auto" ]; then printf '\n%s\n' "$auto"; fi
+            printf '\n**Full Changelog**: %s/%s/compare/%s...%s\n' \
+              "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$PREV" "$TAG"
           } > notes.md
           # Flags first, then `--` so a $TAG starting with '-' can't be read as a gh option.
           gh release edit --notes-file notes.md -- "$TAG"
