@@ -183,6 +183,34 @@ public class GitHubPrLifecycleWriterTests
         result.ErrorCode.Should().Be(PrLifecycleErrorCode.RateLimited);
     }
 
+    // Copilot / claude[bot] review (PR #726): the JsonDocument.Parse guard added to
+    // GitHubReviewThreadWriter has twins here. A 200 with a non-JSON body on EITHER the node-id
+    // resolve hop or the mutation hop must degrade to a typed Generic failure, not escape as an
+    // unhandled 500 (both catch blocks only catch HttpRequestException).
+    [Fact]
+    public async Task MarkReadyForReviewAsync_non_json_node_id_response_maps_to_Generic_without_throwing()
+    {
+        var handler = new StubHandler(Resp(HttpStatusCode.OK, "<html>502 Bad Gateway</html>"));
+
+        var act = async () => await MakeWriter(handler).MarkReadyForReviewAsync(Pr, CancellationToken.None);
+
+        var result = await act.Should().NotThrowAsync();
+        result.Subject.ErrorCode.Should().Be(PrLifecycleErrorCode.Generic);
+    }
+
+    [Fact]
+    public async Task MarkReadyForReviewAsync_non_json_mutation_response_maps_to_Generic_without_throwing()
+    {
+        var handler = new StubHandler(
+            Resp(HttpStatusCode.OK, "{\"data\":{\"repository\":{\"pullRequest\":{\"id\":\"PR_node1\"}}}}"),
+            Resp(HttpStatusCode.OK, ""));
+
+        var act = async () => await MakeWriter(handler).MarkReadyForReviewAsync(Pr, CancellationToken.None);
+
+        var result = await act.Should().NotThrowAsync();
+        result.Subject.ErrorCode.Should().Be(PrLifecycleErrorCode.Generic);
+    }
+
     // Plan ce-doc-review round 2 (scope): the spec requires asserting the classified failure is
     // LOGGED server-side (truncated body) BEFORE the sanitized DTO returns — the other tests wire
     // NullLogger and never check this half. This is the only test that captures the log.

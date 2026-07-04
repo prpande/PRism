@@ -80,25 +80,39 @@ internal sealed partial class GitHubReviewThreadWriter : IReviewThreadWriter
     // live) case where a caller/proxy strips the type field.
     private static ReviewThreadErrorCode? ClassifyThreadGraphQLError(string body)
     {
-        using var doc = JsonDocument.Parse(body);
-        if (!doc.RootElement.TryGetProperty("errors", out var errors)
-            || errors.ValueKind != JsonValueKind.Array || errors.GetArrayLength() == 0)
-            return null;
-        var e0 = errors[0];
-        var msg = e0.TryGetProperty("message", out var m) ? (m.GetString() ?? "") : "";
-        if (e0.TryGetProperty("type", out var t))
+        JsonDocument doc;
+        try
         {
-            var type = t.GetString();
-            if (string.Equals(type, "RATE_LIMITED", StringComparison.Ordinal)) return ReviewThreadErrorCode.RateLimited;
-            if (string.Equals(type, "FORBIDDEN", StringComparison.Ordinal)) return ReviewThreadErrorCode.TokenCannotWrite;
-            if (string.Equals(type, "NOT_FOUND", StringComparison.Ordinal)) return ReviewThreadErrorCode.ThreadNotFound;
+            doc = JsonDocument.Parse(body);
         }
-        if (msg.Contains("Could not resolve to a node", StringComparison.OrdinalIgnoreCase))
-            return ReviewThreadErrorCode.ThreadNotFound;
-        if (msg.Contains("correct permissions", StringComparison.OrdinalIgnoreCase)
-            || msg.Contains("Resource not accessible", StringComparison.OrdinalIgnoreCase))
-            return ReviewThreadErrorCode.TokenCannotWrite;
-        return ReviewThreadErrorCode.Generic;
+        catch (JsonException)
+        {
+            // A 200 whose body isn't JSON (proxy interstitial, truncated/empty response) must degrade
+            // to a typed Generic failure: RunAsync catches only HttpRequestException, so an escaping
+            // JsonException would surface as an unhandled 500 instead of a { code: "generic" } response.
+            return ReviewThreadErrorCode.Generic;
+        }
+        using (doc)
+        {
+            if (!doc.RootElement.TryGetProperty("errors", out var errors)
+                || errors.ValueKind != JsonValueKind.Array || errors.GetArrayLength() == 0)
+                return null;
+            var e0 = errors[0];
+            var msg = e0.TryGetProperty("message", out var m) ? (m.GetString() ?? "") : "";
+            if (e0.TryGetProperty("type", out var t))
+            {
+                var type = t.GetString();
+                if (string.Equals(type, "RATE_LIMITED", StringComparison.Ordinal)) return ReviewThreadErrorCode.RateLimited;
+                if (string.Equals(type, "FORBIDDEN", StringComparison.Ordinal)) return ReviewThreadErrorCode.TokenCannotWrite;
+                if (string.Equals(type, "NOT_FOUND", StringComparison.Ordinal)) return ReviewThreadErrorCode.ThreadNotFound;
+            }
+            if (msg.Contains("Could not resolve to a node", StringComparison.OrdinalIgnoreCase))
+                return ReviewThreadErrorCode.ThreadNotFound;
+            if (msg.Contains("correct permissions", StringComparison.OrdinalIgnoreCase)
+                || msg.Contains("Resource not accessible", StringComparison.OrdinalIgnoreCase))
+                return ReviewThreadErrorCode.TokenCannotWrite;
+            return ReviewThreadErrorCode.Generic;
+        }
     }
 
     private async Task<string> PostGraphQLAsync(string query, object variables, CancellationToken ct)

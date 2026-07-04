@@ -52,6 +52,26 @@ public class PrReviewThreadEndpointsTests
         ctx.Writer.Calls.Should().BeEmpty();
     }
 
+    // claude[bot] review (PR #726): pins the non-disclosure invariant that the subscribe-before-
+    // membership gate ordering exists to protect. An UNSUBSCRIBED caller posting a WELL-FORMED but
+    // FOREIGN threadId must get the subscribe 403 — NOT the membership 404. If the order ever
+    // flipped, 404-vs-403 would let an unsubscribed caller probe which threads exist on a PR they
+    // cannot see. Distinct from Foreign_threadId_returns_404 (that caller IS subscribed) and from
+    // Not_subscribed (that body has no threadId, so it never reaches the membership gate anyway).
+    [Fact]
+    public async Task Not_subscribed_with_foreign_threadId_returns_403_unauthorized_not_404()
+    {
+        using var ctx = PrReviewThreadEndpointsTestContext.Create();
+        ctx.SetSubscribed(false);
+        using var client = ctx.CreateClient();
+
+        var resp = await client.SendAsync(Post("resolve", "{\"threadId\":\"PRRT_foreign\"}"));
+
+        resp.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+        (await resp.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("code").GetString().Should().Be("unauthorized");
+        ctx.Writer.Calls.Should().BeEmpty();
+    }
+
     [Fact]
     public async Task Missing_tab_id_returns_422_tab_id_missing()
     {

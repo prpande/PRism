@@ -172,6 +172,25 @@ public class GitHubReviewThreadWriterTests
         result.ErrorCode.Should().Be(ReviewThreadErrorCode.Generic);
     }
 
+    // Copilot / claude[bot] review (PR #726): a 200 whose body isn't JSON (proxy interstitial,
+    // truncated/empty response) must degrade to a typed Generic failure — NOT throw an escaping
+    // JsonException that RunAsync's HttpRequestException-only catch would let become a 500.
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    [InlineData("<html><body>502 Bad Gateway</body></html>")]
+    [InlineData("not json at all")]
+    public async Task ResolveAsync_non_json_200_body_maps_to_Generic_without_throwing(string body)
+    {
+        var handler = new StubHandler(Resp(HttpStatusCode.OK, body));
+
+        var act = async () => await MakeWriter(handler).ResolveAsync(Pr, "PRRT_1", CancellationToken.None);
+
+        var result = await act.Should().NotThrowAsync();
+        result.Subject.Success.Should().BeFalse();
+        result.Subject.ErrorCode.Should().Be(ReviewThreadErrorCode.Generic);
+    }
+
     // ---- Classification: thrown HttpRequestException path (PostAsync throws on non-2xx) ----
 
     [Fact]
