@@ -21,14 +21,14 @@ jobs:
   # as an output. (This workflow is single-job, so the matrix-clobber concern
   # from publish-desktop.yml doesn't apply — but the job structure is kept
   # identical across both release workflows so they stay easy to maintain.)
-  release-notes:
+  release_notes:  # underscore, not hyphen: `needs.<id>` / dot-notation can't reference a hyphenated id
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
       contents: read
       pull-requests: read  # the github-api pr-strategy discovers PRs via the REST API
     outputs:
-      body: ${{ steps.notes.outputs.release-notes }}
+      body: ${{ steps.notes.outputs['release-notes'] }}  # bracket notation: the action's output key is hyphenated
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # actions/checkout v7.0.0
         with:
@@ -67,8 +67,8 @@ jobs:
         env:
           # Env, not inline ${{ }} in the script — these are derived from PR
           # titles and could otherwise inject shell (GitHub hardening guidance).
-          UNCERTAIN: ${{ steps.notes.outputs.uncertain-entries }}
-          SKIPPED: ${{ steps.notes.outputs.skipped-prs }}
+          UNCERTAIN: ${{ steps.notes.outputs['uncertain-entries'] }}
+          SKIPPED: ${{ steps.notes.outputs['skipped-prs'] }}
         run: |
           {
             echo "### Copilot release-notes diagnostics"
@@ -82,7 +82,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
   build-and-publish:
-    needs: release-notes
+    needs: release_notes
     runs-on: windows-latest
     # Cap at 30 min so a stuck npm ci / dotnet publish / Release-upload retry
     # can't consume the monthly Actions budget on one hung run. Expected wall
@@ -144,7 +144,7 @@ jobs:
           # Copilot-authored notes on top (empty on failure / no prior tag —
           # graceful fallback); GitHub's auto PR list appends below. draft stays
           # true so a human reviews before publishing.
-          body: ${{ needs.release-notes.outputs.body }}
+          body: ${{ needs.release_notes.outputs.body }}
           generate_release_notes: true
           # osx-arm64 line is omitted when include_macos is false; softprops/action-gh-release
           # treats blank lines in `files:` as no-ops, so the expression renders to an empty

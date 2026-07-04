@@ -30,14 +30,14 @@ jobs:
   # per-leg and the second leg would clobber the first leg's body. Computing the
   # notes in a dedicated job (a single Copilot call) and exposing them as an
   # output keeps the body deterministic and identical across legs.
-  release-notes:
+  release_notes:  # underscore, not hyphen: `needs.<id>` / dot-notation can't reference a hyphenated id
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
       contents: read
       pull-requests: read  # the github-api pr-strategy discovers PRs via the REST API
     outputs:
-      body: ${{ steps.notes.outputs.release-notes }}
+      body: ${{ steps.notes.outputs['release-notes'] }}  # bracket notation: the action's output key is hyphenated
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # actions/checkout v7.0.0
         with:
@@ -76,8 +76,8 @@ jobs:
         env:
           # Env, not inline ${{ }} in the script — these are derived from PR
           # titles and could otherwise inject shell (GitHub hardening guidance).
-          UNCERTAIN: ${{ steps.notes.outputs.uncertain-entries }}
-          SKIPPED: ${{ steps.notes.outputs.skipped-prs }}
+          UNCERTAIN: ${{ steps.notes.outputs['uncertain-entries'] }}
+          SKIPPED: ${{ steps.notes.outputs['skipped-prs'] }}
         run: |
           {
             echo "### Copilot release-notes diagnostics"
@@ -91,7 +91,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
   build:
-    needs: release-notes
+    needs: release_notes
     strategy:
       fail-fast: false
       # Serialize the legs: both call action-gh-release against the SAME draft
@@ -185,7 +185,7 @@ jobs:
           # GitHub's auto-notes alone. draft stays true so a human reviews and
           # edits before publishing (this is also where Copilot's flagged
           # "uncertain entries" get checked).
-          body: ${{ needs.release-notes.outputs.body }}
+          body: ${{ needs.release_notes.outputs.body }}
           generate_release_notes: true
           # Newline-separated explicit globs — the proven idiom in publish.yml.
           # Blank-line entries are no-ops, so a job that produces no .dmg is fine.
