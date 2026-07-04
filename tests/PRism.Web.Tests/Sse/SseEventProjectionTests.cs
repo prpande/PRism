@@ -70,4 +70,17 @@ public class SseEventProjectionTests
         json.Should().NotContain("\"mergeReadiness\":4"); // not the int ordinal
         json.Should().Contain("\"mergeReadinessChanged\":true");
     }
+
+    // #571 — review-thread-resolution-changed: prRef-only payload, mirrors PrLifecycleChanged.
+    [Fact]
+    public void Project_review_thread_resolution_changed_carries_pr_ref()
+    {
+        var prRef = new PrReference("o", "r", 1);
+
+        var (name, payload) = SseEventProjection.Project(new ReviewThreadResolutionChanged(prRef));
+
+        name.Should().Be("review-thread-resolution-changed");
+        var wire = payload.Should().BeOfType<SseEventProjection.ReviewThreadResolutionChangedWire>().Subject;
+        wire.PrRef.Should().Be(prRef.ToString());
+    }
 }

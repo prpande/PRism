@@ -191,40 +191,70 @@ internal sealed partial class GitHubPrLifecycleWriter : IPrLifecycleWriter
             }
             """;
         var json = await PostGraphQLAsync(query, new { owner = reference.Owner, repo = reference.Repo, number = reference.Number }, ct).ConfigureAwait(false);
-        using var doc = JsonDocument.Parse(json);
-        if (doc.RootElement.TryGetProperty("data", out var data)
-            && data.TryGetProperty("repository", out var repo)
-            && repo.ValueKind == JsonValueKind.Object
-            && repo.TryGetProperty("pullRequest", out var pr)
-            && pr.ValueKind == JsonValueKind.Object
-            && pr.TryGetProperty("id", out var id)
-            && id.GetString() is { Length: > 0 } nodeId)
+        JsonDocument doc;
+        try
         {
-            return nodeId;
+            doc = JsonDocument.Parse(json);
         }
-        throw new HttpRequestException($"No GraphQL node id for {reference.Owner}/{reference.Repo}#{reference.Number}");
+        catch (JsonException ex)
+        {
+            // A 200 whose body isn't JSON (proxy interstitial, truncated/empty) is rethrown as an
+            // HttpRequestException so the caller's existing catch classifies it (→ Generic) instead
+            // of letting the JsonException escape as an unhandled 500. Mirror of the guard in
+            // FirstGraphQLErrorCode and GitHubReviewThreadWriter.ClassifyThreadGraphQLError.
+            throw new HttpRequestException(
+                $"Non-JSON GraphQL response resolving node id for {reference.Owner}/{reference.Repo}#{reference.Number}", ex);
+        }
+        using (doc)
+        {
+            if (doc.RootElement.TryGetProperty("data", out var data)
+                && data.TryGetProperty("repository", out var repo)
+                && repo.ValueKind == JsonValueKind.Object
+                && repo.TryGetProperty("pullRequest", out var pr)
+                && pr.ValueKind == JsonValueKind.Object
+                && pr.TryGetProperty("id", out var id)
+                && id.GetString() is { Length: > 0 } nodeId)
+            {
+                return nodeId;
+            }
+            throw new HttpRequestException($"No GraphQL node id for {reference.Owner}/{reference.Repo}#{reference.Number}");
+        }
     }
 
     private static PrLifecycleErrorCode? FirstGraphQLErrorCode(string body, string mutation)
     {
-        using var doc = JsonDocument.Parse(body);
-        if (!doc.RootElement.TryGetProperty("errors", out var errors) || errors.ValueKind != JsonValueKind.Array || errors.GetArrayLength() == 0)
-            return null; // no errors
-        // Inspect the first error message. "already ready"/"already a draft" → benign no-op (caller maps to Ok).
-        var msg = errors[0].TryGetProperty("message", out var m) ? (m.GetString() ?? "") : "";
-        if (msg.Contains("already a draft", StringComparison.OrdinalIgnoreCase)
-            || msg.Contains("already ready", StringComparison.OrdinalIgnoreCase)
-            || msg.Contains("not a draft", StringComparison.OrdinalIgnoreCase))
-            return PrLifecycleErrorCode.None; // sentinel for benign
-        if (mutation == "convertPullRequestToDraft"
-            && (msg.Contains("draft", StringComparison.OrdinalIgnoreCase) && msg.Contains("not supported", StringComparison.OrdinalIgnoreCase)))
-            return PrLifecycleErrorCode.PlanUnsupportedDrafts;
-        if (errors[0].TryGetProperty("type", out var t) && string.Equals(t.GetString(), "RATE_LIMITED", StringComparison.Ordinal))
-            return PrLifecycleErrorCode.RateLimited;
-        if (msg.Contains("not have permission", StringComparison.OrdinalIgnoreCase)
-            || msg.Contains("Resource not accessible", StringComparison.OrdinalIgnoreCase))
-            return PrLifecycleErrorCode.TokenCannotWrite;
-        return PrLifecycleErrorCode.Generic;
+        JsonDocument doc;
+        try
+        {
+            doc = JsonDocument.Parse(body);
+        }
+        catch (JsonException)
+        {
+            // A 200 whose body isn't JSON (proxy interstitial, truncated/empty response) must degrade
+            // to a typed Generic failure: ClassifyGraphQLResult's caller catches only
+            // HttpRequestException, so an escaping JsonException would surface as an unhandled 500.
+            return PrLifecycleErrorCode.Generic;
+        }
+        using (doc)
+        {
+            if (!doc.RootElement.TryGetProperty("errors", out var errors) || errors.ValueKind != JsonValueKind.Array || errors.GetArrayLength() == 0)
+                return null; // no errors
+            // Inspect the first error message. "already ready"/"already a draft" → benign no-op (caller maps to Ok).
+            var msg = errors[0].TryGetProperty("message", out var m) ? (m.GetString() ?? "") : "";
+            if (msg.Contains("already a draft", StringComparison.OrdinalIgnoreCase)
+                || msg.Contains("already ready", StringComparison.OrdinalIgnoreCase)
+                || msg.Contains("not a draft", StringComparison.OrdinalIgnoreCase))
+                return PrLifecycleErrorCode.None; // sentinel for benign
+            if (mutation == "convertPullRequestToDraft"
+                && (msg.Contains("draft", StringComparison.OrdinalIgnoreCase) && msg.Contains("not supported", StringComparison.OrdinalIgnoreCase)))
+                return PrLifecycleErrorCode.PlanUnsupportedDrafts;
+            if (errors[0].TryGetProperty("type", out var t) && string.Equals(t.GetString(), "RATE_LIMITED", StringComparison.Ordinal))
+                return PrLifecycleErrorCode.RateLimited;
+            if (msg.Contains("not have permission", StringComparison.OrdinalIgnoreCase)
+                || msg.Contains("Resource not accessible", StringComparison.OrdinalIgnoreCase))
+                return PrLifecycleErrorCode.TokenCannotWrite;
+            return PrLifecycleErrorCode.Generic;
+        }
     }
 
     private PrLifecycleResult ClassifyGraphQLResult(string body, string mutation, PrReference reference)

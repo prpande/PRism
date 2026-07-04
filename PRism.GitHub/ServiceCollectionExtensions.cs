@@ -105,6 +105,20 @@ public static class ServiceCollectionExtensions
                 sp.GetRequiredService<ILogger<GitHubPrLifecycleWriter>>());
         });
 
+        // #571 — IReviewThreadWriter (resolve/unresolve review threads). GraphQL-only; host captured
+        // eagerly, token late-bound — matches the IPrLifecycleWriter precedent above.
+        services.AddSingleton<IReviewThreadWriter>(sp =>
+        {
+            var config = sp.GetRequiredService<IConfigStore>();
+            var tokens = sp.GetRequiredService<ITokenStore>();
+            var factory = sp.GetRequiredService<IHttpClientFactory>();
+            return new GitHubReviewThreadWriter(
+                factory,
+                () => tokens.ReadAsync(CancellationToken.None),
+                config.Current.Github.Host,
+                sp.GetRequiredService<ILogger<GitHubReviewThreadWriter>>());
+        });
+
         services.AddSingleton<ISectionQueryRunner>(sp =>
         {
             var tokens = sp.GetRequiredService<ITokenStore>();

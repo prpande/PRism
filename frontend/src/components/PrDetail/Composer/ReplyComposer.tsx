@@ -1,4 +1,4 @@
-import { useDraftComposer } from './useDraftComposer';
+import { useDraftComposer, type ThreadResolveControl } from './useDraftComposer';
 import { ComposerActionsBar } from './ComposerActionsBar';
 import { ComposerModals } from './ComposerModals';
 import { ComposerMarkdownPreview } from './ComposerMarkdownPreview';
@@ -21,6 +21,7 @@ export interface ReplyComposerProps {
   beginPosting?: () => void;
   endPosting?: () => void;
   onPosted?: (postedCommentId: number, body: string) => void;
+  resolveControl?: ThreadResolveControl;
 }
 
 function replyAriaLabel(parentThreadId: string): string {
@@ -42,6 +43,7 @@ export function ReplyComposer({
   beginPosting,
   endPosting,
   onPosted,
+  resolveControl,
 }: ReplyComposerProps) {
   const { editor, actions, modals } = useDraftComposer({
     prRef,
@@ -59,6 +61,7 @@ export function ReplyComposer({
     onPosted,
     anchor: { kind: 'reply', parentThreadId },
     deletePatchKind: 'deleteDraftReply',
+    resolveControl,
   });
 
   return (

@@ -1,6 +1,7 @@
 import { useId } from 'react';
 import { AiComposerAssistant } from '../../Ai/AiComposerAssistant';
 import type { ComposerSaveBadge } from '../../../hooks/useComposerAutoSave';
+import type { ComposerResolveButton } from './useDraftComposer';
 import { ComposerStatusBadge } from './ComposerStatusBadge';
 
 export interface ComposerActionsBarProps {
@@ -20,6 +21,9 @@ export interface ComposerActionsBarProps {
   onDiscardClick: () => void;
   onSaveClick: () => void;
   onPostNow: () => void;
+  // #571 B1 fix — the thread Resolve / "Comment and resolve conversation" button, rendered
+  // immediately before "Comment". Derived by useDraftComposer; omitted for inline comments.
+  resolve?: ComposerResolveButton;
 }
 
 export function ComposerActionsBar({
@@ -39,6 +43,7 @@ export function ComposerActionsBar({
   onDiscardClick,
   onSaveClick,
   onPostNow,
+  resolve,
 }: ComposerActionsBarProps) {
   // #390 — on a merged/closed PR the inline "PR is merged …" note is gone. Keep
   // the "posts immediately" context as (a) the button's tooltip for mouse users
@@ -96,6 +101,18 @@ export function ComposerActionsBar({
           disabled={actionsLocked}
         >
           {addLabel}
+        </button>
+      )}
+      {resolve && (
+        <button
+          type="button"
+          className={`composer-resolve btn btn-sm ${resolve.isResolved ? 'btn-secondary' : 'btn-success-outline'}`}
+          disabled={resolve.disabled}
+          aria-disabled={resolve.disabled || undefined}
+          aria-busy={resolve.busy || undefined}
+          onClick={resolve.onClick}
+        >
+          {resolve.label}
         </button>
       )}
       <button

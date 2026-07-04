@@ -674,6 +674,21 @@ a:hover { text-decoration: underline; }
 }
 .btn-secondary:hover:not(:disabled) { background: var(--surface-3); border-color: var(--border-strong); }
 
+/* Resolve-conversation CTA (#571): green outline, not a solid fill — this is a
+   confirm-then-apply toggle action, not a destructive/primary one. `.btn`
+   already declares `border: 1px solid transparent`, so `border-color` alone
+   renders the outline. */
+.btn-success-outline {
+  background: var(--surface-1);
+  color: var(--success-fg);
+  border-color: var(--success);
+}
+.btn-success-outline:hover:not(:disabled) {
+  background: var(--success-soft);
+  border-color: var(--success);
+  color: var(--success-fg);
+}
+
 .btn-ghost { color: var(--text-2); }
 .btn-ghost:hover:not(:disabled) { background: var(--surface-3); color: var(--text-1); }
 

@@ -32,4 +32,13 @@
    shows the plain cards with no hover, per "no hover on an open thread card". */
 .commentThreadActions {
   display: flex;
+  align-items: center;
+  gap: var(--s-2);
+}
+/* CollapsedComposerAffordance is width:100% internally (shared with Overview's
+   reply button); wrap it so it fills the remaining row space instead of
+   fighting the Resolve/Unresolve button (#571 Task 12) for room. */
+.replyAffordanceSlot {
+  flex: 1;
+  min-width: 0;
 }

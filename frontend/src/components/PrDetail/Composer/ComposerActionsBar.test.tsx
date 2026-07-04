@@ -98,4 +98,82 @@ describe('ComposerActionsBar', () => {
     expect(badge).toHaveTextContent('Saving…');
     expect(badge).not.toHaveClass('composer-badge--readonly');
   });
+  it('renders the Resolve button immediately before the post-now button (#571) with green-outline style', () => {
+    // The thread Resolve control lands in DOM order right before "Comment" so it reads as the
+    // last action taken before posting. An unresolved thread uses the green-outline affordance.
+    const { container } = render(
+      <ComposerActionsBar
+        {...baseProps}
+        resolve={{
+          label: 'Resolve conversation',
+          busy: false,
+          disabled: false,
+          isResolved: false,
+          onClick: vi.fn(),
+        }}
+      />,
+    );
+    const resolveBtn = screen.getByRole('button', { name: 'Resolve conversation' });
+    const postNowButton = container.querySelector('.composer-post-now') as HTMLElement;
+    expect(resolveBtn).toBeInTheDocument();
+    expect(resolveBtn.className).toMatch(/\bbtn-success-outline\b/);
+    // Node.DOCUMENT_POSITION_FOLLOWING (4): the resolve button precedes post-now.
+    expect(
+      resolveBtn.compareDocumentPosition(postNowButton) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+  });
+  it('renders no Resolve button when the resolve descriptor is omitted', () => {
+    render(<ComposerActionsBar {...baseProps} />);
+    expect(screen.queryByRole('button', { name: /resolve conversation/i })).toBeNull();
+  });
+  it('surfaces the "Comment and resolve conversation" label and, when busy, disables + aria-busy', () => {
+    const { rerender } = render(
+      <ComposerActionsBar
+        {...baseProps}
+        resolve={{
+          label: 'Comment and resolve conversation',
+          busy: false,
+          disabled: false,
+          isResolved: false,
+          onClick: vi.fn(),
+        }}
+      />,
+    );
+    expect(
+      screen.getByRole('button', { name: 'Comment and resolve conversation' }),
+    ).not.toBeDisabled();
+
+    rerender(
+      <ComposerActionsBar
+        {...baseProps}
+        resolve={{
+          label: 'Resolving…',
+          busy: true,
+          disabled: true,
+          isResolved: false,
+          onClick: vi.fn(),
+        }}
+      />,
+    );
+    const busy = screen.getByRole('button', { name: 'Resolving…' });
+    expect(busy).toBeDisabled();
+    expect(busy).toHaveAttribute('aria-busy', 'true');
+  });
+  it('renders the neutral secondary style for an unresolve (isResolved) descriptor', () => {
+    render(
+      <ComposerActionsBar
+        {...baseProps}
+        resolve={{
+          label: 'Unresolve conversation',
+          busy: false,
+          disabled: false,
+          isResolved: true,
+          onClick: vi.fn(),
+        }}
+      />,
+    );
+    expect(screen.getByRole('button', { name: 'Unresolve conversation' }).className).toMatch(
+      /\bbtn-secondary\b/,
+    );
+  });
 });

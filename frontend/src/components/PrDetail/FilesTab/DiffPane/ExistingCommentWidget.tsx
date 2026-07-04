@@ -1,3 +1,4 @@
+import { useRef } from 'react';
 import type { PrReference, ReviewThreadDto } from '../../../../api/types';
 import { CommentCard } from '../../Comment/CommentCard';
 import { CollapsedComposerAffordance } from '../../Composer/CollapsedComposerAffordance';
@@ -8,9 +9,20 @@ import {
   type ComposerOwnerKey,
 } from '../../../../hooks/useDraftSession';
 import { useDraftBackedDisclosure } from '../../../../hooks/useDraftBackedDisclosure';
+import { useThreadResolution } from '../../../../hooks/useThreadResolution';
 import { useReplyData } from '../ReplyDataContext';
 import { ThreadDisclosureHeader } from './ThreadDisclosureHeader';
 import { stripMarkdown } from '../../HotspotsTab/stripMarkdown';
+
+// Stable no-op fallbacks for the pure-render / read-only case (no replyContext
+// or collapse control mounted) so useThreadResolution's useCallback deps don't
+// churn on every render.
+const NOOP = () => {};
+
+function resolveButtonLabel(pending: boolean, isResolved: boolean): string {
+  if (pending) return isResolved ? 'Unresolving…' : 'Resolving…';
+  return isResolved ? 'Unresolve conversation' : 'Resolve conversation';
+}
 
 // #327 Task 13 — the STABLE half of the split reply wiring: identity-stable
 // callbacks plus the rarely-changing scalars (prRef/prState/readOnly). FilesTab
@@ -35,11 +47,19 @@ export interface ExistingCommentWidgetReplyContext {
   // the just-posted comment surfaces. 11b passes the posted body so the parent
   // can stash an optimistic placeholder for this thread.
   onReplyPosted?: (threadId: string, postedCommentId: number, body: string) => void;
+  // #571 — reloads PR detail (stable function from usePrDetailContext). Wired
+  // by the thread-resolution control (Task 12) so a resolve/unresolve action
+  // reflects the server's response without waiting on the SSE round-trip.
+  reload: () => void;
 }
 
 export interface ThreadCollapseControl {
   isCollapsed: (threadId: string, isResolved: boolean) => boolean;
   toggle: (threadId: string, isResolved: boolean) => void;
+  // #571 — drops threadId's entry from the collapse-override map so a
+  // resolve/unresolve action falls back to the isResolved default instead of
+  // sticking to whatever the user last toggled.
+  clearCollapseOverride: (threadId: string) => void;
 }
 
 export interface ExistingCommentWidgetProps {
@@ -122,6 +142,37 @@ function ThreadView({
     (o) => !thread.comments.some((c) => c.databaseId != null && c.databaseId === o.postedCommentId),
   );
 
+  // #571 Task 12 — called UNCONDITIONALLY (Rules of Hooks). The widget also
+  // renders in pure-render / read-only mode where replyContext is undefined;
+  // the hook's null-prRef guard makes invoke() a no-op there, and the button
+  // below is only rendered when replyContext exists, so invoke() is never
+  // reachable with a null prRef.
+  const { pending, announce, error, invoke } = useThreadResolution({
+    prRef: replyContext?.prRef ?? null,
+    threadId: thread.threadId,
+    isResolved: thread.isResolved,
+    reload: replyContext?.reload ?? NOOP,
+    clearCollapseOverride: collapse?.clearCollapseOverride ?? NOOP,
+  });
+  const rootRef = useRef<HTMLDivElement>(null);
+  const onResolveClick = () => {
+    rootRef.current?.focus(); // park focus before the button disables
+    invoke();
+  };
+
+  const resolveButton = replyContext ? (
+    <button
+      type="button"
+      className={`btn btn-sm ${thread.isResolved ? 'btn-secondary' : 'btn-success-outline'}`}
+      disabled={pending || replyContext.readOnly}
+      aria-disabled={pending || replyContext.readOnly || undefined}
+      aria-busy={pending || undefined}
+      onClick={onResolveClick}
+    >
+      {resolveButtonLabel(pending, thread.isResolved)}
+    </button>
+  ) : null;
+
   const collapsed = collapse?.isCollapsed(thread.threadId, thread.isResolved) ?? false;
   const bodyId = `thread-body-${thread.threadId}`;
   const first = thread.comments[0];
@@ -129,6 +180,8 @@ function ThreadView({
 
   return (
     <div
+      ref={rootRef}
+      tabIndex={-1}
       className={`comment-thread${thread.isResolved ? ' comment-thread--resolved' : ''} ${styles.commentThread}`}
       data-thread-id={thread.threadId}
     >
@@ -173,13 +226,16 @@ function ThreadView({
 
           {replyContext && !composerOpen && (
             <div className={`comment-thread-actions ${styles.commentThreadActions}`}>
-              <CollapsedComposerAffordance
-                label={existingDraft ? 'Continue draft…' : 'Reply…'}
-                ariaLabel={`Reply to thread on ${thread.filePath} line ${thread.lineNumber}`}
-                hasDraft={!!existingDraft}
-                readOnly={replyContext.readOnly}
-                onOpen={handleReplyClick}
-              />
+              <div className={styles.replyAffordanceSlot}>
+                <CollapsedComposerAffordance
+                  label={existingDraft ? 'Continue draft…' : 'Reply…'}
+                  ariaLabel={`Reply to thread on ${thread.filePath} line ${thread.lineNumber}`}
+                  hasDraft={!!existingDraft}
+                  readOnly={replyContext.readOnly}
+                  onOpen={handleReplyClick}
+                />
+              </div>
+              {resolveButton}
             </div>
           )}
 
@@ -205,8 +261,30 @@ function ThreadView({
               onPosted={(id, postedBody) =>
                 replyContext.onReplyPosted?.(thread.threadId, id, postedBody)
               }
+              // #571 B1 fix — the OPEN composer hosts its own Resolve button (rendered by
+              // ComposerActionsBar) so it can relabel to "Comment and resolve conversation" and
+              // post the pending reply before resolving. The closed-row `resolveButton` above stays
+              // a plain resolve-only control (no open reply box to post).
+              resolveControl={{
+                onResolve: invoke,
+                isResolved: thread.isResolved,
+                pending,
+                readOnly: replyContext.readOnly ?? false,
+              }}
             />
           )}
+        </div>
+      )}
+
+      {/* Always-mounted live region (mirrors PrActionsPanel.tsx) — screen readers only
+          reliably announce a content mutation inside a region that is ALREADY in the DOM;
+          a region inserted already-containing its text is silent on NVDA/JAWS. */}
+      <span className="sr-only" role="status" aria-live="polite" aria-atomic="true">
+        {announce ?? ''}
+      </span>
+      {error && (
+        <div className="composer-error" role="alert">
+          {error}
         </div>
       )}
     </div>
