@@ -13,10 +13,10 @@ on:
         type: string
         default: ''
       model:
-        description: 'Copilot CLI model for the notes (e.g. claude-sonnet-4, gpt-4o). Stronger models follow the style guide (overview + bold labels) more reliably. Blank = the Action default.'
+        description: 'Copilot CLI model override (e.g. gpt-4o). Leave blank to use the Copilot default model (recommended). Set this only to a model your Copilot account has enabled — an unavailable id fails the run (claude-sonnet-4 is not available for this account).'
         required: false
         type: string
-        default: 'claude-sonnet-4'
+        default: ''
       include_macos:
         description: 'Attach osx-arm64 binary to the Release. Default false at v0.1.0 (Windows-only ship per docs/specs/2026-05-28-v1-completion-roadmap-design.md § 4.2 + § 6.2). Flip true once macOS hardware verifies the build at v0.1.1.'
         required: false
