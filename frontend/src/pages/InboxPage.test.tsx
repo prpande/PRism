@@ -1,4 +1,4 @@
-import { render, screen, within, fireEvent } from '@testing-library/react';
+import { render, screen, within, fireEvent, act } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { InboxResponse, AiCapabilities, PreferencesResponse } from '../api/types';
@@ -348,6 +348,68 @@ describe('InboxPage', () => {
       vi.advanceTimersByTime(30_000); // no throw / no further calls after teardown
       expect(revalidate).toHaveBeenCalledTimes(2);
     } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not poll while the tab is hidden, even when active — #717', () => {
+    // #717 — the backstop poll is gated on document visibility. A backgrounded tab
+    // (document.hidden) does zero polling; the interval is paused, not merely skipped.
+    vi.useFakeTimers();
+    try {
+      const { revalidate } = setHooks({ data: sampleData });
+      render(
+        <MemoryRouter initialEntries={['/']}>
+          <OpenTabsProvider>
+            <InboxPage active={true} revalidateNonce={0} />
+          </OpenTabsProvider>
+        </MemoryRouter>,
+      );
+      // Baseline: while visible it polls (jsdom defaults visibilityState to 'visible').
+      vi.advanceTimersByTime(8_000);
+      expect(revalidate).toHaveBeenCalledTimes(1);
+
+      // Go hidden → the interval is cleared; no poll fires across many would-be ticks.
+      Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true });
+      act(() => document.dispatchEvent(new Event('visibilitychange')));
+      revalidate.mockClear();
+      vi.advanceTimersByTime(80_000); // 10 intervals' worth
+      expect(revalidate).not.toHaveBeenCalled();
+    } finally {
+      Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true });
+      vi.useRealTimers();
+    }
+  });
+
+  it('fires one immediate revalidate on return to visible and resumes the interval — #717', () => {
+    // #717 AC — on tab re-focus a single revalidate() fires promptly (a stale unread bar
+    // clears on return, not on the next 8s tick), and the interval resumes.
+    vi.useFakeTimers();
+    try {
+      const { revalidate } = setHooks({ data: sampleData });
+      render(
+        <MemoryRouter initialEntries={['/']}>
+          <OpenTabsProvider>
+            <InboxPage active={true} revalidateNonce={0} />
+          </OpenTabsProvider>
+        </MemoryRouter>,
+      );
+      // Hide before any tick, then confirm the hidden tab is silent.
+      Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true });
+      act(() => document.dispatchEvent(new Event('visibilitychange')));
+      vi.advanceTimersByTime(80_000);
+      expect(revalidate).not.toHaveBeenCalled();
+
+      // Return to visible → immediate revalidate, without waiting a full interval.
+      Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true });
+      act(() => document.dispatchEvent(new Event('visibilitychange')));
+      expect(revalidate).toHaveBeenCalledTimes(1);
+
+      // ...and the interval resumes on the resumed poll cadence.
+      vi.advanceTimersByTime(8_000);
+      expect(revalidate).toHaveBeenCalledTimes(2);
+    } finally {
+      Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true });
       vi.useRealTimers();
     }
   });

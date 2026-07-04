@@ -62,8 +62,34 @@ export function InboxPage({
     // slow GET under CI load, while staying infrequent enough (with the unchanged-guard) to be
     // negligible traffic. This is a timer, not a render effect, so it fires regardless of the
     // concurrent-render race that can drop the nonce — it is the actual guarantee.
-    const id = setInterval(() => void revalidate(), 8_000);
-    return () => clearInterval(id);
+    //
+    // #717 — gate the poll on document visibility: a backgrounded tab does zero polling. The
+    // interval is paused (cleared) while hidden and restarted on return; returning ALSO fires one
+    // immediate revalidate so a stale unread bar clears on re-focus, not on the next 8s tick.
+    let id: ReturnType<typeof setInterval> | undefined;
+    const start = () => {
+      id ??= setInterval(() => void revalidate(), 8_000);
+    };
+    const stop = () => {
+      if (id !== undefined) {
+        clearInterval(id);
+        id = undefined;
+      }
+    };
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        void revalidate(); // catch up immediately on return
+        start();
+      } else {
+        stop();
+      }
+    };
+    if (document.visibilityState === 'visible') start(); // arm only if visible at mount
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibility);
+      stop();
+    };
   }, [active, revalidate]);
 
   // #450 — an inbox-updated frame now silently auto-refreshes (debounced) instead of
