@@ -321,7 +321,8 @@ Specify it as tabs rather than inventing a bespoke nav:
 
 ## Implementation follow-up (out of scope here)
 
-File a **T3 implementation issue** (brainstorm-lite → writing-plans → executing-plans) covering:
+Tracked as **[#727](https://github.com/prpande/PRism/issues/727)** — a **T3 implementation issue**
+(brainstorm-lite → writing-plans → executing-plans) covering:
 
 1. the **vertical tablist** Section Sidebar component (+ collapse-to-icon-rail);
 2. wiring the selected section's PRs into a **tabpanel** main pane in `InboxPage`;
