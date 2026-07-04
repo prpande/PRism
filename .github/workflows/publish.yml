@@ -136,7 +136,12 @@ jobs:
           DELIM="PRISM_BODY_EOF_$(openssl rand -hex 16)"
           {
             echo "text<<$DELIM"
-            printf '%s\n' "$body"
+            # Only emit a content line when there's a body, so an empty body
+            # yields an unambiguously-empty output value (not a stray newline
+            # that softprops would treat as a set body and prepend to the
+            # generate_release_notes fallback). The trailing \n keeps the
+            # closing delimiter on its own line for a non-empty body.
+            [ -n "$body" ] && printf '%s\n' "$body"
             echo "$DELIM"
           } >> "$GITHUB_OUTPUT"
 
