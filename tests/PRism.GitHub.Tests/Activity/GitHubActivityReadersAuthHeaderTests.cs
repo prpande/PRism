@@ -1,6 +1,7 @@
 using System.Net;
 using System.Text;
 using FluentAssertions;
+using Microsoft.Extensions.Logging.Abstractions;
 using PRism.GitHub.Activity;
 using PRism.GitHub.Tests.TestHelpers;
 using Xunit;
@@ -101,5 +102,22 @@ public sealed class GitHubActivityReadersAuthHeaderTests
             .ReadAsync(CancellationToken.None);
 
         handler.AuthValues.Should().ContainSingle().Which.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task Bearer_is_attached_on_every_paginated_request()
+    {
+        var handler = new ScriptedPagesHandler(
+            (HttpStatusCode.OK, """[{"full_name":"o/r1"}]""", "https://api.github.com/user/subscriptions?page=2"),
+            (HttpStatusCode.OK, """[{"full_name":"o/r2"}]""", null));
+        var reader = new GitHubWatchedReposReader(
+            new FakeHttpClientFactory(handler, new Uri("https://api.github.com/")),
+            () => Task.FromResult<string?>("token"),
+            NullLogger<GitHubWatchedReposReader>.Instance);
+
+        await reader.ReadAsync(CancellationToken.None);
+
+        handler.AuthHeaders.Should().HaveCount(2);
+        handler.AuthHeaders.Should().OnlyContain(h => h == "Bearer token");
     }
 }
