@@ -1,4 +1,4 @@
-import { render, screen, within, fireEvent } from '@testing-library/react';
+import { render, screen, within, fireEvent, act } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { InboxResponse, AiCapabilities, PreferencesResponse } from '../api/types';
@@ -348,6 +348,127 @@ describe('InboxPage', () => {
       vi.advanceTimersByTime(30_000); // no throw / no further calls after teardown
       expect(revalidate).toHaveBeenCalledTimes(2);
     } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not poll while the tab is hidden, even when active — #717', () => {
+    // #717 — the backstop poll is gated on document visibility. A backgrounded tab
+    // (document.hidden) does zero polling; the interval is paused, not merely skipped.
+    vi.useFakeTimers();
+    try {
+      const { revalidate } = setHooks({ data: sampleData });
+      render(
+        <MemoryRouter initialEntries={['/']}>
+          <OpenTabsProvider>
+            <InboxPage active={true} revalidateNonce={0} />
+          </OpenTabsProvider>
+        </MemoryRouter>,
+      );
+      // Baseline: while visible it polls (jsdom defaults visibilityState to 'visible').
+      vi.advanceTimersByTime(8_000);
+      expect(revalidate).toHaveBeenCalledTimes(1);
+
+      // Go hidden → the interval is cleared; no poll fires across many would-be ticks.
+      Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true });
+      act(() => document.dispatchEvent(new Event('visibilitychange')));
+      revalidate.mockClear();
+      vi.advanceTimersByTime(80_000); // 10 intervals' worth
+      expect(revalidate).not.toHaveBeenCalled();
+    } finally {
+      Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true });
+      vi.useRealTimers();
+    }
+  });
+
+  it('fires one immediate revalidate on return to visible and resumes the interval — #717', () => {
+    // #717 AC — on tab re-focus a single revalidate() fires promptly (a stale unread bar
+    // clears on return, not on the next 8s tick), and the interval resumes.
+    vi.useFakeTimers();
+    try {
+      const { revalidate } = setHooks({ data: sampleData });
+      render(
+        <MemoryRouter initialEntries={['/']}>
+          <OpenTabsProvider>
+            <InboxPage active={true} revalidateNonce={0} />
+          </OpenTabsProvider>
+        </MemoryRouter>,
+      );
+      // Hide before any tick, then confirm the hidden tab is silent.
+      Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true });
+      act(() => document.dispatchEvent(new Event('visibilitychange')));
+      vi.advanceTimersByTime(80_000);
+      expect(revalidate).not.toHaveBeenCalled();
+
+      // Return to visible → immediate revalidate, without waiting a full interval.
+      Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true });
+      act(() => document.dispatchEvent(new Event('visibilitychange')));
+      expect(revalidate).toHaveBeenCalledTimes(1);
+
+      // ...and the interval resumes on the resumed poll cadence.
+      vi.advanceTimersByTime(8_000);
+      expect(revalidate).toHaveBeenCalledTimes(2);
+    } finally {
+      Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true });
+      vi.useRealTimers();
+    }
+  });
+
+  it('mounts silent while hidden, then arms on first foreground — #717', () => {
+    // #717 — mount-while-hidden path: a keep-alive user reaching the Inbox route while the OS
+    // tab is backgrounded must NOT poll until the tab is foregrounded, at which point the
+    // interval arms and the immediate catch-up revalidate fires (not the mount-time branch).
+    vi.useFakeTimers();
+    try {
+      Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true });
+      const { revalidate } = setHooks({ data: sampleData });
+      render(
+        <MemoryRouter initialEntries={['/']}>
+          <OpenTabsProvider>
+            <InboxPage active={true} revalidateNonce={0} />
+          </OpenTabsProvider>
+        </MemoryRouter>,
+      );
+      // Armed only if visible at mount → a hidden mount stays silent across many ticks.
+      vi.advanceTimersByTime(80_000);
+      expect(revalidate).not.toHaveBeenCalled();
+
+      // First foreground arms the interval AND fires the immediate catch-up.
+      Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true });
+      act(() => document.dispatchEvent(new Event('visibilitychange')));
+      expect(revalidate).toHaveBeenCalledTimes(1);
+      vi.advanceTimersByTime(8_000);
+      expect(revalidate).toHaveBeenCalledTimes(2);
+    } finally {
+      Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true });
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not fire a duplicate immediate revalidate on a redundant visible event — #717', () => {
+    // #717 — the immediate catch-up must fire ONCE per resume-from-hidden, not on every
+    // visibilitychange whose state is 'visible'. Browsers can emit a 'visible' event with no
+    // intervening 'hidden' (focus/blur cycles); that must not trigger an extra /api/inbox GET.
+    vi.useFakeTimers();
+    try {
+      const { revalidate } = setHooks({ data: sampleData });
+      render(
+        <MemoryRouter initialEntries={['/']}>
+          <OpenTabsProvider>
+            <InboxPage active={true} revalidateNonce={0} />
+          </OpenTabsProvider>
+        </MemoryRouter>,
+      );
+      // Mounted visible → interval armed, no immediate call. A spurious visible→visible event
+      // (the poll was never paused) must NOT catch up.
+      Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true });
+      act(() => document.dispatchEvent(new Event('visibilitychange')));
+      expect(revalidate).not.toHaveBeenCalled();
+      // The armed interval still ticks on cadence (it was never double-armed or dropped).
+      vi.advanceTimersByTime(8_000);
+      expect(revalidate).toHaveBeenCalledTimes(1);
+    } finally {
+      Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true });
       vi.useRealTimers();
     }
   });

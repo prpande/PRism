@@ -97,6 +97,9 @@ Thumbs.db
 # Scratch / ephemeral working files
 .tmp/
 
+# Playwright MCP scratch output (screenshots/snapshots dropped by the MCP browser tool)
+.playwright-mcp/
+
 # Code coverage reports
 coveragereport/
 

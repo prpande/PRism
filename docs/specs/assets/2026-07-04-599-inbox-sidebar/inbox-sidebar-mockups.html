@@ -1,0 +1,495 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>#599 — Inbox section sidebar · mockups</title>
+<style>
+  /* ------------------------------------------------------------------ *
+   * Standalone mockup gallery for issue #599 (inbox section sidebar).
+   * The generic mockup vars below are mapped to PRism's REAL design
+   * tokens (frontend/src/styles/tokens.css), so both themes look faithful
+   * without a build step. Open this file directly in a browser; use the
+   * Light/Dark toggle top-right. These are the brainstorm mockups the
+   * design spec references — see the sibling design .md file.
+   * ------------------------------------------------------------------ */
+  :root {
+    --font-sans: "Geist", -apple-system, BlinkMacSystemFont, system-ui, "Segoe UI", sans-serif;
+    /* mockup token  ->  PRism token (LIGHT) */
+    --bg-primary:    oklch(0.99 0 0);        /* surface-1 */
+    --bg-secondary:  oklch(0.925 0.004 250); /* surface-2 */
+    --bg-tertiary:   oklch(0.90 0.005 250);  /* surface-3 */
+    --selected-bg:   oklch(0.94 0.0425 245); /* accent-soft */
+    --border:        oklch(0.89 0.005 250);  /* border-1 */
+    --accent:        oklch(0.55 0.085 245);  /* accent */
+    --success:       oklch(0.55 0.10 150);
+    --error:         oklch(0.55 0.16 25);    /* danger */
+    --text-primary:   oklch(0.20 0.012 250); /* text-1 */
+    --text-secondary: oklch(0.42 0.010 250); /* text-2 */
+    --text-tertiary:  oklch(0.48 0.010 250); /* text-3 */
+    --page-bg:       oklch(0.96 0.003 250);  /* surface-0 */
+    color-scheme: light;
+  }
+  :root[data-theme="dark"] {
+    --bg-primary:    oklch(0.21 0.009 250);
+    --bg-secondary:  oklch(0.235 0.010 250);
+    --bg-tertiary:   oklch(0.27 0.011 250);
+    --selected-bg:   oklch(0.30 0.0595 245);
+    --border:        oklch(0.30 0.012 250);
+    --accent:        oklch(0.72 0.085 245);
+    --success:       oklch(0.72 0.13 150);
+    --error:         oklch(0.70 0.16 25);
+    --text-primary:   oklch(0.96 0.004 250);
+    --text-secondary: oklch(0.78 0.008 250);
+    --text-tertiary:  oklch(0.62 0.010 250);
+    --page-bg:       oklch(0.18 0.008 250);
+    color-scheme: dark;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: var(--font-sans);
+    background: var(--page-bg);
+    color: var(--text-primary);
+    padding: 2rem clamp(1rem, 4vw, 3rem) 5rem;
+    -webkit-font-smoothing: antialiased;
+  }
+  .page-head { max-width: 1000px; margin: 0 auto 2rem; }
+  h1 { font-size: 1.5rem; margin: 0 0 0.4rem; }
+  .lede { color: var(--text-secondary); font-size: 0.9rem; line-height: 1.55; max-width: 760px; margin: 0; }
+  .screen { max-width: 1000px; margin: 0 auto 3.5rem; }
+  h2 { font-size: 1.15rem; margin: 0 0 0.35rem; }
+  .subtitle { color: var(--text-secondary); font-size: 0.85rem; line-height: 1.5; max-width: 760px; margin: 0 0 1.1rem; }
+
+  .themebar {
+    position: fixed; top: 1rem; right: 1rem; z-index: 50;
+    display: flex; gap: 0.4rem; align-items: center;
+    background: var(--bg-primary); border: 1px solid var(--border);
+    border-radius: 999px; padding: 0.3rem 0.4rem; box-shadow: 0 4px 14px rgba(0,0,0,0.18);
+  }
+  .themebar button {
+    font: inherit; font-size: 0.75rem; cursor: pointer;
+    border: 0; border-radius: 999px; padding: 0.3rem 0.7rem;
+    color: var(--text-secondary); background: transparent;
+  }
+  .themebar button.on { background: var(--selected-bg); color: var(--accent); font-weight: 600; }
+</style>
+</head>
+<body>
+  <div class="themebar" role="group" aria-label="Theme">
+    <button type="button" data-set="light" class="on">Light</button>
+    <button type="button" data-set="dark">Dark</button>
+  </div>
+
+  <div class="page-head">
+    <h1>#599 — Inbox sections as a collapsible left sidebar</h1>
+    <p class="lede">Brainstorm mockups (real PRism tokens, both themes). Baseline → the chosen sidebar direction → the in-pane cap-collapse for busy sections. These are the visual basis for <code>docs/specs/2026-07-04-599-inbox-section-sidebar-design.md</code>; the implementation is tracked as #727.</p>
+  </div>
+
+  <!-- ================= SCREEN 1 — BASELINE ================= -->
+  <section class="screen" id="screen-baseline">
+<style>
+  .pv-wrap { max-width: 960px; }
+  .pv-frame {
+    position: relative;
+    height: 560px;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+    background: var(--bg-primary);
+    box-shadow: 0 8px 30px rgba(0,0,0,0.12);
+  }
+  .pv-chrome {
+    display: flex; align-items: center; gap: 0.4rem;
+    padding: 0.5rem 0.75rem; background: var(--bg-tertiary);
+    border-bottom: 1px solid var(--border);
+  }
+  .pv-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--text-tertiary); opacity: 0.5; }
+  .pv-url { margin-left: 0.6rem; font-size: 0.72rem; color: var(--text-secondary); }
+  .pv-scroll { padding: 0.9rem 1rem 3rem; }
+  .pv-toolbar {
+    display: flex; align-items: center; gap: 0.5rem; margin-bottom: 1rem;
+  }
+  .pv-search {
+    flex: 1; background: var(--bg-secondary); border: 1px solid var(--border);
+    border-radius: 8px; padding: 0.45rem 0.7rem; font-size: 0.78rem; color: var(--text-tertiary);
+  }
+  .pv-chip {
+    font-size: 0.72rem; padding: 0.35rem 0.6rem; border: 1px solid var(--border);
+    border-radius: 999px; color: var(--text-secondary); background: var(--bg-secondary); white-space: nowrap;
+  }
+  .pv-grid { display: grid; grid-template-columns: 1fr 240px; gap: 1.1rem; }
+  .pv-sec { margin-bottom: 1.1rem; }
+  .pv-sechead {
+    display: flex; align-items: center; gap: 0.5rem; padding: 0.4rem 0.2rem;
+    font-weight: 600; font-size: 0.86rem;
+  }
+  .pv-caret { color: var(--text-secondary); font-size: 0.7rem; width: 0.8rem; }
+  .pv-count {
+    margin-left: 0.15rem; font-size: 0.7rem; color: var(--text-secondary);
+    background: var(--bg-tertiary); border-radius: 999px; padding: 0.05rem 0.45rem; font-weight: 600;
+  }
+  .pv-row {
+    display: flex; align-items: center; gap: 0.6rem; padding: 0.5rem 0.6rem;
+    background: var(--bg-secondary); border: 1px solid var(--border); border-radius: 8px; margin: 0.35rem 0;
+  }
+  .pv-rowmain { flex: 1; min-width: 0; }
+  .pv-title { font-size: 0.8rem; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .pv-meta { font-size: 0.68rem; color: var(--text-secondary); margin-top: 0.1rem; }
+  .pv-ai { font-size: 0.62rem; color: var(--accent); border: 1px solid var(--accent); border-radius: 999px; padding: 0.02rem 0.4rem; flex-shrink: 0; opacity: 0.85; }
+  .pv-diff { font-size: 0.66rem; flex-shrink: 0; font-variant-numeric: tabular-nums; }
+  .pv-add { color: var(--success); } .pv-del { color: var(--error); }
+  .pv-rail { }
+  .pv-railhead { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-secondary); margin-bottom: 0.6rem; }
+  .pv-railitem { font-size: 0.72rem; color: var(--text-secondary); padding: 0.4rem 0; border-bottom: 1px solid var(--border); }
+  .pv-fade {
+    position: absolute; left: 0; right: 0; bottom: 0; height: 140px;
+    background: linear-gradient(to bottom, transparent, var(--bg-primary) 78%);
+    pointer-events: none;
+  }
+  .pv-more {
+    position: absolute; left: 50%; bottom: 16px; transform: translateX(-50%);
+    background: var(--text-primary); color: var(--bg-primary);
+    font-size: 0.74rem; font-weight: 600; padding: 0.4rem 0.85rem; border-radius: 999px;
+    box-shadow: 0 4px 14px rgba(0,0,0,0.25);
+  }
+  .pv-annot { display: flex; gap: 1.4rem; margin-top: 1.2rem; flex-wrap: wrap; }
+  .pv-annot div { font-size: 0.82rem; color: var(--text-secondary); }
+  .pv-annot b { color: var(--text-primary); }
+</style>
+
+<h2>Today: the inbox is one tall vertical stack</h2>
+<p class="subtitle">A busy day — 21 open PRs across four sections, all expanded, stacked top-to-bottom. This is the reference point. Everything we compare next is measured against it.</p>
+
+<div class="pv-wrap">
+  <div class="pv-frame">
+    <div class="pv-chrome">
+      <span class="pv-dot"></span><span class="pv-dot"></span><span class="pv-dot"></span>
+      <span class="pv-url">prism &nbsp;/&nbsp; inbox</span>
+    </div>
+    <div class="pv-scroll">
+      <div class="pv-toolbar">
+        <div class="pv-search">Filter PRs…</div>
+        <div class="pv-chip">Repo</div>
+        <div class="pv-chip">Author</div>
+        <div class="pv-chip">Sort: Updated ▾</div>
+      </div>
+      <div class="pv-grid">
+        <div class="pv-sections">
+
+          <div class="pv-sec">
+            <div class="pv-sechead"><span class="pv-caret">▾</span> Authored by me <span class="pv-count">6</span></div>
+            <div class="pv-row"><div class="pv-rowmain"><div class="pv-title">fix(inbox): sticky section headers on scroll</div><div class="pv-meta">PRism #594 · 2h ago · 2 reviewers</div></div><span class="pv-ai">bug</span><span class="pv-diff"><span class="pv-add">+84</span> <span class="pv-del">−12</span></span></div>
+            <div class="pv-row"><div class="pv-rowmain"><div class="pv-title">feat(auth): rotate PAT scopes on reconnect</div><div class="pv-meta">Mindbody.BizApp.Bff #1204 · 5h ago · 1 reviewer</div></div><span class="pv-ai">feature</span><span class="pv-diff"><span class="pv-add">+210</span> <span class="pv-del">−40</span></span></div>
+            <div class="pv-row"><div class="pv-rowmain"><div class="pv-title">refactor: extract GitHubPrBatchReader</div><div class="pv-meta">PRism #682 · 8h ago · needs review</div></div><span class="pv-ai">refactor</span><span class="pv-diff"><span class="pv-add">+120</span> <span class="pv-del">−95</span></span></div>
+            <div class="pv-row"><div class="pv-rowmain"><div class="pv-title">chore(deps): bump vite to 6</div><div class="pv-meta">PRism #712 · 1d ago · CI failing</div></div><span class="pv-ai">chore</span><span class="pv-diff"><span class="pv-add">+8</span> <span class="pv-del">−8</span></span></div>
+            <div class="pv-row"><div class="pv-rowmain"><div class="pv-title">fix: cold-start stale-cookie 401</div><div class="pv-meta">PRism #433 · 1d ago · approved</div></div><span class="pv-ai">bug</span><span class="pv-diff"><span class="pv-add">+18</span> <span class="pv-del">−4</span></span></div>
+            <div class="pv-row"><div class="pv-rowmain"><div class="pv-title">docs: issue-resolution workflow</div><div class="pv-meta">PRism #560 · 2d ago</div></div><span class="pv-ai">docs</span><span class="pv-diff"><span class="pv-add">+300</span> <span class="pv-del">−10</span></span></div>
+          </div>
+
+          <div class="pv-sec">
+            <div class="pv-sechead"><span class="pv-caret">▾</span> Review requested <span class="pv-count">8</span></div>
+            <div class="pv-row"><div class="pv-rowmain"><div class="pv-title">feat(reports): weekly rollup export</div><div class="pv-meta">Mindbody.Clients #973 · 30m ago</div></div><span class="pv-ai">feature</span><span class="pv-diff"><span class="pv-add">+412</span> <span class="pv-del">−31</span></span></div>
+            <div class="pv-row"><div class="pv-rowmain"><div class="pv-title">fix(api): pagination Link rel=next</div><div class="pv-meta">Mindbody.BizApp.Bff #1188 · 1h ago</div></div><span class="pv-ai">bug</span><span class="pv-diff"><span class="pv-add">+22</span> <span class="pv-del">−6</span></span></div>
+            <div class="pv-row"><div class="pv-rowmain"><div class="pv-title">perf: memoize inbox rows</div><div class="pv-meta">PRism #709 · 3h ago</div></div><span class="pv-ai">perf</span><span class="pv-diff"><span class="pv-add">+60</span> <span class="pv-del">−40</span></span></div>
+            <div class="pv-row"><div class="pv-rowmain"><div class="pv-title">…5 more PRs</div><div class="pv-meta">below the fold</div></div></div>
+          </div>
+
+          <div class="pv-sec" style="opacity:0.65">
+            <div class="pv-sechead"><span class="pv-caret">▾</span> Awaiting author <span class="pv-count">3</span></div>
+            <div class="pv-row"><div class="pv-rowmain"><div class="pv-title">fix: modal escape handler leak</div><div class="pv-meta">PRism #644 · changes requested</div></div></div>
+          </div>
+
+          <div class="pv-sec" style="opacity:0.4">
+            <div class="pv-sechead"><span class="pv-caret">▾</span> Mentioned <span class="pv-count">4</span></div>
+          </div>
+
+        </div>
+        <div class="pv-rail">
+          <div class="pv-railhead">Activity</div>
+          <div class="pv-railitem">alice approved #594</div>
+          <div class="pv-railitem">bob commented #1204</div>
+          <div class="pv-railitem">CI passed #433</div>
+          <div class="pv-railitem">carol merged #689</div>
+        </div>
+      </div>
+    </div>
+    <div class="pv-fade"></div>
+    <div class="pv-more">↓ 2 more sections · 15 more PRs below the fold</div>
+  </div>
+
+  <div class="pv-annot">
+    <div><b>Per-section counts</b> already exist (the pill by each title).</div>
+    <div><b>Sections already collapse</b> — but all four default open, so a busy inbox is tall.</div>
+    <div><b>The pain:</b> reaching "Awaiting author" and "Mentioned" means scrolling up and down past everything above.</div>
+  </div>
+</div>
+  </section>
+
+  <!-- ================= SCREEN 2 — SIDEBAR NAV ================= -->
+  <section class="screen" id="screen-sidebar">
+<style>
+  .sb-wrap { max-width: 1000px; }
+  .sb-frame {
+    position: relative; border: 1px solid var(--border); border-radius: 12px;
+    overflow: hidden; background: var(--bg-primary); box-shadow: 0 8px 30px rgba(0,0,0,0.12);
+    margin-bottom: 1.6rem;
+  }
+  .sb-chrome { display: flex; align-items: center; gap: 0.4rem; padding: 0.5rem 0.75rem; background: var(--bg-tertiary); border-bottom: 1px solid var(--border); }
+  .sb-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--text-tertiary); opacity: 0.5; }
+  .sb-url { margin-left: 0.6rem; font-size: 0.72rem; color: var(--text-secondary); }
+
+  .sb-app { display: grid; grid-template-columns: 210px 1fr 220px; height: 500px; }
+  .sb-app.collapsed { grid-template-columns: 54px 1fr 220px; }
+
+  /* ---- LEFT SECTION SIDEBAR ---- */
+  .sb-side { border-right: 1px solid var(--border); background: var(--bg-secondary); display: flex; flex-direction: column; }
+  .sb-sidetop { display: flex; align-items: center; justify-content: space-between; padding: 0.6rem 0.7rem; border-bottom: 1px solid var(--border); }
+  .sb-sidetitle { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-secondary); }
+  .sb-collapsebtn { font-size: 0.9rem; color: var(--text-secondary); cursor: pointer; border: 1px solid var(--border); border-radius: 6px; padding: 0.05rem 0.35rem; background: var(--bg-primary); }
+  .sb-nav { padding: 0.5rem 0.45rem; display: flex; flex-direction: column; gap: 0.2rem; }
+  .sb-navitem { display: flex; align-items: center; gap: 0.6rem; padding: 0.5rem 0.55rem; border-radius: 8px; cursor: pointer; font-size: 0.82rem; color: var(--text-primary); border-left: 3px solid transparent; }
+  .sb-navitem:hover { background: var(--bg-tertiary); }
+  .sb-navitem.active { background: var(--selected-bg); border-left-color: var(--accent); font-weight: 600; }
+  .sb-ico { width: 1.1rem; text-align: center; color: var(--text-secondary); flex-shrink: 0; }
+  .sb-navitem.active .sb-ico { color: var(--accent); }
+  .sb-navlabel { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .sb-navcount { font-size: 0.7rem; color: var(--text-secondary); background: var(--bg-tertiary); border-radius: 999px; padding: 0.05rem 0.45rem; font-weight: 600; }
+  .sb-navitem.active .sb-navcount { background: var(--accent); color: #fff; }
+  .sb-divider { height: 1px; background: var(--border); margin: 0.5rem 0.4rem; }
+
+  /* collapsed rail */
+  .sb-side.mini .sb-sidetitle, .sb-side.mini .sb-navlabel { display: none; }
+  .sb-side.mini .sb-navitem { justify-content: center; position: relative; padding: 0.55rem 0; }
+  .sb-side.mini .sb-navcount { position: absolute; top: 2px; right: 6px; padding: 0 0.3rem; font-size: 0.6rem; }
+  .sb-side.mini .sb-sidetop { justify-content: center; }
+
+  /* ---- MAIN PR LIST ---- */
+  .sb-main { display: flex; flex-direction: column; min-width: 0; }
+  .sb-toolbar { display: flex; align-items: center; gap: 0.5rem; padding: 0.6rem 0.8rem; border-bottom: 1px solid var(--border); }
+  .sb-search { flex: 1; background: var(--bg-secondary); border: 1px solid var(--border); border-radius: 8px; padding: 0.4rem 0.65rem; font-size: 0.76rem; color: var(--text-tertiary); }
+  .sb-chip { font-size: 0.7rem; padding: 0.32rem 0.55rem; border: 1px solid var(--border); border-radius: 999px; color: var(--text-secondary); background: var(--bg-secondary); }
+  .sb-listhead { padding: 0.6rem 0.85rem 0.3rem; font-size: 0.9rem; font-weight: 600; display: flex; align-items: center; gap: 0.5rem; }
+  .sb-listhead .sb-navcount { background: var(--bg-tertiary); color: var(--text-secondary); }
+  .sb-list { overflow-y: auto; padding: 0.2rem 0.7rem 0.7rem; }
+  .sb-row { display: flex; align-items: center; gap: 0.6rem; padding: 0.55rem 0.6rem; border-bottom: 1px solid var(--border); }
+  .sb-rowmain { flex: 1; min-width: 0; }
+  .sb-title { font-size: 0.8rem; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .sb-meta { font-size: 0.67rem; color: var(--text-secondary); margin-top: 0.1rem; }
+  .sb-ai { font-size: 0.6rem; color: var(--accent); border: 1px solid var(--accent); border-radius: 999px; padding: 0.02rem 0.38rem; flex-shrink: 0; opacity: 0.85; }
+  .sb-diff { font-size: 0.64rem; flex-shrink: 0; font-variant-numeric: tabular-nums; }
+  .sb-add { color: var(--success); } .sb-del { color: var(--error); }
+
+  /* ---- RIGHT ACTIVITY RAIL ---- */
+  .sb-rail { border-left: 1px solid var(--border); background: var(--bg-secondary); padding: 0.7rem 0.75rem; }
+  .sb-railhead { font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-secondary); margin-bottom: 0.5rem; }
+  .sb-railitem { font-size: 0.71rem; color: var(--text-secondary); padding: 0.38rem 0; border-bottom: 1px solid var(--border); }
+
+  .sb-caption { font-size: 0.78rem; color: var(--text-secondary); margin: 0.2rem 0 1rem; }
+  .sb-caption b { color: var(--text-primary); }
+  .sb-miniwrap { max-width: 480px; }
+</style>
+
+<h2>Direction: sections become a collapsible left sidebar</h2>
+<p class="subtitle">Master-detail. Pick a section on the left; only that section's PRs fill the main pane. No more scrolling past three sections to reach the fourth. The sidebar keeps every section's count visible, so the at-a-glance triage survives.</p>
+
+<div class="sb-wrap">
+  <div class="sb-frame">
+    <div class="sb-chrome"><span class="sb-dot"></span><span class="sb-dot"></span><span class="sb-dot"></span><span class="sb-url">prism &nbsp;/&nbsp; inbox</span></div>
+    <div class="sb-app">
+      <div class="sb-side">
+        <div class="sb-sidetop"><span class="sb-sidetitle">Sections</span><span class="sb-collapsebtn">«</span></div>
+        <div class="sb-nav">
+          <div class="sb-navitem"><span class="sb-ico">✎</span><span class="sb-navlabel">Authored by me</span><span class="sb-navcount">6</span></div>
+          <div class="sb-navitem active"><span class="sb-ico">◉</span><span class="sb-navlabel">Review requested</span><span class="sb-navcount">8</span></div>
+          <div class="sb-navitem"><span class="sb-ico">⟳</span><span class="sb-navlabel">Awaiting author</span><span class="sb-navcount">3</span></div>
+          <div class="sb-navitem"><span class="sb-ico">@</span><span class="sb-navlabel">Mentioned</span><span class="sb-navcount">4</span></div>
+          <div class="sb-divider"></div>
+          <div class="sb-navitem"><span class="sb-ico">✓</span><span class="sb-navlabel">Recently closed</span><span class="sb-navcount">12</span></div>
+        </div>
+      </div>
+      <div class="sb-main">
+        <div class="sb-toolbar">
+          <div class="sb-search">Filter PRs…</div>
+          <div class="sb-chip">Repo</div>
+          <div class="sb-chip">Sort ▾</div>
+        </div>
+        <div class="sb-listhead">Review requested <span class="sb-navcount">8</span></div>
+        <div class="sb-list">
+          <div class="sb-row"><div class="sb-rowmain"><div class="sb-title">feat(reports): weekly rollup export</div><div class="sb-meta">Mindbody.Clients #973 · 30m ago · 2 reviewers</div></div><span class="sb-ai">feature</span><span class="sb-diff"><span class="sb-add">+412</span> <span class="sb-del">−31</span></span></div>
+          <div class="sb-row"><div class="sb-rowmain"><div class="sb-title">fix(api): pagination Link rel=next double-prefix</div><div class="sb-meta">Mindbody.BizApp.Bff #1188 · 1h ago</div></div><span class="sb-ai">bug</span><span class="sb-diff"><span class="sb-add">+22</span> <span class="sb-del">−6</span></span></div>
+          <div class="sb-row"><div class="sb-rowmain"><div class="sb-title">perf: memoize inbox rows (React.memo)</div><div class="sb-meta">PRism #709 · 3h ago · approved</div></div><span class="sb-ai">perf</span><span class="sb-diff"><span class="sb-add">+60</span> <span class="sb-del">−40</span></span></div>
+          <div class="sb-row"><div class="sb-rowmain"><div class="sb-title">feat: unified conversation + events timeline</div><div class="sb-meta">PRism #692 · 4h ago</div></div><span class="sb-ai">feature</span><span class="sb-diff"><span class="sb-add">+540</span> <span class="sb-del">−120</span></span></div>
+          <div class="sb-row"><div class="sb-rowmain"><div class="sb-title">fix: SSE first-event flake under load</div><div class="sb-meta">Mindbody.BizApp.Bff #1150 · 6h ago</div></div><span class="sb-ai">bug</span><span class="sb-diff"><span class="sb-add">+15</span> <span class="sb-del">−9</span></span></div>
+          <div class="sb-row"><div class="sb-rowmain"><div class="sb-title">chore: bump actions/checkout to 7</div><div class="sb-meta">PRism #696 · 8h ago</div></div><span class="sb-ai">chore</span><span class="sb-diff"><span class="sb-add">+2</span> <span class="sb-del">−2</span></span></div>
+          <div class="sb-row"><div class="sb-rowmain"><div class="sb-title">feat(checks): per-check re-run button</div><div class="sb-meta">Mindbody.Clients #941 · 1d ago</div></div><span class="sb-ai">feature</span><span class="sb-diff"><span class="sb-add">+88</span> <span class="sb-del">−14</span></span></div>
+          <div class="sb-row"><div class="sb-rowmain"><div class="sb-title">refactor: single-source endpoint validation</div><div class="sb-meta">PRism #719 · 1d ago</div></div><span class="sb-ai">refactor</span><span class="sb-diff"><span class="sb-add">+130</span> <span class="sb-del">−90</span></span></div>
+        </div>
+      </div>
+      <div class="sb-rail">
+        <div class="sb-railhead">Activity</div>
+        <div class="sb-railitem">alice approved #594</div>
+        <div class="sb-railitem">bob commented #1204</div>
+        <div class="sb-railitem">CI passed #433</div>
+        <div class="sb-railitem">carol merged #689</div>
+      </div>
+    </div>
+  </div>
+
+  <p class="sb-caption"><b>Collapsed state</b> — the sidebar shrinks to an icon rail (counts ride as badges), reclaiming width for the PR list. Click any icon to jump; click « to expand again.</p>
+  <div class="sb-miniwrap">
+    <div class="sb-frame" style="margin-bottom:0">
+      <div class="sb-app collapsed">
+        <div class="sb-side mini">
+          <div class="sb-sidetop"><span class="sb-collapsebtn">»</span></div>
+          <div class="sb-nav">
+            <div class="sb-navitem"><span class="sb-ico">✎</span><span class="sb-navlabel">Authored by me</span><span class="sb-navcount">6</span></div>
+            <div class="sb-navitem active"><span class="sb-ico">◉</span><span class="sb-navlabel">Review requested</span><span class="sb-navcount">8</span></div>
+            <div class="sb-navitem"><span class="sb-ico">⟳</span><span class="sb-navlabel">Awaiting author</span><span class="sb-navcount">3</span></div>
+            <div class="sb-navitem"><span class="sb-ico">@</span><span class="sb-navlabel">Mentioned</span><span class="sb-navcount">4</span></div>
+            <div class="sb-divider"></div>
+            <div class="sb-navitem"><span class="sb-ico">✓</span><span class="sb-navlabel">Recently closed</span><span class="sb-navcount">12</span></div>
+          </div>
+        </div>
+        <div class="sb-main">
+          <div class="sb-listhead" style="border-bottom:1px solid var(--border);padding-bottom:0.5rem">Review requested <span class="sb-navcount">8</span> &nbsp;<span style="font-size:0.68rem;color:var(--text-secondary);font-weight:400">— more room for titles &amp; meta</span></div>
+          <div class="sb-list">
+            <div class="sb-row"><div class="sb-rowmain"><div class="sb-title">feat(reports): weekly rollup export</div><div class="sb-meta">Mindbody.Clients #973 · 30m ago</div></div><span class="sb-ai">feature</span></div>
+            <div class="sb-row"><div class="sb-rowmain"><div class="sb-title">fix(api): pagination Link rel=next</div><div class="sb-meta">Mindbody.BizApp.Bff #1188 · 1h ago</div></div><span class="sb-ai">bug</span></div>
+            <div class="sb-row"><div class="sb-rowmain"><div class="sb-title">perf: memoize inbox rows</div><div class="sb-meta">PRism #709 · 3h ago</div></div><span class="sb-ai">perf</span></div>
+          </div>
+        </div>
+        <div class="sb-rail" style="display:none"></div>
+      </div>
+    </div>
+  </div>
+</div>
+  </section>
+
+  <!-- ================= SCREEN 3 — CAP-COLLAPSE ================= -->
+  <section class="screen" id="screen-cap">
+<style>
+  .cc-wrap { max-width: 940px; }
+  .cc-frame { position: relative; border: 1px solid var(--border); border-radius: 12px; overflow: hidden; background: var(--bg-primary); box-shadow: 0 8px 30px rgba(0,0,0,0.12); }
+  .cc-chrome { display: flex; align-items: center; gap: 0.4rem; padding: 0.5rem 0.75rem; background: var(--bg-tertiary); border-bottom: 1px solid var(--border); }
+  .cc-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--text-tertiary); opacity: 0.5; }
+  .cc-url { margin-left: 0.6rem; font-size: 0.72rem; color: var(--text-secondary); }
+  .cc-app { display: grid; grid-template-columns: 54px 1fr; height: 540px; }
+
+  .cc-side { border-right: 1px solid var(--border); background: var(--bg-secondary); padding: 0.5rem 0; display: flex; flex-direction: column; align-items: center; gap: 0.25rem; }
+  .cc-sidebtn { font-size: 0.9rem; color: var(--text-secondary); border: 1px solid var(--border); border-radius: 6px; padding: 0.05rem 0.3rem; background: var(--bg-primary); margin-bottom: 0.4rem; }
+  .cc-ico { position: relative; width: 2rem; height: 2rem; display: flex; align-items: center; justify-content: center; border-radius: 8px; color: var(--text-secondary); font-size: 0.95rem; border-left: 3px solid transparent; }
+  .cc-ico.active { background: var(--selected-bg); color: var(--accent); border-left-color: var(--accent); }
+  .cc-badge { position: absolute; top: -2px; right: -2px; font-size: 0.56rem; font-weight: 700; background: var(--text-tertiary); color: var(--bg-primary); border-radius: 999px; padding: 0 0.28rem; }
+  .cc-ico.active .cc-badge { background: var(--accent); color: #fff; }
+
+  .cc-main { display: flex; flex-direction: column; min-width: 0; }
+  .cc-toolbar { display: flex; align-items: center; gap: 0.5rem; padding: 0.55rem 0.85rem; border-bottom: 1px solid var(--border); }
+  .cc-search { flex: 1; background: var(--bg-secondary); border: 1px solid var(--border); border-radius: 8px; padding: 0.4rem 0.65rem; font-size: 0.76rem; color: var(--text-tertiary); }
+  .cc-chip { font-size: 0.7rem; padding: 0.32rem 0.55rem; border: 1px solid var(--border); border-radius: 999px; color: var(--text-secondary); background: var(--bg-secondary); }
+  .cc-listhead { padding: 0.6rem 0.9rem 0.5rem; display: flex; align-items: baseline; gap: 0.6rem; border-bottom: 1px solid var(--border); }
+  .cc-h { font-size: 0.95rem; font-weight: 600; }
+  .cc-capnote { font-size: 0.68rem; color: var(--text-secondary); }
+  .cc-capnote b { color: var(--text-primary); }
+  .cc-list { overflow-y: auto; padding: 0.5rem 0.9rem 0.9rem; }
+
+  .cc-acc { border: 1px solid var(--border); border-radius: 8px; margin-bottom: 0.55rem; overflow: hidden; }
+  .cc-acchead { display: flex; align-items: center; gap: 0.5rem; padding: 0.5rem 0.65rem; background: var(--bg-secondary); font-size: 0.8rem; font-weight: 600; cursor: pointer; }
+  .cc-acc.closed .cc-acchead { color: var(--text-secondary); }
+  .cc-caret { width: 0.8rem; color: var(--text-secondary); font-size: 0.7rem; }
+  .cc-repoico { color: var(--text-secondary); }
+  .cc-reponame { flex: 1; }
+  .cc-acccount { font-size: 0.7rem; color: var(--text-secondary); background: var(--bg-tertiary); border-radius: 999px; padding: 0.05rem 0.45rem; }
+  .cc-fresh { font-size: 0.58rem; color: var(--success); border: 1px solid var(--success); border-radius: 999px; padding: 0 0.35rem; opacity: 0.8; }
+  .cc-stale { font-size: 0.58rem; color: var(--text-tertiary); }
+
+  .cc-row { display: flex; align-items: center; gap: 0.6rem; padding: 0.5rem 0.7rem; border-top: 1px solid var(--border); }
+  .cc-rowmain { flex: 1; min-width: 0; }
+  .cc-title { font-size: 0.78rem; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .cc-meta { font-size: 0.66rem; color: var(--text-secondary); margin-top: 0.1rem; }
+  .cc-ai { font-size: 0.58rem; color: var(--accent); border: 1px solid var(--accent); border-radius: 999px; padding: 0.02rem 0.36rem; opacity: 0.85; }
+  .cc-annot { display: flex; gap: 1.4rem; margin-top: 1.1rem; flex-wrap: wrap; }
+  .cc-annot div { font-size: 0.8rem; color: var(--text-secondary); max-width: 280px; }
+  .cc-annot b { color: var(--text-primary); }
+</style>
+
+<h2>Inside a busy section: cap the scroll by collapsing lower-order repos</h2>
+<p class="subtitle">"Review requested" has 24 PRs across 5 repos. Cap = 10 rows (the mockup illustrates the mechanism with a larger example fill). The top repos in the current sort stay open; the lower-order repos collapse to headers — one click to open any. You land on the work the sort ranks highest; the pile no longer runs off-screen.</p>
+
+<div class="cc-wrap">
+  <div class="cc-frame">
+    <div class="cc-chrome"><span class="cc-dot"></span><span class="cc-dot"></span><span class="cc-dot"></span><span class="cc-url">prism &nbsp;/&nbsp; inbox &nbsp;/&nbsp; review requested</span></div>
+    <div class="cc-app">
+      <div class="cc-side">
+        <span class="cc-sidebtn">»</span>
+        <div class="cc-ico"><span>✎</span><span class="cc-badge">6</span></div>
+        <div class="cc-ico active"><span>◉</span><span class="cc-badge">24</span></div>
+        <div class="cc-ico"><span>⟳</span><span class="cc-badge">3</span></div>
+        <div class="cc-ico"><span>@</span><span class="cc-badge">4</span></div>
+      </div>
+      <div class="cc-main">
+        <div class="cc-toolbar">
+          <div class="cc-search">Filter PRs…</div>
+          <div class="cc-chip">Repo</div>
+          <div class="cc-chip">Sort: Updated ▾</div>
+        </div>
+        <div class="cc-listhead">
+          <span class="cc-h">Review requested</span>
+          <span class="cc-capnote"><b>24 PRs</b> · 12 shown · 3 repos collapsed</span>
+        </div>
+        <div class="cc-list">
+
+          <div class="cc-acc">
+            <div class="cc-acchead"><span class="cc-caret">▾</span><span class="cc-repoico">▢</span><span class="cc-reponame">Mindbody.BizApp.Bff</span><span class="cc-fresh">top of sort</span><span class="cc-acccount">7</span></div>
+            <div class="cc-row"><div class="cc-rowmain"><div class="cc-title">fix(api): pagination Link rel=next double-prefix</div><div class="cc-meta">#1188 · 30m ago</div></div><span class="cc-ai">bug</span></div>
+            <div class="cc-row"><div class="cc-rowmain"><div class="cc-title">feat(auth): rotate PAT scopes on reconnect</div><div class="cc-meta">#1204 · 1h ago</div></div><span class="cc-ai">feature</span></div>
+            <div class="cc-row"><div class="cc-rowmain"><div class="cc-title">fix: SSE first-event flake under load</div><div class="cc-meta">#1150 · 2h ago</div></div><span class="cc-ai">bug</span></div>
+            <div class="cc-row"><div class="cc-rowmain"><div class="cc-title">perf: batch GraphQL merge-readiness</div><div class="cc-meta">#1166 · 3h ago</div></div><span class="cc-ai">perf</span></div>
+            <div class="cc-row" style="opacity:0.7"><div class="cc-rowmain"><div class="cc-title">…3 more</div></div></div>
+          </div>
+
+          <div class="cc-acc">
+            <div class="cc-acchead"><span class="cc-caret">▾</span><span class="cc-repoico">▢</span><span class="cc-reponame">PRism</span><span class="cc-acccount">5</span></div>
+            <div class="cc-row"><div class="cc-rowmain"><div class="cc-title">perf: memoize inbox rows</div><div class="cc-meta">#709 · 3h ago</div></div><span class="cc-ai">perf</span></div>
+            <div class="cc-row"><div class="cc-rowmain"><div class="cc-title">feat: unified conversation + events timeline</div><div class="cc-meta">#692 · 4h ago</div></div><span class="cc-ai">feature</span></div>
+            <div class="cc-row" style="opacity:0.7"><div class="cc-rowmain"><div class="cc-title">…3 more</div></div></div>
+          </div>
+
+          <div class="cc-acc closed">
+            <div class="cc-acchead"><span class="cc-caret">▸</span><span class="cc-repoico">▢</span><span class="cc-reponame">Mindbody.Clients</span><span class="cc-stale">lower in sort</span><span class="cc-acccount">6</span></div>
+          </div>
+          <div class="cc-acc closed">
+            <div class="cc-acchead"><span class="cc-caret">▸</span><span class="cc-repoico">▢</span><span class="cc-reponame">Mindbody.Platform</span><span class="cc-stale">lower in sort</span><span class="cc-acccount">4</span></div>
+          </div>
+          <div class="cc-acc closed">
+            <div class="cc-acchead"><span class="cc-caret">▸</span><span class="cc-repoico">▢</span><span class="cc-reponame">internal-tools</span><span class="cc-stale">lower in sort</span><span class="cc-acccount">2</span></div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="cc-annot">
+    <div><b>Under the cap?</b> Every repo stays open — identical to today. The rule only bites on genuinely busy multi-repo sections.</div>
+    <div><b>Top-of-sort first</b> comes free from the existing repo order (backend emits in sort order; cold open = freshest).</div>
+    <div><b>The gap:</b> if ONE repo holds all 24, there's nothing to collapse — accordions are all-or-nothing. Accepted; row-level "show top N" is a follow-up.</div>
+  </div>
+</div>
+  </section>
+
+  <script>
+    (function () {
+      var root = document.documentElement;
+      var btns = document.querySelectorAll('.themebar button');
+      btns.forEach(function (b) {
+        b.addEventListener('click', function () {
+          root.setAttribute('data-theme', b.dataset.set);
+          btns.forEach(function (x) { x.classList.toggle('on', x === b); });
+        });
+      });
+    })();
+  </script>
+</body>
+</html>
