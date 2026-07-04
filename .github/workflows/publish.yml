@@ -12,6 +12,11 @@ on:
         required: false
         type: string
         default: ''
+      model:
+        description: 'Copilot CLI model for the notes (e.g. claude-sonnet-4, gpt-4o). Stronger models follow the style guide (overview + bold labels) more reliably. Blank = the Action default.'
+        required: false
+        type: string
+        default: 'claude-sonnet-4'
       include_macos:
         description: 'Attach osx-arm64 binary to the Release. Default false at v0.1.0 (Windows-only ship per docs/specs/2026-05-28-v1-completion-roadmap-design.md § 4.2 + § 6.2). Flip true once macOS hardware verifies the build at v0.1.1.'
         required: false
@@ -78,6 +83,7 @@ jobs:
           head-ref: ${{ github.sha }}  # the SHA being released; the tag may not exist yet
           pr-strategy: github-api  # PRism squash-merges — merge-commits (default) finds nothing
           instructions: .github/release-notes-style.md
+          model: ${{ inputs.model }}  # empty = Action default; see the `model` dispatch input
         env:
           COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
           GITHUB_TOKEN: ${{ github.token }}  # PR discovery for the github-api strategy
@@ -104,24 +110,23 @@ jobs:
         id: body
         shell: bash
         env:
-          COPILOT: ${{ steps.notes.outputs['release-notes'] }}  # bracket notation: hyphenated output key
+          RELEASE_NOTES_JSON: ${{ steps.notes.outputs['release-notes-json'] }}  # structured entries; we render them ourselves
           BASE: ${{ steps.prevtag.outputs.tag }}
           TAG: ${{ inputs.tag }}
         run: |
-          # When Copilot produced notes: use them + a single Full Changelog link
-          # (NOT the full PR dump). When it didn't: emit an empty body so the
-          # build job falls back to GitHub's generate_release_notes.
-          if [ -n "$COPILOT" ]; then
-            {
-              printf '%s\n' "$COPILOT"
-              if [ -n "$BASE" ]; then
-                printf '\n**Full Changelog**: %s/%s/compare/%s...%s\n' \
-                  "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$BASE" "$TAG"
-              fi
-            } > body.md
+          # Render the body from the Action's structured `release-notes-json`
+          # (overview paragraph + `##` sections + one `(#pr)` per bullet) rather
+          # than its fixed `release-notes` markdown, which has no overview slot,
+          # hardcodes `###` headings, and auto-appends a second PR ref. The
+          # script prints nothing when there are no entries, so an empty body
+          # makes the build job fall back to GitHub's generate_release_notes.
+          # `|| true`: a render failure must never BLOCK a release — it degrades
+          # to the same empty-body fallback. (The refresh workflow deliberately
+          # omits this and fails loud, so it never clobbers a good body.)
+          body="$(bash .github/scripts/render-release-notes.sh || true)"
+          if [ -n "$body" ]; then
             echo "has_copilot=true" >> "$GITHUB_OUTPUT"
           else
-            : > body.md
             echo "has_copilot=false" >> "$GITHUB_OUTPUT"
           fi
           # Random per-run delimiter: the body is untrusted (Copilot-authored /
@@ -131,7 +136,7 @@ jobs:
           DELIM="PRISM_BODY_EOF_$(openssl rand -hex 16)"
           {
             echo "text<<$DELIM"
-            cat body.md
+            printf '%s\n' "$body"
             echo "$DELIM"
           } >> "$GITHUB_OUTPUT"
 

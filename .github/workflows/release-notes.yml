@@ -6,10 +6,11 @@ name: Refresh Release Notes
 # want another pass. Copilot output is non-deterministic, so each run is a fresh
 # take. Fires on manual dispatch only.
 #
-# Note: the notes-generation shape (resolve base ref -> run Copilot) is close to
-# the `release_notes` job in publish.yml / publish-desktop.yml. Kept inline here
-# rather than extracted to a composite action for now; if a fourth caller shows
-# up, extract .github/actions/generate-release-notes and have all of them use it.
+# Note: the markdown rendering is shared — all three workflows call
+# .github/scripts/render-release-notes.sh over the Action's release-notes-json.
+# The notes-GENERATION shape (resolve base ref -> run Copilot) is still close to
+# the `release_notes` job in publish.yml / publish-desktop.yml and kept inline
+# here; if it drifts or a fourth caller appears, extract a composite action too.
 
 on:
   workflow_dispatch:
@@ -23,6 +24,11 @@ on:
         required: false
         type: string
         default: ''
+      model:
+        description: 'Copilot CLI model for the notes (e.g. claude-sonnet-4, gpt-4o). Stronger models follow the style guide (overview + bold labels) more reliably. Blank = the Action default.'
+        required: false
+        type: string
+        default: 'claude-sonnet-4'
 
 permissions:
   contents: write      # edit the existing release body
@@ -77,6 +83,7 @@ jobs:
           head-ref: ${{ inputs.tag }}  # the tag exists (verified above), so diff base..tag exactly
           pr-strategy: github-api  # PRism squash-merges — merge-commits (default) finds nothing
           instructions: .github/release-notes-style.md
+          model: ${{ inputs.model }}  # empty = Action default; see the `model` dispatch input
         env:
           COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
           GITHUB_TOKEN: ${{ github.token }}  # PR discovery for the github-api strategy
@@ -85,20 +92,21 @@ jobs:
         shell: bash
         env:
           TAG: ${{ inputs.tag }}
-          PREV: ${{ steps.base.outputs.prev }}
-          COPILOT_BODY: ${{ steps.notes.outputs['release-notes'] }}  # bracket notation: hyphenated output key
+          # BASE/TAG feed the Full Changelog link inside the render script.
+          BASE: ${{ steps.base.outputs.prev }}
+          RELEASE_NOTES_JSON: ${{ steps.notes.outputs['release-notes-json'] }}  # structured entries; rendered by the shared script
           GH_TOKEN: ${{ github.token }}
         run: |
-          if [ -z "$COPILOT_BODY" ]; then
-            echo "::error::Copilot produced empty notes; leaving the release body unchanged." ; exit 1
+          # Render from the Action's structured entries (same script the publish
+          # workflows use): overview paragraph + `##` sections + one `(#pr)` per
+          # bullet + a single Full Changelog link.
+          body="$(bash .github/scripts/render-release-notes.sh)"
+          if [ -z "$body" ]; then
+            # Manual refresh: stop BEFORE touching the release body rather than
+            # clobbering a good one with an empty fallback.
+            echo "::error::Copilot produced no entries; leaving the release body unchanged." ; exit 1
           fi
-          # Copilot notes + a single Full Changelog link (no full PR dump —
-          # matches the release-time body).
-          {
-            printf '%s\n' "$COPILOT_BODY"
-            printf '\n**Full Changelog**: %s/%s/compare/%s...%s\n' \
-              "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$PREV" "$TAG"
-          } > notes.md
+          printf '%s\n' "$body" > notes.md
           # Flags first, then `--` so a $TAG starting with '-' can't be read as a gh option.
           gh release edit --notes-file notes.md -- "$TAG"
-          echo "Updated release $TAG (base $PREV)." >> "$GITHUB_STEP_SUMMARY"
+          echo "Updated release $TAG (base $BASE)." >> "$GITHUB_STEP_SUMMARY"
