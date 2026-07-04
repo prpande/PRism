@@ -33,10 +33,10 @@ export function makeGutterClick({
       lineNumber,
       side,
       // anchoredSha is left empty here — DiffPane has no PR-detail context.
-      // FilesTab.openComposerAt fills it in (PoC simplification: always
-      // prDetail.pr.headSha; iteration-relative anchoring is deferred and
-      // only right-side clicks are enabled, so headSha is always a valid
-      // anchor for the right side).
+      // FilesTab.openComposerAt fills it in with the after-side commit of the
+      // displayed range (anchorShaForRange, #723): the iteration's afterSha on
+      // an older-iteration view, the PR head on "All changes". Only right-side
+      // clicks are enabled, so that after-side SHA is always a valid anchor.
       anchoredSha: '',
       anchoredLineContent,
     });

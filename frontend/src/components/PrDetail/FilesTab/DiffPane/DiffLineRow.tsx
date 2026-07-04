@@ -92,12 +92,12 @@ export const DiffLineRow = memo(function DiffLineRow({
     return <HighlightedLine spans={toks} fallback={normalizeEol(line.content)} />;
   };
 
-  // PoC scope: only right-side (insert/context) clicks open the composer.
-  // Left-side (deleted-line) commenting is deferred — its anchoredSha would
-  // need to be the iteration's beforeSha, but FilesTab currently uses
-  // prDetail.pr.headSha as the anchor (see deferrals doc). Once the
-  // anchoredSha-by-iteration plumbing lands, this gate can flip to allow
-  // line.type === 'delete' as well.
+  // Scope: only right-side (insert/context) clicks open the composer. The
+  // right-side anchor is now iteration-aware — FilesTab stamps the displayed
+  // range's afterSha (anchorShaForRange, #723). Left-side (deleted-line)
+  // commenting stays deferred: it needs the mirror resolution (the displayed
+  // range's beforeSha) plus this gate flipping to allow line.type === 'delete'
+  // (see docs/specs/2026-06-01-real-side-by-side-diff-rendering-deferrals.md).
   const commentLineNum = line.newLineNum;
   const canComment =
     onLineClick && commentLineNum !== null && (line.type === 'insert' || line.type === 'context');

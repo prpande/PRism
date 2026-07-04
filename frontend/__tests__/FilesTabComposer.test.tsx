@@ -43,6 +43,17 @@ const minimalPrDetail: PrDetailDto = makePrDetailDto({
   ],
 });
 
+// #723 — a PR with two iterations. Iteration 1 is an OLDER view: its afterSha
+// (mid111) is NOT the PR head (headabc). Selecting it and commenting must anchor
+// to mid111, not head.
+const twoIterationPrDetail: PrDetailDto = makePrDetailDto({
+  pr: makePr({ reference: ref, headSha: 'headabc', baseSha: 'basedef' }),
+  iterations: [
+    { number: 1, beforeSha: 'basedef', afterSha: 'mid111', commits: [], hasResolvableRange: true },
+    { number: 2, beforeSha: 'mid111', afterSha: 'headabc', commits: [], hasResolvableRange: true },
+  ],
+});
+
 function emptySession(): ReviewSessionDto {
   return {
     draftVerdict: null,
@@ -176,11 +187,11 @@ function Wrapper({ prDetail }: { prDetail: PrDetailDto }) {
   );
 }
 
-function renderFilesTab() {
+function renderFilesTab(prDetail: PrDetailDto = minimalPrDetail) {
   return render(
     <MemoryRouter initialEntries={['/pr/octocat/hello/42/files']}>
       <Routes>
-        <Route path="/pr/:owner/:repo/:number" element={<Wrapper prDetail={minimalPrDetail} />}>
+        <Route path="/pr/:owner/:repo/:number" element={<Wrapper prDetail={prDetail} />}>
           <Route path="files/*" element={<FilesTab />} />
         </Route>
       </Routes>
@@ -451,5 +462,54 @@ describe('FilesTab — inline optimistic placeholder (#302 Task 11b)', () => {
     const optimistic = await screen.findByTestId('inline-comment-card-optimistic');
     expect(optimistic).toHaveTextContent('my new comment');
     expect(optimistic.className).toContain('comment-card--posting');
+  });
+});
+
+describe('FilesTab — inline comment anchoring (#723)', () => {
+  it('anchors a NEW inline comment to the active older-iterations afterSha, not head', async () => {
+    // Regression for #723: on an older-iteration view the right-side line belongs
+    // to the iteration's afterSha, and the post-now path sends anchoredSha as the
+    // GitHub commit_id. Before the fix the composer stamped pr.headSha for every
+    // click, so a comment on an older iteration anchored to head → GitHub rejects
+    // or misplaces it. The persisted draft must carry the iteration's afterSha.
+    const tracker = { calls: [] as { url: string; body: unknown }[] };
+    globalThis.fetch = makeRouteHandler(
+      onefileDiff,
+      emptySession(),
+      tracker,
+    ) as unknown as typeof fetch;
+    renderFilesTab(twoIterationPrDetail);
+
+    // Render the diff, then select the OLDER iteration (Iter 1 → basedef..mid111).
+    await waitFor(() => {
+      fireEvent.click(screen.getByText('main.ts'));
+    });
+    fireEvent.click(screen.getByTestId('iteration-tab-1'));
+
+    // Open the composer on line 1, type, then switch lines to flush the create
+    // (mirrors the RapidLineSwitch pattern — the switch persists line 1's draft).
+    const line1 = await screen.findByRole('button', { name: 'Add comment on line 1' });
+    fireEvent.click(line1);
+    const textarea = (await screen.findByLabelText('Comment body')) as HTMLTextAreaElement;
+    fireEvent.change(textarea, { target: { value: 'comment on the older iteration' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Add comment on line 3' }));
+
+    await waitFor(() => {
+      const creates = tracker.calls.filter((c) => {
+        const b = c.body as Record<string, unknown> | null;
+        return !!b && 'newDraftComment' in b;
+      });
+      expect(creates).toHaveLength(1);
+    });
+    const create = tracker.calls.find((c) => {
+      const b = c.body as Record<string, unknown> | null;
+      return !!b && 'newDraftComment' in b;
+    });
+    const payload = (
+      create!.body as { newDraftComment: { anchoredSha: string; lineNumber: number } }
+    ).newDraftComment;
+    // The anchor is the iteration's afterSha (mid111), NOT the PR head (headabc).
+    expect(payload.anchoredSha).toBe('mid111');
+    expect(payload.lineNumber).toBe(1);
   });
 });

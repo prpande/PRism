@@ -20,17 +20,19 @@ Each entry below is something slice 1 deliberately does NOT do. Numbering uses t
 
 ## DSx2 — Left-side comment anchoring
 
-**Status:** Preserved deferral.
+**Status:** Partially unblocked by #723 — the right-side per-iteration anchor landed; left-side (deleted-line) commenting is still deferred.
 
 **What:** Allowing reviewers to click a left-pane (deleted) line and open an inline-comment composer anchored to the iteration's `beforeSha`.
 
-**Why slice 1 doesn't do it:** The deferral was set at S4 (see `frontend/src/components/PrDetail/FilesTab/DiffPane/DiffPane.tsx:297-302`):
+**Why slice 1 doesn't do it:** The deferral was set at S4 (see `frontend/src/components/PrDetail/FilesTab/DiffPane/DiffLineRow.tsx:95-100`):
 
 > PoC scope: only right-side (insert/context) clicks open the composer. Left-side (deleted-line) commenting is deferred — its anchoredSha would need to be the iteration's beforeSha, but FilesTab currently uses prDetail.pr.headSha as the anchor (see deferrals doc). Once the anchoredSha-by-iteration plumbing lands, this gate can flip to allow line.type === 'delete' as well.
 
 Slice 1 makes left-pane content visible (you can now SEE the deleted lines on the left), but you still can't click them to comment. Bundling the per-iteration `beforeSha` plumbing into slice 1 would drag in the iteration-aware anchor work that S4 deliberately deferred.
 
 **Future trigger:** When per-iteration `anchoredSha` plumbing lands (the deferred S4 work), slice 1's `SplitDiffLineRow` gains a left-side affordance with one-line wiring. Also adds `position: relative` to `.diffGutterOld` for the affordance's positioning context.
+
+**Update (2026-07-04, #723):** The per-iteration `anchoredSha` plumbing for the **right** side has now landed — `FilesTab` stamps the displayed range's `afterSha` via `anchorShaForRange` (previously it always used `pr.headSha`, which mis-anchored inline comments added on older-iteration views). The remaining left-side work is the mirror resolution — the displayed range's `beforeSha` — plus flipping the `line.type === 'delete'` gate in `DiffLineRow`. The quoted comment above was updated in-code to match; the blockquote here is the historical S4 snapshot.
 
 ## DSx3 — Multi-line modification block alignment
 
