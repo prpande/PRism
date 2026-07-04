@@ -49,7 +49,9 @@ jobs:
           fi
           if [ -n "$BASE_OVERRIDE" ]; then
             # Explicit base: accept a tag, branch, or SHA that resolves to a commit.
-            if git rev-parse -q --verify "${BASE_OVERRIDE}^{commit}" >/dev/null; then
+            # --end-of-options so a base_ref starting with '-' is read as a rev, not an option.
+            # (`--` is wrong here: for rev-parse it separates revs from paths.)
+            if git rev-parse -q --verify --end-of-options "${BASE_OVERRIDE}^{commit}" >/dev/null; then
               prev="$BASE_OVERRIDE"
             else
               echo "::error::base_ref '${BASE_OVERRIDE}' did not resolve to a commit." ; exit 1
