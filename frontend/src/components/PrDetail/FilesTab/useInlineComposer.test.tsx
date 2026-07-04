@@ -7,7 +7,7 @@ import type { DraftCommentDto, ReviewSessionDto } from '../../../api/types';
 // Unit coverage for the inline-composer lifecycle extracted from FilesTab
 // (#327 slice 2). The FULL FilesTab integration (line click → composer mount →
 // draft save/close) lives in __tests__/FilesTabComposer.test.tsx. This file
-// exercises the hook seam itself: open-at-anchor (headSha stamping +
+// exercises the hook seam itself: open-at-anchor (anchorSha stamping +
 // existing-draft resume), the same-anchor no-op, flush-on-line-switch, close
 // semantics, and — the one deliberate upgrade over the pre-extraction code —
 // the STABLE identity of handleLineClick across rerenders (it crosses the
@@ -36,7 +36,8 @@ function sessionWith(draftComments: DraftCommentDto[]): ReviewSessionDto {
 }
 
 function rawAnchor(overrides: Partial<InlineAnchor> = {}): InlineAnchor {
-  // DiffPane sends back an empty anchoredSha; the hook stamps prDetail.pr.headSha.
+  // DiffPane sends back an empty anchoredSha; the hook stamps the anchorSha
+  // it is given (the after-side of the displayed range — head for "All changes").
   return {
     filePath: 'src/main.ts',
     lineNumber: 5,
@@ -50,14 +51,14 @@ function rawAnchor(overrides: Partial<InlineAnchor> = {}): InlineAnchor {
 function makeOpts(overrides?: {
   session?: ReviewSessionDto | null;
   refetch?: () => Promise<void>;
-  headSha?: string;
+  anchorSha?: string;
 }): UseInlineComposerOpts {
   return {
     draftSession: {
       session: overrides?.session ?? null,
       refetch: overrides?.refetch ?? vi.fn().mockResolvedValue(undefined),
     },
-    prDetail: { pr: { headSha: overrides?.headSha ?? 'sha-head' } },
+    anchorSha: overrides?.anchorSha ?? 'sha-head',
   };
 }
 
@@ -68,7 +69,7 @@ function setup(initialOpts: UseInlineComposerOpts = makeOpts()) {
 }
 
 describe('useInlineComposer', () => {
-  it('handleLineClick opens the composer at the anchor, stamping headSha; no existing draft → null draftId', () => {
+  it('handleLineClick opens the composer at the anchor, stamping the anchorSha; no existing draft → null draftId', () => {
     const { result } = setup();
 
     act(() => {
@@ -77,6 +78,20 @@ describe('useInlineComposer', () => {
 
     expect(result.current.activeAnchor).toEqual(rawAnchor({ anchoredSha: 'sha-head' }));
     expect(result.current.composerDraftId).toBeNull();
+  });
+
+  it('stamps the active iterations afterSha, not head, when an older iteration is displayed (#723)', () => {
+    // FilesTab resolves the after-side of the displayed range and passes it as
+    // anchorSha; on an older-iteration view that is the iteration's afterSha,
+    // NOT the PR head. The composer must stamp exactly what it is given so the
+    // post-now commit_id matches the commit whose diff the reviewer clicked.
+    const { result } = setup(makeOpts({ anchorSha: 'sha-after-2' }));
+
+    act(() => {
+      result.current.handleLineClick(rawAnchor());
+    });
+
+    expect(result.current.activeAnchor?.anchoredSha).toBe('sha-after-2');
   });
 
   it('clicking a line with an existing draft (filePath+lineNumber+side match) resumes that draftId', () => {
@@ -168,17 +183,17 @@ describe('useInlineComposer', () => {
     expect(result.current.handleLineClick).toBe(firstIdentity);
 
     // Entirely new opts objects: new draftSession (now holding a matching
-    // draft) and a new headSha.
+    // draft) and a new anchorSha.
     rerender(
       makeOpts({
         session: sessionWith([draft({ id: 'late-draft', lineNumber: 12 })]),
-        headSha: 'sha-head-2',
+        anchorSha: 'sha-head-2',
       }),
     );
     expect(result.current.handleLineClick).toBe(firstIdentity);
 
     // The stable handler must NOT see stale closures: clicking line 12 now
-    // resumes the late-arriving draft and stamps the NEW headSha.
+    // resumes the late-arriving draft and stamps the NEW anchorSha.
     act(() => {
       result.current.handleLineClick(rawAnchor({ lineNumber: 12 }));
     });

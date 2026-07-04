@@ -19,7 +19,7 @@ import {
 } from './wholeFilePreference';
 import { IterationTabStrip } from './IterationTabStrip';
 import { CommitMultiSelectPicker } from './CommitMultiSelectPicker';
-import { buildAllRange } from '../range';
+import { buildAllRange, anchorShaForRange } from '../range';
 import { buildTree, flattenPaths } from './treeBuilder';
 import { InlineCommentComposer } from '../Composer/InlineCommentComposer';
 import { usePrDetailContext } from '../prDetailContext';
@@ -160,6 +160,12 @@ export function FilesTab() {
     if (activeRange === 'all') return allRange;
     return activeRange;
   }, [isLowQuality, activeRange, allRange]);
+
+  // #723 — a NEW inline comment anchors to the after-side commit of the range
+  // on screen (the post-now path sends it as the GitHub commit_id): head on
+  // "All changes", the iteration's afterSha on an older-iteration view. Null
+  // iterationRange (low-quality commit-picker) falls back to head.
+  const anchorSha = anchorShaForRange(iterationRange, prDetail.pr.headSha);
 
   const rangeDiff = useFileDiff(prRef, isLowQuality ? null : iterationRange);
   const lowAllDiff = useFileDiff(prRef, isLowQuality && selectedCommits === null ? allRange : null);
@@ -363,7 +369,7 @@ export function FilesTab() {
     findExistingDraft,
     handleLineClick,
     handleComposerClose,
-  } = useInlineComposer({ draftSession, prDetail });
+  } = useInlineComposer({ draftSession, anchorSha });
 
   // #302 Task 11b / #603 item C — optimistic placeholders for just-posted
   // comments (state, prune effect, refetch generation, thread grouping and the
