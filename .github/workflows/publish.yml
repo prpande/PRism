@@ -124,10 +124,15 @@ jobs:
             : > body.md
             echo "has_copilot=false" >> "$GITHUB_OUTPUT"
           fi
+          # Random per-run delimiter: the body is untrusted (Copilot-authored /
+          # PR-title-derived) text, so a FIXED marker could appear in the content
+          # and truncate/inject the GITHUB_OUTPUT value. openssl is preinstalled
+          # on ubuntu-latest; 16 bytes = 128 bits, unguessable per run.
+          DELIM="PRISM_BODY_EOF_$(openssl rand -hex 16)"
           {
-            echo "text<<__PRISM_BODY_EOF__"
+            echo "text<<$DELIM"
             cat body.md
-            echo "__PRISM_BODY_EOF__"
+            echo "$DELIM"
           } >> "$GITHUB_OUTPUT"
 
   build-and-publish:
