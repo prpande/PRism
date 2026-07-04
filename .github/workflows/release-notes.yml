@@ -58,7 +58,7 @@ jobs:
             fi
           else
             # Auto: the most recent tag strictly before TAG.
-            prev="$(git describe --tags --abbrev=0 --exclude "$TAG" "${TAG}^" 2>/dev/null || true)"
+            prev="$(git describe --tags --abbrev=0 --exclude "$TAG" --end-of-options "${TAG}^" 2>/dev/null || true)"
           fi
           if [ -z "$prev" ]; then
             echo "::error::no base ref found before ${TAG}; pass base_ref explicitly." ; exit 1
@@ -100,5 +100,6 @@ jobs:
             printf '%s\n' "$COPILOT_BODY"
             if [ -n "$auto" ]; then printf '\n%s\n' "$auto"; fi
           } > notes.md
-          gh release edit "$TAG" --notes-file notes.md
+          # Flags first, then `--` so a $TAG starting with '-' can't be read as a gh option.
+          gh release edit --notes-file notes.md -- "$TAG"
           echo "Updated release $TAG (base $PREV)." >> "$GITHUB_STEP_SUMMARY"
