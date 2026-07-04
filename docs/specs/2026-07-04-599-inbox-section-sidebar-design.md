@@ -353,12 +353,41 @@ Pin the **accepted tradeoffs** and **cap = 10** in that plan.
 
 ## Mockups
 
-Three interactive mockups were produced during brainstorming (real PRism tokens, both themes):
+Three mockups were produced during brainstorming with **real PRism design tokens** (from
+`frontend/src/styles/tokens.css`), in **both themes**. They are the visual basis for this design;
+the ASCII layout above captures the structure.
 
-1. **Baseline** — today's tall single-column stack (the reference point).
-2. **Sidebar-nav** — sections as the collapsible left sidebar, expanded and icon-rail states.
-3. **Cap-collapse** — a busy 24-PR section: the freshest repos open, the staler repos collapsed to
-   one-click headers (the mockup illustrated the *mechanism* with an example cap; the chosen cap is
-   **10**, per this design).
+**Interactive source (open in a browser, Light/Dark toggle top-right):**
+[`assets/2026-07-04-599-inbox-sidebar/inbox-sidebar-mockups.html`](assets/2026-07-04-599-inbox-sidebar/inbox-sidebar-mockups.html)
+— self-contained, no build step. This is the artifact to open when picking up the implementation
+(#727); the generic mockup vars are mapped to the real oklch tokens, so hover/selection/accent
+states render faithfully.
 
-They are the visual basis for this design; the ASCII layout above captures the structure.
+### 1. Baseline — today's tall single-column stack (the reference point)
+
+Everything below is measured against this. All four sections default open and stack vertically;
+reaching "Awaiting author" / "Mentioned" means scrolling up and down past everything above.
+
+| Light | Dark |
+|-------|------|
+| ![Baseline inbox, light theme](assets/2026-07-04-599-inbox-sidebar/599-baseline-light.png) | ![Baseline inbox, dark theme](assets/2026-07-04-599-inbox-sidebar/599-baseline-dark.png) |
+
+### 2. Sidebar-nav — the chosen direction (master-detail)
+
+Sections become the collapsible left sidebar; only the selected section's PRs fill the main pane.
+The second frame in each image shows the **collapsed icon-rail** state (counts ride as badges).
+
+| Light | Dark |
+|-------|------|
+| ![Sidebar-nav, light theme](assets/2026-07-04-599-inbox-sidebar/599-sidebar-light.png) | ![Sidebar-nav, dark theme](assets/2026-07-04-599-inbox-sidebar/599-sidebar-dark.png) |
+
+### 3. Cap-collapse — bounding a busy section
+
+A 24-PR "Review requested" across 5 repos: the top-of-sort repos stay open, the lower-order repos
+collapse to one-click headers. The mockup illustrates the *mechanism* with an example fill; the
+chosen cap is **10 rows**, per § Cap-collapse. The annotation also flags the accepted single-fat-repo
+gap.
+
+| Light | Dark |
+|-------|------|
+| ![Cap-collapse, light theme](assets/2026-07-04-599-inbox-sidebar/599-cap-light.png) | ![Cap-collapse, dark theme](assets/2026-07-04-599-inbox-sidebar/599-cap-dark.png) |
