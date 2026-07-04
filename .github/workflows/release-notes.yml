@@ -1,0 +1,105 @@
+name: Refresh Release Notes
+
+# Regenerate the human-readable release notes for an EXISTING release and
+# overwrite its body — WITHOUT rebuilding or re-uploading any binaries. Use this
+# when the notes on a draft (or published) release aren't up to the mark and you
+# want another pass. Copilot output is non-deterministic, so each run is a fresh
+# take. Fires on manual dispatch only.
+#
+# Note: the notes-generation shape (resolve base ref -> run Copilot) is close to
+# the `release_notes` job in publish.yml / publish-desktop.yml. Kept inline here
+# rather than extracted to a composite action for now; if a fourth caller shows
+# up, extract .github/actions/generate-release-notes and have all of them use it.
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing release tag to regenerate notes for (e.g., v0.6.1). The release must already exist (draft or published).'
+        required: true
+        type: string
+      base_ref:
+        description: 'Generate notes FROM this tag/branch/SHA. Leave blank to diff from the tag immediately before `tag`.'
+        required: false
+        type: string
+        default: ''
+
+permissions:
+  contents: write      # edit the existing release body
+  pull-requests: read  # the github-api pr-strategy discovers PRs via the REST API
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # actions/checkout v7.0.0
+        with:
+          fetch-depth: 0  # full history + tags so tag/base refs resolve
+
+      - name: Resolve base ref
+        id: base
+        shell: bash
+        env:
+          TAG: ${{ inputs.tag }}                 # via env, never interpolated into the script (injection-safe)
+          BASE_OVERRIDE: ${{ inputs.base_ref }}
+        run: |
+          if ! git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null; then
+            echo "::error::'${TAG}' is not a git tag — regenerate against an existing release tag." ; exit 1
+          fi
+          if [ -n "$BASE_OVERRIDE" ]; then
+            # Explicit base: accept a tag, branch, or SHA that resolves to a commit.
+            # --end-of-options so a base_ref starting with '-' is read as a rev, not an option.
+            # (`--` is wrong here: for rev-parse it separates revs from paths.)
+            if git rev-parse -q --verify --end-of-options "${BASE_OVERRIDE}^{commit}" >/dev/null; then
+              prev="$BASE_OVERRIDE"
+            else
+              echo "::error::base_ref '${BASE_OVERRIDE}' did not resolve to a commit." ; exit 1
+            fi
+          else
+            # Auto: the most recent tag strictly before TAG.
+            prev="$(git describe --tags --abbrev=0 --exclude "$TAG" --end-of-options "${TAG}^" 2>/dev/null || true)"
+          fi
+          if [ -z "$prev" ]; then
+            echo "::error::no base ref found before ${TAG}; pass base_ref explicitly." ; exit 1
+          fi
+          echo "prev=$prev" >> "$GITHUB_OUTPUT"
+          echo "Regenerating notes for $prev..${TAG}" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Generate release notes (Copilot)
+        id: notes
+        # No continue-on-error here: this is a manual refresh, so if Copilot
+        # fails we stop BEFORE touching the release body rather than clobbering
+        # a good body with a fallback.
+        uses: github/copilot-release-notes@9eea0a5e7bcf7d5bdb8942b66d36b4b82dea631b  # github/copilot-release-notes@main (no tagged releases)
+        with:
+          base-ref: ${{ steps.base.outputs.prev }}
+          head-ref: ${{ inputs.tag }}  # the tag exists (verified above), so diff base..tag exactly
+          pr-strategy: github-api  # PRism squash-merges — merge-commits (default) finds nothing
+          instructions: .github/release-notes-style.md
+        env:
+          COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ github.token }}  # PR discovery for the github-api strategy
+
+      - name: Overwrite the release body
+        shell: bash
+        env:
+          TAG: ${{ inputs.tag }}
+          PREV: ${{ steps.base.outputs.prev }}
+          COPILOT_BODY: ${{ steps.notes.outputs['release-notes'] }}  # bracket notation: hyphenated output key
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ -z "$COPILOT_BODY" ]; then
+            echo "::error::Copilot produced empty notes; leaving the release body unchanged." ; exit 1
+          fi
+          # GitHub's auto PR list for the same range, appended below Copilot's
+          # notes (same structure as the release-time body).
+          auto="$(gh api "repos/${GITHUB_REPOSITORY}/releases/generate-notes" \
+            -f tag_name="$TAG" -f previous_tag_name="$PREV" --jq '.body' 2>/dev/null || true)"
+          {
+            printf '%s\n' "$COPILOT_BODY"
+            if [ -n "$auto" ]; then printf '\n%s\n' "$auto"; fi
+          } > notes.md
+          # Flags first, then `--` so a $TAG starting with '-' can't be read as a gh option.
+          gh release edit --notes-file notes.md -- "$TAG"
+          echo "Updated release $TAG (base $PREV)." >> "$GITHUB_STEP_SUMMARY"

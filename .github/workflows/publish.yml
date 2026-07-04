@@ -7,6 +7,11 @@ on:
         description: 'Release tag (e.g., v0.1.0)'
         required: true
         type: string
+      base_ref:
+        description: 'Generate release notes FROM this tag/branch/SHA (overrides the auto-detected previous tag — e.g. span several releases back to an earlier major). Leave blank to diff from the immediately-preceding tag.'
+        required: false
+        type: string
+        default: ''
       include_macos:
         description: 'Attach osx-arm64 binary to the Release. Default false at v0.1.0 (Windows-only ship per docs/specs/2026-05-28-v1-completion-roadmap-design.md § 4.2 + § 6.2). Flip true once macOS hardware verifies the build at v0.1.1.'
         required: false
@@ -17,7 +22,86 @@ permissions:
   contents: write  # required to create the draft Release
 
 jobs:
+  # Author human-readable release notes once, then hand them to the publish job
+  # as an output. (This workflow is single-job, so the matrix-clobber concern
+  # from publish-desktop.yml doesn't apply — but the job structure is kept
+  # identical across both release workflows so they stay easy to maintain.)
+  release_notes:  # underscore, not hyphen: `needs.<id>` / dot-notation can't reference a hyphenated id
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: read  # the github-api pr-strategy discovers PRs via the REST API
+    outputs:
+      body: ${{ steps.notes.outputs['release-notes'] }}  # bracket notation: the action's output key is hyphenated
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # actions/checkout v7.0.0
+        with:
+          fetch-depth: 0  # full history + tags so the previous tag resolves
+      - name: Resolve base ref for release notes
+        id: prevtag
+        shell: bash
+        env:
+          TAG: ${{ inputs.tag }}                 # via env, never interpolated into the script (injection-safe)
+          BASE_OVERRIDE: ${{ inputs.base_ref }}  # optional explicit base; blank = auto-detect previous tag
+        run: |
+          if [ -n "$BASE_OVERRIDE" ]; then
+            # Explicit base: accept a tag, branch, or SHA that resolves to a commit.
+            # --end-of-options so a base_ref starting with '-' is read as a rev, not an option.
+            # (`--` is wrong here: for rev-parse it separates revs from paths.)
+            if git rev-parse -q --verify --end-of-options "${BASE_OVERRIDE}^{commit}" >/dev/null; then
+              prev="$BASE_OVERRIDE"
+              echo "Using explicit base ref: $prev" >> "$GITHUB_STEP_SUMMARY"
+            else
+              prev="$(git describe --tags --abbrev=0 --exclude "$TAG" 2>/dev/null || true)"
+              echo "WARNING: base_ref '$BASE_OVERRIDE' did not resolve — falling back to the previous tag ($prev)." >> "$GITHUB_STEP_SUMMARY"
+            fi
+          else
+            # Auto: most recent tag reachable from HEAD, excluding the tag being
+            # cut now (the new tag may not exist yet, or may already point at HEAD).
+            prev="$(git describe --tags --abbrev=0 --exclude "$TAG" 2>/dev/null || true)"
+          fi
+          echo "tag=$prev" >> "$GITHUB_OUTPUT"
+          if [ -z "$prev" ]; then
+            echo "No base ref found — Copilot notes skipped; the release falls back to GitHub's auto-notes." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "Generating release notes for $prev..${TAG}" >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Generate release notes (Copilot)
+        id: notes
+        if: steps.prevtag.outputs.tag != ''
+        continue-on-error: true  # never block a release if Copilot is unavailable
+        uses: github/copilot-release-notes@9eea0a5e7bcf7d5bdb8942b66d36b4b82dea631b  # github/copilot-release-notes@main (no tagged releases)
+        with:
+          base-ref: ${{ steps.prevtag.outputs.tag }}
+          head-ref: ${{ github.sha }}  # the SHA being released; the tag may not exist yet
+          pr-strategy: github-api  # PRism squash-merges — merge-commits (default) finds nothing
+          instructions: .github/release-notes-style.md
+        env:
+          COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ github.token }}  # PR discovery for the github-api strategy
+      - name: Surface diagnostics for the draft reviewer
+        if: steps.notes.outcome == 'success'
+        shell: bash
+        env:
+          # Env, not inline ${{ }} in the script — these are derived from PR
+          # titles and could otherwise inject shell (GitHub hardening guidance).
+          UNCERTAIN: ${{ steps.notes.outputs['uncertain-entries'] }}
+          SKIPPED: ${{ steps.notes.outputs['skipped-prs'] }}
+        run: |
+          {
+            echo "### Copilot release-notes diagnostics"
+            echo "Review these before publishing the draft."
+            echo ""
+            echo "Uncertain entries:"
+            printf '%s\n' "$UNCERTAIN"
+            echo ""
+            echo "Skipped PRs:"
+            printf '%s\n' "$SKIPPED"
+          } >> "$GITHUB_STEP_SUMMARY"
+
   build-and-publish:
+    needs: release_notes
     runs-on: windows-latest
     # Cap at 30 min so a stuck npm ci / dotnet publish / Release-upload retry
     # can't consume the monthly Actions budget on one hung run. Expected wall
@@ -76,6 +160,10 @@ jobs:
           tag_name: ${{ github.event.inputs.tag }}
           name: PRism ${{ github.event.inputs.tag }}
           draft: true
+          # Copilot-authored notes on top (empty on failure / no prior tag —
+          # graceful fallback); GitHub's auto PR list appends below. draft stays
+          # true so a human reviews before publishing.
+          body: ${{ needs.release_notes.outputs.body }}
           generate_release_notes: true
           # osx-arm64 line is omitted when include_macos is false; softprops/action-gh-release
           # treats blank lines in `files:` as no-ops, so the expression renders to an empty
