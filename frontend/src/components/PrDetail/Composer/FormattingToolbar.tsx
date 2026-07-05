@@ -4,6 +4,7 @@ import type { FormatAction } from './markdownFormatting';
 import { applyFormatting } from './applyFormatting';
 import { ICONS } from './formattingIcons';
 import { useFormattingShortcuts } from './useFormattingShortcuts';
+import { ToolbarOverflowMenu } from './ToolbarOverflowMenu';
 
 interface ButtonDef {
   action: FormatAction;
@@ -25,6 +26,23 @@ export const TOOLBAR_BUTTONS: ButtonDef[] = [
   { action: 'numbered', label: 'Numbered list', group: 2 },
   { action: 'task', label: 'Task list', group: 2 },
 ];
+
+// Keep-visible priority (index 0 overflows LAST). The tail overflows first.
+export const OVERFLOW_PRIORITY: FormatAction[] = [
+  'bold',
+  'italic',
+  'link',
+  'code',
+  'quote',
+  'bulleted',
+  'numbered',
+  'heading',
+  'task',
+  'strikethrough',
+];
+
+const BTN_WIDTH = 32; // px per icon button incl. gap (approx; measured live)
+const MORE_WIDTH = 32; // px for the "…" trigger
 
 const IS_MAC = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform ?? '');
 const MOD = IS_MAC ? '⌘' : 'Ctrl';
@@ -100,7 +118,43 @@ export function FormattingToolbar({ handle }: { handle: FormattingHandle }) {
   // Roving tabindex across the format buttons.
   const [activeIndex, setActiveIndex] = useState(0);
   const btnRefs = useRef<(HTMLButtonElement | null)[]>([]);
-  const count = TOOLBAR_BUTTONS.length;
+
+  const toolbarRef = useRef<HTMLDivElement | null>(null);
+  const [maxVisible, setMaxVisible] = useState(TOOLBAR_BUTTONS.length);
+
+  useEffect(() => {
+    const el = toolbarRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver((entries) => {
+      const width = entries[0]?.contentRect.width ?? el.clientWidth;
+      const fitsAll = Math.floor(width / BTN_WIDTH);
+      if (fitsAll >= TOOLBAR_BUTTONS.length) {
+        setMaxVisible(TOOLBAR_BUTTONS.length);
+      } else {
+        // Reserve room for the "…" trigger among the visible slots.
+        setMaxVisible(Math.max(1, Math.floor((width - MORE_WIDTH) / BTN_WIDTH)));
+      }
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [previewMode]);
+
+  // Split by priority; render in display order.
+  const visibleActions = new Set(OVERFLOW_PRIORITY.slice(0, maxVisible));
+  const overflowActions = OVERFLOW_PRIORITY.slice(maxVisible);
+  const visibleButtons = TOOLBAR_BUTTONS.filter((b) => visibleActions.has(b.action));
+  const overflowInDisplayOrder = TOOLBAR_BUTTONS.filter((b) =>
+    overflowActions.includes(b.action),
+  ).map((b) => b.action);
+  const hasOverflow = overflowInDisplayOrder.length > 0;
+
+  // The roving set is the visible format buttons PLUS the "…" trigger (last stop)
+  // when present. Clamp the active index so a shrink that overflows the currently-
+  // focused button can't strand the roving stop on a now-unmounted index (which
+  // would leave every remaining button at tabIndex -1 → an untabbable toolbar).
+  const count = visibleButtons.length + (hasOverflow ? 1 : 0);
+  const clampedActiveIndex = Math.min(activeIndex, count - 1);
+  const overflowTriggerIndex = visibleButtons.length; // its slot in btnRefs
 
   const focusIndex = (i: number) => {
     const clamped = Math.max(0, Math.min(count - 1, i));
@@ -171,14 +225,15 @@ export function FormattingToolbar({ handle }: { handle: FormattingHandle }) {
 
       {!previewMode && (
         <div
+          ref={toolbarRef}
           role="toolbar"
           aria-label="Formatting"
           className="formatting-toolbar"
           onKeyDown={onToolbarKeyDown}
         >
-          {TOOLBAR_BUTTONS.map((def, i) => {
+          {visibleButtons.map((def, i) => {
             const Icon = ICONS[def.action];
-            const prevGroup = i > 0 ? TOOLBAR_BUTTONS[i - 1].group : def.group;
+            const prevGroup = i > 0 ? visibleButtons[i - 1].group : def.group;
             return (
               <span key={def.action} style={{ display: 'contents' }}>
                 {def.group !== prevGroup && (
@@ -196,7 +251,7 @@ export function FormattingToolbar({ handle }: { handle: FormattingHandle }) {
                   className="formatting-toolbar-btn"
                   aria-label={buttonTitle(def)}
                   title={buttonTitle(def)}
-                  tabIndex={i === activeIndex ? 0 : -1}
+                  tabIndex={i === clampedActiveIndex ? 0 : -1}
                   disabled={disabled}
                   aria-disabled={disabled || undefined}
                   onFocus={() => setActiveIndex(i)}
@@ -208,6 +263,18 @@ export function FormattingToolbar({ handle }: { handle: FormattingHandle }) {
               </span>
             );
           })}
+          {hasOverflow && (
+            <ToolbarOverflowMenu
+              items={overflowInDisplayOrder}
+              runAction={runAction}
+              disabled={disabled}
+              tabIndex={clampedActiveIndex === overflowTriggerIndex ? 0 : -1}
+              buttonRef={(el) => {
+                btnRefs.current[overflowTriggerIndex] = el;
+              }}
+              onButtonFocus={() => setActiveIndex(overflowTriggerIndex)}
+            />
+          )}
         </div>
       )}
     </div>

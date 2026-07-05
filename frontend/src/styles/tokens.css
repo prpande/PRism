@@ -1521,3 +1521,42 @@ html[data-theme='dark'] .codeToken {
   border-radius: 2px;
   text-decoration: line-through;
 }
+/* #586 — overflow "…" menu */
+.formatting-overflow {
+  position: relative;
+  display: inline-flex;
+}
+.formatting-overflow-menu {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  z-index: 20;
+  margin: var(--s-1) 0 0;
+  padding: var(--s-1);
+  list-style: none;
+  min-width: 180px;
+  background: var(--surface-1);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-2);
+  box-shadow: var(--shadow-2);
+}
+.formatting-overflow-item {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  width: 100%;
+  padding: var(--s-1) var(--s-2);
+  font-size: var(--text-sm);
+  font-family: var(--font-sans);
+  color: var(--text-1);
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-1);
+  cursor: pointer;
+  text-align: left;
+}
+.formatting-overflow-item:hover,
+.formatting-overflow-item:focus-visible {
+  background: var(--surface-3);
+  outline: none;
+}

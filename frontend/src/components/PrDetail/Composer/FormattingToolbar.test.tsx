@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { useRef, useState } from 'react';
-import { render, fireEvent, within } from '@testing-library/react';
+import { render, fireEvent, within, act } from '@testing-library/react';
 import { FormattingToolbar } from './FormattingToolbar';
 import type { FormattingHandle } from './formattingHandle';
 
@@ -125,5 +125,87 @@ describe('FormattingToolbar', () => {
     // If the controlled re-render reset the caret, this next insert would misplace.
     ta.setRangeText('Z', ta.selectionStart, ta.selectionEnd, 'end');
     expect(ta.value).toBe('x**Z**');
+  });
+});
+
+// A controllable ResizeObserver mock: capture the callback and let the test push
+// a container width.
+class MockResizeObserver {
+  static instances: MockResizeObserver[] = [];
+  cb: ResizeObserverCallback;
+  el: Element | null = null;
+  constructor(cb: ResizeObserverCallback) {
+    this.cb = cb;
+    MockResizeObserver.instances.push(this);
+  }
+  observe(el: Element) {
+    this.el = el;
+  }
+  unobserve() {}
+  disconnect() {}
+  emit(width: number) {
+    this.cb([{ contentRect: { width } } as ResizeObserverEntry], this as unknown as ResizeObserver);
+  }
+}
+
+describe('FormattingToolbar — overflow', () => {
+  it('collapses low-priority buttons into the "…" menu at a constrained width', () => {
+    const orig = globalThis.ResizeObserver;
+    (globalThis as unknown as { ResizeObserver: unknown }).ResizeObserver = MockResizeObserver;
+    try {
+      const { getByRole } = render(<Harness />);
+      act(() => {
+        // ~5 buttons' worth of width -> the tail (strikethrough, task, …) overflows.
+        MockResizeObserver.instances.at(-1)!.emit(180);
+      });
+      const toolbar = getByRole('toolbar', { name: 'Formatting' });
+      // High-priority buttons stay visible; a More button appears.
+      expect(within(toolbar).getByRole('button', { name: /Bold/ })).toBeTruthy();
+      expect(getByRole('button', { name: /More formatting/i })).toBeTruthy();
+      // Strikethrough (lowest priority) is no longer a direct toolbar button.
+      expect(within(toolbar).queryByRole('button', { name: /Strikethrough/ })).toBeNull();
+    } finally {
+      (globalThis as unknown as { ResizeObserver: unknown }).ResizeObserver = orig;
+    }
+  });
+
+  it('shows no "…" button when everything fits', () => {
+    const orig = globalThis.ResizeObserver;
+    (globalThis as unknown as { ResizeObserver: unknown }).ResizeObserver = MockResizeObserver;
+    try {
+      const { getByRole, queryByRole } = render(<Harness />);
+      act(() => {
+        MockResizeObserver.instances.at(-1)!.emit(2000);
+      });
+      expect(within(getByRole('toolbar')).getAllByRole('button').length).toBe(10);
+      expect(queryByRole('button', { name: /More formatting/i })).toBeNull();
+    } finally {
+      (globalThis as unknown as { ResizeObserver: unknown }).ResizeObserver = orig;
+    }
+  });
+
+  it('keeps a tabbable stop after a shrink overflows the focused button (no keyboard trap)', () => {
+    const orig = globalThis.ResizeObserver;
+    (globalThis as unknown as { ResizeObserver: unknown }).ResizeObserver = MockResizeObserver;
+    try {
+      const { getByRole } = render(<Harness />);
+      act(() => {
+        MockResizeObserver.instances.at(-1)!.emit(2000); // all 10 visible
+      });
+      const toolbar = getByRole('toolbar', { name: 'Formatting' });
+      // Focus a low-priority button that will overflow, then shrink.
+      within(toolbar)
+        .getByRole('button', { name: /Strikethrough/ })
+        .focus();
+      act(() => {
+        MockResizeObserver.instances.at(-1)!.emit(180); // tail overflows
+      });
+      // The active index was clamped: exactly one roving stop (a visible button or
+      // the "…" trigger) still has tabIndex 0 — the toolbar is not stranded.
+      const roving = [...within(toolbar).getAllByRole('button')] as HTMLButtonElement[];
+      expect(roving.some((b) => b.tabIndex === 0)).toBe(true);
+    } finally {
+      (globalThis as unknown as { ResizeObserver: unknown }).ResizeObserver = orig;
+    }
   });
 });
