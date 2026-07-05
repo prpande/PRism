@@ -115,6 +115,13 @@ describe('applyMarkdownFormat — italic', () => {
     const r = applyMarkdownFormat('italic', '**foo**', 2, 5);
     expect(r.value).toBe('**_foo_**');
   });
+
+  it('does NOT merge adjacent independent runs on toggle-off (_a_b_c_)', () => {
+    // "b" (3..4) sits between two SEPARATE _..._ runs. The outside-marker
+    // toggle-off must not fire (that would strip a/c into "_abc_"); ADD instead.
+    const r = applyMarkdownFormat('italic', '_a_b_c_', 3, 4);
+    expect(r.value).toBe('_a__b__c_');
+  });
 });
 
 describe('applyMarkdownFormat — strikethrough', () => {
@@ -226,6 +233,18 @@ export function applyMarkdownFormat(
 
 // --- wrap family -----------------------------------------------------------
 
+// Count non-overlapping occurrences of `needle` in `haystack`.
+function occurrences(haystack: string, needle: string): number {
+  if (needle.length === 0) return 0;
+  let n = 0;
+  let i = haystack.indexOf(needle);
+  while (i !== -1) {
+    n += 1;
+    i = haystack.indexOf(needle, i + needle.length);
+  }
+  return n;
+}
+
 // Wrap the selection's non-whitespace core in `marker` on both sides, or strip
 // the marker if it is already present immediately inside OR immediately outside
 // the selection (toggle). Leading/trailing whitespace stays outside the marker.
@@ -247,8 +266,18 @@ function wrapSymmetric(marker: string, text: string, start: number, end: number)
     return { value, selectionStart: s, selectionEnd: s + inner.length };
   }
 
-  // Toggle off — markers immediately outside the selection (selection inside a pair).
-  if (before.endsWith(marker) && after.startsWith(marker)) {
+  // Toggle off — markers immediately outside the selection (selection inside a
+  // pair, e.g. **|foo|**). GUARDED so adjacent independent runs are not merged:
+  // the outside marker counts as an opening delimiter only when an ODD number of
+  // markers precede the selection, and the core itself must not contain the
+  // marker. Without this, italic on `_a_b_c_` @ (3,4) would strip the a/c
+  // underscores into `_abc_` — which then posts wrong to GitHub.
+  if (
+    before.endsWith(marker) &&
+    after.startsWith(marker) &&
+    !core.includes(marker) &&
+    occurrences(before, marker) % 2 === 1
+  ) {
     const value =
       before.slice(0, before.length - m) + leadingWs + core + trailingWs + after.slice(m);
     const s = start - m + leadingWs.length;
@@ -371,6 +400,17 @@ describe('applyMarkdownFormat — quote / bulleted / task', () => {
     const r = applyMarkdownFormat('bulleted', 'a\n\nb', 0, 4);
     expect(r.value).toBe('- a\n\n- b');
   });
+
+  it('does NOT destroy a task line when Bulleted is applied to it', () => {
+    // "- " is a prefix of "- [ ] "; bulleted must not strip a task into "[ ] do it".
+    const r = applyMarkdownFormat('bulleted', '- [ ] do it', 0, 11);
+    expect(r.value).toBe('- [ ] do it'); // no-op, not "[ ] do it"
+  });
+
+  it('converts an existing bullet to a task instead of double-prefixing', () => {
+    const r = applyMarkdownFormat('task', '- do it', 0, 7);
+    expect(r.value).toBe('- [ ] do it'); // not "- [ ] - do it"
+  });
 });
 
 describe('applyMarkdownFormat — numbered list', () => {
@@ -404,6 +444,14 @@ describe('applyMarkdownFormat — heading cycle', () => {
   it('cycles # -> stripped', () => {
     const r = applyMarkdownFormat('heading', '# Title', 0, 7);
     expect(r.value).toBe('Title');
+  });
+
+  it('applies a uniform level across a multi-line selection from the first line', () => {
+    // Documented, accepted behavior: the block cycles as a unit off the first
+    // non-empty line's level (## -> #), not per-line. Mixed-level blocks are rare;
+    // this keeps the action a single predictable cycle rather than a per-line mix.
+    const r = applyMarkdownFormat('heading', '## A\n# B', 0, 8);
+    expect(r.value).toBe('# A\n# B');
   });
 });
 ```
@@ -466,6 +514,46 @@ function toggleLinePrefix(
   });
 }
 
+// "- " is a prefix of the task marker "- [ ] ", so bulleted and task must be
+// mutually aware or they corrupt each other's lines (bulleted-on-a-task strips
+// the checkbox; task-on-a-bullet double-prefixes).
+const TASK_RE = /^- \[[ xX]\] /;
+
+function isPlainBullet(l: string): boolean {
+  return l.startsWith('- ') && !TASK_RE.test(l);
+}
+
+function formatBulleted(text: string, start: number, end: number): FormatResult {
+  return withBlock(text, start, end, (lines) => {
+    const nonEmpty = lines.filter((l) => l.trim().length > 0);
+    const allBulleted = nonEmpty.length > 0 && nonEmpty.every(isPlainBullet);
+    if (allBulleted) {
+      return lines.map((l) => (isPlainBullet(l) ? l.slice(2) : l));
+    }
+    return lines.map((l) => {
+      if (l.trim().length === 0) return l;
+      if (isPlainBullet(l) || TASK_RE.test(l)) return l; // already a list item
+      return '- ' + l;
+    });
+  });
+}
+
+function formatTask(text: string, start: number, end: number): FormatResult {
+  return withBlock(text, start, end, (lines) => {
+    const nonEmpty = lines.filter((l) => l.trim().length > 0);
+    const allTask = nonEmpty.length > 0 && nonEmpty.every((l) => TASK_RE.test(l));
+    if (allTask) {
+      return lines.map((l) => l.replace(TASK_RE, ''));
+    }
+    return lines.map((l) => {
+      if (l.trim().length === 0) return l;
+      if (TASK_RE.test(l)) return l;
+      if (l.startsWith('- ')) return '- [ ] ' + l.slice(2); // convert bullet -> task
+      return '- [ ] ' + l;
+    });
+  });
+}
+
 const NUMBERED_RE = /^\d+\.\s/;
 
 function formatNumbered(text: string, start: number, end: number): FormatResult {
@@ -513,11 +601,11 @@ function formatLinePrefixAction(
     case 'quote':
       return toggleLinePrefix('> ', text, start, end);
     case 'bulleted':
-      return toggleLinePrefix('- ', text, start, end);
+      return formatBulleted(text, start, end);
     case 'numbered':
       return formatNumbered(text, start, end);
     case 'task':
-      return toggleLinePrefix('- [ ] ', text, start, end);
+      return formatTask(text, start, end);
     default:
       return { value: text, selectionStart: start, selectionEnd: end };
   }
@@ -601,6 +689,15 @@ describe('applyFormatting', () => {
     warn.mockRestore();
     expect(ta.value).toBe('**a**');
   });
+
+  it('refuses to mutate a readOnly textarea (autosave-race defense-in-depth)', () => {
+    const ta = makeTextarea('foo', 0, 3);
+    ta.readOnly = true;
+    const onChange = vi.fn();
+    applyFormatting(ta, 'bold', onChange);
+    expect(ta.value).toBe('foo'); // unchanged
+    expect(onChange).not.toHaveBeenCalled();
+  });
 });
 ```
 
@@ -647,6 +744,16 @@ export function applyFormatting(
   action: FormatAction,
   onChange: (next: string) => void,
 ): { selectionStart: number; selectionEnd: number } {
+  // Defense-in-depth for the #601/#644 autosave-vs-post race. The toolbar/shortcut
+  // `disabled` gate already blocks this, but the actual body mutation happens
+  // HERE and setRangeText ignores the `readOnly` attribute — so enforce the lock
+  // where the write occurs. `readOnly` reflects `readOnly || posting` on all three
+  // composers, so a mutation during a post is refused even if a call site's guard
+  // is ever dropped.
+  if (textarea.readOnly) {
+    return { selectionStart: textarea.selectionStart, selectionEnd: textarea.selectionEnd };
+  }
+
   const value = textarea.value;
   const result = applyMarkdownFormat(action, value, textarea.selectionStart, textarea.selectionEnd);
   const span = minimalReplaceSpan(value, result.value);
@@ -660,7 +767,10 @@ export function applyFormatting(
   } catch {
     ok = false;
   }
-  if (!ok) {
+  // `!ok` covers the jsdom / non-Chromium case; the value-equality check also
+  // catches a runtime that returns true but silently no-ops insertText, so the
+  // fallback still lands the edit instead of dropping it.
+  if (!ok || textarea.value !== result.value) {
     if (import.meta.env?.DEV && !warnedOnce) {
       warnedOnce = true;
       // eslint-disable-next-line no-console
@@ -939,18 +1049,27 @@ import { useFormattingShortcuts } from './useFormattingShortcuts';
 import type { FormattingHandle } from './formattingHandle';
 import type { FormatAction } from './markdownFormatting';
 
-function Harness({ disabled, runAction }: { disabled: boolean; runAction: (a: FormatAction) => void }) {
+function Harness({
+  disabled,
+  runAction,
+  previewMode = false,
+}: {
+  disabled: boolean;
+  runAction: (a: FormatAction) => void;
+  previewMode?: boolean;
+}) {
   const ref = useRef<HTMLTextAreaElement | null>(null);
   const handle: FormattingHandle = {
     textareaRef: ref,
     value: '',
     onChange: () => {},
-    previewMode: false,
+    previewMode,
     onTogglePreview: () => {},
     disabled,
   };
   useFormattingShortcuts(handle, runAction);
-  return <textarea ref={ref} aria-label="body" />;
+  // Mirror the inline/reply composers: the textarea UNMOUNTS in preview.
+  return previewMode ? <div>preview</div> : <textarea ref={ref} aria-label="body" />;
 }
 
 describe('useFormattingShortcuts', () => {
@@ -986,6 +1105,19 @@ describe('useFormattingShortcuts', () => {
     fireEvent.keyDown(ta, { key: 'Enter', ctrlKey: true });
     fireEvent.keyDown(ta, { key: 'p', ctrlKey: true, shiftKey: true });
     expect(runAction).not.toHaveBeenCalled();
+  });
+
+  it('re-binds to the new textarea after a preview round-trip', () => {
+    const runAction = vi.fn();
+    const { getByLabelText, rerender } = render(
+      <Harness disabled={false} runAction={runAction} previewMode={false} />,
+    );
+    // Enter preview: the original textarea unmounts.
+    rerender(<Harness disabled={false} runAction={runAction} previewMode={true} />);
+    // Return to edit: a NEW textarea mounts; the listener must rebind to it.
+    rerender(<Harness disabled={false} runAction={runAction} previewMode={false} />);
+    fireEvent.keyDown(getByLabelText('body'), { key: 'b', ctrlKey: true });
+    expect(runAction).toHaveBeenCalledWith('bold');
   });
 });
 ```
@@ -1041,7 +1173,15 @@ export function useFormattingShortcuts(
   handle: FormattingHandle,
   runAction: (action: FormatAction) => void,
 ): void {
-  const { textareaRef, disabled } = handle;
+  const { textareaRef, disabled, previewMode } = handle;
+  // `previewMode` is in the dep list even though the handler doesn't read it:
+  // on the inline/reply composers the textarea UNMOUNTS in preview and a fresh
+  // element mounts on return to edit. The RefObject identity is stable and
+  // `disabled` doesn't change on a preview toggle, so without `previewMode` the
+  // effect would never re-run and the listener would stay bound to the old
+  // (unmounted) element — Ctrl/Cmd+B/I/K/E would silently die after any
+  // Write->Preview->Write cycle. Re-running on `previewMode` re-reads
+  // `textareaRef.current` (the new element) and rebinds.
   useEffect(() => {
     const ta = textareaRef.current;
     if (!ta) return;
@@ -1055,7 +1195,7 @@ export function useFormattingShortcuts(
     };
     ta.addEventListener('keydown', onKeyDown);
     return () => ta.removeEventListener('keydown', onKeyDown);
-  }, [textareaRef, disabled, runAction]);
+  }, [textareaRef, disabled, previewMode, runAction]);
 }
 ```
 
@@ -1185,6 +1325,32 @@ describe('FormattingToolbar', () => {
     fireEvent.keyDown(toolbar, { key: 'Home' });
     expect(document.activeElement).toBe(buttons[0]);
   });
+
+  it('exposes the Write | Preview control as a single tab stop (roving)', () => {
+    const { getByRole } = render(<Harness />);
+    const write = getByRole('button', { name: 'Write' }) as HTMLButtonElement;
+    const preview = getByRole('button', { name: 'Preview' }) as HTMLButtonElement;
+    // Exactly one of the two view buttons is in the tab order at a time.
+    expect([write.tabIndex, preview.tabIndex].sort()).toEqual([-1, 0]);
+    // The active view (Write) holds the tab stop by default.
+    expect(write.tabIndex).toBe(0);
+    // ArrowRight moves the roving focus/stop to Preview.
+    fireEvent.keyDown(getByRole('group', { name: 'Editor view' }), { key: 'ArrowRight' });
+    expect(preview.tabIndex).toBe(0);
+    expect(document.activeElement).toBe(preview);
+  });
+
+  it('keeps the caret after the controlled re-render so the next char lands in place', () => {
+    const { getByRole, getByLabelText } = render(<Harness initialValue="x" />);
+    const ta = getByLabelText('body') as HTMLTextAreaElement;
+    ta.focus();
+    ta.setSelectionRange(1, 1); // caret after "x"
+    fireEvent.click(getByRole('button', { name: /Bold/ }));
+    // Empty-selection bold -> "x****" with the caret parked between the pair.
+    // If the controlled re-render reset the caret, this next insert would misplace.
+    ta.setRangeText('Z', ta.selectionStart, ta.selectionEnd, 'end');
+    expect(ta.value).toBe('x**Z**');
+  });
 });
 ```
 
@@ -1201,6 +1367,7 @@ import type { FormattingHandle } from './formattingHandle';
 import type { FormatAction } from './markdownFormatting';
 import { applyFormatting } from './applyFormatting';
 import { ICONS } from './formattingIcons';
+import { useFormattingShortcuts } from './useFormattingShortcuts';
 
 interface ButtonDef {
   action: FormatAction;
@@ -1236,6 +1403,10 @@ export function FormattingToolbar({ handle }: { handle: FormattingHandle }) {
 
   // Shared apply path: engine edit -> DOM -> onChange -> caret, then re-assert
   // the caret after React commits via a layout effect keyed on this token.
+  // Note: on the real Chromium/Electron execCommand path the native input event
+  // ALSO fires the controlled textarea's onChange, so setBody runs twice with the
+  // same value (idempotent). React then re-renders the controlled value over the
+  // selection; the useLayoutEffect below restores the caret before paint.
   const pendingCaret = useRef<{ start: number; end: number } | null>(null);
   const [caretToken, setCaretToken] = useState(0);
 
@@ -1259,14 +1430,33 @@ export function FormattingToolbar({ handle }: { handle: FormattingHandle }) {
     }
   }, [caretToken, textareaRef]);
 
+  // Roving tabindex across the two view-switch buttons so the Write | Preview
+  // control is a SINGLE tab stop (spec §Accessibility). Arrow/Home/End move focus
+  // between the two; activation (click/Enter/Space) switches the view.
+  const viewBtnRefs = useRef<(HTMLButtonElement | null)[]>([]);
+  const [viewFocusIndex, setViewFocusIndex] = useState(previewMode ? 1 : 0);
+
+  const onViewSwitchKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'ArrowRight' || e.key === 'End') {
+      e.preventDefault();
+      setViewFocusIndex(1);
+      viewBtnRefs.current[1]?.focus();
+    } else if (e.key === 'ArrowLeft' || e.key === 'Home') {
+      e.preventDefault();
+      setViewFocusIndex(0);
+      viewBtnRefs.current[0]?.focus();
+    }
+  };
+
   // Focus flow across the view switch: entering Preview parks focus on the
   // Preview button (the textarea is about to unmount); returning to Write parks
-  // focus back on the textarea so the user resumes typing.
-  const previewBtnRef = useRef<HTMLButtonElement | null>(null);
+  // focus back on the textarea so the user resumes typing. Also realign the
+  // roving stop to the active view so Tab lands on the button that reflects it.
   const prevPreview = useRef(previewMode);
   useEffect(() => {
     if (prevPreview.current !== previewMode) {
-      if (previewMode) previewBtnRef.current?.focus();
+      setViewFocusIndex(previewMode ? 1 : 0);
+      if (previewMode) viewBtnRefs.current[1]?.focus();
       else textareaRef.current?.focus();
       prevPreview.current = previewMode;
     }
@@ -1299,15 +1489,28 @@ export function FormattingToolbar({ handle }: { handle: FormattingHandle }) {
     }
   };
 
-  useFormattingShortcutsBinding(handle, runAction);
+  // Always called (rules of hooks): the toolbar strip is always mounted even in
+  // preview, so shortcuts stay active in edit mode; the hook no-ops when the
+  // textarea ref is null and rebinds on the preview round-trip.
+  useFormattingShortcuts(handle, runAction);
 
   return (
     <div className="formatting-strip">
-      <div className="composer-view-switch" role="group" aria-label="Editor view">
+      <div
+        className="composer-view-switch"
+        role="group"
+        aria-label="Editor view"
+        onKeyDown={onViewSwitchKeyDown}
+      >
         <button
+          ref={(el) => {
+            viewBtnRefs.current[0] = el;
+          }}
           type="button"
           className="composer-view-switch-btn"
           aria-pressed={!previewMode}
+          tabIndex={viewFocusIndex === 0 ? 0 : -1}
+          onFocus={() => setViewFocusIndex(0)}
           onClick={() => {
             if (previewMode) onTogglePreview();
           }}
@@ -1315,10 +1518,14 @@ export function FormattingToolbar({ handle }: { handle: FormattingHandle }) {
           Write
         </button>
         <button
-          ref={previewBtnRef}
+          ref={(el) => {
+            viewBtnRefs.current[1] = el;
+          }}
           type="button"
           className="composer-view-switch-btn"
           aria-pressed={previewMode}
+          tabIndex={viewFocusIndex === 1 ? 0 : -1}
+          onFocus={() => setViewFocusIndex(1)}
           onClick={() => {
             if (!previewMode) onTogglePreview();
           }}
@@ -1367,23 +1574,14 @@ export function FormattingToolbar({ handle }: { handle: FormattingHandle }) {
     </div>
   );
 }
-
-// Wrapper so the shortcut hook is always called (rules of hooks) even though the
-// toolbar buttons unmount in preview. The hook itself no-ops when the textarea
-// ref is null.
-function useFormattingShortcutsBinding(
-  handle: FormattingHandle,
-  runAction: (action: FormatAction) => void,
-) {
-  useFormattingShortcuts(handle, runAction);
-}
 ```
 
-Add the import at the top of the file:
-
-```tsx
-import { useFormattingShortcuts } from './useFormattingShortcuts';
-```
+Note: when the composer is entirely `disabled` (read-only / posting), every format
+button gets the native `disabled` attribute, so all 10 are removed from the tab
+order — the toolbar has zero tab stops in that state (there is nothing to
+activate). This is intentional; the `Write | Preview` control stays focusable so
+the strip region is still keyboard-reachable. The disabled-state test asserts the
+buttons are `disabled`; no separate tab-order assertion is needed.
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
@@ -1549,6 +1747,16 @@ describe('ToolbarOverflowMenu', () => {
     expect(queryByRole('menu')).toBeNull();
     expect(document.activeElement).toBe(trigger);
   });
+
+  it('disables the trigger and cannot open when disabled (matches the greyed strip)', () => {
+    const { getByRole, queryByRole } = render(
+      <ToolbarOverflowMenu items={['task']} runAction={() => {}} disabled />,
+    );
+    const trigger = getByRole('button', { name: /More formatting/i }) as HTMLButtonElement;
+    expect(trigger.disabled).toBe(true);
+    fireEvent.click(trigger);
+    expect(queryByRole('menu')).toBeNull();
+  });
 });
 ```
 
@@ -1569,13 +1777,26 @@ function defFor(action: FormatAction) {
   return TOOLBAR_BUTTONS.find((b) => b.action === action)!;
 }
 
+export interface ToolbarOverflowMenuProps {
+  items: FormatAction[];
+  runAction: (a: FormatAction) => void;
+  disabled?: boolean;
+  // Roving-tabindex participation: the "…" trigger is the toolbar's LAST stop, so
+  // the parent supplies the trigger's tabIndex, a ref to register it in the
+  // roving ref array, and a focus callback to sync the active index.
+  tabIndex?: number;
+  buttonRef?: (el: HTMLButtonElement | null) => void;
+  onButtonFocus?: () => void;
+}
+
 export function ToolbarOverflowMenu({
   items,
   runAction,
-}: {
-  items: FormatAction[];
-  runAction: (a: FormatAction) => void;
-}) {
+  disabled = false,
+  tabIndex,
+  buttonRef,
+  onButtonFocus,
+}: ToolbarOverflowMenuProps) {
   const [open, setOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const itemRefs = useRef<(HTMLButtonElement | null)[]>([]);
@@ -1584,8 +1805,10 @@ export function ToolbarOverflowMenu({
   useEffect(() => {
     if (open) {
       setActiveIndex(0);
-      // Focus the first item after it mounts.
-      requestAnimationFrame(() => itemRefs.current[0]?.focus());
+      // Focus the first item synchronously. The menu items are mounted by the
+      // time this post-commit effect runs, so no requestAnimationFrame — rAF
+      // would not fire under fake timers in tests that install them.
+      itemRefs.current[0]?.focus();
     }
   }, [open]);
 
@@ -1614,19 +1837,26 @@ export function ToolbarOverflowMenu({
   return (
     <div className="formatting-overflow">
       <button
-        ref={triggerRef}
+        ref={(el) => {
+          triggerRef.current = el;
+          buttonRef?.(el);
+        }}
         type="button"
         className="formatting-toolbar-btn"
         aria-label="More formatting options"
         title="More formatting options"
         aria-haspopup="menu"
         aria-expanded={open}
+        tabIndex={tabIndex}
+        disabled={disabled}
+        aria-disabled={disabled || undefined}
+        onFocus={onButtonFocus}
         onMouseDown={(e) => e.preventDefault()}
         onClick={() => setOpen((o) => !o)}
       >
         <MoreIcon />
       </button>
-      {open && (
+      {open && !disabled && (
         <ul
           role="menu"
           aria-label="More formatting options"
@@ -1735,6 +1965,31 @@ describe('FormattingToolbar — overflow', () => {
       (globalThis as unknown as { ResizeObserver: unknown }).ResizeObserver = orig;
     }
   });
+
+  it('keeps a tabbable stop after a shrink overflows the focused button (no keyboard trap)', () => {
+    const orig = globalThis.ResizeObserver;
+    (globalThis as unknown as { ResizeObserver: unknown }).ResizeObserver = MockResizeObserver;
+    try {
+      const { getByRole } = render(<Harness />);
+      act(() => {
+        MockResizeObserver.instances.at(-1)!.emit(2000); // all 10 visible
+      });
+      const toolbar = getByRole('toolbar', { name: 'Formatting' });
+      // Focus a low-priority button that will overflow, then shrink.
+      within(toolbar).getByRole('button', { name: /Strikethrough/ }).focus();
+      act(() => {
+        MockResizeObserver.instances.at(-1)!.emit(180); // tail overflows
+      });
+      // The active index was clamped: exactly one roving stop (a visible button or
+      // the "…" trigger) still has tabIndex 0 — the toolbar is not stranded.
+      const roving = [
+        ...within(toolbar).getAllByRole('button'),
+      ] as HTMLButtonElement[];
+      expect(roving.some((b) => b.tabIndex === 0)).toBe(true);
+    } finally {
+      (globalThis as unknown as { ResizeObserver: unknown }).ResizeObserver = orig;
+    }
+  });
 });
 ```
 
@@ -1772,7 +2027,7 @@ Add the import:
 import { ToolbarOverflowMenu } from './ToolbarOverflowMenu';
 ```
 
-Inside `FormattingToolbar`, add container measurement state and effect (place beside the roving state):
+Inside `FormattingToolbar`, add container measurement state and effect (place beside the roving state), then compute the split and the roving `count`. **Delete the `const count = TOOLBAR_BUTTONS.length;` line from Task 6** — this block supplies `count`:
 
 ```tsx
 const toolbarRef = useRef<HTMLDivElement | null>(null);
@@ -1802,9 +2057,22 @@ const visibleButtons = TOOLBAR_BUTTONS.filter((b) => visibleActions.has(b.action
 const overflowInDisplayOrder = TOOLBAR_BUTTONS.filter((b) => overflowActions.includes(b.action)).map(
   (b) => b.action,
 );
+const hasOverflow = overflowInDisplayOrder.length > 0;
+
+// The roving set is the visible format buttons PLUS the "…" trigger (last stop)
+// when present. Clamp the active index so a shrink that overflows the currently-
+// focused button can't strand the roving stop on a now-unmounted index (which
+// would leave every remaining button at tabIndex -1 → an untabbable toolbar).
+const count = visibleButtons.length + (hasOverflow ? 1 : 0);
+const clampedActiveIndex = Math.min(activeIndex, count - 1);
+const overflowTriggerIndex = visibleButtons.length; // its slot in btnRefs
 ```
 
-Change the toolbar `<div role="toolbar">` to attach `ref={toolbarRef}`, iterate `visibleButtons` instead of `TOOLBAR_BUTTONS`, fix the roving index bookkeeping to the visible count, and append the overflow menu:
+`focusIndex` already clamps to `[0, count - 1]`, so it needs no change once `count`
+comes from this block. Use `clampedActiveIndex` (not the raw `activeIndex`) when
+deciding each button's `tabIndex` so the render survives a shrink.
+
+Change the toolbar `<div role="toolbar">` to attach `ref={toolbarRef}`, iterate `visibleButtons` instead of `TOOLBAR_BUTTONS`, drive `tabIndex` from `clampedActiveIndex`, and append the overflow menu **wired into the roving set** (its ref lands at `overflowTriggerIndex`, its tabIndex tracks the clamped active index, and it carries the `disabled` gate):
 
 ```tsx
 {!previewMode && (
@@ -1831,7 +2099,7 @@ Change the toolbar `<div role="toolbar">` to attach `ref={toolbarRef}`, iterate 
             className="formatting-toolbar-btn"
             aria-label={buttonTitle(def)}
             title={buttonTitle(def)}
-            tabIndex={i === activeIndex ? 0 : -1}
+            tabIndex={i === clampedActiveIndex ? 0 : -1}
             disabled={disabled}
             aria-disabled={disabled || undefined}
             onFocus={() => setActiveIndex(i)}
@@ -1843,14 +2111,26 @@ Change the toolbar `<div role="toolbar">` to attach `ref={toolbarRef}`, iterate 
         </span>
       );
     })}
-    {overflowInDisplayOrder.length > 0 && (
-      <ToolbarOverflowMenu items={overflowInDisplayOrder} runAction={runAction} />
+    {hasOverflow && (
+      <ToolbarOverflowMenu
+        items={overflowInDisplayOrder}
+        runAction={runAction}
+        disabled={disabled}
+        tabIndex={clampedActiveIndex === overflowTriggerIndex ? 0 : -1}
+        buttonRef={(el) => {
+          btnRefs.current[overflowTriggerIndex] = el;
+        }}
+        onButtonFocus={() => setActiveIndex(overflowTriggerIndex)}
+      />
     )}
   </div>
 )}
 ```
 
-Update `count` and `focusIndex` to use `visibleButtons.length` (the roving set is the visible buttons; the "…" trigger is a natural focus stop after them). Change `const count = TOOLBAR_BUTTONS.length;` to `const count = visibleButtons.length;` and move that declaration below the split so it sees `visibleButtons`.
+With `count`, `clampedActiveIndex`, and `overflowTriggerIndex` supplied by the split
+block above, `focusIndex`/`onToolbarKeyDown` from Task 6 need no further edits: `End`
+lands on the "…" trigger (the last roving index) when overflow is present, and
+`ArrowLeft`/`ArrowRight` traverse the visible buttons and the trigger as one group.
 
 - [ ] **Step 8: Add overflow-menu styling to `tokens.css`**
 
@@ -2020,27 +2300,37 @@ git commit -m "feat(#586): wire toolbar into inline+reply composers; move Previe
 
 **Interfaces:**
 - Consumes: `FormattingToolbar` (Task 6/7), `FormattingHandle` (Task 5).
-- Produces: `PrRootBodyEditor` gains an **optional** prop `textAreaRef?: React.RefObject<HTMLTextAreaElement | null>` attached via a merged callback-ref alongside its internal ref. When omitted (SubmitDialog), behavior is identical to today.
+- Produces: `PrRootBodyEditor` gains **two** optional additions, both no-ops when omitted (SubmitDialog): (1) `textAreaRef?: React.RefObject<HTMLTextAreaElement | null>` attached via a merged callback-ref alongside its internal ref; (2) its surfaced autosave control gains `setValue: (next: string) => void` (the editor's own `setBody`) so the toolbar handle can drive the editor's INTERNAL body state.
+
+**⚠️ Why the ref alone is not enough (the load-bearing correctness point).** `PrRootBodyEditor` is an uncontrolled-from-the-parent editor: it owns its textarea `value` via its **internal** `body` state (`value={body}` / `onChange={(e) => setBody(e.target.value)}`). `PrRootReplyComposer` keeps a **separate mirror** `body` fed only through `onBodyChange`. If the toolbar handle's `onChange` writes the parent mirror (`handleBodyChange`), the editor's internal `body` never updates; on the next render the editor re-applies its stale `value={body}` and React's controlled-input reconciliation **resets the textarea, discarding every toolbar/shortcut edit** — the Overview toolbar would silently do nothing. The `textAreaRef` gives the toolbar the DOM node but does not fix this. The fix: the handle's `onChange` must drive the editor's own `setBody` (surfaced as `setValue`). The editor's existing `onBodyChange` effect then propagates the new value back to the parent mirror and clears the post-error, so the parent stays in sync without a second write path.
 
 - [ ] **Step 1: Write the failing test — toolbar present in the Overview composer, footer Preview gone**
 
-Add to `PrRootReplyComposer.test.tsx` (follow the file's existing render/setup helpers; a minimal new test):
+Add to `PrRootReplyComposer.test.tsx`. **Use the file's existing `Harness` component** (`render(<Harness … />)`) — there is no `renderComposer` helper and no top-level `screen` import; use the `render(...)` return value. **The file installs `vi.useFakeTimers()` in `beforeEach`**, so any assertion that depends on the overflow menu's post-open focus (rAF-free now) or on autosave debounce must advance timers with `act(() => vi.runAllTimers())` — the two tests below do not depend on timers.
 
 ```tsx
 it('renders the formatting toolbar and no footer Preview toggle', () => {
-  renderComposer(); // existing helper that mounts PrRootReplyComposer with required props
+  const { getByRole } = render(<Harness />); // the file's existing render harness
   // Toolbar present with the Write | Preview segmented control.
-  expect(screen.getByRole('toolbar', { name: 'Formatting' })).toBeTruthy();
-  expect(screen.getByRole('button', { name: 'Preview' })).toBeTruthy();
+  expect(getByRole('toolbar', { name: 'Formatting' })).toBeTruthy();
+  expect(getByRole('button', { name: 'Preview' })).toBeTruthy();
   // The old footer `.composer-preview-toggle` button is gone: exactly one control
-  // switches preview now (the segmented one), so there is no button literally
-  // labelled "Preview"/"Edit" in the footer actions row.
+  // switches preview now (the segmented one).
   const actions = document.querySelector('.composer-actions')!;
   expect(actions.querySelector('.composer-preview-toggle')).toBeNull();
 });
-```
 
-If `PrRootReplyComposer.test.tsx` has no reusable `renderComposer`/`screen` setup, mirror the render harness already used by the other tests in that file (props: `prRef`, `prState`, `draftId`, `onDraftIdChange`, `registerOpenComposer`, `onClose`).
+it('a toolbar edit actually lands in the textarea (drives the editor body, not a dead mirror)', () => {
+  const { getByRole } = render(<Harness />);
+  const ta = getByRole('textbox', { name: 'PR-level body' }) as HTMLTextAreaElement;
+  ta.focus();
+  ta.setSelectionRange(0, 0);
+  fireEvent.click(getByRole('button', { name: /Bold/ }));
+  // Empty-selection bold -> "****". This FAILS if onChange writes only the parent
+  // mirror: the editor re-renders its stale internal value and resets the DOM.
+  expect(ta.value).toBe('****');
+});
+```
 
 - [ ] **Step 2: Run to verify it fails**
 
@@ -2072,6 +2362,28 @@ Add `textAreaRef` to the destructured props, import `React` type if not already,
 
 and on the `<textarea>`: `ref={setTextAreaRef}`.
 
+Then surface the editor's own `setBody` so the toolbar can drive the internal body
+state (see the ⚠️ note above). Extend the `onAutosaveControl` type and its call:
+
+```tsx
+  // interface addition — the surfaced control gains setValue:
+  onAutosaveControl?: (control: {
+    flush: () => Promise<string | null>;
+    badge: ComposerSaveBadge;
+    setValue: (next: string) => void; // #586 — the editor's own setBody
+  }) => void;
+```
+
+```tsx
+  // the surfacing effect passes setBody through:
+  useEffect(() => {
+    onAutosaveControlRef.current?.({ flush, badge, setValue: setBody });
+  }, [flush, badge]);
+```
+
+`setBody` has a stable identity (a `useState` setter), so it does not need to be in
+the effect deps and does not change the effect's fire cadence.
+
 - [ ] **Step 4: Render the toolbar in `PrRootReplyComposer.tsx` and remove the footer Preview button**
 
 Add imports:
@@ -2081,20 +2393,44 @@ import { FormattingToolbar } from './FormattingToolbar';
 import type { FormattingHandle } from './formattingHandle';
 ```
 
-Create a ref the parent shares with both the editor and the toolbar handle:
+First widen the local `AutosaveControl` type (top of the file) to carry the surfaced
+setter:
+
+```tsx
+type AutosaveControl = {
+  flush: () => Promise<string | null>;
+  badge: ComposerSaveBadge;
+  setValue: (next: string) => void; // #586
+};
+```
+
+Create a ref the parent shares with both the editor and the toolbar handle. The
+handle's `onChange` drives the editor's **own** `setBody` via the surfaced
+`setValue` — NOT `handleBodyChange` (the parent mirror) — so the edit actually
+lands (see the ⚠️ note in Interfaces). The editor's `onBodyChange` effect then
+propagates the new value back to `handleBodyChange`, keeping the mirror + post-error
+clear in sync:
 
 ```tsx
   const bodyTextAreaRef = useRef<HTMLTextAreaElement | null>(null);
 
+  const applyExternalValue = useCallback((next: string) => {
+    autosaveControl.current?.setValue(next);
+  }, []);
+
   const formattingHandle: FormattingHandle = {
     textareaRef: bodyTextAreaRef,
     value: body,
-    onChange: handleBodyChange,
+    onChange: applyExternalValue,
     previewMode,
     onTogglePreview: () => setPreviewMode((p) => !p),
     disabled: readOnly || postInFlight,
   };
 ```
+
+(`autosaveControl.current` is populated by `handleAutosaveControl` on the editor's
+mount effect, well before any user interaction; `applyExternalValue` no-ops safely
+if it is somehow not yet set.)
 
 Render `<FormattingToolbar handle={formattingHandle} />` at the top of the composer body — above the `<div hidden={previewMode}>` editor block:
 
@@ -2186,7 +2522,7 @@ Run `/simplify` on the branch diff first (quality pass — it edits the tree, so
 - §The actions / §Toggle contract → Task 1 (wrap/code/link) + Task 2 (line-prefix, heading cycle, numbered renumber) with exact-string tests.
 - §Application vector → Task 3 (minimal span, execCommand + fallback + dev warn, caret) + Task 6 (useLayoutEffect caret re-assert token).
 - §Autosave-race safety → Task 5 (disabled early-return + no-op-while-disabled test) + handle `disabled = readOnly || posting` in Tasks 8/9.
-- §Accessibility → Task 6 (segmented control separate tab stop + aria-pressed; role=toolbar roving; titles; separators; mousedown-preventDefault; focus flow) + Task 7 (menu-button pattern).
+- §Accessibility → Task 6 (segmented control as a single roving tab stop + aria-pressed; role=toolbar roving incl. the "…" trigger as last stop; titles; separators; mousedown-preventDefault; focus flow) + Task 7 (menu-button pattern + overflow disabled gate).
 - §Degradation → Task 6 (hidden-in-preview / disabled gating; stable strip height in CSS).
 - §Styling & theming → Task 6/7 CSS keyed to `.composer-preview-toggle` tokens; both-theme check in Task 10.
 - §Responsive overflow → Task 7.
@@ -2195,6 +2531,31 @@ Run `/simplify` on the branch diff first (quality pass — it edits the tree, so
 
 **2. Placeholder scan.** No "TBD"/"handle edge cases"/"similar to Task N" — every code step shows complete code; every test step shows real assertions.
 
-**3. Type consistency.** `FormatResult`/`FormatAction` (Task 1) used unchanged in Tasks 2/3/5/6/7. `FormattingHandle` (Task 5) used identically in Tasks 6/8/9. `applyFormatting(textarea, action, onChange) → { selectionStart, selectionEnd }` (Task 3) called with that exact shape in Task 6. `ICONS: Record<FormatAction, …>` + `MoreIcon` (Task 4) consumed in Tasks 6/7. `TOOLBAR_BUTTONS`/`buttonTitle`/`OVERFLOW_PRIORITY` exported from Task 6, imported in Task 7. `ToolbarOverflowMenu({ items, runAction })` (Task 7) matches its FormattingToolbar call site.
+**3. Type consistency.** `FormatResult`/`FormatAction` (Task 1) used unchanged in Tasks 2/3/5/6/7. `FormattingHandle` (Task 5) used identically in Tasks 6/8/9. `applyFormatting(textarea, action, onChange) → { selectionStart, selectionEnd }` (Task 3) called with that exact shape in Task 6. `ICONS: Record<FormatAction, …>` + `MoreIcon` (Task 4) consumed in Tasks 6/7. `TOOLBAR_BUTTONS`/`buttonTitle`/`OVERFLOW_PRIORITY` exported from Task 6, imported in Task 7. `ToolbarOverflowMenu({ items, runAction, disabled?, tabIndex?, buttonRef?, onButtonFocus? })` (Task 7) matches its FormattingToolbar call site (disabled gate + roving participation). Task 9's `AutosaveControl` gains `setValue`, matching the widened `onAutosaveControl` surfaced by `PrRootBodyEditor` (Task 9 Step 3).
 
-**One deviation from the spec, flagged per the plan-deviation rule:** the spec's §wiring says each composer calls `useFormattingShortcuts(handle)`. This plan instead has **`FormattingToolbar` call `useFormattingShortcuts(handle, runAction)`** so a single owner holds `runAction` + the caret-restore token + the shortcut binding (avoids duplicating that mechanism in every composer). All spec-required properties hold: shortcuts operate on the textarea, share the `applyFormatting` path (undoable), honor the disable gate, and use disjoint keys from `matchComposerKey`. The toolbar is always mounted (spec §Degradation), so the hook is always active in edit mode. This is an internal structural refinement, not a behavior change; it is recorded here and will be noted in the PR's Proof section.
+**Deviations from the spec, flagged per the plan-deviation rule (to note in the PR Proof section):**
+1. The spec's §wiring says each composer calls `useFormattingShortcuts(handle)`. This plan has **`FormattingToolbar` call `useFormattingShortcuts(handle, runAction)`** so a single owner holds `runAction` + the caret-restore token + the shortcut binding (no per-composer duplication). All spec-required properties hold: shortcuts operate on the textarea, share the `applyFormatting` path (undoable), honor the disable gate, use disjoint keys from `matchComposerKey`; the toolbar is always mounted so the hook is always active in edit mode.
+2. `formattingHandle.ts` is a 7th new file (the spec's module-layout table listed the handle inline). Trivial interface-extraction split; no added capability.
+3. Task 9 surfaces `PrRootBodyEditor.setBody` (`setValue`) to the parent. The spec's §wiring for surface #3 said only "pass a ref," which is necessary but **not sufficient** — the editor owns its textarea value internally, so a ref-only wiring would leave the toolbar inert (edits reset by the editor's controlled value). This is a correctness completion of the spec, not a scope change.
+
+## ce-doc-review dispositions (machine pass, 5 personas)
+
+Ran headless on this plan (coherence, feasibility, design-lens, scope-guardian, adversarial). Scope-guardian: clean. All actionable findings were **Applied** (the pass caught two would-break-the-feature bugs):
+
+| # | Reviewer / sev | Finding | Disposition |
+|---|----------------|---------|-------------|
+| 1 | feasibility P0 | Overview composer (#3) dual body state → toolbar edits discarded | **Applied** — Task 9 surfaces the editor's `setBody` as `setValue`; handle `onChange` drives it (⚠️ note + state-sync test). |
+| 2 | feasibility P1 | Shortcuts die after a Preview round-trip (textarea remounts, listener not rebound) | **Applied** — `previewMode` added to the `useFormattingShortcuts` effect deps + a re-bind test. |
+| 3 | adversarial P1 | `wrapSymmetric` outside-toggle merges adjacent emphasis (`_a_b_c_` → `_abc_`) | **Applied** — parity guard + `!core.includes(marker)` + a `_a_b_c_` test. |
+| 4 | adversarial P1 | Bullet `- ` is a prefix of task `- [ ] ` → cross-corruption | **Applied** — task-aware `formatBulleted`/`formatTask` + collision tests. |
+| 5 | design-lens P1 | Overflow "…" menu bypasses the disabled gate | **Applied** — `disabled` prop on `ToolbarOverflowMenu`, trigger disabled + menu suppressed + test. |
+| 6 | design-lens P1 | Write\|Preview claims "single tab stop" but renders two | **Applied** — roving tabindex over the two view buttons + a single-tab-stop test. |
+| 7 | design-lens P2 | Roving `activeIndex` not clamped on resize-shrink → keyboard trap | **Applied** — `clampedActiveIndex` drives every `tabIndex` + a shrink-clamp test. |
+| 8 | design-lens P3 / coherence | "…" trigger claimed as roving "last stop" but wasn't in the index space | **Applied** — trigger folded into the roving set (ref/tabIndex/onFocus, `count` includes it). |
+| 9 | coherence P1 | Pointless `useFormattingShortcutsBinding` wrapper (confusing name) | **Applied** — removed; hook called directly. |
+| 10 | adversarial P2 | `applyFormatting` had no internal readOnly guard (one-guard-deep race safety) | **Applied** — early-return on `textarea.readOnly` + value-check fallback + test. |
+| 11 | feasibility P3 | Task 9 test referenced a non-existent `renderComposer`/`screen` | **Applied** — uses the file's `Harness` + fake-timer note. |
+| 12 | adversarial P2 / P3 (advisory) | Heading cycle collapses mixed-level blocks; caret survival untested on a controlled textarea | **Applied** — documented-acceptance heading test + a controlled-caret-survival test in FormattingToolbar. |
+| 13 | design-lens P3 (advisory) | All-disabled toolbar has zero tab stops — undocumented | **Applied** — documented as intentional (the view switch stays reachable). |
+
+Residual (not changed): the execCommand *undo granularity* claim is confirmable only in the Task 10 live pass (jsdom cannot exercise `execCommand` undo) — already scoped there.
