@@ -86,9 +86,11 @@ it('groups the Overview footer with a spacer in canonical order', () => {
   const bar = container.querySelector('.composer-actions') as HTMLElement;
   expect(bar.querySelector('.composer-actions-spacer')).not.toBeNull();
   // AiComposerAssistant is mocked to null and the badge/spacer are spans, so the
-  // button sequence in DOM (= visual) order is Preview -> Discard -> Post.
+  // button sequence in DOM (= visual) order is Discard -> Post. The footer
+  // Preview toggle was removed (#586): the toolbar's segmented Write | Preview
+  // control is the only preview switch now, and it lives outside .composer-actions.
   const buttons = within(bar)
     .getAllByRole('button')
     .map((b) => b.textContent);
-  expect(buttons).toEqual(['Preview', 'Discard', 'Post']);
+  expect(buttons).toEqual(['Discard', 'Post']);
 });
