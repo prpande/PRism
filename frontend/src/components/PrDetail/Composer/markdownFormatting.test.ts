@@ -98,3 +98,83 @@ describe('applyMarkdownFormat — link', () => {
     expect(r.value.slice(r.selectionStart, r.selectionEnd)).toBe('text');
   });
 });
+
+describe('applyMarkdownFormat — quote / bulleted / task', () => {
+  it('prefixes every selected non-empty line with "> "', () => {
+    const r = applyMarkdownFormat('quote', 'a\nb', 0, 3);
+    expect(r.value).toBe('> a\n> b');
+  });
+
+  it('toggles the quote prefix off when all non-empty lines carry it', () => {
+    const r = applyMarkdownFormat('quote', '> a\n> b', 0, 7);
+    expect(r.value).toBe('a\nb');
+  });
+
+  it('uses "- " (hyphen) for bulleted lists, not "*"', () => {
+    const r = applyMarkdownFormat('bulleted', 'a\nb', 0, 3);
+    expect(r.value).toBe('- a\n- b');
+  });
+
+  it('uses GFM "- [ ] " for task lists', () => {
+    const r = applyMarkdownFormat('task', 'do it', 0, 5);
+    expect(r.value).toBe('- [ ] do it');
+  });
+
+  it('leaves blank lines unprefixed', () => {
+    const r = applyMarkdownFormat('bulleted', 'a\n\nb', 0, 4);
+    expect(r.value).toBe('- a\n\n- b');
+  });
+
+  it('does NOT destroy a task line when Bulleted is applied to it', () => {
+    // "- " is a prefix of "- [ ] "; bulleted must not strip a task into "[ ] do it".
+    const r = applyMarkdownFormat('bulleted', '- [ ] do it', 0, 11);
+    expect(r.value).toBe('- [ ] do it'); // no-op, not "[ ] do it"
+  });
+
+  it('converts an existing bullet to a task instead of double-prefixing', () => {
+    const r = applyMarkdownFormat('task', '- do it', 0, 7);
+    expect(r.value).toBe('- [ ] do it'); // not "- [ ] - do it"
+  });
+});
+
+describe('applyMarkdownFormat — numbered list', () => {
+  it('numbers each non-empty line sequentially from 1.', () => {
+    const r = applyMarkdownFormat('numbered', 'a\nb\nc', 0, 5);
+    expect(r.value).toBe('1. a\n2. b\n3. c');
+  });
+
+  it('toggles numbering off when every non-empty line is already numbered', () => {
+    const r = applyMarkdownFormat('numbered', '1. a\n2. b', 0, 9);
+    expect(r.value).toBe('a\nb');
+  });
+});
+
+describe('applyMarkdownFormat — heading cycle', () => {
+  it('adds "### " (H3) by default', () => {
+    const r = applyMarkdownFormat('heading', 'Title', 0, 5);
+    expect(r.value).toBe('### Title');
+  });
+
+  it('cycles ### -> ## on a second application', () => {
+    const r = applyMarkdownFormat('heading', '### Title', 0, 9);
+    expect(r.value).toBe('## Title');
+  });
+
+  it('cycles ## -> #', () => {
+    const r = applyMarkdownFormat('heading', '## Title', 0, 8);
+    expect(r.value).toBe('# Title');
+  });
+
+  it('cycles # -> stripped', () => {
+    const r = applyMarkdownFormat('heading', '# Title', 0, 7);
+    expect(r.value).toBe('Title');
+  });
+
+  it('applies a uniform level across a multi-line selection from the first line', () => {
+    // Documented, accepted behavior: the block cycles as a unit off the first
+    // non-empty line's level (## -> #), not per-line. Mixed-level blocks are rare;
+    // this keeps the action a single predictable cycle rather than a per-line mix.
+    const r = applyMarkdownFormat('heading', '## A\n# B', 0, 8);
+    expect(r.value).toBe('# A\n# B');
+  });
+});

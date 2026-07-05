@@ -152,13 +152,142 @@ function formatLink(text: string, start: number, end: number): FormatResult {
   return { value, selectionStart: urlStart, selectionEnd: urlStart + 'url'.length };
 }
 
-// Implemented in Task 2. Declared here so the dispatch compiles in Task 1;
-// Task 2 replaces this stub with the real implementation.
+// --- line-prefix family ----------------------------------------------------
+
+// Expand [start, end] to whole-line bounds. A selection whose end sits at the
+// very start of a line (right after a "\n") does NOT include that line.
+function selectedLineRange(
+  text: string,
+  start: number,
+  end: number,
+): { lineStart: number; lineEnd: number } {
+  const lineStart = text.lastIndexOf('\n', start - 1) + 1;
+  let searchFrom = end;
+  if (end > start && end > 0 && text[end - 1] === '\n') searchFrom = end - 1;
+  let lineEnd = text.indexOf('\n', searchFrom);
+  if (lineEnd === -1) lineEnd = text.length;
+  return { lineStart, lineEnd };
+}
+
+function withBlock(
+  text: string,
+  start: number,
+  end: number,
+  transform: (lines: string[]) => string[],
+): FormatResult {
+  const { lineStart, lineEnd } = selectedLineRange(text, start, end);
+  const before = text.slice(0, lineStart);
+  const block = text.slice(lineStart, lineEnd);
+  const after = text.slice(lineEnd);
+  const newBlock = transform(block.split('\n')).join('\n');
+  const value = before + newBlock + after;
+  return { value, selectionStart: lineStart, selectionEnd: lineStart + newBlock.length };
+}
+
+function toggleLinePrefix(prefix: string, text: string, start: number, end: number): FormatResult {
+  return withBlock(text, start, end, (lines) => {
+    const nonEmpty = lines.filter((l) => l.trim().length > 0);
+    const allPrefixed = nonEmpty.length > 0 && nonEmpty.every((l) => l.startsWith(prefix));
+    if (allPrefixed) {
+      return lines.map((l) => (l.startsWith(prefix) ? l.slice(prefix.length) : l));
+    }
+    return lines.map((l) => (l.trim().length > 0 && !l.startsWith(prefix) ? prefix + l : l));
+  });
+}
+
+// "- " is a prefix of the task marker "- [ ] ", so bulleted and task must be
+// mutually aware or they corrupt each other's lines (bulleted-on-a-task strips
+// the checkbox; task-on-a-bullet double-prefixes).
+const TASK_RE = /^- \[[ xX]\] /;
+
+function isPlainBullet(l: string): boolean {
+  return l.startsWith('- ') && !TASK_RE.test(l);
+}
+
+function formatBulleted(text: string, start: number, end: number): FormatResult {
+  return withBlock(text, start, end, (lines) => {
+    const nonEmpty = lines.filter((l) => l.trim().length > 0);
+    const allBulleted = nonEmpty.length > 0 && nonEmpty.every(isPlainBullet);
+    if (allBulleted) {
+      return lines.map((l) => (isPlainBullet(l) ? l.slice(2) : l));
+    }
+    return lines.map((l) => {
+      if (l.trim().length === 0) return l;
+      if (isPlainBullet(l) || TASK_RE.test(l)) return l; // already a list item
+      return '- ' + l;
+    });
+  });
+}
+
+function formatTask(text: string, start: number, end: number): FormatResult {
+  return withBlock(text, start, end, (lines) => {
+    const nonEmpty = lines.filter((l) => l.trim().length > 0);
+    const allTask = nonEmpty.length > 0 && nonEmpty.every((l) => TASK_RE.test(l));
+    if (allTask) {
+      return lines.map((l) => l.replace(TASK_RE, ''));
+    }
+    return lines.map((l) => {
+      if (l.trim().length === 0) return l;
+      if (TASK_RE.test(l)) return l;
+      if (l.startsWith('- ')) return '- [ ] ' + l.slice(2); // convert bullet -> task
+      return '- [ ] ' + l;
+    });
+  });
+}
+
+const NUMBERED_RE = /^\d+\.\s/;
+
+function formatNumbered(text: string, start: number, end: number): FormatResult {
+  return withBlock(text, start, end, (lines) => {
+    const nonEmpty = lines.filter((l) => l.trim().length > 0);
+    const allNumbered = nonEmpty.length > 0 && nonEmpty.every((l) => NUMBERED_RE.test(l));
+    if (allNumbered) {
+      return lines.map((l) => l.replace(NUMBERED_RE, ''));
+    }
+    let n = 0;
+    return lines.map((l) => {
+      if (l.trim().length === 0) return l;
+      n += 1;
+      return `${n}. ${l.replace(NUMBERED_RE, '')}`;
+    });
+  });
+}
+
+const HEADING_RE = /^(#{1,6})\s+/;
+
+// H3 default; cycles ### -> ## -> # -> (stripped) based on the first non-empty line.
+function cycleHeading(text: string, start: number, end: number): FormatResult {
+  return withBlock(text, start, end, (lines) => {
+    const firstNonEmpty = lines.find((l) => l.trim().length > 0) ?? '';
+    const m = HEADING_RE.exec(firstNonEmpty);
+    const current = m ? m[1].length : 0;
+    const next = current === 0 ? 3 : current === 3 ? 2 : current === 2 ? 1 : 0;
+    const nextPrefix = next === 0 ? '' : '#'.repeat(next) + ' ';
+    return lines.map((l) => {
+      if (l.trim().length === 0) return l;
+      return nextPrefix + l.replace(HEADING_RE, '');
+    });
+  });
+}
+
 function formatLinePrefixAction(
-  _action: FormatAction,
+  action: FormatAction,
   text: string,
   start: number,
   end: number,
 ): FormatResult {
-  return { value: text, selectionStart: start, selectionEnd: end };
+  switch (action) {
+    case 'heading':
+      return cycleHeading(text, start, end);
+    case 'quote':
+      return toggleLinePrefix('> ', text, start, end);
+    case 'bulleted':
+      return formatBulleted(text, start, end);
+    case 'numbered':
+      return formatNumbered(text, start, end);
+    case 'task':
+      return formatTask(text, start, end);
+    default:
+      return { value: text, selectionStart: start, selectionEnd: end };
+  }
 }
