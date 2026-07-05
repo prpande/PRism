@@ -73,6 +73,8 @@ the relocated control.)
    ambiguity — "pairs naturally with [the actions bar] or sits as a strip above the textarea" — in
    favor of a single control over a duplicated one.)*
 7. Reuse the existing `MarkdownRenderer` for preview (no second markdown pipeline).
+8. **Every emitted token is GitHub-Flavored-Markdown**, matching GitHub's own composer output, so a
+   comment posted to GitHub renders there identically (§The actions — GFM round-trip constraint).
 
 ## Non-goals / explicitly deferred
 
@@ -133,7 +135,8 @@ All new files under `frontend/src/components/PrDetail/Composer/`.
 | `markdownFormatting.ts` | **Pure, DOM-free** transform engine. One function per action: `(text, selStart, selEnd) => { value, selectionStart, selectionEnd }`. All string math + toggle/edge-case logic (§Toggle contract); no React, no DOM. The exhaustively-tested core. |
 | `applyFormatting.ts` | Thin **application** layer. Given a `textareaRef` + a transform, reads caret, computes via the engine, applies via `document.execCommand('insertText', …)` (undo-preserving) with a `setRangeText` fallback, syncs React state via `onChange`, restores selection + focus (§Application vector). |
 | `FormattingToolbar.tsx` | Presentational strip: a `Write \| Preview` segmented control **plus** a sibling `role="toolbar"` holding the format buttons (two adjacent widgets — §Accessibility). Consumes the handle. |
-| `formattingIcons.tsx` | Inline 16×16 `currentColor` SVG icon components (Bold/Italic/Strikethrough/Heading/Quote/Code/Link/BulletList/NumberedList/TaskList), matching `diffIcons.tsx`. |
+| `ToolbarOverflowMenu.tsx` | The "…" (More) menu-button that holds format buttons which don't fit the toolbar width; `ResizeObserver`-driven, priority-ordered, WAI-ARIA menu-button (§Responsive). |
+| `formattingIcons.tsx` | Inline 16×16 `currentColor` SVG icon components (Bold/Italic/Strikethrough/Heading/Quote/Code/Link/BulletList/NumberedList/TaskList + a `More`/kebab glyph), matching `diffIcons.tsx`. |
 | `useFormattingShortcuts.ts` | Maps `Ctrl/Cmd+B/I/K/E` to the same transforms; **early-returns when the handle is disabled** (§Autosave-race safety); used by all three surfaces. |
 
 New styling: a `.formatting-toolbar` block in `styles/tokens.css` (see §Styling & theming).
@@ -192,6 +195,16 @@ Consequence for testing: the **pure engine** is fully unit-testable with zero DO
 (which the AC already requires). This split is deliberate — jsdom cannot validate `execCommand` undo.
 
 ## The actions (exact markdown; all toggle-aware)
+
+> **Constraint — GitHub-Flavored-Markdown (GFM) round-trip.** Every token the engine emits MUST be
+> valid GFM and match what GitHub's **own** composer emits, because a posted PRism comment is sent
+> **verbatim to GitHub** and must render identically there — not only in PRism's local
+> `MarkdownRenderer`. Concretely: bold `**…**`, italic `_…_`, strikethrough `~~…~~`, inline
+> `` `…` `` / fenced ```` ``` ```` code, `[text](url)` links, ATX headings `#`/`##`/`###`, blockquote
+> `> `, bullets `- ` (hyphen, GitHub's default — not `*`), ordered `1. `, and GFM task list
+> `- [ ] `. The engine's unit tests assert the **exact emitted strings** against these GitHub
+> conventions (not merely "renders in PRism"), so a divergence that would render differently on
+> GitHub is a test failure.
 
 **Wrap actions** — wrap the selection in markers; toggle-off if already wrapped (§Toggle contract).
 Empty selection inserts the marker pair with the caret parked between.
@@ -364,14 +377,35 @@ button` footer normalization, so it defines its own styling:
 - **Both-theme parity is an explicit review-checklist item**, not folded silently into the general
   B1 pass.
 
-## Responsive / overflow
+## Responsive / overflow ("…" menu)
 
 `InlineCommentComposer` mounts inside a Files-tab diff row, the **narrowest** of the three surfaces
 (split view, narrow windows). 10 icon buttons + the segmented control can exceed that width.
-**Strategy:** the `role="toolbar"` cluster is a fixed-height single row that **scrolls horizontally
-on overflow** (`overflow-x: auto`) with a subtle edge fade affordance — it never wraps to a second
-row (roving tabindex assumes a 1-D order) and never pushes the `Write | Preview` control off-screen
-(that control sits outside the scrolling region). Narrow-width behavior is added to the B1 live pass.
+**Strategy: an overflow "…" menu** (`ToolbarOverflowMenu.tsx`) — never wrap (roving tabindex assumes
+a 1-D order), never horizontal-scroll:
+
+- The `role="toolbar"` renders as many format buttons as fit the available width; the rest collapse
+  behind a trailing **"…" (More)** button. The `Write | Preview` control always stays visible
+  (outside the overflow calculation).
+- **Which buttons overflow** is priority-driven, least-essential first, so the common actions stay
+  on the strip: keep-visible priority (high→low) **Bold, Italic, Link, Code, Quote, Bulleted list,
+  Numbered list, Heading, Task list, Strikethrough** — the tail moves into the menu first.
+- **Measurement:** a `ResizeObserver` on the toolbar container recomputes how many buttons fit when
+  the width changes (composer width, not viewport — so a container observer, not a CSS media query),
+  and moves the overflow set into the menu. Fully-wide composers (Overview #3) show all 10 with no
+  "…" button.
+- **Menu-button a11y (WAI-ARIA menu-button pattern):** the "…" trigger is `<button>` with
+  `aria-haspopup="menu"` + `aria-expanded`, and participates in the toolbar's roving tabindex as the
+  last stop. Opening focuses the first `role="menuitem"`; `ArrowUp/Down` navigate; `Escape` closes
+  and returns focus to the "…" trigger; selecting an item runs the same transform + `applyFormatting`
+  path (so focus returns to the textarea, exactly like a visible button). Each menuitem shows the
+  label + shortcut.
+- **Shortcuts are unaffected** by overflow: `Ctrl/Cmd+B/I/K/E` fire on the textarea regardless of
+  whether their button is on the strip or in the menu (and regardless of whether the action even has
+  a visible button).
+
+Narrow-width behavior — including the "…" menu open/close, its keyboard flow, and that the priority
+buttons stay visible — is added to the B1 live pass.
 
 ## Testing
 
@@ -379,7 +413,8 @@ row (roving tabindex assumes a 1-D order) and never pushes the `Write | Preview`
   single-line, multi-line, already-applied → toggle-off, caret/selection placement}, **plus every
   §Toggle-contract row**: marker-adjacent-outside (bold-inside-bold), trailing-whitespace match,
   italic/bold adjacency, code-inside-fence, numbered-list renumber, and Heading cycle
-  `### → ## → # → strip`. No DOM.
+  `### → ## → # → strip`. Assertions check the **exact emitted GFM string** per the round-trip
+  constraint (e.g. bullets are `- `, task list `- [ ] `). No DOM.
 - **`applyFormatting.test.ts` (application layer, jsdom):** the `setRangeText` fallback yields the
   right `value` + selection; `onChange` called with the post-edit value; **typing a character
   immediately after an action lands at the engine's caret** (guards the caret-restore ordering).
@@ -387,6 +422,11 @@ row (roving tabindex assumes a 1-D order) and never pushes the `Write | Preview`
   roving-tabindex arrow/Home/End nav within the toolbar; the segmented control is a **separate** tab
   stop; format buttons **hidden** in preview, **disabled** in readonly/posting, control **persists**;
   a button click invokes the correct transform on a mock handle and leaves focus on the textarea.
+- **`ToolbarOverflowMenu.test.tsx`:** at a constrained width the low-priority buttons collapse into
+  the "…" menu while the priority buttons stay visible (mock `ResizeObserver` / container width);
+  menu-button a11y (`aria-haspopup`/`aria-expanded`, first-item focus on open, `Escape` returns
+  focus to the trigger); a menuitem click runs the correct transform and returns focus to the
+  textarea; the "…" button is absent when everything fits.
 - **Shortcuts:** `Ctrl/Cmd+B/I/K/E` fire the transforms; **`Ctrl/Cmd+B` while `disabled` fires no
   transform / no `onChange`** (§Autosave-race safety); no regression to `matchComposerKey`.
 - **Preview relocation:** `ComposerActionsBar.test.tsx` — no Preview button in the footer;
@@ -405,8 +445,8 @@ row (roving tabindex assumes a 1-D order) and never pushes the `Write | Preview`
 - [ ] Common actions have GitHub-consistent shortcuts (`Ctrl/Cmd+B/I/K/E`) that honor the same lock
   gate as the buttons.
 - [ ] Toolbar is accessible (segmented `Write|Preview` + `role="toolbar"` roving tabindex, labelled
-  + tooltipped buttons, defined focus flow, keyboard-operable) and degrades sensibly in read-only /
-  preview / posting with no layout shift.
+  + tooltipped buttons, a keyboard-operable "…" overflow menu at narrow widths, defined focus flow)
+  and degrades sensibly in read-only / preview / posting with no layout shift.
 - [ ] Implemented as one shared `<FormattingToolbar>` reused across the composers — no per-composer
   duplication.
 - [ ] Live-verified in the running app for **all three** composers, both themes, incl. narrow width.
