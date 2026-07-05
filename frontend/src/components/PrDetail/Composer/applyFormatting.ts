@@ -58,7 +58,13 @@ export function applyFormatting(
   }
   // `!ok` covers the jsdom / non-Chromium case; the value-equality check also
   // catches a runtime that returns true but silently no-ops insertText, so the
-  // fallback still lands the edit instead of dropping it.
+  // fallback still lands the edit instead of dropping it. Overwrite the FULL
+  // buffer with `result.value` here rather than replaying `span` (offsets into
+  // the original pre-mutation value): if execCommand returned true but left the
+  // textarea in some other state entirely (neither the original nor the engine
+  // result), replaying those stale offsets against the current buffer could
+  // corrupt it. A full-buffer overwrite reconstructs the exact engine result
+  // regardless of what execCommand did to `textarea.value`.
   if (!ok || textarea.value !== result.value) {
     if (import.meta.env?.DEV && !warnedOnce) {
       warnedOnce = true;
@@ -67,7 +73,7 @@ export function applyFormatting(
         '[applyFormatting] execCommand insertText unavailable; falling back to setRangeText (native undo not preserved).',
       );
     }
-    textarea.setRangeText(span.replacement, span.start, span.oldEnd, 'preserve');
+    textarea.setRangeText(result.value, 0, textarea.value.length, 'preserve');
   }
 
   onChange(textarea.value);

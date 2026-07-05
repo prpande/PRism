@@ -54,4 +54,18 @@ describe('applyFormatting', () => {
     expect(ta.value).toBe('foo'); // unchanged
     expect(onChange).not.toHaveBeenCalled();
   });
+
+  it('recovers to the exact engine result when execCommand returns true but leaves a wrong value', () => {
+    const ta = makeTextarea('foo bar', 4, 7);
+    const original = document.execCommand;
+    document.execCommand = vi.fn().mockImplementation(() => {
+      ta.value = 'CORRUPTED'; // returns true but did not produce result.value
+      return true;
+    });
+    const onChange = vi.fn();
+    applyFormatting(ta, 'bold', onChange);
+    document.execCommand = original;
+    expect(ta.value).toBe('foo **bar**');
+    expect(onChange).toHaveBeenCalledWith('foo **bar**');
+  });
 });
