@@ -54,7 +54,7 @@ export function applyFormatting(
   try {
     ok = document.execCommand('insertText', false, span.replacement);
   } catch {
-    ok = false;
+    // execCommand threw (jsdom / non-Chromium) — `ok` stays false, fallback below.
   }
   // `!ok` covers the jsdom / non-Chromium case; the value-equality check also
   // catches a runtime that returns true but silently no-ops insertText, so the
@@ -68,7 +68,6 @@ export function applyFormatting(
   if (!ok || textarea.value !== result.value) {
     if (import.meta.env?.DEV && !warnedOnce) {
       warnedOnce = true;
-      // eslint-disable-next-line no-console
       console.warn(
         '[applyFormatting] execCommand insertText unavailable; falling back to setRangeText (native undo not preserved).',
       );
