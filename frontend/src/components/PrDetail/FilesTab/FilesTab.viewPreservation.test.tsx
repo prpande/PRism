@@ -99,6 +99,8 @@ function makeDraftSession(viewedFiles: Record<string, string> = {}): UseDraftSes
     postingInProgress: false,
     beginPosting: vi.fn(),
     endPosting: vi.fn(),
+    removeDraftLocally: vi.fn(),
+    insertDraftLocally: vi.fn(),
   };
 }
 

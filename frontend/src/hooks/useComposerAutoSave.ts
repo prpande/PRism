@@ -1,6 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { sendPatch, type SendPatchResult } from '../api/draft';
-import type { DraftSide, PrReference, ReviewSessionPatch } from '../api/types';
+import type {
+  DraftCommentDto,
+  DraftReplyDto,
+  DraftSide,
+  PrReference,
+  ReviewSessionPatch,
+} from '../api/types';
 
 export type ComposerSaveBadge = 'saved' | 'saving' | 'unsaved' | 'rejected';
 
@@ -62,6 +68,14 @@ export interface UseComposerAutoSaveProps {
   // parent uses this to refetch the shared draft session so the Drafts tab
   // reflects the just-saved draft live, rather than waiting for composer close.
   onSaved?: () => void;
+  // #744 — fired only on a successful CREATE, with the just-created draft as a
+  // full DTO, so the parent can optimistically insert it into the shared
+  // session (Drafts tab shows it without waiting for onSaved's refetch GET).
+  // This is the single convergence point for all three anchor kinds — pr-root
+  // composers reach useComposerAutoSave directly, not via useDraftComposer.
+  // Fires again on a recovery-recreate (a fresh create with a new id). Not
+  // fired on update or delete, and suppressed on a taken-over (disabled) tab.
+  onCreated?: (draft: DraftCommentDto | DraftReplyDto) => void;
 }
 
 export interface UseComposerAutoSaveResult {
@@ -138,6 +152,10 @@ export function useComposerAutoSave(props: UseComposerAutoSaveProps): UseCompose
         draftIdRef.current = result.assignedId;
         setBadge('saved');
         propsRef.current.onAssignedId?.(result.assignedId);
+        // #744 — optimistically insert the just-created draft, then fire
+        // onSaved (which drives the reconciliation refetch). `currentBody` is
+        // the exact body just persisted; `p.anchor` is the dispatch-time anchor.
+        propsRef.current.onCreated?.(makeCreatedDraftDto(result.assignedId, currentBody, p.anchor));
         propsRef.current.onSaved?.();
         return;
       }
@@ -302,6 +320,44 @@ function makeCreatePatch(body: string, anchor: ComposerAnchor): ReviewSessionPat
         payload: { parentThreadId: anchor.parentThreadId, bodyMarkdown: body },
       };
   }
+}
+
+// #744 — build a full draft DTO for the just-created draft, from the assigned
+// id + the body that was persisted + the composer anchor. Server-authoritative
+// fields (status, isOverriddenStale, posted/replyCommentId) get brand-new-draft
+// defaults; the trailing refetch reconciles them (e.g. an immediately-stale
+// anchor). Shape mirrors what getDraft returns for a fresh draft.
+function makeCreatedDraftDto(
+  id: string,
+  body: string,
+  anchor: ComposerAnchor,
+): DraftCommentDto | DraftReplyDto {
+  // Fields common to every fresh draft; the per-kind branches add the anchor.
+  const base = { id, bodyMarkdown: body, status: 'draft' as const, isOverriddenStale: false };
+  if (anchor.kind === 'reply') {
+    return { ...base, parentThreadId: anchor.parentThreadId, replyCommentId: null };
+  }
+  if (anchor.kind === 'inline-comment') {
+    return {
+      ...base,
+      filePath: anchor.filePath,
+      lineNumber: anchor.lineNumber,
+      side: anchor.side,
+      anchoredSha: anchor.anchoredSha,
+      anchoredLineContent: anchor.anchoredLineContent,
+      postedCommentId: null,
+    };
+  }
+  // pr-root: a PR-level comment with no file anchor.
+  return {
+    ...base,
+    filePath: null,
+    lineNumber: null,
+    side: null,
+    anchoredSha: null,
+    anchoredLineContent: null,
+    postedCommentId: null,
+  };
 }
 
 function makeUpdatePatch(id: string, body: string, anchor: ComposerAnchor): ReviewSessionPatch {

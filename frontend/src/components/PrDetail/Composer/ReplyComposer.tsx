@@ -5,7 +5,7 @@ import { ComposerMarkdownPreview } from './ComposerMarkdownPreview';
 import { FormattingToolbar } from './FormattingToolbar';
 import type { FormattingHandle } from './formattingHandle';
 import styles from './ReplyComposer.module.css';
-import type { PrReference } from '../../../api/types';
+import type { DraftCommentDto, DraftReplyDto, PrReference } from '../../../api/types';
 import type { ComposerOwnerKey } from '../../../hooks/useDraftSession';
 
 export interface ReplyComposerProps {
@@ -23,6 +23,9 @@ export interface ReplyComposerProps {
   beginPosting?: () => void;
   endPosting?: () => void;
   onPosted?: (postedCommentId: number, body: string) => void;
+  // #744 — forwarded to useComposerAutoSave so a reply create optimistically
+  // inserts the new draft reply into the shared session.
+  onCreated?: (draft: DraftCommentDto | DraftReplyDto) => void;
   resolveControl?: ThreadResolveControl;
 }
 
@@ -45,6 +48,7 @@ export function ReplyComposer({
   beginPosting,
   endPosting,
   onPosted,
+  onCreated,
   resolveControl,
 }: ReplyComposerProps) {
   const { editor, actions, modals } = useDraftComposer({
@@ -61,6 +65,7 @@ export function ReplyComposer({
     beginPosting,
     endPosting,
     onPosted,
+    onCreated,
     anchor: { kind: 'reply', parentThreadId },
     deletePatchKind: 'deleteDraftReply',
     resolveControl,

@@ -94,6 +94,8 @@ function makeDraftSession(): UseDraftSessionResult {
     postingInProgress: false,
     beginPosting: vi.fn(),
     endPosting: vi.fn(),
+    removeDraftLocally: vi.fn(),
+    insertDraftLocally: vi.fn(),
   };
 }
 

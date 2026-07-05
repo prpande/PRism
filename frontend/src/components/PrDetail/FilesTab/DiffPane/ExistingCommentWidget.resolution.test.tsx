@@ -41,6 +41,7 @@ function replyContext(over: Record<string, unknown> = {}) {
     prState: 'open' as const,
     registerOpenComposer: () => () => {},
     onReplyComposerClose: () => {},
+    insertDraftLocally: () => {},
     reload: () => {},
     ...over,
   };

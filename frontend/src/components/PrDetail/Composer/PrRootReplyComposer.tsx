@@ -14,7 +14,7 @@ import { ComposerMarkdownPreview } from './ComposerMarkdownPreview';
 import { PrRootBodyEditor } from './PrRootBodyEditor';
 import { FormattingToolbar } from './FormattingToolbar';
 import type { FormattingHandle } from './formattingHandle';
-import type { PrReference } from '../../../api/types';
+import type { DraftCommentDto, DraftReplyDto, PrReference } from '../../../api/types';
 import type { ComposerOwnerKey } from '../../../hooks/useDraftSession';
 import { matchComposerKey } from './matchComposerKey';
 
@@ -39,6 +39,9 @@ export interface PrRootReplyComposerProps {
   // also fires on discard/cancel; the caller (OverviewTab) bridges this into ActivityFeed's
   // refetchNewest, so a discard must not trigger a spurious refetch.
   onPosted?: () => void;
+  // #744 — forwarded to the wrapped PrRootBodyEditor so a PR-root create
+  // optimistically inserts the new draft into the shared session.
+  onCreated?: (draft: DraftCommentDto | DraftReplyDto) => void;
   // Spec § 5.7a. Set when a peer tab claimed cross-tab ownership of this
   // PR. Disables the action buttons; the wrapped editor short-circuits
   // autosave via its own `readOnly` gate.
@@ -54,6 +57,7 @@ export function PrRootReplyComposer({
   registerOpenComposer,
   onClose,
   onPosted,
+  onCreated,
   readOnly = false,
 }: PrRootReplyComposerProps) {
   // Live body tracked from the wrapped editor (spec § 4.7 — drives Post gating
@@ -228,6 +232,7 @@ export function PrRootReplyComposer({
           onBodyChange={handleBodyChange}
           onAutosaveControl={handleAutosaveControl}
           onDraftLost={handleDraftLost}
+          onCreated={onCreated}
           textAreaRef={bodyTextAreaRef}
         />
       </div>

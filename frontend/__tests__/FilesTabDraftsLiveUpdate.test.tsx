@@ -173,6 +173,7 @@ function Wrapper({ prDetail }: { prDetail: PrDetailDto }) {
         session={draftSession.session}
         status={draftSession.status}
         refetch={draftSession.refetch}
+        removeDraftLocally={draftSession.removeDraftLocally}
       />
     </PrDetailContextProvider>
   );

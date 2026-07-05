@@ -1,5 +1,10 @@
 import { useRef } from 'react';
-import type { PrReference, ReviewThreadDto } from '../../../../api/types';
+import type {
+  DraftCommentDto,
+  DraftReplyDto,
+  PrReference,
+  ReviewThreadDto,
+} from '../../../../api/types';
 import { CommentCard } from '../../Comment/CommentCard';
 import { CollapsedComposerAffordance } from '../../Composer/CollapsedComposerAffordance';
 import { ReplyComposer } from '../../Composer/ReplyComposer';
@@ -47,6 +52,9 @@ export interface ExistingCommentWidgetReplyContext {
   // the just-posted comment surfaces. 11b passes the posted body so the parent
   // can stash an optimistic placeholder for this thread.
   onReplyPosted?: (threadId: string, postedCommentId: number, body: string) => void;
+  // #744 — optimistic insert seam, forwarded to ReplyComposer's onCreated so a
+  // reply create surfaces in the Drafts tab without waiting on the refetch.
+  insertDraftLocally: (draft: DraftCommentDto | DraftReplyDto) => void;
   // #571 — reloads PR detail (stable function from usePrDetailContext). Wired
   // by the thread-resolution control (Task 12) so a resolve/unresolve action
   // reflects the server's response without waiting on the SSE round-trip.
@@ -249,6 +257,7 @@ function ThreadView({
               onDraftIdChange={setDraftReplyId}
               registerOpenComposer={replyContext.registerOpenComposer}
               onClose={handleComposerClose}
+              onCreated={replyContext.insertDraftLocally}
               readOnly={replyContext.readOnly ?? false}
               anyOtherDraftsStaged={computeAnyOtherDraftsStaged(
                 draftComments,

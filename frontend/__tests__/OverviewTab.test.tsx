@@ -42,6 +42,8 @@ function fakeDraftSession(overrides: Partial<UseDraftSessionResult> = {}): UseDr
     postingInProgress: false,
     beginPosting: () => undefined,
     endPosting: () => undefined,
+    removeDraftLocally: () => undefined,
+    insertDraftLocally: () => undefined,
     ...overrides,
   };
 }

@@ -567,6 +567,7 @@ export function FilesTab() {
             draftId={composerDraftId}
             onDraftIdChange={setComposerDraftId}
             registerOpenComposer={draftSession.registerOpenComposer}
+            onCreated={draftSession.insertDraftLocally}
             onClose={handleComposerClose}
             onSaved={handleComposerSaved}
             flushRef={activeComposerFlushRef}
@@ -627,6 +628,7 @@ export function FilesTab() {
   const replyCallbackDepsRef = useLatestRef({
     registerOpenComposer: draftSession.registerOpenComposer,
     refetch: draftSession.refetch,
+    insertDraftLocally: draftSession.insertDraftLocally,
     beginPosting: draftSession.beginPosting,
     endPosting: draftSession.endPosting,
     noteReplyPosted,
@@ -650,6 +652,10 @@ export function FilesTab() {
       // (computeAnyOtherDraftsStaged) rather than threaded as a closure here.
       beginPosting: () => replyCallbackDepsRef.current.beginPosting(),
       endPosting: () => replyCallbackDepsRef.current.endPosting(),
+      // #744 — optimistic insert on reply create (mirrors the inline/pr-root
+      // surfaces). Stable useCallback under the hood; routed through the ref to
+      // keep this memo's identity stable.
+      insertDraftLocally: (draft) => replyCallbackDepsRef.current.insertDraftLocally(draft),
       // #302 Task 11b — stash an optimistic placeholder for the thread, then
       // refetch. The placeholder is de-duped against the refetched comment by
       // databaseId (postedCommentId), in the hook and at render in

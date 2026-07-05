@@ -22,6 +22,7 @@ const replyContext: PrRootConversationReplyContext = {
   existingPrRootDraft: null,
   registerOpenComposer: () => () => undefined,
   onComposerClose: () => undefined,
+  insertDraftLocally: () => undefined,
 };
 
 describe('PrRootConversationActions', () => {

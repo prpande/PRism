@@ -11,6 +11,10 @@ interface DiscardAllStaleButtonProps {
   // Own-tab state-changed events are filtered, so the parent must drive
   // the refetch explicitly. DraftsTab passes draftSession.refetch in.
   onMutated: () => void;
+  // #744 — optimistic removal per server-confirmed delete, so each row clears
+  // as its delete lands rather than all-at-once after the reconciliation
+  // refetch. Optional: omitting it degrades to refetch-only.
+  removeDraftLocally?: (id: string) => void;
 }
 
 const MAX_PREVIEW_ITEMS = 3;
@@ -58,6 +62,7 @@ export function DiscardAllStaleButton({
   staleComments,
   staleReplies,
   onMutated,
+  removeDraftLocally,
 }: DiscardAllStaleButtonProps) {
   const [open, setOpen] = useState(false);
   const [running, setRunning] = useState(false);
@@ -86,6 +91,7 @@ export function DiscardAllStaleButton({
         console.warn('discard-all-stale: deleteDraftComment failed', c.id, r);
         failures++;
       } else {
+        removeDraftLocally?.(c.id); // #744 — clear this row now, on its own success
         successes++;
       }
     }
@@ -98,6 +104,7 @@ export function DiscardAllStaleButton({
         console.warn('discard-all-stale: deleteDraftReply failed', reply.id, r);
         failures++;
       } else {
+        removeDraftLocally?.(reply.id); // #744 — clear this row now, on its own success
         successes++;
       }
     }

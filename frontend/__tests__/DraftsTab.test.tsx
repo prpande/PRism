@@ -115,6 +115,7 @@ function renderDraftsTab(opts: RenderOptions) {
                 session={opts.session}
                 status={opts.status}
                 refetch={refetch}
+                removeDraftLocally={() => {}}
                 readOnly={opts.readOnly}
               />
             </PrDetailContextProvider>
@@ -277,6 +278,7 @@ describe('DraftsTab', () => {
                   session={oneStale}
                   status="ready"
                   refetch={() => Promise.resolve()}
+                  removeDraftLocally={() => {}}
                 />
               </PrDetailContextProvider>
             }
