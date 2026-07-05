@@ -53,6 +53,12 @@ export interface UseDraftSessionResult {
   postingInProgress: boolean;
   beginPosting: () => void;
   endPosting: () => void;
+  // #744 — optimistic local mutators. They let a confirmed create/discard
+  // reflect in the shared session immediately, without waiting on the trailing
+  // reconciliation refetch. Both are id-keyed, idempotent, and touch only the
+  // draft arrays; the refetch remains the reconciliation authority.
+  removeDraftLocally: (id: string) => void;
+  insertDraftLocally: (draft: DraftCommentDto | DraftReplyDto) => void;
 }
 
 export function useDraftSession(prRef: PrReference): UseDraftSessionResult {
@@ -179,6 +185,41 @@ export function useDraftSession(prRef: PrReference): UseDraftSessionResult {
 
   const clearOutOfBandToast = useCallback(() => setOutOfBandToast(null), []);
 
+  // #744 — optimistic discard: splice the id from BOTH draft arrays (ids are
+  // unique across comments/replies, but removing from both is unconditionally
+  // safe and keeps callers from needing a kind hint). No-op on null session or
+  // absent id; idempotent.
+  const removeDraftLocally = useCallback((id: string) => {
+    setSession((prev) => {
+      if (!prev) return prev;
+      const draftComments = prev.draftComments.filter((c) => c.id !== id);
+      const draftReplies = prev.draftReplies.filter((r) => r.id !== id);
+      if (
+        draftComments.length === prev.draftComments.length &&
+        draftReplies.length === prev.draftReplies.length
+      ) {
+        return prev; // nothing removed — keep identity so consumers don't re-render
+      }
+      return { ...prev, draftComments, draftReplies };
+    });
+  }, []);
+
+  // #744 — optimistic create: insert (or replace, dedup-by-id) a just-created
+  // draft. Reply DTOs carry `parentThreadId`; everything else is a comment. The
+  // dedup guarantees a refetch that already landed the server row can't produce
+  // a duplicate. No-op on null session.
+  const insertDraftLocally = useCallback((draft: DraftCommentDto | DraftReplyDto) => {
+    setSession((prev) => {
+      if (!prev) return prev;
+      if ('parentThreadId' in draft) {
+        const rest = prev.draftReplies.filter((r) => r.id !== draft.id);
+        return { ...prev, draftReplies: [...rest, draft] };
+      }
+      const rest = prev.draftComments.filter((c) => c.id !== draft.id);
+      return { ...prev, draftComments: [...rest, draft] };
+    });
+  }, []);
+
   return {
     session,
     status,
@@ -191,6 +232,8 @@ export function useDraftSession(prRef: PrReference): UseDraftSessionResult {
     postingInProgress,
     beginPosting,
     endPosting,
+    removeDraftLocally,
+    insertDraftLocally,
   };
 }
 

@@ -20,6 +20,9 @@ interface DraftsTabProps {
   session: ReviewSessionDto | null;
   status: DraftSessionStatus;
   refetch: () => Promise<void>;
+  // #744 — optimistic removal seam, threaded from DraftsTabRoute's
+  // draftSession so a discarded row clears before refetch reconciles.
+  removeDraftLocally: (id: string) => void;
   readOnly?: boolean;
 }
 
@@ -83,7 +86,14 @@ function groupByFile(session: ReviewSessionDto): FileGroup[] {
   return out;
 }
 
-export function DraftsTab({ prRef, session, status, refetch, readOnly = false }: DraftsTabProps) {
+export function DraftsTab({
+  prRef,
+  session,
+  status,
+  refetch,
+  removeDraftLocally,
+  readOnly = false,
+}: DraftsTabProps) {
   const { onSelectSubTab } = usePrDetailContext();
 
   // Hooks must run unconditionally — branch on `session` *after* memoizing.
@@ -151,6 +161,7 @@ export function DraftsTab({ prRef, session, status, refetch, readOnly = false }:
             staleComments={staleComments}
             staleReplies={staleReplies}
             onMutated={handleMutated}
+            removeDraftLocally={removeDraftLocally}
           />
         )}
       </div>
@@ -162,6 +173,7 @@ export function DraftsTab({ prRef, session, status, refetch, readOnly = false }:
             prRef={prRef}
             onEdit={handleEdit}
             onMutated={handleMutated}
+            removeDraftLocally={removeDraftLocally}
             readOnly={readOnly}
           />
         ))}
@@ -175,12 +187,14 @@ function FileGroupSection({
   prRef,
   onEdit,
   onMutated,
+  removeDraftLocally,
   readOnly,
 }: {
   group: FileGroup;
   prRef: PrReference;
   onEdit: (draft: DraftLike) => void;
   onMutated: () => void;
+  removeDraftLocally: (id: string) => void;
   readOnly?: boolean;
 }) {
   // The null-key bucket holds both PR-root draft comments AND all
@@ -197,6 +211,7 @@ function FileGroupSection({
           draft={{ kind: 'comment', data: c }}
           onEdit={onEdit}
           onMutated={onMutated}
+          removeDraftLocally={removeDraftLocally}
           readOnly={readOnly}
         />
       ))}
@@ -207,6 +222,7 @@ function FileGroupSection({
           draft={{ kind: 'reply', data: r }}
           onEdit={onEdit}
           onMutated={onMutated}
+          removeDraftLocally={removeDraftLocally}
           readOnly={readOnly}
         />
       ))}

@@ -110,6 +110,7 @@ export function OverviewTab() {
       existingPrRootDraft,
       registerOpenComposer: draftSession.registerOpenComposer,
       onComposerClose: draftSession.refetch,
+      insertDraftLocally: draftSession.insertDraftLocally,
       readOnly,
     }),
     [
@@ -119,6 +120,7 @@ export function OverviewTab() {
       existingPrRootDraft,
       draftSession.registerOpenComposer,
       draftSession.refetch,
+      draftSession.insertDraftLocally,
       readOnly,
     ],
   );

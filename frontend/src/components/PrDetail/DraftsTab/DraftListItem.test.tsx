@@ -1,9 +1,16 @@
-import { it, expect, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { it, expect, vi, beforeEach } from 'vitest';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { DraftListItem } from './DraftListItem';
 import type { DraftLike } from '../draftKinds';
+import { sendPatch } from '../../../api/draft';
 
 vi.mock('../../../api/draft', () => ({ sendPatch: vi.fn() }));
+
+const mockSendPatch = vi.mocked(sendPatch);
+
+beforeEach(() => {
+  mockSendPatch.mockReset();
+});
 
 const prRef = { owner: 'acme', repo: 'api', number: 123 };
 
@@ -86,4 +93,47 @@ it('footer shows Edit + Discard; readOnly hides the footer', () => {
     <DraftListItem prRef={prRef} draft={fileDraft} onEdit={noop} onMutated={noop} readOnly />,
   );
   expect(screen.queryByRole('button', { name: 'Edit' })).toBeNull();
+});
+
+// #744 — optimistic discard: the row leaves the list on delete SUCCESS, before
+// the reconciliation refetch (onMutated) round-trips back.
+it('calls removeDraftLocally(id) then onMutated on a successful discard', async () => {
+  mockSendPatch.mockResolvedValue({ ok: true, assignedId: null });
+  const removeDraftLocally = vi.fn();
+  const onMutated = vi.fn();
+  render(
+    <DraftListItem
+      prRef={prRef}
+      draft={fileDraft}
+      onEdit={noop}
+      onMutated={onMutated}
+      removeDraftLocally={removeDraftLocally}
+    />,
+  );
+  fireEvent.click(screen.getByRole('button', { name: 'Discard' }));
+  // Confirm in the modal (data-modal-role="primary").
+  fireEvent.click(document.querySelector('[data-modal-role="primary"]') as HTMLButtonElement);
+  await waitFor(() => expect(removeDraftLocally).toHaveBeenCalledWith('d1'));
+  expect(onMutated).toHaveBeenCalledTimes(1);
+});
+
+it('does NOT remove the row when the discard fails (keeps it for retry)', async () => {
+  mockSendPatch.mockResolvedValue({ ok: false, status: 0, kind: 'network', body: 'x' });
+  const removeDraftLocally = vi.fn();
+  const onMutated = vi.fn();
+  // Empty body → requestDelete runs the delete directly (no confirm modal).
+  const emptyDraft: DraftLike = { kind: 'comment', data: { ...fileDraft.data, bodyMarkdown: '' } };
+  render(
+    <DraftListItem
+      prRef={prRef}
+      draft={emptyDraft}
+      onEdit={noop}
+      onMutated={onMutated}
+      removeDraftLocally={removeDraftLocally}
+    />,
+  );
+  fireEvent.click(screen.getByRole('button', { name: 'Discard' }));
+  await waitFor(() => expect(mockSendPatch).toHaveBeenCalledTimes(1));
+  expect(removeDraftLocally).not.toHaveBeenCalled();
+  expect(onMutated).not.toHaveBeenCalled();
 });

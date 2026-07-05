@@ -15,6 +15,11 @@ interface DraftListItemProps {
   // owning DraftsTab passes its draftSession.refetch down so this
   // component can refresh the list itself.
   onMutated: () => void;
+  // #744 — optimistic removal. Called with the draft id right after a
+  // successful delete so the row leaves the list immediately, without waiting
+  // for onMutated's reconciliation refetch to round-trip. Optional: omitting it
+  // degrades gracefully to refetch-only (the pre-#744 behaviour).
+  removeDraftLocally?: (id: string) => void;
   readOnly?: boolean;
 }
 
@@ -42,6 +47,7 @@ export function DraftListItem({
   draft,
   onEdit,
   onMutated,
+  removeDraftLocally,
   readOnly = false,
 }: DraftListItemProps) {
   const [confirmOpen, setConfirmOpen] = useState(false);
@@ -75,6 +81,11 @@ export function DraftListItem({
       setDeleting(false);
       return;
     }
+    // #744 — optimistic removal keyed on server-confirmed success: splice the
+    // row out locally now so it clears instantly, before onMutated's refetch
+    // round-trips. Keyed on success, so the trailing refetch (server no longer
+    // returns this id) cannot resurrect it.
+    removeDraftLocally?.(draft.data.id);
     // Own-tab state-changed events are filtered (spec § 5.7), so we have
     // to drive the refetch ourselves. Re-enable the buttons immediately so
     // the user is not stuck behind a permanent disabled state if refetch

@@ -32,7 +32,13 @@ const ONE_COMMENT: DraftCommentDto = {
 
 function renderTab(session: ReviewSessionDto) {
   return renderWithPrDetailContext(
-    <DraftsTab prRef={PR_REF} session={session} status="ready" refetch={async () => {}} />,
+    <DraftsTab
+      prRef={PR_REF}
+      session={session}
+      status="ready"
+      refetch={async () => {}}
+      removeDraftLocally={() => {}}
+    />,
     { prRef: PR_REF },
   );
 }

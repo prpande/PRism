@@ -1,4 +1,4 @@
-import type { DraftCommentDto, PrReference } from '../../../api/types';
+import type { DraftCommentDto, DraftReplyDto, PrReference } from '../../../api/types';
 import { CollapsedComposerAffordance } from '../Composer/CollapsedComposerAffordance';
 import { PrRootReplyComposer } from '../Composer/PrRootReplyComposer';
 import { MarkAllReadButton } from './MarkAllReadButton';
@@ -15,6 +15,9 @@ export interface PrRootConversationReplyContext {
   existingPrRootDraft: DraftCommentDto | null;
   registerOpenComposer: (draftId: string, ownerKey: ComposerOwnerKey) => () => void;
   onComposerClose: () => void;
+  // #744 — optimistic insert seam, forwarded to PrRootReplyComposer so a
+  // PR-root create appears in the Drafts tab without waiting for a refetch.
+  insertDraftLocally: (draft: DraftCommentDto | DraftReplyDto) => void;
   // Spec § 5.7a. Forwarded to PrRootReplyComposer.
   readOnly?: boolean;
 }
@@ -34,8 +37,15 @@ export function PrRootConversationActions({
   // doesn't duplicate it).
   onPosted?: () => void;
 }) {
-  const { prRef, prState, existingPrRootDraft, registerOpenComposer, onComposerClose, readOnly } =
-    replyContext;
+  const {
+    prRef,
+    prState,
+    existingPrRootDraft,
+    registerOpenComposer,
+    onComposerClose,
+    insertDraftLocally,
+    readOnly,
+  } = replyContext;
   // The composer auto-opens when a saved PR-root draft exists, including a
   // cross-tab arrival after mount (OverviewTab hydrates existingPrRootDraft from
   // the shared draft session). See useDraftBackedDisclosure for the resync rationale.
@@ -76,6 +86,7 @@ export function PrRootConversationActions({
           registerOpenComposer={registerOpenComposer}
           onClose={handleClose}
           onPosted={onPosted}
+          onCreated={insertDraftLocally}
           readOnly={readOnly ?? false}
         />
       )}

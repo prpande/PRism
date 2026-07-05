@@ -493,3 +493,88 @@ describe('useDraftSession — getPrRootHolder', () => {
     cleanupB();
   });
 });
+
+// #744 — optimistic local mutators so create/discard reflect instantly, without
+// waiting on the trailing reconciliation refetch (see
+// docs/specs/2026-07-05-drafts-lifecycle-optimistic-updates-design.md).
+describe('useDraftSession — removeDraftLocally (optimistic discard)', () => {
+  async function readyWith(session: ReviewSessionDto) {
+    vi.spyOn(draftApi, 'getDraft').mockResolvedValue(session);
+    const { result } = renderHook(() => useDraftSession(ref));
+    await waitFor(() => expect(result.current.status).toBe('ready'));
+    return result;
+  }
+
+  it('splices a comment id out of draftComments', async () => {
+    const result = await readyWith({
+      ...emptySession(),
+      draftComments: [comment('c1', 'one'), comment('c2', 'two')],
+    });
+    act(() => result.current.removeDraftLocally('c1'));
+    expect(result.current.session?.draftComments.map((c) => c.id)).toEqual(['c2']);
+    expect(result.current.session?.draftReplies).toEqual([]);
+  });
+
+  it('splices a reply id out of draftReplies', async () => {
+    const result = await readyWith({
+      ...emptySession(),
+      draftReplies: [reply('r1', 'one'), reply('r2', 'two')],
+    });
+    act(() => result.current.removeDraftLocally('r2'));
+    expect(result.current.session?.draftReplies.map((r) => r.id)).toEqual(['r1']);
+  });
+
+  it('is a no-op when the id is absent (leaves the session unchanged)', async () => {
+    const before = { ...emptySession(), draftComments: [comment('c1', 'one')] };
+    const result = await readyWith(before);
+    act(() => result.current.removeDraftLocally('nope'));
+    expect(result.current.session?.draftComments.map((c) => c.id)).toEqual(['c1']);
+  });
+
+  it('is idempotent — removing the same id twice leaves one clean removal', async () => {
+    const result = await readyWith({
+      ...emptySession(),
+      draftComments: [comment('c1', 'one'), comment('c2', 'two')],
+    });
+    act(() => {
+      result.current.removeDraftLocally('c1');
+      result.current.removeDraftLocally('c1');
+    });
+    expect(result.current.session?.draftComments.map((c) => c.id)).toEqual(['c2']);
+  });
+});
+
+describe('useDraftSession — insertDraftLocally (optimistic create)', () => {
+  async function readyWith(session: ReviewSessionDto) {
+    vi.spyOn(draftApi, 'getDraft').mockResolvedValue(session);
+    const { result } = renderHook(() => useDraftSession(ref));
+    await waitFor(() => expect(result.current.status).toBe('ready'));
+    return result;
+  }
+
+  it('appends a new comment draft to draftComments', async () => {
+    const result = await readyWith(emptySession());
+    const c = comment('c1', 'new draft');
+    act(() => result.current.insertDraftLocally(c));
+    expect(result.current.session?.draftComments).toEqual([c]);
+    expect(result.current.session?.draftReplies).toEqual([]);
+  });
+
+  it('routes a reply DTO (has parentThreadId) into draftReplies', async () => {
+    const result = await readyWith(emptySession());
+    const r = reply('r1', 'new reply');
+    act(() => result.current.insertDraftLocally(r));
+    expect(result.current.session?.draftReplies).toEqual([r]);
+    expect(result.current.session?.draftComments).toEqual([]);
+  });
+
+  it('dedups by id — inserting an existing id replaces rather than duplicates', async () => {
+    const result = await readyWith({
+      ...emptySession(),
+      draftComments: [comment('c1', 'old body')],
+    });
+    act(() => result.current.insertDraftLocally(comment('c1', 'new body')));
+    expect(result.current.session?.draftComments).toHaveLength(1);
+    expect(result.current.session?.draftComments[0].bodyMarkdown).toBe('new body');
+  });
+});

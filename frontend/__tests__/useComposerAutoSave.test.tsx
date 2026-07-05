@@ -692,3 +692,133 @@ describe('useComposerAutoSave — serialized saves (#602 Defect C)', () => {
     expect(spy.mock.calls[1][1]).toMatchObject({ kind: 'deleteDraftComment' });
   });
 });
+
+// #744 — the create-success path emits the just-created draft as a full DTO so
+// the shared session can insert it optimistically (Drafts tab shows it without
+// waiting for the reconciliation refetch). useComposerAutoSave is the single
+// convergence point for all three anchor kinds.
+describe('useComposerAutoSave — onCreated optimistic-insert (#744)', () => {
+  const prRootAnchor: ComposerAnchor = { kind: 'pr-root' };
+
+  it('fires once with a full inline-comment DraftCommentDto on create', async () => {
+    vi.spyOn(draftApi, 'sendPatch').mockResolvedValue({ ok: true, assignedId: 'uuid-1' });
+    const onCreated = vi.fn();
+    renderHook(() =>
+      useComposerAutoSave(defaultProps({ body: 'abc', anchor: inlineAnchor, onCreated })),
+    );
+    await flushTimersAndPromises();
+    expect(onCreated).toHaveBeenCalledTimes(1);
+    expect(onCreated).toHaveBeenCalledWith({
+      id: 'uuid-1',
+      filePath: 'src/Foo.cs',
+      lineNumber: 42,
+      side: 'right',
+      anchoredSha: 'a'.repeat(40),
+      anchoredLineContent: '    return 0;',
+      bodyMarkdown: 'abc',
+      status: 'draft',
+      isOverriddenStale: false,
+      postedCommentId: null,
+    });
+  });
+
+  it('fires with a null-anchored pr-root DraftCommentDto on create', async () => {
+    vi.spyOn(draftApi, 'sendPatch').mockResolvedValue({ ok: true, assignedId: 'uuid-2' });
+    const onCreated = vi.fn();
+    renderHook(() =>
+      useComposerAutoSave(defaultProps({ body: 'root body', anchor: prRootAnchor, onCreated })),
+    );
+    await flushTimersAndPromises();
+    expect(onCreated).toHaveBeenCalledWith({
+      id: 'uuid-2',
+      filePath: null,
+      lineNumber: null,
+      side: null,
+      anchoredSha: null,
+      anchoredLineContent: null,
+      bodyMarkdown: 'root body',
+      status: 'draft',
+      isOverriddenStale: false,
+      postedCommentId: null,
+    });
+  });
+
+  it('fires with a DraftReplyDto on reply create', async () => {
+    vi.spyOn(draftApi, 'sendPatch').mockResolvedValue({ ok: true, assignedId: 'uuid-3' });
+    const onCreated = vi.fn();
+    renderHook(() =>
+      useComposerAutoSave(defaultProps({ body: 'a reply', anchor: replyAnchor, onCreated })),
+    );
+    await flushTimersAndPromises();
+    expect(onCreated).toHaveBeenCalledWith({
+      id: 'uuid-3',
+      parentThreadId: 'PRRT_kwDOCRphzc6S',
+      replyCommentId: null,
+      bodyMarkdown: 'a reply',
+      status: 'draft',
+      isOverriddenStale: false,
+    });
+  });
+
+  it('does NOT fire on an update to an existing draft', async () => {
+    vi.spyOn(draftApi, 'sendPatch').mockResolvedValue({ ok: true, assignedId: null });
+    const onCreated = vi.fn();
+    renderHook(() =>
+      useComposerAutoSave(defaultProps({ body: 'edited', draftId: 'uuid-x', onCreated })),
+    );
+    await flushTimersAndPromises();
+    expect(onCreated).not.toHaveBeenCalled();
+  });
+
+  it('does NOT fire on a delete (empty body on an existing draft)', async () => {
+    vi.spyOn(draftApi, 'sendPatch').mockResolvedValue({ ok: true, assignedId: null });
+    const onCreated = vi.fn();
+    renderHook(() => useComposerAutoSave(defaultProps({ body: '', draftId: 'uuid-x', onCreated })));
+    await flushTimersAndPromises();
+    expect(onCreated).not.toHaveBeenCalled();
+  });
+
+  it('is suppressed when disabled flips true mid-create (parity with onSaved)', async () => {
+    const create = deferred<{ ok: true; assignedId: string }>();
+    vi.spyOn(draftApi, 'sendPatch').mockImplementationOnce(() => create.promise);
+    const onCreated = vi.fn();
+    const { rerender } = renderHook(
+      ({ body, disabled }: { body: string; disabled: boolean }) =>
+        useComposerAutoSave(defaultProps({ body, disabled, onCreated })),
+      { initialProps: { body: 'abc', disabled: false } },
+    );
+    await flushTimersAndPromises(); // create in-flight
+    rerender({ body: 'abc', disabled: true }); // cross-tab take-over
+    await act(async () => {
+      create.resolve({ ok: true, assignedId: 'uuid-1' });
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(onCreated).not.toHaveBeenCalled();
+  });
+
+  it('fires again with the new id on a recovery-recreate (create → 404 → recreate)', async () => {
+    vi.spyOn(draftApi, 'sendPatch')
+      .mockResolvedValueOnce({ ok: true, assignedId: 'uuid-1' })
+      .mockResolvedValueOnce({ ok: true, assignedId: 'uuid-2' });
+    const onCreated = vi.fn();
+    const { rerender } = renderHook(
+      ({ body, draftId }: { body: string; draftId: string | null }) =>
+        useComposerAutoSave(defaultProps({ body, draftId, onCreated })),
+      { initialProps: { body: 'abc', draftId: null as string | null } },
+    );
+    await flushTimersAndPromises();
+    expect(onCreated).toHaveBeenCalledTimes(1);
+    expect(onCreated.mock.calls[0][0]).toMatchObject({ id: 'uuid-1' });
+
+    // The parent binds the assigned id (onAssignedId → draftId prop). Then a
+    // 404 recovery clears draftId back to null; the next edit re-creates. The
+    // null→non-null→null transition is what resets the internal draftId ref.
+    rerender({ body: 'abc', draftId: 'uuid-1' });
+    rerender({ body: 'abcdef', draftId: null });
+    await flushTimersAndPromises();
+    expect(onCreated).toHaveBeenCalledTimes(2);
+    expect(onCreated.mock.calls[1][0]).toMatchObject({ id: 'uuid-2' });
+  });
+});

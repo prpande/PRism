@@ -3,7 +3,7 @@ import { ComposerActionsBar } from './ComposerActionsBar';
 import { ComposerModals } from './ComposerModals';
 import { ComposerMarkdownPreview } from './ComposerMarkdownPreview';
 import styles from './InlineCommentComposer.module.css';
-import type { DraftSide, PrReference } from '../../../api/types';
+import type { DraftCommentDto, DraftReplyDto, DraftSide, PrReference } from '../../../api/types';
 import type { ComposerOwnerKey } from '../../../hooks/useDraftSession';
 import type React from 'react';
 
@@ -27,6 +27,7 @@ export interface InlineCommentComposerProps {
   onClose: () => void;
   readOnly?: boolean;
   onSaved?: () => void;
+  onCreated?: (draft: DraftCommentDto | DraftReplyDto) => void;
   flushRef?: React.MutableRefObject<(() => Promise<string | null>) | null>;
   anyOtherDraftsStaged?: boolean;
   beginPosting?: () => void;
@@ -50,6 +51,7 @@ export function InlineCommentComposer({
   onClose,
   readOnly = false,
   onSaved,
+  onCreated,
   flushRef,
   anyOtherDraftsStaged = false,
   beginPosting,
@@ -67,6 +69,7 @@ export function InlineCommentComposer({
     onClose,
     readOnly,
     onSaved,
+    onCreated,
     flushRef,
     anyOtherDraftsStaged,
     beginPosting,

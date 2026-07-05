@@ -4,7 +4,7 @@ import styles from './PrRootBodyEditor.module.css';
 import { useComposerAutoSave, type ComposerSaveBadge } from '../../../hooks/useComposerAutoSave';
 import { ComposerStatusBadge } from './ComposerStatusBadge';
 import { Modal } from '../../Modal/Modal';
-import type { PrReference } from '../../../api/types';
+import type { DraftCommentDto, DraftReplyDto, PrReference } from '../../../api/types';
 import type { ComposerOwnerKey } from '../../../hooks/useDraftSession';
 
 export interface PrRootBodyEditorProps {
@@ -44,6 +44,11 @@ export interface PrRootBodyEditorProps {
   // Fired when the user discards from the 404-recovery modal. The consumer
   // decides what to do (composer closes; SubmitDialog clears its editor).
   onDraftLost?: () => void;
+  // #744 — forwarded to useComposerAutoSave so a PR-root create optimistically
+  // inserts the new draft into the shared session. This surface reaches
+  // useComposerAutoSave directly (not via useDraftComposer), which is why the
+  // insert seam lives in that hook rather than in the wrapper.
+  onCreated?: (draft: DraftCommentDto | DraftReplyDto) => void;
 }
 
 export function PrRootBodyEditor({
@@ -59,6 +64,7 @@ export function PrRootBodyEditor({
   onBodyChange,
   onAutosaveControl,
   onDraftLost,
+  onCreated,
 }: PrRootBodyEditorProps) {
   const [body, setBody] = useState(initialBody);
   const [recoveryModalOpen, setRecoveryModalOpen] = useState(false);
@@ -103,6 +109,7 @@ export function PrRootBodyEditor({
     onAssignedId: handleAssignedId,
     onDraftDeletedByServer: handleDraftDeletedByServer,
     onLocalDelete: handleLocalDelete,
+    onCreated,
     disabled: readOnly,
   });
 

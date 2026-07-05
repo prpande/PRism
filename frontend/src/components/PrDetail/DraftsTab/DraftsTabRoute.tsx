@@ -22,6 +22,7 @@ export function DraftsTabRoute() {
       session={draftSession.session}
       status={draftSession.status}
       refetch={draftSession.refetch}
+      removeDraftLocally={draftSession.removeDraftLocally}
       readOnly={readOnly}
     />
   );

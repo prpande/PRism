@@ -5,7 +5,7 @@ import { sendPatch } from '../../../api/draft';
 import { postComment } from '../../../api/comment';
 import { matchComposerKey } from './matchComposerKey';
 import type { ComposerOwnerKey } from '../../../hooks/useDraftSession';
-import type { PrReference } from '../../../api/types';
+import type { DraftCommentDto, DraftReplyDto, PrReference } from '../../../api/types';
 import type React from 'react';
 
 // #571 B1 fix — the resolve/unresolve control the reply composer hosts next to "Comment". The
@@ -45,6 +45,9 @@ export interface UseDraftComposerParams {
   endPosting?: () => void;
   onPosted?: (postedCommentId: number, body: string) => void;
   onSaved?: () => void;
+  // #744 — forwarded to useComposerAutoSave so a create optimistically inserts
+  // the new draft into the shared session (inline + reply surfaces).
+  onCreated?: (draft: DraftCommentDto | DraftReplyDto) => void;
   flushRef?: React.MutableRefObject<(() => Promise<string | null>) | null>;
   // #571 B1 fix — when supplied (reply composers only), the actions bar renders a Resolve /
   // "Comment and resolve conversation" button wired to this control. Omitted for inline comments.
@@ -109,6 +112,7 @@ export function useDraftComposer(params: UseDraftComposerParams): UseDraftCompos
     endPosting,
     onPosted,
     onSaved,
+    onCreated,
     flushRef,
     resolveControl,
   } = params;
@@ -158,6 +162,7 @@ export function useDraftComposer(params: UseDraftComposerParams): UseDraftCompos
     onDraftDeletedByServer: handleDraftDeletedByServer,
     onLocalDelete: handleLocalDelete,
     onSaved,
+    onCreated,
     disabled: readOnly,
   });
 

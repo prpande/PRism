@@ -567,6 +567,7 @@ export function FilesTab() {
             draftId={composerDraftId}
             onDraftIdChange={setComposerDraftId}
             registerOpenComposer={draftSession.registerOpenComposer}
+            onCreated={draftSession.insertDraftLocally}
             onClose={handleComposerClose}
             onSaved={handleComposerSaved}
             flushRef={activeComposerFlushRef}
