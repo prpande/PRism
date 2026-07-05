@@ -56,13 +56,15 @@ export interface UseDraftComposerResult {
     body: string;
     setBody: (v: string) => void;
     previewMode: boolean;
+    // Toggles the editor's Write/Preview state. Consumed by FormattingToolbar's
+    // segmented control (via the FormattingHandle the composers build); the
+    // footer actions bar no longer owns a preview toggle.
+    onTogglePreview: () => void;
     textareaRef: React.RefObject<HTMLTextAreaElement | null>;
     handleKeyDown: (e: React.KeyboardEvent<HTMLTextAreaElement>) => void;
     readOnly: boolean;
   };
   actions: {
-    previewMode: boolean;
-    onTogglePreview: () => void;
     badge: ComposerSaveBadge;
     saveDisabled: boolean;
     saveTooltip: string | undefined;
@@ -373,10 +375,16 @@ export function useDraftComposer(params: UseDraftComposerParams): UseDraftCompos
   }, []);
 
   return {
-    editor: { body, setBody, previewMode, textareaRef, handleKeyDown, readOnly },
-    actions: {
+    editor: {
+      body,
+      setBody,
       previewMode,
       onTogglePreview: () => setPreviewMode((p) => !p),
+      textareaRef,
+      handleKeyDown,
+      readOnly,
+    },
+    actions: {
       badge,
       saveDisabled,
       saveTooltip,

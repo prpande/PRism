@@ -3,8 +3,6 @@ import { render, screen, within } from '@testing-library/react';
 import { ComposerActionsBar } from './ComposerActionsBar';
 
 const baseProps = {
-  previewMode: false,
-  onTogglePreview: vi.fn(),
   badge: 'saved' as const,
   saveDisabled: false,
   saveTooltip: undefined,
@@ -29,7 +27,7 @@ describe('ComposerActionsBar', () => {
       .getAllByRole('button')
       .map((b) => b.textContent);
     // AiComposerAssistant renders null (AI gate off in tests); badge is a span, not a button.
-    expect(buttons).toEqual(['Preview', 'Discard', 'Add to review', 'Comment']);
+    expect(buttons).toEqual(['Discard', 'Add to review', 'Comment']);
   });
   it('hides the save button and the merged note when closedBanner', () => {
     render(<ComposerActionsBar {...baseProps} closedBanner prState="merged" />);

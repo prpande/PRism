@@ -314,6 +314,30 @@ describe('PrRootReplyComposer — Post flow', () => {
   });
 });
 
+describe('PrRootReplyComposer — formatting toolbar (#586)', () => {
+  it('renders the formatting toolbar and no footer Preview toggle', () => {
+    const { getByRole } = render(<Harness />);
+    // Toolbar present with the Write | Preview segmented control.
+    expect(getByRole('toolbar', { name: 'Formatting' })).toBeTruthy();
+    expect(getByRole('button', { name: 'Preview' })).toBeTruthy();
+    // The old footer `.composer-preview-toggle` button is gone: exactly one control
+    // switches preview now (the segmented one).
+    const actions = document.querySelector('.composer-actions')!;
+    expect(actions.querySelector('.composer-preview-toggle')).toBeNull();
+  });
+
+  it('a toolbar edit actually lands in the textarea (drives the editor body, not a dead mirror)', () => {
+    const { getByRole } = render(<Harness />);
+    const ta = getByRole('textbox', { name: 'PR-level body' }) as HTMLTextAreaElement;
+    ta.focus();
+    ta.setSelectionRange(0, 0);
+    fireEvent.click(getByRole('button', { name: /Bold/ }));
+    // Empty-selection bold -> "****". This FAILS if onChange writes only the parent
+    // mirror: the editor re-renders its stale internal value and resets the DOM.
+    expect(ta.value).toBe('****');
+  });
+});
+
 describe('PrRootReplyComposer — closed PR (#302 updated)', () => {
   // #302: "text not saved" banner removed from PrRootBodyEditor (guard relaxed).
   it('does NOT render a "text not saved" banner when prState !== "open"', () => {

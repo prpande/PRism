@@ -1,3 +1,4 @@
+import type React from 'react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import styles from './PrRootBodyEditor.module.css';
@@ -40,10 +41,15 @@ export interface PrRootBodyEditorProps {
   onAutosaveControl?: (control: {
     flush: () => Promise<string | null>;
     badge: ComposerSaveBadge;
+    setValue: (next: string) => void; // #586 — the editor's own setBody
   }) => void;
   // Fired when the user discards from the 404-recovery modal. The consumer
   // decides what to do (composer closes; SubmitDialog clears its editor).
   onDraftLost?: () => void;
+  // #586 — optional external textarea ref, attached via a merged callback-ref
+  // alongside the internal ref. Supplied by PrRootReplyComposer so its toolbar
+  // can act on this textarea; omitted by SubmitDialog (no toolbar there).
+  textAreaRef?: React.RefObject<HTMLTextAreaElement | null>;
 }
 
 export function PrRootBodyEditor({
@@ -59,10 +65,21 @@ export function PrRootBodyEditor({
   onBodyChange,
   onAutosaveControl,
   onDraftLost,
+  textAreaRef,
 }: PrRootBodyEditorProps) {
   const [body, setBody] = useState(initialBody);
   const [recoveryModalOpen, setRecoveryModalOpen] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+
+  // Merged callback-ref: the internal ref (mount-focus effect below) and the
+  // optional external textAreaRef (toolbar consumer) both see the same node.
+  const setTextAreaRef = useCallback(
+    (el: HTMLTextAreaElement | null) => {
+      textareaRef.current = el;
+      if (textAreaRef) textAreaRef.current = el;
+    },
+    [textAreaRef],
+  );
 
   // Read the surfaced callbacks from refs so an unstable (inline) consumer
   // callback identity does NOT churn the surfacing effects below. The effects
@@ -106,9 +123,11 @@ export function PrRootBodyEditor({
     disabled: readOnly,
   });
 
-  // Surface autosave controls (flush + badge) to the consumer.
+  // Surface autosave controls (flush + badge + setValue) to the consumer.
+  // `setBody` is a useState setter with stable identity — it doesn't need to
+  // be in the deps and doesn't change this effect's fire cadence.
   useEffect(() => {
-    onAutosaveControlRef.current?.({ flush, badge });
+    onAutosaveControlRef.current?.({ flush, badge, setValue: setBody });
   }, [flush, badge]);
 
   // Surface the live body to the consumer.
@@ -140,7 +159,7 @@ export function PrRootBodyEditor({
   return (
     <div className={styles.editor}>
       <textarea
-        ref={textareaRef}
+        ref={setTextAreaRef}
         className="composer-textarea"
         value={body}
         onChange={(e) => setBody(e.target.value)}

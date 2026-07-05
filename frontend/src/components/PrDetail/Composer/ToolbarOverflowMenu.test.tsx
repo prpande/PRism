@@ -1,0 +1,98 @@
+import { describe, it, expect, vi } from 'vitest';
+import { render, fireEvent, waitFor, within } from '@testing-library/react';
+import { ToolbarOverflowMenu } from './ToolbarOverflowMenu';
+
+describe('ToolbarOverflowMenu', () => {
+  it('renders a collapsed menu-button and expands on click', () => {
+    const { getByRole, queryByRole } = render(
+      <ToolbarOverflowMenu items={['task', 'strikethrough']} runAction={() => {}} />,
+    );
+    const trigger = getByRole('button', { name: /More formatting/i });
+    expect(trigger.getAttribute('aria-haspopup')).toBe('menu');
+    expect(trigger.getAttribute('aria-expanded')).toBe('false');
+    expect(queryByRole('menu')).toBeNull();
+    fireEvent.click(trigger);
+    expect(trigger.getAttribute('aria-expanded')).toBe('true');
+    expect(getByRole('menu')).toBeTruthy();
+  });
+
+  it('focuses the first item on open and navigates with ArrowDown', () => {
+    const { getByRole } = render(
+      <ToolbarOverflowMenu items={['task', 'strikethrough']} runAction={() => {}} />,
+    );
+    fireEvent.click(getByRole('button', { name: /More formatting/i }));
+    const menu = getByRole('menu');
+    const items = within(menu).getAllByRole('menuitem');
+    expect(document.activeElement).toBe(items[0]);
+    fireEvent.keyDown(menu, { key: 'ArrowDown' });
+    expect(document.activeElement).toBe(items[1]);
+  });
+
+  it('runs the action and closes when a menuitem is chosen', () => {
+    const runAction = vi.fn();
+    const { getByRole, queryByRole } = render(
+      <ToolbarOverflowMenu items={['task', 'strikethrough']} runAction={runAction} />,
+    );
+    fireEvent.click(getByRole('button', { name: /More formatting/i }));
+    fireEvent.click(within(getByRole('menu')).getAllByRole('menuitem')[0]);
+    expect(runAction).toHaveBeenCalledWith('task');
+    expect(queryByRole('menu')).toBeNull();
+  });
+
+  it('closes on Escape and returns focus to the trigger', async () => {
+    const { getByRole, queryByRole } = render(
+      <ToolbarOverflowMenu items={['task']} runAction={() => {}} />,
+    );
+    const trigger = getByRole('button', { name: /More formatting/i });
+    fireEvent.click(trigger);
+    fireEvent.keyDown(getByRole('menu'), { key: 'Escape' });
+    expect(queryByRole('menu')).toBeNull();
+    // useDismissableMenu returns focus on a deferred tick (setTimeout 0), so the
+    // trigger regains focus asynchronously after the menu unmounts.
+    await waitFor(() => expect(document.activeElement).toBe(trigger));
+  });
+
+  it('closes on an outside pointerdown (shared dismissal behavior)', () => {
+    const { getByRole, queryByRole } = render(
+      <ToolbarOverflowMenu items={['task']} runAction={() => {}} />,
+    );
+    fireEvent.click(getByRole('button', { name: /More formatting/i }));
+    expect(getByRole('menu')).toBeTruthy();
+    // A pointerdown outside the menu root dismisses it, matching every other
+    // popup menu in the app (DiffSettingsMenu, Select, …).
+    fireEvent.pointerDown(document.body);
+    expect(queryByRole('menu')).toBeNull();
+  });
+
+  it('closes (not just hides) when disabled flips true, and stays closed when re-enabled', () => {
+    const { getByRole, queryByRole, rerender } = render(
+      <ToolbarOverflowMenu items={['task', 'strikethrough']} runAction={() => {}} />,
+    );
+    fireEvent.click(getByRole('button', { name: /More formatting/i }));
+    expect(getByRole('menu')).toBeTruthy();
+
+    // Composer becomes disabled (posting / cross-tab read-only) while open.
+    rerender(
+      <ToolbarOverflowMenu items={['task', 'strikethrough']} runAction={() => {}} disabled />,
+    );
+    expect(queryByRole('menu')).toBeNull();
+
+    // Re-enabling must NOT pop the menu back open — `open` was reset, not merely
+    // masked by the `open && !disabled` render gate.
+    rerender(<ToolbarOverflowMenu items={['task', 'strikethrough']} runAction={() => {}} />);
+    expect(queryByRole('menu')).toBeNull();
+    expect(getByRole('button', { name: /More formatting/i }).getAttribute('aria-expanded')).toBe(
+      'false',
+    );
+  });
+
+  it('disables the trigger and cannot open when disabled (matches the greyed strip)', () => {
+    const { getByRole, queryByRole } = render(
+      <ToolbarOverflowMenu items={['task']} runAction={() => {}} disabled />,
+    );
+    const trigger = getByRole('button', { name: /More formatting/i }) as HTMLButtonElement;
+    expect(trigger.disabled).toBe(true);
+    fireEvent.click(trigger);
+    expect(queryByRole('menu')).toBeNull();
+  });
+});

@@ -88,11 +88,14 @@ describe('InlineCommentComposer — accessibility (A3)', () => {
 describe('InlineCommentComposer — preview toggle', () => {
   it('toggle button has aria-pressed and switches to ComposerMarkdownPreview', () => {
     render(<Harness initialBody="**bold**" />);
-    const toggle = screen.getByRole('button', { name: 'Preview' });
-    expect(toggle).toHaveAttribute('aria-pressed', 'false');
-    fireEvent.click(toggle);
+    const preview = screen.getByRole('button', { name: 'Preview' });
+    expect(preview).toHaveAttribute('aria-pressed', 'false');
+    fireEvent.click(preview);
     expect(screen.getByRole('region', { name: 'Markdown preview' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Edit' })).toHaveAttribute('aria-pressed', 'true');
+    // #586: Preview moved from the footer single-label toggle (Preview<->Edit) into
+    // the toolbar's Write | Preview segmented control. The Preview segment is now
+    // aria-pressed once active; there is no separate 'Edit' button.
+    expect(screen.getByRole('button', { name: 'Preview' })).toHaveAttribute('aria-pressed', 'true');
   });
 });
 
@@ -253,6 +256,6 @@ describe('InlineCommentComposer — button order (Task 6)', () => {
       .getAllByRole('button')
       .map((b) => b.textContent);
     // AiComposerAssistant renders null (AI gate off in tests); badge is a <span>, not a button.
-    expect(labels).toEqual(['Preview', 'Discard', 'Add to review', 'Comment']);
+    expect(labels).toEqual(['Discard', 'Add to review', 'Comment']);
   });
 });
