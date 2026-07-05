@@ -332,41 +332,30 @@ function makeCreatedDraftDto(
   body: string,
   anchor: ComposerAnchor,
 ): DraftCommentDto | DraftReplyDto {
+  // Fields common to every fresh draft; the per-kind branches add the anchor.
+  const base = { id, bodyMarkdown: body, status: 'draft' as const, isOverriddenStale: false };
   if (anchor.kind === 'reply') {
-    return {
-      id,
-      parentThreadId: anchor.parentThreadId,
-      replyCommentId: null,
-      bodyMarkdown: body,
-      status: 'draft',
-      isOverriddenStale: false,
-    };
+    return { ...base, parentThreadId: anchor.parentThreadId, replyCommentId: null };
   }
   if (anchor.kind === 'inline-comment') {
     return {
-      id,
+      ...base,
       filePath: anchor.filePath,
       lineNumber: anchor.lineNumber,
       side: anchor.side,
       anchoredSha: anchor.anchoredSha,
       anchoredLineContent: anchor.anchoredLineContent,
-      bodyMarkdown: body,
-      status: 'draft',
-      isOverriddenStale: false,
       postedCommentId: null,
     };
   }
   // pr-root: a PR-level comment with no file anchor.
   return {
-    id,
+    ...base,
     filePath: null,
     lineNumber: null,
     side: null,
     anchoredSha: null,
     anchoredLineContent: null,
-    bodyMarkdown: body,
-    status: 'draft',
-    isOverriddenStale: false,
     postedCommentId: null,
   };
 }
