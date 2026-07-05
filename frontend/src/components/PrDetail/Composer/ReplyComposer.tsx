@@ -2,6 +2,8 @@ import { useDraftComposer, type ThreadResolveControl } from './useDraftComposer'
 import { ComposerActionsBar } from './ComposerActionsBar';
 import { ComposerModals } from './ComposerModals';
 import { ComposerMarkdownPreview } from './ComposerMarkdownPreview';
+import { FormattingToolbar } from './FormattingToolbar';
+import type { FormattingHandle } from './formattingHandle';
 import styles from './ReplyComposer.module.css';
 import type { PrReference } from '../../../api/types';
 import type { ComposerOwnerKey } from '../../../hooks/useDraftSession';
@@ -64,6 +66,15 @@ export function ReplyComposer({
     resolveControl,
   });
 
+  const handle: FormattingHandle = {
+    textareaRef: editor.textareaRef,
+    value: editor.body,
+    onChange: editor.setBody,
+    previewMode: editor.previewMode,
+    onTogglePreview: actions.onTogglePreview,
+    disabled: editor.readOnly || actions.posting,
+  };
+
   return (
     <div
       role="form"
@@ -72,6 +83,7 @@ export function ReplyComposer({
       data-testid="reply-composer"
       className={`reply-composer composer-frame ${styles.replyComposer}`}
     >
+      <FormattingToolbar handle={handle} />
       {editor.previewMode ? (
         <ComposerMarkdownPreview body={editor.body} />
       ) : (
