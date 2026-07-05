@@ -9,10 +9,15 @@ function Harness({
   disabled,
   runAction,
   previewMode = false,
+  keepMounted = false,
 }: {
   disabled: boolean;
   runAction: (a: FormatAction) => void;
   previewMode?: boolean;
+  // When true, mirror the Overview composer (PrRootReplyComposer): the textarea
+  // stays MOUNTED across preview toggles, hidden rather than unmounted. When
+  // false (default), mirror the inline/reply composers: it UNMOUNTS in preview.
+  keepMounted?: boolean;
 }) {
   const ref = useRef<HTMLTextAreaElement | null>(null);
   const handle: FormattingHandle = {
@@ -24,7 +29,7 @@ function Harness({
     disabled,
   };
   useFormattingShortcuts(handle, runAction);
-  // Mirror the inline/reply composers: the textarea UNMOUNTS in preview.
+  if (keepMounted) return <textarea ref={ref} aria-label="body" hidden={previewMode} />;
   return previewMode ? <div>preview</div> : <textarea ref={ref} aria-label="body" />;
 }
 
@@ -60,6 +65,19 @@ describe('useFormattingShortcuts', () => {
     const ta = getByLabelText('body');
     fireEvent.keyDown(ta, { key: 'Enter', ctrlKey: true });
     fireEvent.keyDown(ta, { key: 'p', ctrlKey: true, shiftKey: true });
+    expect(runAction).not.toHaveBeenCalled();
+  });
+
+  it('fires NO action in preview even when the textarea stays mounted (Overview composer)', () => {
+    // The Overview composer keeps the textarea mounted (hidden) in preview. The
+    // format buttons are hidden there, so the shortcuts must be inert too — the
+    // handler's previewMode guard enforces this without relying on the hidden
+    // element being unfocusable (jsdom dispatches keydown to it regardless).
+    const runAction = vi.fn();
+    const { getByLabelText } = render(
+      <Harness disabled={false} runAction={runAction} previewMode={true} keepMounted={true} />,
+    );
+    fireEvent.keyDown(getByLabelText('body'), { key: 'b', ctrlKey: true });
     expect(runAction).not.toHaveBeenCalled();
   });
 

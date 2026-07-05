@@ -45,6 +45,15 @@ export function ToolbarOverflowMenu({
     onClose: () => setOpen(false),
   });
 
+  // If the composer becomes disabled (posting / cross-tab read-only) while the
+  // menu is open, close it. The render is gated by `open && !disabled`, so a
+  // stale `open=true` would otherwise (a) keep useDismissableMenu's document
+  // listeners live behind a hidden menu and (b) pop the menu back open when
+  // `disabled` clears (e.g. a post completes). Closing keeps state + ARIA honest.
+  useEffect(() => {
+    if (disabled) setOpen(false);
+  }, [disabled]);
+
   useEffect(() => {
     if (open) {
       setActiveIndex(0);

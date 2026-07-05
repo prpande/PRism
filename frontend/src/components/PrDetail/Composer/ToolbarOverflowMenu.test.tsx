@@ -64,6 +64,28 @@ describe('ToolbarOverflowMenu', () => {
     expect(queryByRole('menu')).toBeNull();
   });
 
+  it('closes (not just hides) when disabled flips true, and stays closed when re-enabled', () => {
+    const { getByRole, queryByRole, rerender } = render(
+      <ToolbarOverflowMenu items={['task', 'strikethrough']} runAction={() => {}} />,
+    );
+    fireEvent.click(getByRole('button', { name: /More formatting/i }));
+    expect(getByRole('menu')).toBeTruthy();
+
+    // Composer becomes disabled (posting / cross-tab read-only) while open.
+    rerender(
+      <ToolbarOverflowMenu items={['task', 'strikethrough']} runAction={() => {}} disabled />,
+    );
+    expect(queryByRole('menu')).toBeNull();
+
+    // Re-enabling must NOT pop the menu back open — `open` was reset, not merely
+    // masked by the `open && !disabled` render gate.
+    rerender(<ToolbarOverflowMenu items={['task', 'strikethrough']} runAction={() => {}} />);
+    expect(queryByRole('menu')).toBeNull();
+    expect(getByRole('button', { name: /More formatting/i }).getAttribute('aria-expanded')).toBe(
+      'false',
+    );
+  });
+
   it('disables the trigger and cannot open when disabled (matches the greyed strip)', () => {
     const { getByRole, queryByRole } = render(
       <ToolbarOverflowMenu items={['task']} runAction={() => {}} disabled />,
