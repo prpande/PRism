@@ -1163,6 +1163,75 @@ a:hover { text-decoration: underline; }
 .composer-preview-toggle:hover {
   color: var(--text-1);
 }
+/* #586 — formatting toolbar strip: a Write|Preview segmented control + a
+   role=toolbar of icon buttons, mounted above the textarea. Keyed to the same
+   color tokens as the removed .composer-preview-toggle so light/dark parity
+   matches the control it replaces. */
+.formatting-strip {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  min-height: 34px; /* stable row height: no reflow when the toolbar hides in preview */
+  padding: var(--s-1) var(--s-1) 0;
+  flex-wrap: nowrap;
+}
+.composer-view-switch {
+  display: inline-flex;
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-2);
+  overflow: hidden;
+}
+.composer-view-switch-btn {
+  font-size: var(--text-sm);
+  font-family: var(--font-sans);
+  color: var(--text-2);
+  background: transparent;
+  border: none;
+  padding: var(--s-1) var(--s-2);
+  cursor: pointer;
+}
+.composer-view-switch-btn:hover {
+  color: var(--text-1);
+}
+.composer-view-switch-btn[aria-pressed='true'] {
+  background: var(--surface-3);
+  color: var(--text-1);
+}
+.formatting-toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--s-1);
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.formatting-toolbar-sep {
+  width: 1px;
+  align-self: stretch;
+  margin: 3px var(--s-1);
+  background: var(--border-2);
+}
+.formatting-toolbar-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  color: var(--text-2);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-2);
+  cursor: pointer;
+}
+.formatting-toolbar-btn:hover:not(:disabled) {
+  color: var(--text-1);
+  background: var(--surface-3);
+  border-color: var(--border-2);
+}
+.formatting-toolbar-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
 .composer-badge {
   font-size: var(--text-xs);
   padding: 2px var(--s-2);
