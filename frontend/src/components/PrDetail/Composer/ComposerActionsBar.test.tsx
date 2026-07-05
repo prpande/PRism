@@ -3,8 +3,6 @@ import { render, screen, within } from '@testing-library/react';
 import { ComposerActionsBar } from './ComposerActionsBar';
 
 const baseProps = {
-  previewMode: false,
-  onTogglePreview: vi.fn(),
   badge: 'saved' as const,
   saveDisabled: false,
   saveTooltip: undefined,

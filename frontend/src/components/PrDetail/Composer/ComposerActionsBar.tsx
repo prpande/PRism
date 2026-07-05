@@ -5,8 +5,6 @@ import type { ComposerResolveButton } from './useDraftComposer';
 import { ComposerStatusBadge } from './ComposerStatusBadge';
 
 export interface ComposerActionsBarProps {
-  previewMode: boolean;
-  onTogglePreview: () => void;
   badge: ComposerSaveBadge;
   saveDisabled: boolean;
   saveTooltip: string | undefined;

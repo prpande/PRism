@@ -71,7 +71,7 @@ export function ReplyComposer({
     value: editor.body,
     onChange: editor.setBody,
     previewMode: editor.previewMode,
-    onTogglePreview: actions.onTogglePreview,
+    onTogglePreview: editor.onTogglePreview,
     disabled: editor.readOnly || actions.posting,
   };
 
