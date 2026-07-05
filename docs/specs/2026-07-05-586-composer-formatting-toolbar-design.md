@@ -78,10 +78,12 @@ the relocated control.)
 
 - **SubmitDialog root-body / PR-description editor** — out of scope (issue). No toolbar; no ref
   passed. Could adopt the same toolbar later.
-- **Real `@`-mention / `#`-reference autocomplete** (fuzzy-search of PR participants / referenced
-  PRs). See §Open decision — the `@`/`#` buttons are the one place two reviewers flagged a
-  parity-premise risk; the interim-vs-cut call is recorded there. **A follow-up issue will be filed**
-  for the autocomplete feature regardless, cross-linked from #586.
+- **`@`-mention / `#`-reference buttons — cut from this slice.** On GitHub these open
+  participant/PR autocomplete popovers; a same-looking button that only inserts a bare character
+  (which the user can just type) sets an expectation the interim cannot meet and reads as unfinished
+  (flagged independently by the product-lens and adversarial reviewers). They are **deferred to ship
+  together with real autocomplete** in the follow-up issue, where they gain actual behavior. **A
+  follow-up issue will be filed** for the autocomplete feature, cross-linked from #586.
 - **No persistent `aria-pressed` toggle state** on the format buttons (no live "is the selection
   currently bold" detection). Toggle is behavioral on click, as on GitHub. (`aria-pressed` is used
   only on the separate `Write | Preview` segmented control, reflecting the active view.)
@@ -131,7 +133,7 @@ All new files under `frontend/src/components/PrDetail/Composer/`.
 | `markdownFormatting.ts` | **Pure, DOM-free** transform engine. One function per action: `(text, selStart, selEnd) => { value, selectionStart, selectionEnd }`. All string math + toggle/edge-case logic (§Toggle contract); no React, no DOM. The exhaustively-tested core. |
 | `applyFormatting.ts` | Thin **application** layer. Given a `textareaRef` + a transform, reads caret, computes via the engine, applies via `document.execCommand('insertText', …)` (undo-preserving) with a `setRangeText` fallback, syncs React state via `onChange`, restores selection + focus (§Application vector). |
 | `FormattingToolbar.tsx` | Presentational strip: a `Write \| Preview` segmented control **plus** a sibling `role="toolbar"` holding the format buttons (two adjacent widgets — §Accessibility). Consumes the handle. |
-| `formattingIcons.tsx` | Inline 16×16 `currentColor` SVG icon components (Bold/Italic/Strikethrough/Heading/Quote/Code/Link/BulletList/NumberedList/TaskList[/Mention/Reference]), matching `diffIcons.tsx`. |
+| `formattingIcons.tsx` | Inline 16×16 `currentColor` SVG icon components (Bold/Italic/Strikethrough/Heading/Quote/Code/Link/BulletList/NumberedList/TaskList), matching `diffIcons.tsx`. |
 | `useFormattingShortcuts.ts` | Maps `Ctrl/Cmd+B/I/K/E` to the same transforms; **early-returns when the handle is disabled** (§Autosave-race safety); used by all three surfaces. |
 
 New styling: a `.formatting-toolbar` block in `styles/tokens.css` (see §Styling & theming).
@@ -215,8 +217,8 @@ if **all** selected non-empty lines already carry the prefix (§Toggle contract)
 | Numbered list | `1. `, `2. `, … (renumbered sequentially across the block) |
 | Task list | `- [ ] ` |
 
-**Insert actions** *(pending §Open decision)* — insert a single character at the caret (no toggle):
-`@`, `#`.
+That is the full **10-button** set. `@`/`#` are **not** included (see §Non-goals — cut in favour of
+shipping them with real autocomplete in the follow-up).
 
 ## Toggle & edge-case contract (engine)
 
@@ -315,11 +317,11 @@ GitHub's own DOM, which separates the view switch from the formatting commands):
 - Each format button is `<button type="button">` with an `aria-label` **and a visible tooltip**
   (native `title=` for now — the unified `<Tooltip>` from #509 is parked; when it lands the toolbar
   can adopt it) showing the label + shortcut, e.g. "Bold (Ctrl+B)". Its SVG icon is `aria-hidden` +
-  `focusable="false"`. This matters because Strikethrough/Task-list/Numbered-list/Mention/Reference
-  are not self-evident glyphs.
+  `focusable="false"`. This matters because Strikethrough/Task-list/Numbered-list are not
+  self-evident glyphs.
 - **Grouping:** the format buttons are visually clustered (thin divider / spacing) into
-  **wrap · link · line-prefix · insert** groups matching the actions taxonomy, with a
-  `role="separator"` between groups, to keep a 10–12-button row scannable.
+  **wrap · link · line-prefix** groups matching the actions taxonomy, with a `role="separator"`
+  between groups, to keep the 10-button row scannable.
 - **Buttons keep focus on the textarea:** each button applies on `onMouseDown` with
   `preventDefault()` (so a mouse click never blurs the textarea → no caret flash), and after any
   activation focus is on the textarea (§Application vector step 1) so the user resumes typing
@@ -365,7 +367,7 @@ button` footer normalization, so it defines its own styling:
 ## Responsive / overflow
 
 `InlineCommentComposer` mounts inside a Files-tab diff row, the **narrowest** of the three surfaces
-(split view, narrow windows). 10–12 icon buttons + the segmented control can exceed that width.
+(split view, narrow windows). 10 icon buttons + the segmented control can exceed that width.
 **Strategy:** the `role="toolbar"` cluster is a fixed-height single row that **scrolls horizontally
 on overflow** (`overflow-x: auto`) with a subtle edge fade affordance — it never wraps to a second
 row (roving tabindex assumes a 1-D order) and never pushes the `Write | Preview` control off-screen
@@ -409,21 +411,15 @@ row (roving tabindex assumes a 1-D order) and never pushes the `Write | Preview`
   duplication.
 - [ ] Live-verified in the running app for **all three** composers, both themes, incl. narrow width.
 
-## Open decision — the `@` / `#` buttons
+## Resolved decision — the `@` / `#` buttons (cut)
 
-Two independent reviewers (product-lens + adversarial) flagged the same risk and recommended
-**cutting** `@`/`#` from this slice: on GitHub they open participant/PR autocomplete popovers, so a
-same-looking button in a parity toolbar that only inserts a bare character (which the user can type
-directly, saving zero keystrokes) **sets the exact expectation the interim cannot meet** — it reads
-as unfinished and lightly trains distrust, while adding 2 of 12 buttons, 2 icons, and 2 roving
-stops for zero capability. The counter-argument (and the reason they're currently in the design) is
-that the user explicitly requested them as interim placeholders, with autocomplete deferred to the
-follow-up issue.
-
-**Resolution is the user's call** (recorded at the review gate): either (a) **keep** them as bare
-inserts now, or (b) **cut** them and reintroduce with the autocomplete follow-up. If (b), the button
-count drops to 10 and the `Mention`/`Reference` icons + labels are removed. The follow-up autocomplete
-issue is filed either way.
+Two independent reviewers (product-lens + adversarial) flagged the same risk: on GitHub `@`/`#` open
+participant/PR autocomplete popovers, so a same-looking button in a parity toolbar that only inserts
+a bare character (which the user can type directly, saving zero keystrokes) **sets the exact
+expectation the interim cannot meet** — it reads as unfinished and lightly trains distrust, for zero
+capability. The user (who had earlier requested them as interim placeholders) **accepted the cut at
+the review gate.** `@`/`#` are therefore **out of this slice** and will be reintroduced **with real
+autocomplete** in the follow-up issue. Button count is **10**.
 
 ## Follow-up
 
