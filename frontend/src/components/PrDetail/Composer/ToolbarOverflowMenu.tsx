@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import type { FormatAction } from './markdownFormatting';
+import { useDismissableMenu } from '../../../hooks/useDismissableMenu';
 import { ICONS, MoreIcon } from './formattingIcons';
-import { TOOLBAR_BUTTONS, buttonTitle } from './FormattingToolbar';
+import { TOOLBAR_BUTTONS, buttonTitle } from './toolbarButtons';
 
 function defFor(action: FormatAction) {
   return TOOLBAR_BUTTONS.find((b) => b.action === action)!;
@@ -28,9 +29,21 @@ export function ToolbarOverflowMenu({
   onButtonFocus,
 }: ToolbarOverflowMenuProps) {
   const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement | null>(null);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const itemRefs = useRef<(HTMLButtonElement | null)[]>([]);
   const [activeIndex, setActiveIndex] = useState(0);
+
+  // Shared dismissal (the same behavior every other popup menu uses —
+  // DiffSettingsMenu, Select, …): document-level Escape returns focus to the
+  // trigger; an outside pointerdown closes without moving focus. The Escape
+  // focus-return is deferred a tick by the hook so it lands after the close.
+  useDismissableMenu({
+    open,
+    rootRef,
+    returnFocusRef: triggerRef,
+    onClose: () => setOpen(false),
+  });
 
   useEffect(() => {
     if (open) {
@@ -42,11 +55,8 @@ export function ToolbarOverflowMenu({
     }
   }, [open]);
 
-  const close = (returnFocus: boolean) => {
-    setOpen(false);
-    if (returnFocus) triggerRef.current?.focus();
-  };
-
+  // Escape + outside-click dismissal live in useDismissableMenu; this handler
+  // owns only intra-menu arrow navigation.
   const onMenuKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'ArrowDown') {
       e.preventDefault();
@@ -58,14 +68,11 @@ export function ToolbarOverflowMenu({
       const next = Math.max(0, activeIndex - 1);
       setActiveIndex(next);
       itemRefs.current[next]?.focus();
-    } else if (e.key === 'Escape') {
-      e.preventDefault();
-      close(true);
     }
   };
 
   return (
-    <div className="formatting-overflow">
+    <div className="formatting-overflow" ref={rootRef}>
       <button
         ref={(el) => {
           triggerRef.current = el;
@@ -109,7 +116,7 @@ export function ToolbarOverflowMenu({
                   onMouseDown={(e) => e.preventDefault()}
                   onClick={() => {
                     runAction(action);
-                    close(false);
+                    setOpen(false);
                   }}
                 >
                   <Icon />

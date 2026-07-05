@@ -5,51 +5,10 @@ import { applyFormatting } from './applyFormatting';
 import { ICONS } from './formattingIcons';
 import { useFormattingShortcuts } from './useFormattingShortcuts';
 import { ToolbarOverflowMenu } from './ToolbarOverflowMenu';
-
-interface ButtonDef {
-  action: FormatAction;
-  label: string;
-  shortcut?: string;
-  group: number; // 0 = wrap, 1 = code/link, 2 = line-prefix
-}
-
-// Display order (grouped wrap · code/link · line-prefix).
-export const TOOLBAR_BUTTONS: ButtonDef[] = [
-  { action: 'bold', label: 'Bold', shortcut: 'B', group: 0 },
-  { action: 'italic', label: 'Italic', shortcut: 'I', group: 0 },
-  { action: 'strikethrough', label: 'Strikethrough', group: 0 },
-  { action: 'code', label: 'Code', shortcut: 'E', group: 1 },
-  { action: 'link', label: 'Link', shortcut: 'K', group: 1 },
-  { action: 'heading', label: 'Heading', group: 2 },
-  { action: 'quote', label: 'Quote', group: 2 },
-  { action: 'bulleted', label: 'Bulleted list', group: 2 },
-  { action: 'numbered', label: 'Numbered list', group: 2 },
-  { action: 'task', label: 'Task list', group: 2 },
-];
-
-// Keep-visible priority (index 0 overflows LAST). The tail overflows first.
-export const OVERFLOW_PRIORITY: FormatAction[] = [
-  'bold',
-  'italic',
-  'link',
-  'code',
-  'quote',
-  'bulleted',
-  'numbered',
-  'heading',
-  'task',
-  'strikethrough',
-];
+import { TOOLBAR_BUTTONS, OVERFLOW_PRIORITY, buttonTitle } from './toolbarButtons';
 
 const BTN_WIDTH = 32; // px per icon button incl. gap (approx; measured live)
 const MORE_WIDTH = 32; // px for the "…" trigger
-
-const IS_MAC = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform ?? '');
-const MOD = IS_MAC ? '⌘' : 'Ctrl';
-
-export function buttonTitle(def: ButtonDef): string {
-  return def.shortcut ? `${def.label} (${MOD}+${def.shortcut})` : def.label;
-}
 
 export function FormattingToolbar({ handle }: { handle: FormattingHandle }) {
   const { textareaRef, previewMode, onTogglePreview, disabled } = handle;
@@ -71,7 +30,11 @@ export function FormattingToolbar({ handle }: { handle: FormattingHandle }) {
       pendingCaret.current = { start: sel.selectionStart, end: sel.selectionEnd };
       setCaretToken((t) => t + 1);
     },
-    [textareaRef, disabled, handle],
+    // `handle.onChange` (not the whole `handle`) is the only field read here that
+    // isn't already destructured above. Depending on the fresh-every-render
+    // `handle` object literal would rebuild runAction each keystroke, which in
+    // turn rebinds useFormattingShortcuts' native keydown listener every keystroke.
+    [textareaRef, disabled, handle.onChange],
   );
 
   useLayoutEffect(() => {

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { render, fireEvent, within } from '@testing-library/react';
+import { render, fireEvent, waitFor, within } from '@testing-library/react';
 import { ToolbarOverflowMenu } from './ToolbarOverflowMenu';
 
 describe('ToolbarOverflowMenu', () => {
@@ -39,7 +39,7 @@ describe('ToolbarOverflowMenu', () => {
     expect(queryByRole('menu')).toBeNull();
   });
 
-  it('closes on Escape and returns focus to the trigger', () => {
+  it('closes on Escape and returns focus to the trigger', async () => {
     const { getByRole, queryByRole } = render(
       <ToolbarOverflowMenu items={['task']} runAction={() => {}} />,
     );
@@ -47,7 +47,21 @@ describe('ToolbarOverflowMenu', () => {
     fireEvent.click(trigger);
     fireEvent.keyDown(getByRole('menu'), { key: 'Escape' });
     expect(queryByRole('menu')).toBeNull();
-    expect(document.activeElement).toBe(trigger);
+    // useDismissableMenu returns focus on a deferred tick (setTimeout 0), so the
+    // trigger regains focus asynchronously after the menu unmounts.
+    await waitFor(() => expect(document.activeElement).toBe(trigger));
+  });
+
+  it('closes on an outside pointerdown (shared dismissal behavior)', () => {
+    const { getByRole, queryByRole } = render(
+      <ToolbarOverflowMenu items={['task']} runAction={() => {}} />,
+    );
+    fireEvent.click(getByRole('button', { name: /More formatting/i }));
+    expect(getByRole('menu')).toBeTruthy();
+    // A pointerdown outside the menu root dismisses it, matching every other
+    // popup menu in the app (DiffSettingsMenu, Select, …).
+    fireEvent.pointerDown(document.body);
+    expect(queryByRole('menu')).toBeNull();
   });
 
   it('disables the trigger and cannot open when disabled (matches the greyed strip)', () => {
