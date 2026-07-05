@@ -2,8 +2,12 @@ import type { JSX } from 'react';
 import type { FormatAction } from './markdownFormatting';
 
 const SVG = {
-  width: 16,
-  height: 16,
+  // Rendered larger than the 16-unit viewBox so the glyphs read at roughly the
+  // same height as the --text-sm (13px) labels on the surrounding buttons
+  // (Write/Preview/Discard/Comment). viewBox stays 16 so every icon's internal
+  // coordinates scale up uniformly — no per-icon retuning. (#586 B1 feedback)
+  width: 20,
+  height: 20,
   viewBox: '0 0 16 16',
   'aria-hidden': true as const,
   focusable: 'false' as const,
