@@ -2,6 +2,8 @@ import { useDraftComposer } from './useDraftComposer';
 import { ComposerActionsBar } from './ComposerActionsBar';
 import { ComposerModals } from './ComposerModals';
 import { ComposerMarkdownPreview } from './ComposerMarkdownPreview';
+import { FormattingToolbar } from './FormattingToolbar';
+import type { FormattingHandle } from './formattingHandle';
 import styles from './InlineCommentComposer.module.css';
 import type { DraftCommentDto, DraftReplyDto, DraftSide, PrReference } from '../../../api/types';
 import type { ComposerOwnerKey } from '../../../hooks/useDraftSession';
@@ -86,6 +88,15 @@ export function InlineCommentComposer({
     deletePatchKind: 'deleteDraftComment',
   });
 
+  const handle: FormattingHandle = {
+    textareaRef: editor.textareaRef,
+    value: editor.body,
+    onChange: editor.setBody,
+    previewMode: editor.previewMode,
+    onTogglePreview: editor.onTogglePreview,
+    disabled: editor.readOnly || actions.posting,
+  };
+
   return (
     <div
       role="form"
@@ -94,6 +105,7 @@ export function InlineCommentComposer({
       data-testid="inline-comment-composer"
       className={`inline-comment-composer composer-frame ${styles.inlineCommentComposer}`}
     >
+      <FormattingToolbar handle={handle} />
       {editor.previewMode ? (
         <ComposerMarkdownPreview body={editor.body} />
       ) : (

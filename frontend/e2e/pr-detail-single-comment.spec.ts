@@ -205,8 +205,7 @@ test('#450 inline post-now preserves diff scroll across the auto-reload', async 
   expect(scrollBefore.top, 'scrollTop must be non-zero before posting').toBeGreaterThan(0);
 
   // Open the inline composer on line 3 (the affordance may have scrolled out of
-  // view; clicking re-scrolls minimally — capture scrollTop again right before
-  // the post so the comparison reflects the at-post offset, not the pre-click one).
+  // view; clicking re-scrolls minimally).
   await addBtn.click();
   const composer = page.getByTestId('inline-comment-composer');
   await expect(composer).toBeVisible();
@@ -214,7 +213,20 @@ test('#450 inline post-now preserves diff scroll across the auto-reload', async 
   const body = 'Scroll-preservation inline comment (#450).';
   await composer.getByRole('textbox', { name: /comment body/i }).fill(body);
 
+  // Bring the "Comment" button fully into view BEFORE capturing the reference
+  // scroll offset — this reflects the real pre-post state (a user can only click
+  // a button they can see) and isolates the assertion below to the #450 contract:
+  // *the reload* must not yank the diff scroll. Load-bearing since #586: the
+  // composer gained a formatting-toolbar strip (~34px taller), so when it opens
+  // at the extreme top of a scrolled diff its footer post-button can sit just
+  // below the internal fold. Clicking a below-fold focusable triggers the
+  // browser's one-time focus-scroll-into-view (React's commit-phase focus
+  // restoration re-focuses the clicked button) — a normal browser behavior, NOT
+  // a reload yank. Capturing the offset with the button already visible removes
+  // that confound; the reload-preservation check that follows is unaffected.
+  await composer.getByRole('button', { name: 'Comment', exact: true }).scrollIntoViewIfNeeded();
   const atPostScrollTop = await scroller.evaluate((el) => el.scrollTop);
+  expect(atPostScrollTop, 'scrollTop must be non-zero at post time').toBeGreaterThan(0);
 
   // Post-now: click "Comment" and wait for the 200. The success fires a
   // single-comment-posted SSE → usePrDetail.reload() (the auto-reload under test).

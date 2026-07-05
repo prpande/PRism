@@ -5,8 +5,6 @@ import type { ComposerResolveButton } from './useDraftComposer';
 import { ComposerStatusBadge } from './ComposerStatusBadge';
 
 export interface ComposerActionsBarProps {
-  previewMode: boolean;
-  onTogglePreview: () => void;
   badge: ComposerSaveBadge;
   saveDisabled: boolean;
   saveTooltip: string | undefined;
@@ -27,8 +25,6 @@ export interface ComposerActionsBarProps {
 }
 
 export function ComposerActionsBar({
-  previewMode,
-  onTogglePreview,
   badge,
   saveDisabled,
   saveTooltip,
@@ -61,15 +57,6 @@ export function ComposerActionsBar({
   return (
     <div className="composer-actions">
       {/* left group */}
-      <button
-        type="button"
-        className="composer-preview-toggle"
-        aria-pressed={previewMode}
-        onClick={onTogglePreview}
-      >
-        {previewMode ? 'Edit' : 'Preview'}
-      </button>
-
       <AiComposerAssistant />
 
       <ComposerStatusBadge badge={badge} readOnly={readOnly} />

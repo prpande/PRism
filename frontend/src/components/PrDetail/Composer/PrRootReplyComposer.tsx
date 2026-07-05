@@ -12,11 +12,17 @@ import { AiComposerAssistant } from '../../Ai/AiComposerAssistant';
 import { ComposerStatusBadge } from './ComposerStatusBadge';
 import { ComposerMarkdownPreview } from './ComposerMarkdownPreview';
 import { PrRootBodyEditor } from './PrRootBodyEditor';
+import { FormattingToolbar } from './FormattingToolbar';
+import type { FormattingHandle } from './formattingHandle';
 import type { DraftCommentDto, DraftReplyDto, PrReference } from '../../../api/types';
 import type { ComposerOwnerKey } from '../../../hooks/useDraftSession';
 import { matchComposerKey } from './matchComposerKey';
 
-type AutosaveControl = { flush: () => Promise<string | null>; badge: ComposerSaveBadge };
+type AutosaveControl = {
+  flush: () => Promise<string | null>;
+  badge: ComposerSaveBadge;
+  setValue: (next: string) => void; // #586
+};
 
 export interface PrRootReplyComposerProps {
   prRef: PrReference;
@@ -79,6 +85,30 @@ export function PrRootReplyComposer({
     // Spec § 4.7: any keystroke clears the post error.
     setPostError(null);
   }, []);
+
+  // #586 — shared with PrRootBodyEditor (via textAreaRef) and the formatting
+  // toolbar handle below.
+  const bodyTextAreaRef = useRef<HTMLTextAreaElement | null>(null);
+
+  // Drives the editor's OWN setBody (surfaced as autosaveControl.setValue) —
+  // NOT handleBodyChange (the parent mirror). The editor is uncontrolled from
+  // the parent: it re-applies its stale internal `body` state as `value` on
+  // every render, so writing only the parent mirror would be silently
+  // discarded by React's controlled-input reconciliation. The editor's
+  // existing onBodyChange effect propagates the new value back to
+  // handleBodyChange, keeping the mirror in sync without a second write path.
+  const applyExternalValue = useCallback((next: string) => {
+    autosaveControl.current?.setValue(next);
+  }, []);
+
+  const formattingHandle: FormattingHandle = {
+    textareaRef: bodyTextAreaRef,
+    value: body,
+    onChange: applyExternalValue,
+    previewMode,
+    onTogglePreview: () => setPreviewMode((p) => !p),
+    disabled: readOnly || postInFlight,
+  };
 
   const handleDraftLost = useCallback(() => {
     onClose();
@@ -170,6 +200,7 @@ export function PrRootReplyComposer({
       className={`composer-frame ${styles.prRootReplyComposer}`}
       onKeyDown={handleKeyDown}
     >
+      <FormattingToolbar handle={formattingHandle} />
       {/* Keep the editor mounted across Preview toggles so autosave continuity
           and the mount-once initialBody contract hold. Hide (not unmount) it
           while previewing. */}
@@ -202,6 +233,7 @@ export function PrRootReplyComposer({
           onAutosaveControl={handleAutosaveControl}
           onDraftLost={handleDraftLost}
           onCreated={onCreated}
+          textAreaRef={bodyTextAreaRef}
         />
       </div>
 
@@ -230,15 +262,6 @@ export function PrRootReplyComposer({
 
       <div className="composer-actions">
         {/* left group */}
-        <button
-          type="button"
-          className="composer-preview-toggle"
-          aria-pressed={previewMode}
-          onClick={() => setPreviewMode((p) => !p)}
-        >
-          {previewMode ? 'Edit' : 'Preview'}
-        </button>
-
         <AiComposerAssistant />
 
         <ComposerStatusBadge badge={badge} readOnly={readOnly} />
