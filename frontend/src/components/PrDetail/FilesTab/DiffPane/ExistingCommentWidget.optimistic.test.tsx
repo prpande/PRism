@@ -39,6 +39,7 @@ const replyContext: ExistingCommentWidgetReplyContext = {
   prState: 'open',
   registerOpenComposer: () => () => {},
   onReplyComposerClose: () => {},
+  insertDraftLocally: () => {},
   reload: () => {},
 };
 

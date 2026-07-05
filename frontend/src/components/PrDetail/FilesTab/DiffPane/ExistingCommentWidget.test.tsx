@@ -77,6 +77,7 @@ describe('ExistingCommentWidget', () => {
             prState: 'open',
             registerOpenComposer: () => () => {},
             onReplyComposerClose: () => {},
+            insertDraftLocally: () => {},
             reload: () => {},
           }}
         />
