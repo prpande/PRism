@@ -1,6 +1,13 @@
 .panel {
   position: sticky;
   bottom: 0;
+  /* Claims the footer's chrome layer above the Overview content, mirroring the other sticky
+     panel in PR detail (Reconciliation/UnresolvedPanel). Sticky alone is not enough: it leaves
+     z-index `auto`, so any content element carrying a positive z-index paints over this bar
+     regardless of DOM order (#746). Deliberately low: transient overlays — notably the
+     composer's formatting overflow menu — are meant to float ABOVE the footer. The app's
+     layering ladder is prose-only magic numbers; #747 tracks tokenising it. */
+  z-index: 1;
   /* Full-bleed bar: the border-top + surface fill span the whole pane so content
      scrolling beneath the sticky footer is occluded across the side gutters too.
      The ROW inside (.inner) is what gets constrained to the card column. */
