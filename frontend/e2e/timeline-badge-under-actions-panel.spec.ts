@@ -109,8 +109,12 @@ test('timeline node badges scroll behind the sticky PR-actions panel, not over i
       // (cx, cy), making this assertion pass vacuously. `isolation` establishes a stacking
       // context but NOT a containing block, so a fixed descendant still positions against the
       // viewport while remaining stacked inside `.rail`.
-      const canary = document.createElement('div');
-      canary.style.cssText = `position:fixed;z-index:999;left:${cx - 4}px;top:${cy - 4}px;width:8px;height:8px;`;
+      //
+      // An <li>, not a <div>: the rail is an <ol>, whose content model admits only li/script/
+      // template. Stacking containment cares about DOM ancestry, so any valid child works.
+      const canary = document.createElement('li');
+      canary.setAttribute('aria-hidden', 'true');
+      canary.style.cssText = `position:fixed;z-index:999;left:${cx - 4}px;top:${cy - 4}px;width:8px;height:8px;list-style:none;`;
       rail.appendChild(canary);
       const canaryHit = document.elementFromPoint(cx, cy);
       const canaryEscaped = !!canaryHit && canary.contains(canaryHit);

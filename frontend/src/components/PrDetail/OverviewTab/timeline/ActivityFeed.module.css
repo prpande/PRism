@@ -76,10 +76,10 @@
 }
 
 /* circular type-glyph node badge — the ring masks the spine so the badge sits ON the rail.
-   Deliberately NO z-index: `.rail::before` (the spine) is the first box in tree order inside
-   .rail, so the nodes already paint over it. A positive z-index here would escape the timeline
-   entirely — no ancestor up to .overviewTab establishes a stacking context to scope it — and
-   paint the badge OVER the sticky PrActionsPanel footer, which is `z-index: 1` chrome (#746). */
+   No z-index needed: `.rail::before` (the spine) is the first box in tree order inside .rail, so
+   the nodes already paint over it. Before .rail isolated, a `z-index: 1` here escaped the timeline
+   and painted over the sticky PrActionsPanel footer — that was #746. The rail's containment now
+   confines any such z-index, so this is no longer load-bearing, just unnecessary. */
 .badge {
   width: 32px;
   height: 32px;
