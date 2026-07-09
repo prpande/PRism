@@ -22,18 +22,21 @@ import { resetBackendState, setupAndOpenScenarioPr } from './helpers/s4-setup';
 // would be vacuous. The check has to run in a real browser and ask the compositor what is
 // actually on top, via `elementFromPoint`.
 //
-// SCOPE: this guards the badge specifically. It would NOT catch a different Overview
-// component (a stat tile, a card) newly acquiring a positive `z-index` and escaping the
-// same way — the footer's `z-index: 1` only outranks content that declares nothing. The
-// durable cure for that class is the layering token scale in #747. Note the footer is
-// deliberately NOT above everything: the composer's formatting overflow menu (z-index 20)
-// is meant to float over it.
+// Two assertions, one per layer of the fix:
+//   1. The symptom — a real badge scrolled into the footer's band stays behind it.
+//   2. The mechanism — `.rail` carries `isolation: isolate`, so ANY rail descendant, however
+//      high its z-index, is contained. The canary probe proves the boundary exists rather
+//      than trusting that nobody inside the rail ever declares a z-index again.
 //
-// The fix has two halves — dropping `.badge`'s `z-index`, and giving `.panel` `z-index: 1`
-// — and EITHER ONE ALONE is sufficient: with both at `1` they tie, and a tie breaks on DOM
-// order, which the footer wins. So this asserts the observable (nothing in the rail paints
-// over the footer), not either declaration. Reverting BOTH halves makes it RED; reverting
-// one does not, by design.
+// Assertion 1 alone is weakly guarded: the fix's two CSS halves (dropping `.badge`'s
+// `z-index`, giving `.panel` `z-index: 1`) are each independently sufficient, since equal
+// z-indexes tie and a tie breaks on DOM order, which the footer wins. Reverting one does not
+// turn it red. Assertion 2 is what pins the containment boundary.
+//
+// SCOPE: the footer is deliberately NOT above everything — the composer's formatting overflow
+// menu (z-index 20) is a sibling of `.rail` and is meant to float over the footer. So a
+// non-timeline Overview component acquiring `z-index >= 2` would still escape; #747 (the
+// layering token scale) is the durable cure for that remaining class.
 
 test.beforeEach(async () => {
   const ctx = await request.newContext();
@@ -59,38 +62,74 @@ test('timeline node badges scroll behind the sticky PR-actions panel, not over i
     // Subtabs are kept alive while hidden, so qualify on the visible one.
     const slot = document.querySelector<HTMLElement>('[data-subtab="overview"]:not([hidden])');
     const panel = document.querySelector<HTMLElement>('[role="group"][aria-label="PR actions"]');
-    if (!slot || !panel) throw new Error('missing overview slot or PR-actions panel');
+    const rail = document.querySelector<HTMLElement>('[data-testid="activity-feed"] ol');
+    if (!slot || !panel || !rail)
+      throw new Error('missing overview slot, PR-actions panel, or rail');
 
-    const badges = [
-      ...document.querySelectorAll<HTMLElement>('[data-testid="activity-feed"] ol [data-tone]'),
-    ];
+    // A `bottom: 0` sticky footer holds the same viewport rect at every scroll offset, so the
+    // band is loop-invariant — measure it once.
+    const band = panel.getBoundingClientRect();
+    const bandCentre = band.top + band.height / 2;
 
-    // Park each badge in turn at the panel's vertical centre. The topmost badges clamp
-    // scrollTop to 0 and the last ones clamp at the maximum, so only a mid-rail badge
-    // lands inside the band — which one depends on the seeded event count.
+    // Name what is painted on top at (cx, cy). The hit is often the badge's inner <svg>, which
+    // carries no class of its own, so report the nearest classed ancestor.
+    const describe = (el: Element | null) => {
+      if (!el) return 'nothing';
+      const owner = el.closest('[class]')?.getAttribute('class')?.split(' ')[0];
+      return `<${el.tagName.toLowerCase()}> inside .${owner ?? '(unclassed)'}`;
+    };
+
+    const badges = [...rail.querySelectorAll<HTMLElement>('[data-tone]')];
+
+    // Park each badge's CENTRE on the band's centre in turn. Resetting to 0 first makes a
+    // rect's viewport `top` equal its offset from the scroll origin, so the delta below is a
+    // valid absolute scrollTop. Early badges clamp at 0 and late ones clamp at the maximum, so
+    // only a mid-rail badge actually lands — which one depends on the seeded event count, hence
+    // the loop rather than a hardcoded index.
     for (const badge of badges) {
       slot.scrollTop = 0;
-      const band = panel.getBoundingClientRect();
-      slot.scrollTop = badge.getBoundingClientRect().top - (band.top + band.height / 2);
+      const at0 = badge.getBoundingClientRect();
+      slot.scrollTop = at0.top + at0.height / 2 - bandCentre;
 
       const b = badge.getBoundingClientRect();
-      const p = panel.getBoundingClientRect();
       const cx = b.left + b.width / 2;
       const cy = b.top + b.height / 2;
-      if (cy <= p.top || cy >= p.bottom) continue;
+      // Both arms are live: `cy <= band.top` catches a badge that clamped at scrollTop 0,
+      // `cy >= band.bottom` one that clamped at the maximum.
+      if (cy <= band.top || cy >= band.bottom) continue;
 
-      const hit = document.elementFromPoint(cx, cy);
-      // The hit is often the badge's inner <svg>, which carries no class of its own — name
-      // the nearest classed ancestor so a failure says WHICH element escaped.
-      const owner = hit?.closest('[class]')?.getAttribute('class')?.split(' ')[0];
+      const badgeHit = document.elementFromPoint(cx, cy);
+
+      // Boundary check, not just this symptom: a rail descendant with an outrageous z-index must
+      // STILL sit under the footer, because `.rail` isolates. Without `isolation: isolate` this
+      // escapes exactly as the badge did before #746 was fixed.
+      //
+      // `position: fixed` (not absolute) so left/top are VIEWPORT coordinates — absolute would
+      // resolve against `.rail`, which is `position: relative`, and land the canary nowhere near
+      // (cx, cy), making this assertion pass vacuously. `isolation` establishes a stacking
+      // context but NOT a containing block, so a fixed descendant still positions against the
+      // viewport while remaining stacked inside `.rail`.
+      const canary = document.createElement('div');
+      canary.style.cssText = `position:fixed;z-index:999;left:${cx - 4}px;top:${cy - 4}px;width:8px;height:8px;`;
+      rail.appendChild(canary);
+      const canaryHit = document.elementFromPoint(cx, cy);
+      const canaryEscaped = !!canaryHit && canary.contains(canaryHit);
+      // Self-check: the canary must actually be under the probe point, else "it did not escape"
+      // means "it was not there". `canaryOverProbePoint` is asserted below.
+      const cr = canary.getBoundingClientRect();
+      const canaryOverProbePoint =
+        cx >= cr.left && cx <= cr.right && cy >= cr.top && cy <= cr.bottom;
+      canary.remove();
+
       return {
-        // Guards a vacuous pass: if the footer ever stops being sticky, the overlap this
-        // test depends on cannot happen and "nothing painted over it" proves nothing.
+        // Guards a vacuous pass: if the footer ever stops being sticky, the overlap this test
+        // depends on cannot happen and "nothing painted over it" would prove nothing.
         panelPosition: getComputedStyle(panel).position,
-        topmostIsPanel: !!hit && panel.contains(hit),
-        topmost: hit
-          ? `<${hit.tagName.toLowerCase()}> inside .${owner ?? '(unclassed)'}`
-          : 'nothing',
+        badgeTopmostIsPanel: !!badgeHit && panel.contains(badgeHit),
+        badgeTopmost: describe(badgeHit),
+        canaryEscaped,
+        canaryOverProbePoint,
+        canaryTopmost: describe(canaryHit),
       };
     }
     throw new Error(`no badge could be scrolled into the panel band (badges: ${badges.length})`);
@@ -98,11 +137,22 @@ test('timeline node badges scroll behind the sticky PR-actions panel, not over i
 
   expect(probe.panelPosition).toBe('sticky');
 
-  // The assertion: at a point the badge and the panel both cover, the panel is what the
-  // user sees. Reaching this line already proves a badge overlapped the panel — the probe
-  // throws otherwise.
+  // The symptom: at a point the badge and the panel both cover, the panel is what the user
+  // sees. Reaching here already proves a badge overlapped the panel — the probe throws otherwise.
   expect(
-    probe.topmostIsPanel,
-    `expected the sticky footer on top at the badge's centre, but found ${probe.topmost}`,
+    probe.badgeTopmostIsPanel,
+    `expected the sticky footer on top at the badge's centre, but found ${probe.badgeTopmost}`,
   ).toBe(true);
+
+  // Without this the next assertion is vacuous: a canary that never covered the probe point
+  // trivially "did not escape". An earlier revision used `position: absolute` and failed exactly
+  // this way — it passed with `isolation: isolate` removed.
+  expect(probe.canaryOverProbePoint).toBe(true);
+
+  // The mechanism: `.rail` is a stacking context, so nothing inside it can outrank the footer
+  // however high its z-index. This is what stops the next timeline element from re-opening #746.
+  expect(
+    probe.canaryEscaped,
+    `a z-index:999 element inside .rail escaped its stacking context and painted over the footer (topmost: ${probe.canaryTopmost}) — has .rail lost \`isolation: isolate\`?`,
+  ).toBe(false);
 });

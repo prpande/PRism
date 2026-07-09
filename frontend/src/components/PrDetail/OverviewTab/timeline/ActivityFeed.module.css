@@ -42,6 +42,15 @@
   list-style: none;
   margin: 0;
   padding: 0;
+  /* Containment boundary (#746): the rail's internal layering — the spine, the node badges seated
+     on it — is nobody else's business. Without a stacking context here, any `z-index` inside the
+     rail is resolved against the whole page and can paint over the sticky PrActionsPanel footer,
+     which is exactly how #746 happened. `isolation` (unlike `overflow`/`contain`) only scopes
+     paint order; it clips nothing. Safe to put here and not on an outer wrapper because the
+     composer is a SIBLING of this <ol>, not a descendant, so its formatting overflow menu keeps
+     its (intended) escape above the footer. A future overlay anchored to a timeline node that
+     must escape the rail has to portal out, as ReadinessBadge does. */
+  isolation: isolate;
 }
 /* the accent spine, threaded behind the node badges */
 .rail::before {
