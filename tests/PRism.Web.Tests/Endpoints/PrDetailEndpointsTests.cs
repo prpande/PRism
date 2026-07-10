@@ -638,7 +638,7 @@ public class PrDetailEndpointsTests
         // the snapshot twice: once synchronously (SingleCommentPostedBusEvent), then again up to a
         // poll cadence later when ActivePrPoller sees its own CommentCountChanged. Only the first
         // eviction has a client reload behind it — the poller's leaves the snapshot gone while the
-        // user sits on the PR, so every mark-viewed 422'd and the checkbox silently rolled back.
+        // user sits on the PR, so every files/viewed write 422'd and the checkbox silently rolled back.
         var (factory, _) = MakeFactory();
         using var _f = factory;
         var client = factory.CreateClient();

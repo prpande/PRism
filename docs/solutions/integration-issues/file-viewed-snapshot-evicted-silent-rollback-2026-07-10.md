@@ -92,11 +92,17 @@ the detail's head if the active-PR poller is stale." Gating the 409 on a lagging
 reject valid marks against the very code the user is looking at. Comparing like with like is worth the
 round-trip on a path that only runs once per eviction.
 
-**Frontend — never roll back silently.** `useFileViewState` takes an optional `onRollback` callback
+**Frontend — never roll back silently.** `useFileViewState` takes a **required** `onRollback` callback
 (read through a ref so `toggleViewed` stays referentially stable), invoked from the POST rejection
-handler *after* the generation guard, so a superseded late failure raises no phantom toast.
-`PrDetailView` maps it to an error toast via the pure `viewedRollbackMessage`, which gives a 409 its
-own recovery-shaped copy ("The PR has new commits — reload to update reviewed files.").
+handler *after* the generation guard, so a superseded late failure raises no phantom toast. It is
+required rather than optional for the same reason this bug existed: an optional reporting callback is
+a silent-drop footgun one level up, and every sibling hook that reports an async failure
+(`usePrDetailRefresh`, `useInboxRefresh`) makes its `onError` required.
+`PrDetailView` maps it to an error toast via the pure `viewedRollbackMessage`, which gives a
+`409 /viewed/stale-head-sha` its own recovery-shaped copy ("The PR has new commits — reload to update
+reviewed files."). That branch matches the problem `type`, not the bare status: `/viewed/stale-head-sha`
+is the only 409 this route can return *today*, and keying the copy on that coincidence would silently
+mislabel the next 409 reason someone adds.
 
 ## Lessons
 

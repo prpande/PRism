@@ -44,4 +44,26 @@ describe('viewedRollbackMessage', () => {
       }),
     ).toBe('Couldn\'t mark "Foo.tsx" as reviewed.');
   });
+
+  it('does not claim "new commits" for a 409 that is not a stale head', () => {
+    // stale-head-sha is the only 409 this route returns today. Keying the recovery copy on the
+    // bare status would mislabel the next 409 reason added — the copy matches the type instead.
+    expect(
+      viewedRollbackMessage({
+        path: 'src/Foo.tsx',
+        viewed: true,
+        error: new ApiError(409, null, { type: '/viewed/some-future-conflict' }),
+      }),
+    ).toBe('Couldn\'t mark "Foo.tsx" as reviewed.');
+  });
+
+  it('uses the generic message when the error carries no problem body', () => {
+    expect(
+      viewedRollbackMessage({
+        path: 'src/Foo.tsx',
+        viewed: true,
+        error: new ApiError(409, null, null),
+      }),
+    ).toBe('Couldn\'t mark "Foo.tsx" as reviewed.');
+  });
 });
