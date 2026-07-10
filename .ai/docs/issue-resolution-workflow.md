@@ -7,7 +7,8 @@ human only when the change needs human judgment.
 **This is guidance, not enforcement.** There is no CI check and no `.yml` behind
 it. You classify your own change against the tables below, record the
 classification in your triage comment, and — for gated changes — pause and notify
-the human. **The human merge is the safety boundary.**
+the human. **The human merge is the safety boundary**, except inside the narrow
+envelope of [§ Delegated merge authority](#delegated-merge-authority-bounded-self-merge).
 
 Rationale and rejected alternatives: see
 [`docs/specs/2026-06-03-issue-resolution-workflow-design.md`](../../docs/specs/2026-06-03-issue-resolution-workflow-design.md)
@@ -27,7 +28,9 @@ You have been assigned a GitHub issue in this repo (`prpande/PRism`).
 - **Minimum capability** for any agent assigned hands-off work: it must be able to
   read the codebase, run the full test suite, and reason about the risk-surface
   table below. With no CI enforcement, the safety property leans entirely on the
-  agent's classification plus the human merge.
+  agent's classification plus the human merge — and, inside the
+  § Delegated merge authority envelope, on the classification plus that section's
+  compensating controls alone.
 
 ## Claiming an issue (before you start)
 
@@ -66,7 +69,9 @@ decide who was earlier, compare **assignee-list order** (GitHub preserves
 insertion order), falling back to triage-comment timestamp only if one already
 exists (at step 0 it usually won't). This shrinks the check-then-claim race but
 does not eliminate it; the human (who ultimately merges) is the final backstop
-against duplicate work.
+against duplicate work — which is one more reason condition 2 of
+§ Delegated merge authority requires the issue to be **unclaimed** before you may
+merge your own PR: on a self-merged PR that backstop never fires.
 
 **Fresh vs. stale.** A claim is **fresh** — leave it alone — unless it is
 **stale**. A claim is **stale (reclaimable)** only when it shows **no sign of
@@ -111,7 +116,9 @@ cleanup step (see decision-tree step 11).
    surface you didn't gate at intake, re-classify to gated and route to the human.
 8. Assemble the ## Proof section (§ Proof template).
 9. pr-autopilot → green-and-ready.
-10. Notify the human (§ Notification template). The human merges.
+10. Notify the human (§ Notification template). The human merges — unless the
+    change clears every condition in § Delegated merge authority, in which case
+    you merge, then notify.
     (UI: pause for the visual assert. Risk-surface: you paused earlier.)
 11. Un-claim on completion: when the issue closes (the merged fix's `Closes #N`
     closes it), the `in-progress` label is removed automatically by the
@@ -177,7 +184,9 @@ brainstorming → spec (docs/specs/)
 the actual committed diff against the Axis-B table and compare it to your intake
 classification. A discrepancy (a risk surface touched that you didn't gate at
 intake) forces the issue to gated and routes to the human gate. Re-check UI (B1)
-here too. This is a self-check; the human merge is the only backstop behind it.
+here too. This is a self-check; the human merge is the only backstop behind it —
+and on a self-merged PR (§ Delegated merge authority) it is *condition 5*, with no
+backstop behind it at all. Read the diff, not your memory of it.
 
 ## Risk (Axis B) — whether a human gate fires
 
@@ -217,7 +226,9 @@ hands-off vs gated, and **record the decision and its reason in your triage
 comment**. There is no CI check that re-computes or enforces this — the
 classification is yours, surfaced for the human, and the human merge is the
 boundary. The "when in doubt, gate" rule protects against gaps in your judgment;
-the human merge is the backstop.
+the human merge is the backstop. Where you intend to self-merge
+(§ Delegated merge authority), that backstop is gone: the two-lens adversarial
+gate-check replaces it, and a B2 surface is disqualifying outright.
 
 ## Triage-comment template
 
@@ -247,6 +258,9 @@ The PR body MUST contain a `## Proof` section. Include the parts that apply:
 <before/after screenshots or recording>
 ### Doc-review dispositions (hands-off T2/T3)
 <each ce-doc-review finding: Applied | Deferred | Skipped + one-line reason>
+### Self-merge authority (self-merged PRs only)
+<the six conditions of § Delegated merge authority, each with how it was satisfied,
+ including both adversarial reviewers' verdicts>
 ```
 
 Proof rules:
@@ -264,6 +278,8 @@ Proof rules:
   `behavioral-guidelines.md` §6.
 - **Green CI** is enforced by `pr-autopilot`'s terminal gate (see Terms); it is
   not pasted as a separate artifact.
+- **Self-merge authority** is required on every PR the executor merges itself, and
+  MUST be absent otherwise. See § Delegated merge authority.
 
 ## Gate substitution (the core hands-off mechanism)
 
@@ -279,7 +295,9 @@ one-line reason). This is authorized by `CLAUDE.md`. It applies **only** to
 non-gated issues; gated issues keep the human gates.
 
 Hands-off **T3 is in scope**: net-new behavior runs hands-off when it doesn't
-touch a risk surface, bounded by the human merge.
+touch a risk surface, bounded by the human merge. That bound is load-bearing —
+which is why § Delegated merge authority forbids self-merging a T3 outright. The
+human merge is what makes gate substitution's residual risk survivable.
 
 **Fallback:** if `ce-doc-review` is unavailable in the session, the substitute
 sign-off doesn't exist — **treat that stage as gated** and request a human review.
@@ -289,7 +307,8 @@ Do not proceed hands-off on an unsigned spec/plan.
 
 **Hands-off (non-gated):** intake → pipeline → `pr-autopilot` drives to
 green-and-ready → **stop and notify the human** with the PR link + proof summary.
-The human does the one-click merge. No pause in between.
+The human does the one-click merge, unless § Delegated merge authority applies.
+No pause in between.
 
 **Gated:** pause at the **first human-judgment point**:
 
@@ -300,6 +319,69 @@ The human does the one-click merge. No pause in between.
   Flag the PR (label + a "do not merge — awaiting gate" marker) and notify the
   human; merge is held by the human-merge boundary.
 
+## Delegated merge authority (bounded self-merge)
+
+On 2026-07-10 the repository owner delegated a **bounded** merge authority to the
+reference executor, for autonomous tech-debt work. It is a narrow exception to
+"the human merge is the safety boundary," not a replacement for it. The envelope
+below limits what a misclassification can damage; the adversarial gate-check in
+condition 3 hardens the classification itself.
+
+**You may merge your own PR only when ALL six conditions hold.** Any one failing
+condition returns the PR to the default path: drive it to green-and-ready, stop,
+and notify the human.
+
+1. **Actionable.** Not an epic, not blocked, not a duplicate, not `needs-slicing`.
+2. **Unclaimed.** No assignee, no `in-progress` label, no other agent's triage
+   comment (§ Claiming an issue).
+3. **Hands-off after a 2-lens adversarial gate check.** Beyond the ordinary Axis-B
+   read, run two independent reviewers whose brief is to *refute* the hands-off
+   call — one arguing B1 (UI-visual), one arguing B2 (risk-surface). A refutation
+   at medium or high confidence flips the issue to gated.
+4. **Green is a trustworthy signal for this change.** It is not, for instance, on
+   a flaky-test fix (green proves nothing about the flake) or on an unmeasured
+   performance claim (green proves nothing about the speed-up).
+5. **The pre-PR-open re-check found zero risk surfaces** in the *actual committed
+   diff* — not in the plan, not in the intent.
+6. **All checks pass.** `gh pr checks <N>` reports zero failing and zero pending.
+
+**Two absolutes sit above the six conditions.** Neither can be traded against a
+condition, and no amount of green satisfies either.
+
+- **Never self-merge a B2 risk-surface change.** Condition 3 exists to catch a B2
+  you misread as hands-off; this rule is what remains standing if condition 3
+  fails too.
+- **Never self-merge a T3.** § Gate substitution lets you walk past the human
+  spec/plan review, and the design spec accepts that residual on one stated
+  condition: *"the human still performs the merge, so the worst case is 'a human
+  merges a PR whose approach they would have steered differently' → rework, not a
+  silent production change."* Self-merging a T3 would compound the two
+  authorizations and void that bound — no independent party would read the spec,
+  and none would read the diff. Condition 3's adversarial lenses test the *risk
+  surface*, not the *approach*, so they cannot backfill the gate substitution
+  already removed. A hands-off T3 goes to the human's merge queue, green and
+  ready.
+
+**Why condition 6 names `gh pr checks` and not `mergeable`.** `main`'s ruleset
+lists exactly one required status check — `build-and-test`. The `e2e` and
+`desktop` jobs are **not** required. GitHub therefore reports `mergeable:
+MERGEABLE` / `mergeStateStatus: CLEAN`, and lights the merge button, on a PR whose
+`e2e` job is **red**. `mergeable` answers "will GitHub let this merge," never "is
+this change correct"; only the full check list answers the latter. (The ruleset
+also sets `strict_required_status_checks_policy`, so merges are strictly serial —
+each merge invalidates the next PR's required check and forces a re-sync.)
+
+**Everything else** — every gated issue, every issue where green is not a
+trustworthy signal, every issue whose diff surprised you at the pre-PR re-check —
+follows the unchanged path in § Gates & terminal action: drive to green-and-ready
+and hand the human a one-click merge.
+
+**Record it.** A self-merged PR's `## Proof` MUST carry a `### Self-merge
+authority` block naming each of the six conditions and how it was satisfied,
+including both adversarial reviewers' verdicts. That block is the audit trail that
+stands in for the human glance. Notify the human **after** merging
+(§ Notification), so the merge is never silent.
+
 ## Notification (minimum bar)
 
 At green-and-ready and at each gate, you MUST **post a comment that @-mentions the
@@ -309,8 +391,8 @@ signals (a review-request, an assignment, an external ping) are encouraged on to
 but the @-mention is the floor.
 
 ```markdown
-@<assignee> — <PR #> is <green-and-ready | awaiting your gate (B<n>)>.
-Tier T<n>, <risk>. Proof: <link to ## Proof>. Action needed: <merge | review approach | visual assert>.
+@<assignee> — <PR #> is <green-and-ready | awaiting your gate (B<n>) | merged under § Delegated merge authority>.
+Tier T<n>, <risk>. Proof: <link to ## Proof>. Action needed: <merge | review approach | visual assert | none — FYI>.
 ```
 
 **Staleness:** PRs parked at a gate are not silently abandoned — re-ping after
@@ -338,7 +420,8 @@ Stop and ask the human when any of these occur:
 
 ## Terms
 
-- **Green-and-ready** — CI green (all required workflows pass) **and**
+- **Green-and-ready** — CI green (**every** check `gh pr checks <N>` reports
+  passes — not merely the *required* ones; see § Delegated merge authority) **and**
   `/code-review` bot **quiescent** **and** the `## Proof` section complete. The
   terminal state of every hands-off run.
 - **Quiescent** — one full CI + `/code-review` cycle completes with **zero new
