@@ -416,9 +416,14 @@ approver identity, and a red-baseline CI job. This iteration ships guidance only
 
 - **RESOLVED — OPEN DECISION 1 (hands-off T3):** hands-off extends to net-new T3
   behavior; `ce-doc-review` substitutes for the human spec/plan gate, bounded by
-  the human merge. The body reflects this.
+  the human merge. The body reflects this. **Still in force after the 2026-07-10
+  amendment** — precisely because bounded self-merge excludes T3, the human merge
+  remains the bound this decision was accepted on.
 - **RESOLVED — OPEN DECISION 2 (enforcement model):** guidance + human-merge; no
   CI check, no enforcement tooling (see Deferred/rejected, above).
+  **Amended 2026-07-10** — bounded self-merge (see `## Deferred work`). The
+  enforcement model is unchanged (still no CI check); what changed is that the
+  human merge is no longer the boundary for a narrow, enumerated class of change.
 - **The risk-surface table is the single point of failure**, and it is partial by
   construction (behavioral surfaces have no obvious signal). Mitigations: the
   Axis-B "when in doubt, gate" default, the scheduled re-audit doc-maintenance
@@ -433,3 +438,26 @@ approver identity, and a red-baseline CI job. This iteration ships guidance only
   expectation for any agent assigned hands-off work, since (with no CI enforcement)
   the safety property leans entirely on the agent's classification plus the human
   merge.
+
+## Deferred work
+
+- **[Superseded] The human merge is the enforcement boundary for every PR** —
+  overturns OPEN DECISION 2's "the human merges every PR" premise, whose own
+  revisit trigger (`## Deliverables` → Deferred/rejected: *"revisit only if
+  autonomy increases beyond 'human merges every PR'"*) fired on 2026-07-10 when
+  the repository owner delegated a **bounded self-merge** authority for autonomous
+  tech-debt work. The boundary now holds for every gated change and every change
+  outside the six-condition envelope in
+  [`issue-resolution-workflow.md`](../../.ai/docs/issue-resolution-workflow.md)
+  § Delegated merge authority. Two absolutes sit above the envelope: a B2
+  risk-surface change is never self-merged, and **a T3 is never self-merged** —
+  the latter because OPEN DECISION 1 (below) accepts gate substitution's residual
+  *expressly on the ground that* "the human still performs the merge," so
+  self-merging a T3 would compound the two authorizations and void the bound that
+  makes each one survivable. Two compensating controls replace the human glance
+  inside the envelope: a two-lens adversarial gate-check that tries to *refute*
+  the hands-off call, and a mandatory `### Self-merge authority` audit block in
+  the PR's `## Proof`. The "no CI check, no enforcement tooling" half of OPEN
+  DECISION 2 stands unchanged. Note this narrows — but does not close — the
+  correlated-blind-spot gap named above: the adversarial reviewers are the same
+  model family as the fixer.
