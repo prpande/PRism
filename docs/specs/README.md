@@ -114,6 +114,7 @@ This is a **concise index** — one line per spec, grouped by status. The per-sp
 
 ## In progress
 
+- [`2026-07-10-activity-rail-visibility-gate-design.md`](2026-07-10-activity-rail-visibility-gate-design.md) — gate the activity-rail 90s poll on `document.visibilityState`, mirroring the #717 inbox precedent ([#732](https://github.com/prpande/PRism/issues/732)); the resume-window freshness cue is deferred (see the spec's `## Deferred work`, [#753](https://github.com/prpande/PRism/issues/753)).
 - [`2026-06-25-138-checks-tab-design.md`](2026-06-25-138-checks-tab-design.md) — read-only PR-detail **Checks** tab (live-polled CI check list + tab-strip health glyph) ([#138](https://github.com/prpande/PRism/issues/138)); re-trigger and sibling-endpoint owner/repo validation deferred (see the spec's `## Deferred work`). Plan: [`../plans/2026-06-25-138-checks-tab.md`](../plans/2026-06-25-138-checks-tab.md).
 - [`2026-06-10-desktop-cold-start-instrumentation-design.md`](2026-06-10-desktop-cold-start-instrumentation-design.md) — desktop cold-start instrumentation. Part 1 shipped; **Part 2** (splash / compression decision) is open against [#282](https://github.com/prpande/PRism/issues/282), pending a clean-VM cold-start measurement.
 - [`2026-05-06-architectural-readiness-design.md`](2026-05-06-architectural-readiness-design.md) — cross-cutting structural items gated to slices. *Now*-gate items shipped (banned-API analyzer, DI extension methods); later-gate items tracked in [`../roadmap.md`](../roadmap.md) § "Architectural readiness".
