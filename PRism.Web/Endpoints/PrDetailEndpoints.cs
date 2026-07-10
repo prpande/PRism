@@ -145,12 +145,10 @@ internal static class PrDetailEndpoints
                     return Results.Problem(type: "/viewed/tab-id-missing", statusCode: 422);
 
                 var prRef = new PrReference(owner, repo, number);
-                // Unlike /file and /files/viewed, this path does NOT re-hydrate an evicted snapshot —
-                // not because re-hydration would mask a stale head (it would not: LoadAsync re-reads
-                // the live detail head, so the 409 below still fires), but because it does not need to.
-                // usePrDetail fires this fire-and-forget from inside getPrDetail's .then(), i.e.
-                // immediately after the GET that warmed the snapshot, so its eviction window is a
-                // narrow race rather than a window the user can sit in.
+                // Unlike /file and /files/viewed, this path does NOT re-hydrate an evicted snapshot.
+                // It does not need to: usePrDetail fires it fire-and-forget from inside getPrDetail's
+                // .then(), immediately after the GET that warmed the snapshot, so the eviction window
+                // is a narrow race rather than a window the user can sit in.
                 var snapshot = loader.TryGetCachedSnapshot(prRef);
                 if (snapshot is null)
                     return Results.Problem(type: "/viewed/snapshot-evicted", statusCode: 422);

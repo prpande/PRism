@@ -77,12 +77,18 @@ under #510. The probe-then-load idiom (hand-copied at six sites) is extracted to
 rule: use `LoadAsync`'s return value, never re-probe the cache after it, because a generation flush
 can return a non-null-but-uncached snapshot.
 
-The prior comment claimed re-hydration "would mask" a stale-head write. It does not: `LoadAsync`
-re-reads the *live detail* head — the same head the frontend stamped from `GET /api/pr` — so a body
-stamped at a superseded head still fails the equality check and 409s. A regression test
+The prior comment claimed re-hydration "would mask" a stale-head write. It does not. On the path that
+matters here `LoadAsync` re-reads the *detail* head — the same head the frontend stamped from
+`GET /api/pr` — and re-keys the snapshot on it, so a body stamped at a superseded head still fails the
+equality check and 409s. A regression test
 (`Post_files_viewed_returns_409_stale_head_after_rehydrate_when_head_advanced`) locks that.
 `snapshot-evicted` is retained for the one genuine failure: `LoadAsync` returning null because the
 PR no longer exists.
+
+That is a statement about *this* path, not a universal property of `LoadAsync`. Its `pollKey` fast path
+can return a snapshot cached under a head the poller reported and `GetPrDetail` never confirmed — see
+"Still open" below and [#754]. Writing the guarantee down without its boundary would repeat the exact
+mistake this document exists to record.
 
 **Rejected: sourcing the head from `IActivePrCache` instead.** Tempting — the endpoint needs only a
 head SHA, and the poller keeps one in memory, so it would avoid `LoadAsync`'s three REST + two GraphQL
@@ -125,8 +131,8 @@ mislabel the next 409 reason someone adds.
 - **`POST /api/pr/{ref}/mark-viewed`** keeps the `TryGetCachedSnapshot` → 422 dead-end. It is far less
   exposed: `usePrDetail` fires it fire-and-forget from inside the `getPrDetail` `.then()` that just
   warmed the snapshot, so its eviction window is a narrow race, and a failure logs to `console.warn`
-  and self-heals on the next reload's re-stamp. Its comment was corrected — the old "re-hydrating
-  would mask staleness" rationale was false — but the behavior is unchanged.
+  and self-heals on the next reload's re-stamp. Its comment now gives that as the reason outright,
+  rather than arguing from a claim about what `LoadAsync` re-reads; the behavior is unchanged.
 - **Four remaining hand-copies of the idiom** (`PrReviewThreadEndpoints.cs`, and the summarizer /
   ranker / annotator wiring in `PRism.Web/Composition/ServiceCollectionExtensions.cs`) should collapse
   onto `GetOrLoadSnapshotAsync`. Left out of this PR to keep the review surface to the bug.
