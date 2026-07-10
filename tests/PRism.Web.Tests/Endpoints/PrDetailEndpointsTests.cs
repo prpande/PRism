@@ -694,7 +694,10 @@ public class PrDetailEndpointsTests
     public async Task Post_files_viewed_returns_422_snapshot_evicted_only_when_rehydrate_fails()
     {
         // The snapshot-evicted contract survives for the genuine failure: re-hydration cannot
-        // rebuild the snapshot because the PR no longer exists (GetPrDetail => null).
+        // rebuild the snapshot because the PR no longer exists (GetPrDetail => null). The
+        // attempt counter is what makes this discriminating — the pre-fix handler dead-ended on
+        // the null cache probe and returned the SAME 422 without ever re-hydrating, so asserting
+        // only the status code would pass against the bug.
         var (factory, review) = MakeFactory();
         using var _f = factory;
         var client = factory.CreateClient();
@@ -705,7 +708,12 @@ public class PrDetailEndpointsTests
 
         var loader = factory.Services.GetRequiredService<PrDetailLoader>();
         loader.Invalidate(new PrReference("octo", "repo", 1));
-        review.GetPrDetailAsyncOverride = (_, _) => Task.FromResult<PrDetailDto?>(null);
+        var rehydrateAttempts = 0;
+        review.GetPrDetailAsyncOverride = (_, _) =>
+        {
+            rehydrateAttempts++;
+            return Task.FromResult<PrDetailDto?>(null);
+        };
 
         var resp = await client.PostAsJsonAsync(
             new Uri("/api/pr/octo/repo/1/files/viewed", UriKind.Relative),
@@ -713,6 +721,7 @@ public class PrDetailEndpointsTests
 
         resp.StatusCode.Should().Be(HttpStatusCode.UnprocessableEntity);
         (await resp.Content.ReadAsStringAsync()).Should().Contain("/viewed/snapshot-evicted");
+        rehydrateAttempts.Should().BeGreaterThan(0);
     }
 
     [Theory]

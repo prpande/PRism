@@ -124,22 +124,22 @@ own recovery-shaped copy ("The PR has new commits — reload to update reviewed 
 - **Four remaining hand-copies of the idiom** (`PrReviewThreadEndpoints.cs`, and the summarizer /
   ranker / annotator wiring in `PRism.Web/Composition/ServiceCollectionExtensions.cs`) should collapse
   onto `GetOrLoadSnapshotAsync`. Left out of this PR to keep the review surface to the bug.
-- **`LoadAsync` has no per-key coalescing gate.** Concurrent misses for the same PR each pay a full
-  fetch + cluster and only dedupe at the closing `GetOrAdd` (its own comment concedes this, and defers
-  the per-key `Lazy` gate "if dogfooding shows it"). Now that a checkbox toggle can enter `LoadAsync`,
-  a rapid-click burst right after an eviction fans out to K redundant GitHub loads — each of which is
-  3 REST + 2 GraphQL plus a paced per-commit changed-files fan-out. Dogfooding has now shown it.
-  Tracked separately.
-- **`LoadAsync`'s early returns skip the `_snapshotKeyByPrRef` sidecar write** (the `pollKey` hit and
-  the `realKey` hit; only the closing `GetOrAdd` writes it). In the ordinary eviction path this is
-  unreachable from `GetOrLoadSnapshotAsync`: `_snapshots` only ever gains `realKey` entries paired
-  with a sidecar write, so a `_snapshots` hit implies a sidecar hit, and `TryGetCachedSnapshot` would
-  already have short-circuited. It becomes reachable only via a leaked entry — `Invalidate` removes
-  just the sidecar's *current* key, so a snapshot cached under a superseded head survives, and if
-  `PollActivePrAsync` reports that superseded head (the code documents that the poll head "can also
-  persistently lag the detail's head"), the `pollKey` probe hits it and returns a stale snapshot with
-  no sidecar write. The endpoint then 409s against the frontend's newer stamp, and every subsequent
-  toggle re-pays `PollActivePrAsync` until the poll head converges. Pre-existing — `GET /api/pr` calls
-  `LoadAsync` bare and serves the same stale snapshot — but routing `files/viewed` through `LoadAsync`
-  is what makes it cost a network round-trip per checkbox click. Write the sidecar before those
-  returns, and evict by `prRef` rather than by a single key.
+- **Three `PrDetailLoader` cache gaps that this fix makes reachable on a hot path — [#754].** None are
+  introduced here, but routing a per-checkbox-click endpoint through `LoadAsync` moves all three from
+  rare-path warts to things a user can hit while ticking through a file list:
+  1. **No per-key single-flight gate.** Concurrent misses each pay a full fetch + cluster (3 REST +
+     2 GraphQL + a paced per-commit fan-out) and only dedupe at the closing `GetOrAdd` — whose own
+     comment defers the `Lazy` gate "if dogfooding shows it". Dogfooding has now shown it.
+  2. **Superseded-head snapshots are never evicted, and the `pollKey` probe can resurrect them.**
+     `Invalidate` removes only the key the sidecar points at; `RefreshAsync` overwrites the sidecar
+     without removing the prior head's entry. `LoadAsync`'s first fast path probes on the *poll* head
+     and returns that entry **without calling `GetPrDetail`**. So the guarantee "re-hydration re-reads
+     the live detail head, therefore a stale stamp still conflicts" is not universal. The endpoint's
+     comment was corrected to say so rather than assert it — the very failure mode this whole write-up
+     is about.
+  3. **`LoadAsync`'s early returns skip the `_snapshotKeyByPrRef` sidecar write.** Unreachable on the
+     ordinary eviction path (a `_snapshots` hit implies a sidecar hit, so `TryGetCachedSnapshot`
+     short-circuits first); reachable only via the orphan in (2), where it costs a `PollActivePrAsync`
+     round-trip per click until the poll head converges.
+
+[#754]: https://github.com/prpande/PRism/issues/754

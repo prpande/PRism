@@ -222,9 +222,13 @@ internal static class PrDetailEndpoints
                 // applied here). The ActivePrPoller evicts on its own CommentCountChanged tick —
                 // which fires for the user's OWN inline comment and has no client reload behind it —
                 // so the snapshot stayed gone while the user sat on the PR and every checkbox
-                // silently rolled back. Re-hydration cannot launder a stale mark: LoadAsync re-reads
-                // the live DETAIL head (the same head the frontend stamped from GET /api/pr), so a
-                // body stamped at a superseded head still fails the equality check below with 409.
+                // silently rolled back. Re-hydration does not weaken the head check below: on the
+                // path that matters here LoadAsync re-reads the DETAIL head (the same head the
+                // frontend stamped from GET /api/pr) and re-keys the snapshot on it, so a body
+                // stamped at a superseded head still conflicts with 409. It is NOT a universal
+                // guarantee — LoadAsync's pollKey fast path can serve a snapshot cached under a
+                // head the poller reported but GetPrDetail never confirmed (#754). That predates
+                // this call site: GET /api/pr and /file both take the same path.
                 var snapshot = await loader.GetOrLoadSnapshotAsync(prRef, ct).ConfigureAwait(false);
                 if (snapshot is null)
                     return Results.Problem(type: "/viewed/snapshot-evicted", statusCode: 422);
