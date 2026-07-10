@@ -93,6 +93,68 @@ describe('useFileViewState', () => {
     await waitFor(() => expect(result.current.viewedPaths.has('a.ts')).toBe(false));
   });
 
+  it('reports the rollback to the caller so a failed mark is never silent', async () => {
+    const err = new Error('network down');
+    postFileViewedMock.mockRejectedValueOnce(err);
+    const onRollback = vi.fn();
+    const { result } = renderHook(() => useFileViewState(REF, HEAD, {}, onRollback));
+
+    act(() => result.current.toggleViewed('a.ts'));
+
+    await waitFor(() =>
+      expect(onRollback).toHaveBeenCalledWith({ path: 'a.ts', viewed: true, error: err }),
+    );
+  });
+
+  it('does not report a rollback when the POST succeeds', async () => {
+    const onRollback = vi.fn();
+    const { result } = renderHook(() => useFileViewState(REF, HEAD, {}, onRollback));
+
+    act(() => result.current.toggleViewed('a.ts'));
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(onRollback).not.toHaveBeenCalled();
+  });
+
+  it('does not report a rollback for a superseded POST that fails late', async () => {
+    // The generation guard already suppresses the stale state write; it must suppress the
+    // user-facing report too, or a toggle the user has since re-made raises a phantom error.
+    let rejectFirst!: (e: Error) => void;
+    const firstPending = new Promise<void>((_, reject) => {
+      rejectFirst = reject;
+    });
+    postFileViewedMock.mockReturnValueOnce(firstPending).mockResolvedValue(undefined);
+    const onRollback = vi.fn();
+
+    const { result } = renderHook(() => useFileViewState(REF, HEAD, {}, onRollback));
+    act(() => result.current.toggleViewed('a.ts')); // POST_1 — fails late
+    act(() => result.current.toggleViewed('a.ts')); // POST_2 — supersedes it
+
+    await act(async () => {
+      rejectFirst(new Error('late failure'));
+      await Promise.resolve();
+    });
+
+    expect(onRollback).not.toHaveBeenCalled();
+  });
+
+  it('keeps toggleViewed referentially stable across onRollback identity changes', () => {
+    // toggleViewed feeds the prDetailContext value; re-creating it on every render of the
+    // toast-owning parent would churn every consumer of that context.
+    const { result, rerender } = renderHook(
+      ({ cb }: { cb: () => void }) => useFileViewState(REF, HEAD, {}, cb),
+      { initialProps: { cb: () => {} } },
+    );
+    const first = result.current.toggleViewed;
+
+    rerender({ cb: () => {} });
+
+    expect(result.current.toggleViewed).toBe(first);
+  });
+
   it('does not clobber a newer toggle when an older POST fails late', async () => {
     // Server says a.ts is viewed at HEAD.
     let rejectFirst!: (e: Error) => void;

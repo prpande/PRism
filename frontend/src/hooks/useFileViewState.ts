@@ -7,6 +7,15 @@ export interface FileViewState {
   toggleViewed: (path: string) => void;
 }
 
+// Emitted when a POST fails and the optimistic value is rolled back. `viewed` is the
+// value the user intended and that did NOT persist, so the caller can word the message
+// for a failed mark and a failed un-mark alike.
+export interface FileViewRollback {
+  path: string;
+  viewed: boolean;
+  error: unknown;
+}
+
 // Count files (by path) present in `viewedPaths`. Shared by the Overview
 // "Viewed" tile and the Files-tab tree header so the intersection derivation
 // lives in exactly one place. Filtering over `files` keeps the result bounded
@@ -66,6 +75,7 @@ export function useFileViewState(
   prRef: PrReference,
   headSha: string | undefined,
   persistedViewedFiles: Record<string, string> | undefined,
+  onRollback?: (rollback: FileViewRollback) => void,
 ): FileViewState {
   const { owner, repo, number } = prRef;
   const key = headSha ? `${owner}/${repo}/${number}@${headSha}` : null;
@@ -135,6 +145,11 @@ export function useFileViewState(
   const viewedRef = useRef(viewedPaths);
   viewedRef.current = viewedPaths;
 
+  // Read through a ref for the same reason as `viewedRef`: the caller owns a toast, so its
+  // callback identity churns, and taking it as a dep would re-create `toggleViewed`.
+  const onRollbackRef = useRef(onRollback);
+  onRollbackRef.current = onRollback;
+
   // Per-path issue counter. Each toggle bumps its path's generation; a POST's
   // success/failure handler only fires if no newer toggle for that path has been
   // issued since. This keeps a late-completing older request from clobbering the
@@ -157,11 +172,13 @@ export function useFileViewState(
           setPending((prev) => withoutPath(prev, key, path));
           setConfirmed((prev) => withPath(prev, key, path, desired));
         },
-        () => {
+        (error: unknown) => {
           if (genRef.current.get(path) !== gen) return;
           // Failure: drop the optimistic value, falling back to the prior ACKed
-          // value (`confirmed`) or `serverViewed` — the real prior state.
+          // value (`confirmed`) or `serverViewed` — the real prior state. Report it
+          // so the checkbox never flips back without telling the user why.
           setPending((prev) => withoutPath(prev, key, path));
+          onRollbackRef.current?.({ path, viewed: desired, error });
         },
       );
     },

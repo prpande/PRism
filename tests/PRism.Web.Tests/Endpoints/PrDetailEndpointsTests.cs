@@ -631,6 +631,90 @@ public class PrDetailEndpointsTests
         state.Reviews.Sessions["octo/repo/1"].ViewedFiles.Should().ContainKey("src/Foo.cs");
     }
 
+    [Fact]
+    public async Task Post_files_viewed_rehydrates_evicted_snapshot_instead_of_dead_ending()
+    {
+        // Applies #510's /file re-hydration to the viewed write. Posting an inline comment evicts
+        // the snapshot twice: once synchronously (SingleCommentPostedBusEvent), then again up to a
+        // poll cadence later when ActivePrPoller sees its own CommentCountChanged. Only the first
+        // eviction has a client reload behind it — the poller's leaves the snapshot gone while the
+        // user sits on the PR, so every mark-viewed 422'd and the checkbox silently rolled back.
+        var (factory, _) = MakeFactory();
+        using var _f = factory;
+        var client = factory.CreateClient();
+        await client.GetAsync(new Uri("/api/pr/octo/repo/1", UriKind.Relative));
+        var validBase = new string('a', 40);
+        var validHead = new string('b', 40);
+        await client.GetAsync(new Uri($"/api/pr/octo/repo/1/diff?range={validBase}..{validHead}", UriKind.Relative));
+
+        var prRef = new PrReference("octo", "repo", 1);
+        var loader = factory.Services.GetRequiredService<PrDetailLoader>();
+        loader.Invalidate(prRef);
+        loader.TryGetCachedSnapshot(prRef).Should().BeNull();   // precondition: snapshot is gone
+
+        var resp = await client.PostAsJsonAsync(
+            new Uri("/api/pr/octo/repo/1/files/viewed", UriKind.Relative),
+            new { path = "src/Foo.cs", headSha = "head1", viewed = true });
+
+        resp.StatusCode.Should().Be(HttpStatusCode.NoContent);
+
+        using var stateStore = new AppStateStore(factory.DataDir);
+        var state = await stateStore.LoadAsync(CancellationToken.None);
+        state.Reviews.Sessions["octo/repo/1"].ViewedFiles.Should().ContainKey("src/Foo.cs");
+    }
+
+    [Fact]
+    public async Task Post_files_viewed_returns_409_stale_head_after_rehydrate_when_head_advanced()
+    {
+        // Re-hydration must not launder a stale mark. The rebuilt snapshot's head is authoritative,
+        // so a body stamped at the pre-advance head still 409s rather than persisting a mark the
+        // user made against code that has since moved.
+        var (factory, review) = MakeFactory();
+        using var _f = factory;
+        var client = factory.CreateClient();
+        await client.GetAsync(new Uri("/api/pr/octo/repo/1", UriKind.Relative));
+        var validBase = new string('a', 40);
+        var validHead = new string('b', 40);
+        await client.GetAsync(new Uri($"/api/pr/octo/repo/1/diff?range={validBase}..{validHead}", UriKind.Relative));
+
+        var loader = factory.Services.GetRequiredService<PrDetailLoader>();
+        loader.Invalidate(new PrReference("octo", "repo", 1));
+        review.DefaultPollResponse = new ActivePrPollSnapshot("head2", "base1", "MERGEABLE", PrState.Open, 0, 0);
+        review.DefaultDetailResponse = MakeDetail(headSha: "head2");
+
+        var resp = await client.PostAsJsonAsync(
+            new Uri("/api/pr/octo/repo/1/files/viewed", UriKind.Relative),
+            new { path = "src/Foo.cs", headSha = "head1", viewed = true });
+
+        resp.StatusCode.Should().Be(HttpStatusCode.Conflict);
+        (await resp.Content.ReadAsStringAsync()).Should().Contain("/viewed/stale-head-sha");
+    }
+
+    [Fact]
+    public async Task Post_files_viewed_returns_422_snapshot_evicted_only_when_rehydrate_fails()
+    {
+        // The snapshot-evicted contract survives for the genuine failure: re-hydration cannot
+        // rebuild the snapshot because the PR no longer exists (GetPrDetail => null).
+        var (factory, review) = MakeFactory();
+        using var _f = factory;
+        var client = factory.CreateClient();
+        await client.GetAsync(new Uri("/api/pr/octo/repo/1", UriKind.Relative));
+        var validBase = new string('a', 40);
+        var validHead = new string('b', 40);
+        await client.GetAsync(new Uri($"/api/pr/octo/repo/1/diff?range={validBase}..{validHead}", UriKind.Relative));
+
+        var loader = factory.Services.GetRequiredService<PrDetailLoader>();
+        loader.Invalidate(new PrReference("octo", "repo", 1));
+        review.GetPrDetailAsyncOverride = (_, _) => Task.FromResult<PrDetailDto?>(null);
+
+        var resp = await client.PostAsJsonAsync(
+            new Uri("/api/pr/octo/repo/1/files/viewed", UriKind.Relative),
+            new { path = "src/Foo.cs", headSha = "head1", viewed = true });
+
+        resp.StatusCode.Should().Be(HttpStatusCode.UnprocessableEntity);
+        (await resp.Content.ReadAsStringAsync()).Should().Contain("/viewed/snapshot-evicted");
+    }
+
     [Theory]
     [InlineData("../etc/passwd")]              // segment equals ".."
     [InlineData("./relative")]                 // segment equals "."

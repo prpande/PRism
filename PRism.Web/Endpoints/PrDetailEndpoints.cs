@@ -85,8 +85,7 @@ internal static class PrDetailEndpoints
                     // event evicted the snapshot, rather than surfacing the manual-reload
                     // /file/snapshot-evicted dead-end. Only surface snapshot-evicted when
                     // re-hydration also fails (LoadAsync => null: the PR no longer exists).
-                    var snapshot = loader.TryGetCachedSnapshot(prRef)
-                        ?? await loader.LoadAsync(prRef, ct).ConfigureAwait(false);
+                    var snapshot = await loader.GetOrLoadSnapshotAsync(prRef, ct).ConfigureAwait(false);
                     if (snapshot is null)
                         return Results.Problem(type: "/file/snapshot-evicted", statusCode: 422);
 
@@ -146,11 +145,14 @@ internal static class PrDetailEndpoints
                     return Results.Problem(type: "/viewed/tab-id-missing", statusCode: 422);
 
                 var prRef = new PrReference(owner, repo, number);
-                // Unlike /file (#510), this path intentionally does NOT re-hydrate an evicted
-                // snapshot: it asserts the caller's HeadSha matches the live snapshot's to reject
-                // viewed-state writes against a stale head (the 409 below). Re-hydrating would
-                // silently rebuild the snapshot at the current head and mask that staleness
-                // conflict — so a missing snapshot is a hard 422 here, not a lazy reload.
+                // Unlike /file and /files/viewed, this path does NOT re-hydrate an evicted snapshot —
+                // not because re-hydration would mask a stale head (it would not: LoadAsync re-reads
+                // the live detail head, so the 409 below still fires), but because it does not need to.
+                // usePrDetail fires this fire-and-forget from inside getPrDetail's .then(), i.e.
+                // immediately after the GET that warmed the snapshot, so its eviction window is a
+                // narrow race rather than a window the user can sit in. A failure logs to console.warn
+                // and self-heals on the next reload's re-stamp. Folding it into GetOrLoadSnapshotAsync
+                // is a cleanup, not a bug fix.
                 var snapshot = loader.TryGetCachedSnapshot(prRef);
                 if (snapshot is null)
                     return Results.Problem(type: "/viewed/snapshot-evicted", statusCode: 422);
@@ -218,10 +220,14 @@ internal static class PrDetailEndpoints
                     return Results.Problem(type: "/viewed/path-invalid", statusCode: 422);
 
                 var prRef = new PrReference(owner, repo, number);
-                // Like /mark-viewed (and unlike /file, #510), this intentionally does NOT
-                // re-hydrate an evicted snapshot: the HeadSha equality check below rejects a
-                // viewed-state write against a stale head, and a lazy reload would mask that.
-                var snapshot = loader.TryGetCachedSnapshot(prRef);
+                // Re-hydrate an evicted snapshot rather than refusing the write (#510's /file fix,
+                // applied here). The ActivePrPoller evicts on its own CommentCountChanged tick —
+                // which fires for the user's OWN inline comment and has no client reload behind it —
+                // so the snapshot stayed gone while the user sat on the PR and every checkbox
+                // silently rolled back. Re-hydration cannot launder a stale mark: LoadAsync re-reads
+                // the live DETAIL head (the same head the frontend stamped from GET /api/pr), so a
+                // body stamped at a superseded head still fails the equality check below with 409.
+                var snapshot = await loader.GetOrLoadSnapshotAsync(prRef, ct).ConfigureAwait(false);
                 if (snapshot is null)
                     return Results.Problem(type: "/viewed/snapshot-evicted", statusCode: 422);
                 if (!string.Equals(snapshot.Detail.Pr.HeadSha, body.HeadSha, StringComparison.Ordinal))

@@ -898,7 +898,7 @@ GET    /api/pr/{owner}/{repo}/{number}/file?path=&sha=                       [re
        → 415  { type: "/file/binary" } if file is binary
        → 422  { type: "/file/not-in-diff" } if (path, sha) is not in the loaded PR's diff AND DiffDto.truncated is false
        → 422  { type: "/file/truncation-window" } if (path, sha) is not in the cached files list AND DiffDto.truncated is true (file may legitimately be in the PR but cut off by the truncation window — frontend surfaces "open on github.com")
-       → 422  { type: "/file/snapshot-evicted" } if the PR's PrDetailSnapshot is gone — frontend must refetch /api/pr/{ref} and retry
+       → 422  { type: "/file/snapshot-evicted" } if the PR's PrDetailSnapshot is gone AND re-hydrating it fails because the PR no longer exists (#510: the endpoint lazily re-loads an evicted snapshot rather than making the frontend retry)
 
 POST   /api/pr/{owner}/{repo}/{number}/mark-viewed                          [requires X-PRism-Session, non-empty Origin]
        body: { headSha, maxCommentId }                                       (16 KiB body cap)
@@ -906,7 +906,7 @@ POST   /api/pr/{owner}/{repo}/{number}/mark-viewed                          [req
        //   PrDetailDto.rootComments[].databaseId ∪ PrDetailDto.reviewComments[].comments[].databaseId.
        //   Frontend computes; backend writes verbatim into LastSeenCommentId.
        → 204  writes lastViewedHeadSha + lastSeenCommentId into ReviewSessions[ref]
-       → 422  { type: "/viewed/snapshot-evicted" } if the PR's PrDetailSnapshot is gone — frontend must refetch /api/pr/{ref} and retry (mirrors /file/snapshot-evicted)
+       → 422  { type: "/viewed/snapshot-evicted" } if the PR's PrDetailSnapshot is gone — frontend must refetch /api/pr/{ref} and retry. Unlike /file and /files/viewed this endpoint does NOT re-hydrate: it is fired fire-and-forget straight after the GET that warms the snapshot, so the eviction window is a narrow race and a failure self-heals on the next reload.
        → 409  { type: "/viewed/stale-head-sha" } if headSha != prDetail.headSha
        → 423  { type: "/state/read-only" } if state.json is in forward-incompat read-only mode (binary needs upgrade)
 
@@ -917,8 +917,8 @@ POST   /api/pr/{owner}/{repo}/{number}/files/viewed                         [req
        → 422  { type: "/viewed/path-too-long" } if path > 4096 bytes
        → 422  { type: "/viewed/cap-exceeded" } if ReviewSessions[ref].ViewedFiles already has 10 000 entries
        → 422  { type: "/viewed/path-invalid" } if path canonicalization rejects the input (rules below)
-       → 422  { type: "/viewed/snapshot-evicted" } if the PR's PrDetailSnapshot is gone — frontend must refetch /api/pr/{ref} and retry (mirrors /file/snapshot-evicted)
-       → 409  { type: "/viewed/stale-head-sha" } if headSha != prDetail.headSha
+       → 422  { type: "/viewed/snapshot-evicted" } if the PR's PrDetailSnapshot is gone AND re-hydrating it fails because the PR no longer exists (mirrors /file/snapshot-evicted). A background eviction — e.g. the ActivePrPoller's own CommentCountChanged tick after the user posts an inline comment — is re-hydrated in-request, not surfaced.
+       → 409  { type: "/viewed/stale-head-sha" } if headSha != prDetail.headSha (re-checked against the re-hydrated detail head, so a genuinely advanced head still conflicts)
        → 423  { type: "/state/read-only" } if state.json is in forward-incompat read-only mode
        (Path travels in the body, not the URL — keeps the route static, avoids ASP.NET catch-all
         encoding traps with %2F / NFC-NFD / leading dots, lets the byte-length cap apply uniformly.
