@@ -354,14 +354,34 @@ The following items were Apply'd during the original spec-rigor pass (commit `6c
 - **Revisit when:** v2 lights up `ai.fileFocus` capability and ships a real `FileFocusRanker`, OR S6 adds the `aiPreview` toggle in the settings panel.
 - **Where the gap lives in code:** `frontend/src/components/PrDetail/FilesTab/FileTree.tsx` — `FileNodeComponent` has no focus-dot span.
 
-## [Defer] Inline toast for viewed-checkbox rollback (spec § 7.2 line 737)
+## [Partially delivered] Inline toast for viewed-checkbox rollback (spec § 7.2 line 737)
 
 - **Source:** PR7 preflight — reliability reviewer
 - **Severity:** P2
 - **Date:** 2026-05-08
-- **Reason:** Spec prescribes inline toast with role=status, aria-live=polite, 4s auto-dismiss, click-to-dismiss, --t-med animation on 422/409 rollback from POST /files/viewed. PR7 rolls back silently (the viewed checkbox reverts, but no toast appears). The rollback itself is implemented — only the visual feedback toast is missing.
-- **Revisit when:** Dogfooding encounters 422 cap-exceeded or 409 stale-head-sha failures frequently enough to warrant user-visible feedback, OR S6 polish work formalizes toast patterns.
-- **Where the gap lives in code:** `frontend/src/components/PrDetail/FilesTab/FilesTab.tsx:handleToggleViewed` catch block — rolls back state but does not render a toast.
+- **Last updated:** 2026-07-10 — the "rolls back silently" half is CLOSED by #749, via the app's global
+  toast rather than the row-anchored inline toast the spec prescribes. The row-anchoring half stays deferred.
+- **Reason:** Spec prescribes an inline toast anchored to the file row (right-aligned, scrolls with the
+  FileTree, `role=status`, `aria-live=polite`, 4 s auto-dismiss, click-to-dismiss, `--t-med` animation,
+  max 3 stacked with per-row replacement) on 422/409 rollback from `POST /files/viewed`. PR7 rolled back
+  silently.
+- **What #749 delivered:** `useFileViewState` now takes a **required** `onRollback` callback and reports
+  every rollback; `PrDetailView` maps it to the app's existing global toast
+  (`frontend/src/components/Toast/`) via the pure `viewedRollbackMessage`. A rollback is therefore never
+  silent again. This is a deliberate deviation: the repo has no row-anchored inline-toast primitive, and
+  building one — with the per-row replacement, 3-toast cap, and scroll-away dismissal the spec calls for —
+  is a component-design task, not part of a bug fix. The global toast is the same surface every other
+  transient failure in the app uses.
+- **What remains deferred:** (a) row anchoring and the stacking / scroll-dismissal rules; (b) the spec's
+  distinct `422 /viewed/cap-exceeded` copy. The spec's wording for (b) — "viewed limit reached, reset via
+  Settings" — **cannot be implemented as written: Settings has no reset-viewed-files affordance.** The cap
+  is 10 000 files in a single PR (`PrDetailEndpoints.cs`), so the path is effectively unreachable and
+  #749 lets it fall through to the generic "Couldn't mark …" copy rather than name a control that does not
+  exist. Closing (b) means either building the Settings reset or rewording the spec.
+- **Revisit when:** S6 polish work formalizes toast patterns, or a real user hits the 10 000-file cap.
+- **Where the gap lives in code:** `frontend/src/components/PrDetail/viewedRollbackMessage.ts` — maps the
+  rollback to copy, with no `cap-exceeded` branch; `frontend/src/components/PrDetail/PrDetailView.tsx`
+  renders it through the global toast, not a row-anchored one.
 
 ## [Defer] File-viewed graph-walk semantics (spec § 7.2 line 730)
 
