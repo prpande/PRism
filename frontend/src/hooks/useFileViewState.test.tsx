@@ -12,6 +12,9 @@ const postFileViewedMock = vi.mocked(postFileViewed);
 
 const REF: PrReference = { owner: 'octocat', repo: 'hello', number: 42 };
 const HEAD = 'headsha';
+// Tests that assert something other than rollback reporting still have to supply the
+// callback: it is required precisely so a caller cannot forget to surface a failure.
+const noop = () => {};
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -31,13 +34,13 @@ describe('countViewedFiles', () => {
 describe('useFileViewState', () => {
   it('derives the head-matched persisted set and ignores stale-head entries', () => {
     const { result } = renderHook(() =>
-      useFileViewState(REF, HEAD, { 'a.ts': HEAD, 'b.ts': 'oldhead', 'c.ts': HEAD }),
+      useFileViewState(REF, HEAD, { 'a.ts': HEAD, 'b.ts': 'oldhead', 'c.ts': HEAD }, noop),
     );
     expect(result.current.viewedPaths).toEqual(new Set(['a.ts', 'c.ts']));
   });
 
   it('toggles a file viewed optimistically and POSTs the right body', async () => {
-    const { result } = renderHook(() => useFileViewState(REF, HEAD, {}));
+    const { result } = renderHook(() => useFileViewState(REF, HEAD, {}, noop));
 
     act(() => result.current.toggleViewed('a.ts'));
 
@@ -50,7 +53,7 @@ describe('useFileViewState', () => {
   });
 
   it('unmarks a persisted-viewed file and POSTs viewed:false', async () => {
-    const { result } = renderHook(() => useFileViewState(REF, HEAD, { 'a.ts': HEAD }));
+    const { result } = renderHook(() => useFileViewState(REF, HEAD, { 'a.ts': HEAD }, noop));
     expect(result.current.viewedPaths.has('a.ts')).toBe(true);
 
     act(() => result.current.toggleViewed('a.ts'));
@@ -66,7 +69,7 @@ describe('useFileViewState', () => {
   it('preserves a toggle made before the persisted state arrives (overlay race)', () => {
     const { result, rerender } = renderHook(
       ({ persisted }: { persisted: Record<string, string> | undefined }) =>
-        useFileViewState(REF, HEAD, persisted),
+        useFileViewState(REF, HEAD, persisted, noop),
       { initialProps: { persisted: undefined as Record<string, string> | undefined } },
     );
 
@@ -84,7 +87,7 @@ describe('useFileViewState', () => {
 
   it('rolls back the optimistic toggle when the POST fails', async () => {
     postFileViewedMock.mockRejectedValueOnce(new Error('network down'));
-    const { result } = renderHook(() => useFileViewState(REF, HEAD, {}));
+    const { result } = renderHook(() => useFileViewState(REF, HEAD, {}, noop));
 
     act(() => result.current.toggleViewed('a.ts'));
     expect(result.current.viewedPaths.has('a.ts')).toBe(true);
@@ -164,7 +167,7 @@ describe('useFileViewState', () => {
     // POST_1 stays in flight; POST_2 and POST_3 resolve immediately.
     postFileViewedMock.mockReturnValueOnce(firstPending).mockResolvedValue(undefined);
 
-    const { result } = renderHook(() => useFileViewState(REF, HEAD, { 'a.ts': HEAD }));
+    const { result } = renderHook(() => useFileViewState(REF, HEAD, { 'a.ts': HEAD }, noop));
     expect(result.current.viewedPaths.has('a.ts')).toBe(true);
 
     // Three rapid toggles of the same path. A render commits between acts, so
@@ -185,7 +188,7 @@ describe('useFileViewState', () => {
 
   it('clears overrides when the head advances (key change resets viewed state)', () => {
     const { result, rerender } = renderHook(
-      ({ head }: { head: string }) => useFileViewState(REF, head, {}),
+      ({ head }: { head: string }) => useFileViewState(REF, head, {}, noop),
       { initialProps: { head: HEAD } },
     );
 
@@ -198,7 +201,7 @@ describe('useFileViewState', () => {
   });
 
   it('no-ops toggleViewed before the head sha is known', () => {
-    const { result } = renderHook(() => useFileViewState(REF, undefined, undefined));
+    const { result } = renderHook(() => useFileViewState(REF, undefined, undefined, noop));
 
     act(() => result.current.toggleViewed('a.ts'));
 
@@ -215,7 +218,7 @@ describe('useFileViewState', () => {
     postFileViewedMock
       .mockResolvedValueOnce(undefined)
       .mockRejectedValueOnce(new Error('network down'));
-    const { result } = renderHook(() => useFileViewState(REF, HEAD, {}));
+    const { result } = renderHook(() => useFileViewState(REF, HEAD, {}, noop));
 
     // Mark a.ts viewed — POST succeeds, so the server now holds viewed:true.
     act(() => result.current.toggleViewed('a.ts'));
@@ -243,7 +246,7 @@ describe('useFileViewState', () => {
   it('does not shadow a server refetch that drops the path after a successful POST', async () => {
     const { result, rerender } = renderHook(
       ({ persisted }: { persisted: Record<string, string> }) =>
-        useFileViewState(REF, HEAD, persisted),
+        useFileViewState(REF, HEAD, persisted, noop),
       { initialProps: { persisted: {} as Record<string, string> } },
     );
 
@@ -271,7 +274,7 @@ describe('useFileViewState', () => {
   it('evicts an un-view once the server agrees, then honors a later external re-mark', async () => {
     const { result, rerender } = renderHook(
       ({ persisted }: { persisted: Record<string, string> }) =>
-        useFileViewState(REF, HEAD, persisted),
+        useFileViewState(REF, HEAD, persisted, noop),
       { initialProps: { persisted: { 'a.ts': HEAD } as Record<string, string> } },
     );
     expect(result.current.viewedPaths.has('a.ts')).toBe(true);
@@ -304,7 +307,7 @@ describe('useFileViewState', () => {
     postFileViewedMock.mockReturnValueOnce(firstPending);
 
     const { result, rerender } = renderHook(
-      ({ head }: { head: string }) => useFileViewState(REF, head, {}),
+      ({ head }: { head: string }) => useFileViewState(REF, head, {}, noop),
       { initialProps: { head: HEAD } },
     );
 

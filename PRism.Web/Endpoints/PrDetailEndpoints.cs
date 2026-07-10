@@ -150,9 +150,7 @@ internal static class PrDetailEndpoints
                 // the live detail head, so the 409 below still fires), but because it does not need to.
                 // usePrDetail fires this fire-and-forget from inside getPrDetail's .then(), i.e.
                 // immediately after the GET that warmed the snapshot, so its eviction window is a
-                // narrow race rather than a window the user can sit in. A failure logs to console.warn
-                // and self-heals on the next reload's re-stamp. Folding it into GetOrLoadSnapshotAsync
-                // is a cleanup, not a bug fix.
+                // narrow race rather than a window the user can sit in.
                 var snapshot = loader.TryGetCachedSnapshot(prRef);
                 if (snapshot is null)
                     return Results.Problem(type: "/viewed/snapshot-evicted", statusCode: 422);

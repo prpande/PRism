@@ -19,7 +19,7 @@ describe('viewedRollbackMessage', () => {
     ).toBe('Couldn\'t mark "Foo.tsx" as not reviewed.');
   });
 
-  it('falls back to the whole path when it has no directory segment', () => {
+  it('uses the whole path when it has no directory segment', () => {
     expect(
       viewedRollbackMessage({ path: 'README.md', viewed: true, error: new Error('x') }),
     ).toContain('"README.md"');

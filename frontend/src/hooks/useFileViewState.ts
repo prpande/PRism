@@ -7,9 +7,8 @@ export interface FileViewState {
   toggleViewed: (path: string) => void;
 }
 
-// Emitted when a POST fails and the optimistic value is rolled back. `viewed` is the
-// value the user intended and that did NOT persist, so the caller can word the message
-// for a failed mark and a failed un-mark alike.
+// `viewed` is the value the user intended (that did NOT persist), not the prior state —
+// so callers can word a message for both a failed mark and a failed un-mark.
 export interface FileViewRollback {
   path: string;
   viewed: boolean;
@@ -75,7 +74,7 @@ export function useFileViewState(
   prRef: PrReference,
   headSha: string | undefined,
   persistedViewedFiles: Record<string, string> | undefined,
-  onRollback?: (rollback: FileViewRollback) => void,
+  onRollback: (rollback: FileViewRollback) => void,
 ): FileViewState {
   const { owner, repo, number } = prRef;
   const key = headSha ? `${owner}/${repo}/${number}@${headSha}` : null;
@@ -178,7 +177,7 @@ export function useFileViewState(
           // value (`confirmed`) or `serverViewed` — the real prior state. Report it
           // so the checkbox never flips back without telling the user why.
           setPending((prev) => withoutPath(prev, key, path));
-          onRollbackRef.current?.({ path, viewed: desired, error });
+          onRollbackRef.current({ path, viewed: desired, error });
         },
       );
     },
