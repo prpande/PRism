@@ -21,7 +21,8 @@ import { snapshot } from '../../utils/snapshotMerge';
 import { usePrDetailRefresh } from '../../hooks/usePrDetailRefresh';
 import { useToast } from '../Toast/useToast';
 import { useDraftSession } from '../../hooks/useDraftSession';
-import { useFileViewState } from '../../hooks/useFileViewState';
+import { useFileViewState, type FileViewRollback } from '../../hooks/useFileViewState';
+import { viewedRollbackMessage } from './viewedRollbackMessage';
 import { useCapabilities } from '../../hooks/useCapabilities';
 import { usePreferences } from '../../hooks/usePreferences';
 import { useFileFocusResult } from '../../hooks/useFileFocusResult';
@@ -127,6 +128,14 @@ export function PrDetailView({
   // drafts. Own-tab events are filtered by the subscriber per spec § 5.7.
   useStateChangedSubscriber({ prRef, onSessionChange: draftSession.refetch });
 
+  // A failed viewed-POST rolls the checkbox back. Say so: a tick that silently un-ticks
+  // itself reads as the app losing the mark rather than as a rejected write.
+  const handleViewedRollback = useCallback(
+    (rollback: FileViewRollback) =>
+      toast.show({ kind: 'error', message: viewedRollbackMessage(rollback) }),
+    [toast],
+  );
+
   // #442 — single shared per-file "viewed" state for the Files-tab checkboxes
   // AND the Overview "Viewed" tile. Derived from the persisted fileViewState
   // (head-matched) plus an optimistic overlay; `headSha` is undefined until the
@@ -135,6 +144,7 @@ export function PrDetailView({
     prRef,
     data?.pr.headSha,
     draftSession.session?.fileViewState?.viewedFiles,
+    handleViewedRollback,
   );
   // Task 14: reload PR detail when the root-comment draft is posted so the
   // posted comment appears in the conversation and the local draft clears.

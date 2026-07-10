@@ -3829,12 +3829,17 @@ Expected: all passing.
 - [ ] **Filter icon HIDDEN until S6 (spec § 7.2).** Do not render a clickable stub with a tooltip. The icon is simply absent from the file tree header in S3; S6 is when filtering ships.
 - [ ] **AI focus dot column (spec § 7.2):** when `aiPreview === true` and the focus is backed by `PlaceholderFileFocusRanker` (the PoC noop ranker), suffix the `aria-label` with " (preview)". Final shape: `aria-label="AI focus: high (preview)"`. When `aiPreview === false`, render an `aria-hidden` placeholder span (no dot, no label). When a real (non-Noop, non-Placeholder) ranker ships in v2, the suffix drops away.
 - [ ] **P2.33 — Focus dot width-stability:** the `aria-hidden` placeholder span (rendered when `aiPreview === false`) MUST reserve the same width and column position as the visible dot, so toggling `aiPreview` does not produce horizontal layout shift on file rows.
-- [ ] **Inline toast for viewed-checkbox rollback (spec § 7.2).** When `POST /files/viewed` 4xxs and the optimistic-update reverts, render an inline toast with these properties:
+- [~] **Inline toast for viewed-checkbox rollback (spec § 7.2).** When `POST /files/viewed` 4xxs and the optimistic-update reverts, render an inline toast with these properties:
   - **Position:** right-aligned within the file row (does NOT overlay the path text — sits to the right of the row, in the column where the viewed checkbox lives). **D7:** anchored to the file row and scrolls with the FileTree.
   - **Duration:** 4 seconds auto-dismiss; click-to-dismiss supported.
   - **A11y:** `role="status"`, `aria-live="polite"`.
   - **Stacking (D7):** maximum 3 visible at once; older toasts auto-dismiss early when the count exceeds 3. If a row scrolls out of view, its toast is dismissed. Per-row replacement still applies (a second toast on the same row replaces the first).
   - **Animation:** `--t-med` ease-out (matches BannerRefresh).
+  - **Status (2026-07-10, #749):** the rollback is now reported and surfaced through the app's **global**
+    toast — never silent. The row-anchored positioning, stacking rules, and the distinct `cap-exceeded`
+    copy remain outstanding; see the deferral entry in
+    [`docs/specs/2026-05-06-s3-pr-detail-read-deferrals.md`](../specs/2026-05-06-s3-pr-detail-read-deferrals.md)
+    for why the spec's cap-exceeded wording cannot ship as written.
 - [ ] **Null-SHA iteration UI (spec § 7.2):** iterations with `HasResolvableRange === false` render as "Iter N (snapshot lost)" in the IterationTabStrip; ComparePicker disables selection of these iterations (renders them in a disabled-style row with a tooltip "Snapshot lost — base or head SHA was garbage-collected").
 - [ ] **Q5 — `CommitMultiSelectPicker` (new step group; spec § 7.2.1):**
   - Frontend chooses between `IterationTabStrip` and `CommitMultiSelectPicker` based on `prDetailDto.clusteringQuality === "ok" ? <IterationTabStrip /> : <CommitMultiSelectPicker />`.

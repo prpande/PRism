@@ -126,6 +126,7 @@ function Harness({
     prRef,
     HEAD_SHA,
     draftSession.session?.fileViewState.viewedFiles,
+    () => {},
   );
 
   const value = makePrDetailContextValue({
