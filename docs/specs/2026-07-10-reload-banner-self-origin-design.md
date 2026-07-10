@@ -2,9 +2,9 @@
 
 - **Issue:** [#740](https://github.com/prpande/PRism/issues/740)
 - **Date:** 2026-07-10
-- **Status:** Design — **awaiting human gate (B2)**. Two decisions are open (§3, §5). No implementation proceeds until both are answered.
+- **Status:** Design — **LOCKED**. B2 gate answered 2026-07-10: **origin reading (§3) → option E (§5)**. Implementation plan: `docs/plans/2026-07-10-reload-banner-self-origin.md`.
 - **Tier / Risk:** T3 / gated — B1 (`needs-design`, rendered chrome) **and** B2 (behavioral architectural invariant: *Banner, not mutation*).
-- **Surfaces:** PR detail (`BannerRefresh`), `ActivePrPoller`, `pr-updated` SSE frame.
+- **Surfaces:** PR detail (`BannerRefresh`). **Frontend-only** under E — no wire, DTO, GraphQL, or poller change.
 - **Revision:** rewritten after a 6-persona `ce-doc-review`. The first draft recommended option D on a misreading of the #450 governing principle (§2.1). That recommendation is withdrawn.
 
 ## 1. Problem
@@ -95,9 +95,9 @@ The exception names *display widgets*, not a page-level reload that swaps the re
 thread list mid-review. Reading it to license auto-apply is a stretch, and it is the same
 stretch the first draft made.
 
-## 3. GATE DECISION 1 — what does the banner mean?
+## 3. DECISION 1 — what does the banner mean? → **origin** (locked 2026-07-10)
 
-This must be answered **before** the option choice, because it eliminates options.
+This had to be answered **before** the option choice, because it eliminates options.
 
 - **Origin reading:** "PRism did not cause this." Suppress only what PRism itself wrote.
 - **Seen/unseen reading:** "you have not looked at this." Suppress anything already rendered.
@@ -112,6 +112,22 @@ seen-ness, D suppresses everything.
 
 The first draft asserted the seen/unseen reading in a single line and then evaluated only
 options that survive it. That was the deck-stacking; it is corrected here.
+
+**On the origin/seen-ness distinction in E's implementation.** E's predicate is literally
+"is this comment id absent from what PRism has rendered?" — the *seen-ness* test. It is the
+correct implementation of the *origin* reading anyway, because the two agree on every case
+that can occur:
+
+| Case | Origin says | Rendered-set says | Agree? |
+|---|---|---|---|
+| PRism posted it | suppress | rendered (#450 auto-reload) → suppress | ✔ |
+| Teammate posted it on GitHub | banner | absent → banner | ✔ |
+| *You* posted it on github.com in a browser | banner | absent → banner | ✔ |
+| External comment already pulled in by a manual Refresh | banner | rendered → suppress | ✘ |
+
+Only the last row diverges, and there the banner would be announcing a comment already on
+the reviewer's screen — the very defect #740 reports. Suppressing is correct. The rendered
+set is therefore a *sound and slightly more conservative* proxy for origin, not a compromise.
 
 ## 4. Options
 
@@ -195,76 +211,114 @@ and announce. Implements the **seen/unseen** reading, maximally.
 
 *Benefit:* fixes #740 by construction — no origin question, no counting, no reconciliation.
 
-### E — Client-side identity diff (single-reader) — **new; not in the first draft**
+### E — Client-side identity diff (single-reader) — **CHOSEN**
 
 Implements the **origin** reading, which is what #740 asks for.
 
-On a comment-only `pr-updated` frame (used purely as a *trigger*, never as truth), the client
-fetches the PR-detail snapshot into a shadow buffer and diffs the review-comment `databaseId`
-set against the ids it has already rendered. Ids PRism itself posted are already rendered (the
-#450 auto-reload put them there). If every unseen id is one PRism wrote → **no banner**. If any
-unseen id is not → **banner**, with an accurate count, and **no auto-apply** (consent preserved).
+A comment-only `pr-updated` frame is treated purely as a *trigger*, never as truth. On such a
+frame the client re-fetches the PR detail (`getPrDetail`, a pure GET — `api/prDetail.ts:4`) and
+counts the review-comment ids in the response that are **absent from the ids it has already
+rendered**. That count — not `event.commentCountDelta` — is what the banner displays. Zero →
+**no banner**. Non-zero → **banner**, with an accurate count, and **no auto-apply** (consent
+preserved).
+
+*Identity key:* `ReviewCommentDto.commentId` (`api/types.ts:318`), the GraphQL node id, mapped
+from `nodes{ id }` in the thread fragment (`GitHubReviewService.cs:55`) and non-nullable in the
+contract (`PRism.Core.Contracts/ReviewThreadDto.cs:18`). **Not `databaseId`** — that field is
+`number | null | undefined` (`api/types.ts:324`) and a null would silently read as "unseen."
+Set membership by string equality respects the *GraphQL Node IDs are opaque* invariant
+(`architectural-invariants.md:15` — "equality and pass-through only").
 
 *Why it is sound where B is not:* both sides of the comparison come from the **same reader**
-(`GetPrDetailAsync`), so the `first:100` window cannot diverge against itself. Reload swaps the
-shadow buffer in, and the id sets converge. No stuck banner. No wire change, no GraphQL change,
-no DTO change. `Banner, not mutation` is untouched: nothing auto-applies.
+(`GetPrDetailAsync`), so the `first:100` window cannot diverge against itself. After Reload the
+rendered set *is* the fetched set. No stuck banner. No wire change, no GraphQL change, no DTO
+change, no poller change. `Banner, not mutation` is untouched: nothing auto-applies, and the
+fetched payload is **discarded** — Reload still refetches, so reload semantics are byte-identical
+to today's.
+
+*Why no self-posted-id ledger is needed.* #450 already auto-reloads on `single-comment-posted`,
+so by the time the poll frame lands ~30s later PRism's own comment is in the rendered set. The
+"ids PRism wrote" set is a strict subset of the rendered set, so tracking it separately is
+redundant. This deletes the first draft's cross-tab-persistence cost entirely.
 
 *Cost / risk.*
-- One extra PR-detail GET per comment-change tick. `PrDetailLoader.cs:146` already evicts the
-  snapshot on `CommentCountChanged`, so this is the same fetch Reload would have made — brought
-  forward. On a large PR that is a real, repeated cost paid whenever **anyone** comments.
-- Needs a shadow snapshot so the prefetch does not mutate the rendered view before consent.
+- **≤1 extra PR-detail GET per 30s poll tick, and only on ticks where the inline comment count
+  moved.** Quiet PRs pay nothing. `PrDetailLoader.cs:146` evicts its snapshot on
+  `CommentCountChanged`, so this GET *repopulates the head-SHA-keyed cache that the user's Reload
+  would otherwise have had to fill* — in the banner case it is not extra work, just earlier work.
+  The genuinely wasted case is the suppressed one (your own comment): one detail fetch to avoid
+  one false banner.
+- **Fail-open.** If the fetch throws, fall back to the raw `commentCountDelta` and show the
+  banner. A false positive (a redundant banner) is recoverable; a false negative (never told a
+  teammate commented) is not. This is the *Truthful by default* bias.
+- **A narrow ordering race.** If a poll tick fires within the ~1s the #450 auto-reload takes to
+  land, the rendered set may not yet contain the self-post → one false banner. Mitigated by
+  deferring the diff while `usePrDetail.isLoading` is true and by reading the rendered set at
+  fetch-resolve time, not at frame-arrival time. Not a regression: today that banner *always*
+  shows.
 - Inherits today's `first:100` blind spot (a comment in thread #150 never triggers). No regression.
-- Ids are per-repo monotonic, so "unseen" is well-defined; but the client must persist the set of
-  ids it posted across a keep-alive tab switch.
 
-## 5. GATE DECISION 2 — the option
+*Bonus:* the count is also **corrected**. `useActivePrUpdates` accumulates
+`s.commentCountDelta + event.commentCountDelta` across frames (`:90`), so a self-post followed by
+one teammate comment reads "2 new comments" today. E replaces the accumulator with an absolute
+diff, so it reads "1". This is the #437 bug class on the comment arm, fixed as a side effect.
 
-Conditional on §3.
+## 5. DECISION 2 — the option → **E** (locked 2026-07-10)
 
-- **If the origin reading (what #740 says) → E.** It satisfies the issue literally, keeps the
-  banner for external comments, preserves consent, needs no wire change, and avoids B's cross-reader
-  hazard. Fall back to **A** (with credit expiry, accepting the same-window blind spot) if the extra
-  detail GET is judged too expensive.
-- **If the seen/unseen reading → B (with the single-reader clamp) or D.** B keeps a persistent,
-  un-missable signal at the cost of the pinned-query change and the e2e mock sweep. D is smaller in
-  the banner itself but carries the full design surface in §4-D and requires amending #740.
+Follows from §3's origin reading. E satisfies the issue literally, keeps the banner for external
+comments, preserves consent, needs no wire change, and avoids B's cross-reader hazard. It is also
+the only option that touches neither the byte-pinned GraphQL query nor the untypechecked
+`frontend/e2e` mock bodies.
 
-**Neither B nor D is implementation-ready as written.** B needs its reconciliation approach chosen
-(clamp vs paginate). D needs the composer gate, the toast/snackbar decision, the debounce, the
-`active` gate, a persistent fallback cue, and joint-frame copy. E is the only option currently
-specified to the level where a plan could be written directly from it.
+**Rejected, and why.**
+
+- **A** (poller-local counter) — fallback if E's extra GET had been judged too expensive. It was
+  not: the GET is bounded to comment-change ticks and warms the cache Reload needs. A's blind
+  counter also cannot separate a self-post from a teammate's comment inside one tick window.
+- **B** (absolute-count reconciliation) — implements the wrong reading (seen-ness, not origin),
+  and its two readers can permanently disagree above 100 threads.
+- **C** (client-side blind delta absorption) — A's flaw without A's vantage.
+- **D** (retire the comment arm; auto-apply) — contradicts the #450 principle cited to justify it
+  (§2.1), and overrides #740's explicit *"the banner remains for genuinely external changes"*.
+  Choosing it would have meant amending the issue on the record.
+
+**Scope boundary.** E does not fix the `first:100` blind spot, does not fix #437's
+`headShaChanged`/`baseShaChanged` boolean latch, and does not touch the root-comment path (§1.2
+shows it never raised the banner). Each is tracked separately (§8).
 
 ## 6. Testing strategy
 
-Red-on-main is achievable at the vitest layer for every option; a full Playwright e2e is **not
-feasible** for this bug under any option (§7). `development-process.md` mandates a regression test
-failing on `main`; the vitest-level test is that gate.
+A full Playwright e2e cannot reproduce this bug (§7). `development-process.md` mandates a regression
+test failing on `main`; the **vitest layer is that gate**.
 
-**Under E (recommended if §3 → origin):**
-- `useActivePrUpdates` / the new diff hook: a comment-only frame whose unseen ids are all
-  PRism-posted leaves `hasUpdate === false`. **RED on main** (today `hasUpdate` is set
-  unconditionally, so the banner appears). One whose unseen ids include a foreign id sets it.
-- `BannerRefresh` unchanged — the count it renders now comes from the id diff.
-- Scenario-pinned, not rule-pinned: the test names the #740 scenario ("post a comment, then a poll
-  tick reports the rise") rather than asserting a rendering rule.
+**The red-on-main scenario test.** Render `PrDetailView` with a detail payload already containing
+comment `c-self`. Deliver a `pr-updated` frame with `commentCountDelta: 1, headShaChanged: false`.
+Stub `getPrDetail`'s second call to return the *same* id set. Assert `reload-banner` is absent.
+This is **RED on main** — today `formatMessage` returns `"1 new comment — Reload to view"` the
+moment the frame lands, with no fetch and no diff. It is scenario-pinned (it names #740's sequence),
+not rule-pinned: a future change that re-derives the count from a different field still has to keep
+this green.
 
-**Under D:** `BannerRefresh` with `commentCountDelta={1} headShaChanged={false}` renders nothing.
-This **is** RED on main (verified: `formatMessage` returns `"1 new comment — Reload to view"`). But
-it pins the *rendering rule*, not the #740 *scenario* — a future change that sets `hasUpdate` from a
-new field could reintroduce the defect with this test green. Add a scenario test regardless.
+Companions, same layer:
+- A frame whose refetch introduces a foreign id `c-other` → banner reads `"1 new comment"`.
+- Two frames (self, then foreign) → banner reads `"1 new comment"`, **not** `"2"` — pins the
+  accumulator fix (§4-E *Bonus*).
+- A frame arriving with a SHA change *and* a self-only comment rise → `"Iteration N — Reload to
+  view"` with no comment clause. Joint-frame copy is preserved.
+- `getPrDetail` rejects → banner shows with the raw delta. Pins **fail-open**.
 
-**Backend (`PRism.Core.Tests`)** — the inline `commentChanged` gate (`ActivePrPoller.cs:286`) has
-**no dedicated test** today. Add `Publishes_comment_delta_when_inline_count_rises` under every option.
-`TickAsync` is `internal`, reachable via `InternalsVisibleTo` (`PRism.Core.csproj:22`); drive it with
-an explicit `now`. **Do not use `PRism.Core.Tests`' `FakeReviewEventBus` for any subscription path** —
-its `Subscribe` returns `NullDisposable` and never invokes handlers (`FakeReviewEventBus.cs:28-29`);
-use the real `ReviewEventBus`.
+**Backend (`PRism.Core.Tests`).** E changes no backend code, but it *depends* on the poller emitting
+a comment-count frame at all — if that stopped, E would silently never banner. That gate
+(`ActivePrPoller.cs:286`) has **no dedicated test** today. Add one characterization test,
+`Publishes_comment_delta_when_inline_count_rises`. `TickAsync` is `internal`, reachable via
+`InternalsVisibleTo` (`PRism.Core.csproj:22`); drive it with an explicit `now`. It is green on main
+by construction — it is a guard, not the regression gate. **Do not use `PRism.Core.Tests`'
+`FakeReviewEventBus` for any subscription path** — its `Subscribe` returns `NullDisposable` and never
+invokes handlers (`FakeReviewEventBus.cs:28-29`); use the real `ReviewEventBus`.
 
-**e2e** — unchanged under D and E. `no-layout-shift-on-banner.spec.ts:92-95` drives
-`headShaChanged: true, commentCountDelta: 0`; a grep of all of `frontend/e2e` for `"new comment"`
-returns zero matches.
+**e2e — unchanged.** `no-layout-shift-on-banner.spec.ts:92-95` drives `headShaChanged: true,
+commentCountDelta: 0`, which E leaves on the untouched SHA path; a grep of all of `frontend/e2e` for
+`"new comment"` returns zero matches. No mock bodies need editing.
 
 ## 7. Why no end-to-end test for this bug
 
@@ -287,9 +341,11 @@ the fake submitter. Net-new infrastructure; filed as a follow-up rather than smu
 - **#437** — `useActivePrUpdates` boolean-latches `headShaChanged`/`baseShaChanged` (`s.x || event.x`).
   Same bug class as the comment-delta accumulation. Untouched here.
 - **#106** — the write path's knowledge of what it created is the same seam #106 needs for
-  marker-based adoption; E's client-side id set is a cheaper cousin.
-- New: fake `IActivePrBatchReader` for the e2e DI swap (§7).
-- New: `Snackbar` has no neutral tone (`'warning' | 'danger'`). Any informational use needs one.
+  marker-based adoption.
+- New: fake `IActivePrBatchReader` for the e2e DI swap (§7), which would make this bug
+  e2e-reproducible.
+- New: `reviewThreads(first:100)` is unpaginated in both readers; comments past the window are
+  invisible to the banner. Pre-existing, unchanged by E.
 
 ## 9. Review record
 
@@ -299,3 +355,11 @@ the PR's `## Proof` section. The material ones, all **Applied**, rewrote this do
 inheritance was backwards (§2.1), the option space omitted the origin-keyed class (§4-E), §4-A and
 §4-B were overstated, the semantics question was assumed rather than asked (§3), and D's design
 surface was undercounted (§4-D).
+
+**Post-gate correction (2026-07-10), found while pinning E's seams for the plan.** §4-E named
+`databaseId` as the identity key. That field is `number | null | undefined` in the DTO
+(`api/types.ts:324`) — a null id would read as "unseen" and re-raise the banner it exists to
+suppress. Corrected to `commentId`, the non-nullable node id. The same pass deleted two costs the
+first sketch of E carried: the shadow buffer (nothing is auto-applied, so the payload is simply
+discarded) and the cross-tab self-posted-id ledger (redundant with #450's auto-reload). Both are
+recorded in §4-E.
