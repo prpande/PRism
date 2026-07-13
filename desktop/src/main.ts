@@ -6,6 +6,7 @@ import { sidecarBinaryName } from "./platform";
 import { isOpenableUrl, navigationDecision, windowOpenDecision } from "./urls";
 import { attribute, formatSummary, Phase } from "./startupTimings";
 import { applicationMenuTemplate, editableContextMenuTemplate } from "./menu";
+import { WINDOWS_APP_USER_MODEL_ID, windowsTaskbarAppDetails } from "./taskbar";
 
 let sidecar: Sidecar | null = null;
 let mainWindow: BrowserWindow | null = null;
@@ -37,12 +38,16 @@ if (!gotLock) {
   const appMenu = applicationMenuTemplate(process.platform);
   Menu.setApplicationMenu(appMenu ? Menu.buildFromTemplate(appMenu) : null);
 
-  // Windows groups taskbar buttons by AppUserModelID and reads the icon from it.
-  // Without an explicit ID, an unpackaged dev run groups under electron.exe and
-  // shows Electron's icon. Set our own ID so the window's icon (below) is what
-  // the taskbar displays.
+  // Windows groups taskbar buttons by AppUserModelID; set ours so the button
+  // groups as PRism rather than under electron.exe. This governs GROUPING only —
+  // it does NOT make the window icon survive an Explorer button rebuild (e.g.
+  // across a Modern Standby sleep/wake while the process is suspended), where
+  // Explorer falls back to app-identity resolution and, for an unpackaged run,
+  // reverts to electron.exe's atom icon + "Electron" name. That durability comes
+  // from windowsTaskbarAppDetails() applied to the window in bootstrap; the two
+  // stay in sync via the shared WINDOWS_APP_USER_MODEL_ID.
   if (process.platform === "win32") {
-    app.setAppUserModelId("com.prpande.prism.desktop");
+    app.setAppUserModelId(WINDOWS_APP_USER_MODEL_ID);
   }
 
   // macOS reads the dock label + the "About/Hide/Quit <app>" role items from
@@ -221,6 +226,19 @@ async function bootstrap(): Promise<void> {
       sandbox: true,
     },
   });
+
+  // Pin the Windows taskbar button's icon (and name) to a process-independent
+  // source so an Explorer button rebuild after a Modern Standby sleep/wake can't
+  // revert an unpackaged dev run to the Electron atom icon. No-op (null) off
+  // Windows and in packaged builds — see windowsTaskbarAppDetails().
+  const appDetails = windowsTaskbarAppDetails(
+    process.platform,
+    app.isPackaged,
+    process.execPath,
+    path.join(__dirname, ".."),
+    iconPath,
+  );
+  if (appDetails) mainWindow.setAppDetails(appDetails);
 
   // External-link safety net. The header's OpenInGitHubButton intercepts its own
   // click, but the diff-truncation + submit-success "Open on GitHub" links are
