@@ -42,6 +42,19 @@ public sealed partial class ActivePrPoller : BackgroundService, IImmediateRefres
     // DateTimeOffset.MinValue on first cycle so the guard never fires before the first tick.
     private DateTimeOffset _lastTickAt = DateTimeOffset.MinValue;
 
+    // #740 self-post netting (option G). Per-PR credit of inline comments/replies PRism itself
+    // posted (SingleCommentPostedBusEvent) that have not yet been reconciled against GitHub's
+    // observed CommentCount. Each tick nets this credit out of the observed rise so the poller
+    // does not raise a reload banner for the user's own post. Mutated cross-thread — the write
+    // path publishes synchronously on the POST thread (CreditSelfPost) while the poller thread
+    // reads/decrements it (ExternalCommentDelta) — so every access is guarded by _pendingLock.
+    // Kept OFF ActivePrPollerState, which is documented tick-only (single-threaded).
+    private const int SelfPostCreditTtlTicks = 2;
+    private readonly object _pendingLock = new();
+    private readonly Dictionary<PrReference, PendingSelfPosts> _pendingSelfPosts = new();
+    private sealed class PendingSelfPosts { public int Count; public int StaleTicks; }
+    private readonly IDisposable? _singleCommentSubscription;
+
     // Read-only observability seam for tests: the number of PRs with retained poller state.
     // Backs the regression assertion that _state does not grow without bound across
     // subscribe/unsubscribe cycles (issue #609). No behavior; surfaces _state.Count only.
@@ -105,6 +118,43 @@ public sealed partial class ActivePrPoller : BackgroundService, IImmediateRefres
         _bus = bus;
         _cache = cache;
         _logger = logger;
+        // #740: credit a self-post the moment the write path publishes it, so the next tick can
+        // net it out of GitHub's observed count rise. Mirrors PrDetailLoader's subscribe pattern.
+        _singleCommentSubscription = bus.Subscribe<SingleCommentPostedBusEvent>(e => CreditSelfPost(e.PrRef));
+    }
+
+    // #740: record one un-reconciled self-post for this PR. Called on the write (POST) thread.
+    private void CreditSelfPost(PrReference prRef)
+    {
+        lock (_pendingLock)
+        {
+            if (!_pendingSelfPosts.TryGetValue(prRef, out var p))
+                _pendingSelfPosts[prRef] = p = new PendingSelfPosts();
+            p.Count += 1;
+            p.StaleTicks = 0;
+        }
+    }
+
+    // #740: the externally-caused portion of this tick's raw comment-count rise, after netting
+    // out self-posts PRism originated. Ages unconsumed credit and expires it after
+    // SelfPostCreditTtlTicks so a never-reconciled self-post cannot linger and later consume a
+    // much-later foreign rise (fail-open — expiry biases toward SHOWING a banner). Expiry bounds,
+    // it does not eliminate, the deletion/never-landing residual (spec § 4-G): a credit consumed
+    // by a foreign rise before it ages out is that residual, closed only by id-based netting
+    // (spec § 8). Runs once per candidate per tick, on the poller thread.
+    private int ExternalCommentDelta(PrReference prRef, int rawDelta)
+    {
+        lock (_pendingLock)
+        {
+            if (!_pendingSelfPosts.TryGetValue(prRef, out var p) || p.Count == 0)
+                return rawDelta;
+            var consumed = rawDelta > 0 ? Math.Min(p.Count, rawDelta) : 0;
+            p.Count -= consumed;
+            if (consumed > 0) p.StaleTicks = 0;
+            else if (++p.StaleTicks >= SelfPostCreditTtlTicks) p.Count = 0;
+            if (p.Count == 0) _pendingSelfPosts.Remove(prRef);
+            return rawDelta - consumed;
+        }
     }
 
     /// <summary>
@@ -204,6 +254,7 @@ public sealed partial class ActivePrPoller : BackgroundService, IImmediateRefres
 
     public override void Dispose()
     {
+        _singleCommentSubscription?.Dispose();   // #740: release the write-path subscription
         _refreshSignal.Dispose();
         base.Dispose();
     }
@@ -233,6 +284,13 @@ public sealed partial class ActivePrPoller : BackgroundService, IImmediateRefres
             if (!live.Contains(key)) _state.TryRemove(key, out _);
         }
         _cache.Retain(live);
+        // #740: prune self-post credit against the SAME live set — a PR that lost every subscriber
+        // will not be polled again, so a lingering credit could never be reconciled or expire.
+        lock (_pendingLock)
+        {
+            foreach (var key in _pendingSelfPosts.Keys.Where(k => !live.Contains(k)).ToList())
+                _pendingSelfPosts.Remove(key);
+        }
 
         // #598 Slice B: gather every subscribed PR not currently in backoff, then issue ONE
         // batched GraphQL read for the whole set. Whole-tick-abort contract: a rate-limited or
@@ -277,13 +335,27 @@ public sealed partial class ActivePrPoller : BackgroundService, IImmediateRefres
             // zero deltas so the frontend hydration gate (useFirstActivePrPollComplete, spec § 5.6)
             // fires on the first successful poll. LastBaseSha follows the same first-poll null pattern.
             var firstPoll = state.LastHeadSha is null && state.LastCommentCount is null;
+            // #740: on a PR's first poll the baseline folds in any self-rise that already landed,
+            // so any credit predating that baseline is already reconciled and would orphan. Clear
+            // it here (credit-lifecycle, so it runs regardless of whether this tick publishes). On
+            // firstPoll rawDelta is 0 (null baseline), so this changes no externalDelta this tick.
+            if (firstPoll)
+                lock (_pendingLock) { _pendingSelfPosts.Remove(prRef); }
             // ORDER-CRITICAL: compute headChanged against the PRIOR LastHeadSha, BEFORE the state
             // update overwrites it below. The fast-retry re-arm (`if (headChanged) FastRetryCount = 0`)
             // depends on this — moving the state mutation above this line silently breaks the re-arm
             // (the compare would always be false). See the matching note at the re-arm site (PR #658 review).
             var headChanged = state.LastHeadSha is { } ph && ph != snapshot.HeadSha;
             var baseChanged = state.LastBaseSha is { } pb && pb != snapshot.BaseSha;
-            var commentChanged = state.LastCommentCount is { } pc && pc != snapshot.CommentCount;
+            // #740: net self-posts out of the raw rise. externalDelta gates the comment frame AND
+            // is the delta published — a rise fully explained by PRism's own posts raises nothing.
+            // A deletion (negative rawDelta) passes through unnetted (existing behavior preserved).
+            // externalDelta != 0 already implies a real prior→now change (a null baseline or an
+            // unchanged count both yield rawDelta 0 → externalDelta 0), so it needs no separate
+            // null/change guard — unlike the head/base/state gates, this term is netted, not raw.
+            var rawDelta = state.LastCommentCount is { } priorCount ? snapshot.CommentCount - priorCount : 0;
+            var externalDelta = ExternalCommentDelta(prRef, rawDelta);
+            var commentChanged = externalDelta != 0;
             var stateChanged = state.LastPrState is { } ps && ps != snapshot.PrState;
             // Anti-flicker: only a change TO a real (non-None) readiness publishes. A transient
             // None (GitHub's async mergeStateStatus recompute returning UNKNOWN) must not blank or
@@ -315,7 +387,6 @@ public sealed partial class ActivePrPoller : BackgroundService, IImmediateRefres
 
             if (firstPoll || headChanged || baseChanged || commentChanged || stateChanged || readinessChanged || issueCommentChanged || reviewersChanged)
             {
-                var commentDelta = state.LastCommentCount is { } prior ? snapshot.CommentCount - prior : 0;
                 // Load-bearing ordering: Publish MUST precede _cache.Update. The bus is synchronous,
                 // so eviction handlers (summarizer, loader) run against the pre-move snapshot.
                 _bus.Publish(new ActivePrUpdated(
@@ -323,7 +394,7 @@ public sealed partial class ActivePrPoller : BackgroundService, IImmediateRefres
                     HeadShaChanged: headChanged,
                     CommentCountChanged: commentChanged,
                     NewHeadSha: headChanged ? snapshot.HeadSha : null,
-                    CommentCountDelta: commentDelta,
+                    CommentCountDelta: externalDelta,   // #740: self-posts already netted out
                     IsMerged: snapshot.PrState == PrState.Merged,
                     IsClosed: snapshot.PrState == PrState.Closed,
                     BaseShaChanged: baseChanged,

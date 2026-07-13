@@ -400,3 +400,19 @@ all applied here:
 Product-lens's advisory (cost the null/minimal option) is addressed in §5; the batch-defer
 also answers its "batch path not independently reproduced" note. Full dispositions ride in the
 PR's `## Proof`.
+
+## Deferred work
+
+Structured index (per [`.ai/docs/documentation-maintenance.md`](../../.ai/docs/documentation-maintenance.md))
+of the decisions this spec's rigor passes deferred or overturned; §8 carries the full rationale.
+
+- **[Superseded] Option E — frontend seen/unseen netting** — overturned 2026-07-13: origin is
+  cheapest at the write path (§3), so a frontend-confined fix must reconstruct origin from the
+  rendered set and diverges from #740 on a manually-Refreshed external comment. Replaced by G.
+- **[Defer] Review-submit (batch) self-banner** — #TBD. The same defect on the `DraftSubmitted`
+  path; the correct credit is the *newly-posted* inline count threaded through
+  `SubmitOutcome.Success`, not the over-counting pre-submit draft count (§8). Revisit: when the
+  submit path is observed to re-banner the user's own batch.
+- **[Defer] Net by comment id** — #TBD. The nudge-safe replacement for G's count-based netting,
+  closing the deletion-in-window / never-landing residual (§4-G); needs per-comment ids from the
+  batch reader (GraphQL + DTO change). Revisit: if the bounded residual is observed in practice.
