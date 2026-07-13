@@ -5,7 +5,8 @@ import { AskAiDrawerProvider } from '../../contexts/AskAiDrawerContext';
 import { ToastProvider } from '../Toast/useToast';
 import { AiFailureContext, type AiFailureApi } from '../Ai/aiFailure';
 import { PrDetailView } from './PrDetailView';
-import type { PrReference, ReviewSessionDto } from '../../api/types';
+import type { PrReference } from '../../api/types';
+import type { UseDraftSessionResult } from '../../hooks/useDraftSession';
 import { makePrDetailDto, makePr } from '../../../__tests__/helpers/prDetail';
 
 // ---------------------------------------------------------------------------
@@ -35,7 +36,7 @@ vi.mock('../../hooks/useDraftSession', async (importOriginal) => ({
   // Spread the real module so pure exports (computeAnyOtherDraftsStaged,
   // called by FilesTab at render time) stay live; only the hook is faked.
   ...(await importOriginal<typeof import('../../hooks/useDraftSession')>()),
-  useDraftSession: () => ({
+  useDraftSession: (): UseDraftSessionResult => ({
     session: {
       draftVerdict: null,
       draftVerdictStatus: 'draft',
@@ -45,7 +46,7 @@ vi.mock('../../hooks/useDraftSession', async (importOriginal) => ({
       pendingReviewId: null,
       pendingReviewCommitOid: null,
       fileViewState: { viewedFiles: {} },
-    } satisfies ReviewSessionDto,
+    },
     status: 'ready',
     error: null,
     refetch: vi.fn().mockResolvedValue(undefined),
@@ -53,6 +54,11 @@ vi.mock('../../hooks/useDraftSession', async (importOriginal) => ({
     getPrRootHolder: vi.fn(() => null),
     outOfBandToast: null,
     clearOutOfBandToast: vi.fn(),
+    postingInProgress: false,
+    beginPosting: vi.fn(),
+    endPosting: vi.fn(),
+    removeDraftLocally: vi.fn(),
+    insertDraftLocally: vi.fn(),
   }),
 }));
 
