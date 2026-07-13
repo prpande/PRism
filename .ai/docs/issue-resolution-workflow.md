@@ -69,9 +69,11 @@ decide who was earlier, compare **assignee-list order** (GitHub preserves
 insertion order), falling back to triage-comment timestamp only if one already
 exists (at step 0 it usually won't). This shrinks the check-then-claim race but
 does not eliminate it; the human (who ultimately merges) is the final backstop
-against duplicate work — which is one more reason condition 2 of
-§ Delegated merge authority requires the issue to be **unclaimed** before you may
-merge your own PR: on a self-merged PR that backstop never fires.
+against duplicate work — which is why condition 2 of § Delegated merge authority
+bars self-merging an issue that carries **another agent's** claim (assignee or
+triage comment): on a self-merged PR that backstop never fires, so a *contested*
+issue must go to the human. Your own solo claim is not a contest and does not bar
+self-merge.
 
 **Fresh vs. stale.** A claim is **fresh** — leave it alone — unless it is
 **stale**. A claim is **stale (reclaimable)** only when it shows **no sign of
@@ -332,8 +334,13 @@ condition returns the PR to the default path: drive it to green-and-ready, stop,
 and notify the human.
 
 1. **Actionable.** Not an epic, not blocked, not a duplicate, not `needs-slicing`.
-2. **Unclaimed.** No assignee, no `in-progress` label, no other agent's triage
-   comment (§ Claiming an issue).
+2. **No competing claim.** No assignee other than you, and no other agent's triage
+   comment (§ Claiming an issue) — a competing claim always surfaces as one of
+   those, since a claim is self-assign + label together. Your own step-0 claim does
+   **not** disqualify you: condition 2 guards against *another actor's* duplicate
+   work, and a claim you placed and never shared carries none of that risk. So the
+   bare `in-progress` label alone is not disqualifying; a *contested* issue (another
+   agent co-assigned or commented) is — hand that to the human.
 3. **Hands-off after a 2-lens adversarial gate check.** Beyond the ordinary Axis-B
    read, run two independent reviewers whose brief is to *refute* the hands-off
    call — one arguing B1 (UI-visual), one arguing B2 (risk-surface). A refutation
