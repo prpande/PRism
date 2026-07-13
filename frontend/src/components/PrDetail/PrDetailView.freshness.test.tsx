@@ -4,7 +4,13 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { AskAiDrawerProvider } from '../../contexts/AskAiDrawerContext';
 import { ToastProvider } from '../Toast/useToast';
-import type { PrDetailDto, PrReference, FileChange, DiffDto } from '../../api/types';
+import type {
+  PrDetailDto,
+  PrReference,
+  FileChange,
+  DiffDto,
+  ReviewSessionDto,
+} from '../../api/types';
 import { OpenTabsContext, type OpenTabsContextValue } from '../../contexts/OpenTabsContext';
 import { PrDetailView } from './PrDetailView';
 import { FilesTab } from './FilesTab/FilesTab';
@@ -103,7 +109,16 @@ vi.mock('../../hooks/useDraftSession', async (importOriginal) => ({
   // called by FilesTab at render time) stay live; only the hook is faked.
   ...(await importOriginal<typeof import('../../hooks/useDraftSession')>()),
   useDraftSession: () => ({
-    session: { draftComments: [], draftReplies: [], draftVerdictStatus: 'none' },
+    session: {
+      draftVerdict: null,
+      draftVerdictStatus: 'draft',
+      draftComments: [],
+      draftReplies: [],
+      iterationOverrides: [],
+      pendingReviewId: null,
+      pendingReviewCommitOid: null,
+      fileViewState: { viewedFiles: {} },
+    } satisfies ReviewSessionDto,
     status: 'ready',
     error: null,
     refetch: vi.fn().mockResolvedValue(undefined),
@@ -372,7 +387,16 @@ describe('FilesTab — stale selected file resets to first after refetch (OQ5)',
       prRef: PR_REF,
       prDetail: PR_DETAIL,
       draftSession: {
-        session: { draftComments: [], draftReplies: [], draftVerdictStatus: 'none' },
+        session: {
+          draftVerdict: null,
+          draftVerdictStatus: 'draft',
+          draftComments: [],
+          draftReplies: [],
+          iterationOverrides: [],
+          pendingReviewId: null,
+          pendingReviewCommitOid: null,
+          fileViewState: { viewedFiles: {} },
+        },
         status: 'ready',
         error: null,
         refetch: vi.fn().mockResolvedValue(undefined),
@@ -380,7 +404,12 @@ describe('FilesTab — stale selected file resets to first after refetch (OQ5)',
         getPrRootHolder: vi.fn(() => null),
         outOfBandToast: null,
         clearOutOfBandToast: vi.fn(),
-      } as unknown as PrDetailContextValue['draftSession'],
+        postingInProgress: false,
+        beginPosting: vi.fn(),
+        endPosting: vi.fn(),
+        removeDraftLocally: vi.fn(),
+        insertDraftLocally: vi.fn(),
+      },
       readOnly: false,
       subscribed: false,
       baseShaChanged: false,
