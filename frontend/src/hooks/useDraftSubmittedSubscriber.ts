@@ -1,6 +1,5 @@
-import { useEffect } from 'react';
-import { useEventSource } from './useEventSource';
-import { prRefKey, type PrReference } from '../api/types';
+import { usePrRefEventSubscriber } from './usePrRefEventSubscriber';
+import type { PrReference } from '../api/types';
 
 export interface UseDraftSubmittedSubscriberOptions {
   prRef: PrReference | null;
@@ -12,21 +11,10 @@ export interface UseDraftSubmittedSubscriberOptions {
 }
 
 // Subscribes to 'draft-submitted' SSE events, filtering by prRef (exact string match) so
-// a multi-PR layout cannot react to another PR's submit. Mirrors
-// useRootCommentPostedSubscriber — the submit path is the same invalidate-and-reload class
-// of refresh the root-comment-post path uses.
+// a multi-PR layout cannot react to another PR's submit.
 export function useDraftSubmittedSubscriber({
   prRef,
   onSubmitted,
 }: UseDraftSubmittedSubscriberOptions): void {
-  const stream = useEventSource();
-  useEffect(() => {
-    if (!stream || !prRef) return;
-    const prRefStr = prRefKey(prRef);
-    return stream.on('draft-submitted', (event) => {
-      if (event.prRef !== prRefStr) return;
-      onSubmitted();
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- deps are prRef's stable primitive fields; the prRef object is a fresh literal each render (#331)
-  }, [stream, prRef?.owner, prRef?.repo, prRef?.number, onSubmitted]);
+  usePrRefEventSubscriber('draft-submitted', prRef, onSubmitted);
 }

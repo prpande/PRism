@@ -1,6 +1,5 @@
-import { useEffect } from 'react';
-import { useEventSource } from './useEventSource';
-import { prRefKey, type PrReference } from '../api/types';
+import { usePrRefEventSubscriber } from './usePrRefEventSubscriber';
+import type { PrReference } from '../api/types';
 
 export interface UseRootCommentPostedSubscriberOptions {
   prRef: PrReference | null;
@@ -16,14 +15,5 @@ export function useRootCommentPostedSubscriber({
   prRef,
   onPosted,
 }: UseRootCommentPostedSubscriberOptions): void {
-  const stream = useEventSource();
-  useEffect(() => {
-    if (!stream || !prRef) return;
-    const prRefStr = prRefKey(prRef);
-    return stream.on('root-comment-posted', (event) => {
-      if (event.prRef !== prRefStr) return;
-      onPosted();
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- deps are prRef's stable primitive fields; the prRef object is a fresh literal each render (#331)
-  }, [stream, prRef?.owner, prRef?.repo, prRef?.number, onPosted]);
+  usePrRefEventSubscriber('root-comment-posted', prRef, onPosted);
 }
