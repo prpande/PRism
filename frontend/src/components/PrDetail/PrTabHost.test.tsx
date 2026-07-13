@@ -9,6 +9,7 @@ import { OpenTabsContext, type OpenTabsContextValue } from '../../contexts/OpenT
 import { ToastProvider } from '../../components/Toast';
 import { CheatsheetProvider } from '../../components/Cheatsheet';
 import { AskAiDrawerProvider } from '../../contexts/AskAiDrawerContext';
+import type { ReviewSessionDto } from '../../api/types';
 
 // ---------------------------------------------------------------------------
 // Keep-alive host integration test. We mount the REAL <App/> (its provider tree
@@ -79,7 +80,16 @@ vi.mock('../../hooks/useDraftSession', async (importOriginal) => ({
   // called by FilesTab at render time) stay live; only the hook is faked.
   ...(await importOriginal<typeof import('../../hooks/useDraftSession')>()),
   useDraftSession: () => ({
-    session: { draftComments: [], draftReplies: [], draftVerdictStatus: 'none' },
+    session: {
+      draftVerdict: null,
+      draftVerdictStatus: 'draft',
+      draftComments: [],
+      draftReplies: [],
+      iterationOverrides: [],
+      pendingReviewId: null,
+      pendingReviewCommitOid: null,
+      fileViewState: { viewedFiles: {} },
+    } satisfies ReviewSessionDto,
     status: 'ready',
     error: null,
     refetch: vi.fn().mockResolvedValue(undefined),

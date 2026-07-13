@@ -4,7 +4,7 @@ import { MemoryRouter } from 'react-router-dom';
 import { OpenTabsProvider } from '../../contexts/OpenTabsContext';
 import { AskAiDrawerProvider } from '../../contexts/AskAiDrawerContext';
 import { ToastProvider } from '../Toast/useToast';
-import type { AiCapabilities } from '../../api/types';
+import type { AiCapabilities, ReviewSessionDto } from '../../api/types';
 import { makePrDetailDto, makePr } from '../../../__tests__/helpers/prDetail';
 import type { PrTabId } from './PrSubTabStrip';
 import { PrDetailView } from './PrDetailView';
@@ -54,7 +54,16 @@ vi.mock('../../hooks/useDraftSession', async (importOriginal) => ({
   // called by FilesTab at render time) stay live; only the hook is faked.
   ...(await importOriginal<typeof import('../../hooks/useDraftSession')>()),
   useDraftSession: () => ({
-    session: { draftComments: [], draftReplies: [], draftVerdictStatus: 'none' },
+    session: {
+      draftVerdict: null,
+      draftVerdictStatus: 'draft',
+      draftComments: [],
+      draftReplies: [],
+      iterationOverrides: [],
+      pendingReviewId: null,
+      pendingReviewCommitOid: null,
+      fileViewState: { viewedFiles: {} },
+    } satisfies ReviewSessionDto,
     status: 'ready',
     error: null,
     refetch: vi.fn().mockResolvedValue(undefined),
