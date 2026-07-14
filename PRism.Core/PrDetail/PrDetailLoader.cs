@@ -290,6 +290,24 @@ public sealed class PrDetailLoader : IDisposable
     }
 
     /// <summary>
+    /// Returns the snapshot for <paramref name="prRef"/>, re-loading it on demand when a
+    /// background <see cref="Invalidate"/> evicted it. Callers that merely need the snapshot's
+    /// content should prefer this over <see cref="TryGetCachedSnapshot"/>, which dead-ends on an
+    /// eviction the caller cannot see coming. Returns null only when the PR itself is gone
+    /// (<see cref="LoadAsync"/> => null).
+    /// <para>
+    /// Uses <see cref="LoadAsync"/>'s return value directly rather than re-probing the cache:
+    /// LoadAsync can return a non-null snapshot WITHOUT caching it when a generation flush races
+    /// the load, so a follow-up <see cref="TryGetCachedSnapshot"/> would spuriously see null.
+    /// </para>
+    /// </summary>
+    public async Task<PrDetailSnapshot?> GetOrLoadSnapshotAsync(PrReference prRef, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(prRef);
+        return TryGetCachedSnapshot(prRef) ?? await LoadAsync(prRef, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>
     /// Memoized diff fetch keyed by <c>(prRef, range)</c>. Both <c>/diff</c> and
     /// <c>/file</c> endpoints consult this so the diff is fetched at most once per range
     /// per process lifetime (Option B per the PR4 design discussion). The range itself

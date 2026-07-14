@@ -78,6 +78,7 @@ This is a **concise index** — one line per spec, grouped by status. The per-sp
 - [`2026-06-09-inbox-ci-checks-indicator-design.md`](2026-06-09-inbox-ci-checks-indicator-design.md) — inbox CI + PR-state leading status glyphs (#264, builds on #286).
 - [`2026-06-09-inbox-section-order-design.md`](2026-06-09-inbox-section-order-design.md) — customizable inbox section order (#275).
 - [`2026-06-10-285-inbox-unread-bar-design.md`](2026-06-10-285-inbox-unread-bar-design.md) — inbox "new changes" unread bar reset-on-view (#285).
+- [`2026-07-10-activity-rail-visibility-gate-design.md`](2026-07-10-activity-rail-visibility-gate-design.md) — activity-rail 90s poll gated on `document.visibilityState`, mirroring the #717 inbox precedent (#732, PR #757); the resume-window freshness cue is deferred (see the spec's `## Deferred work`, #753).
 - [`2026-06-10-inbox-cohesion-toolbar-design.md`](2026-06-10-inbox-cohesion-toolbar-design.md) — inbox cohesion: toolbar→card + two-layout rail gate + sort restyle (#300).
 - [`2026-06-10-inbox-group-by-repo-toggle-design.md`](2026-06-10-inbox-group-by-repo-toggle-design.md) — inbox group-by-repo Settings toggle (#219).
 - [`2026-06-10-inbox-manual-refresh-design.md`](2026-06-10-inbox-manual-refresh-design.md) — inbox manual Refresh button (#311).
