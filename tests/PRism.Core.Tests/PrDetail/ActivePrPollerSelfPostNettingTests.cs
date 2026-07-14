@@ -153,6 +153,42 @@ public class ActivePrPollerSelfPostNettingTests
         Assert.Equal(-1, evt.CommentCountDelta);
     }
 
+    // #767 review (claude[bot], observation 1): a deletion tick (rawDelta < 0) carrying pending
+    // self-post credit ages that credit (consumed = 0 -> ++StaleTicks) rather than leaving it
+    // untouched. That is the intended fail-open bias (ExternalCommentDelta: "expiry biases toward
+    // SHOWING a banner") -- aging the credit sooner can never swallow a genuine foreign rise;
+    // leaving it untouched on deletions would let it linger and risk swallowing one. Locks that a
+    // never-landing self-post whose credit ages out via DELETION ticks still lets a later foreign
+    // rise banner.
+    [Fact]
+    public async Task Deletion_ticks_age_an_unreconciled_credit_so_a_later_foreign_rise_still_banners()
+    {
+        var (poller, registry, batch, bus, recorded) = NewPoller();
+        var pr = Pr(1);
+        registry.Add("sub1", pr);
+
+        batch.SetSnapshot(pr, Snap(commentCount: 5));
+        await poller.TickAsync(T0, CancellationToken.None);   // firstPoll — seeds the baseline (5)
+        recorded.Clear();
+
+        bus.Publish(new SingleCommentPostedBusEvent(pr, ReviewCommentId: 123)); // never reflected
+
+        // Two DELETION ticks (not quiet ticks) age the credit to expiry (SelfPostCreditTtlTicks = 2).
+        var t = T0 + Cadence;
+        batch.SetSnapshot(pr, Snap(commentCount: 4));
+        await poller.TickAsync(t, CancellationToken.None); t += Cadence;   // rawDelta -1, StaleTicks 1
+        batch.SetSnapshot(pr, Snap(commentCount: 3));
+        await poller.TickAsync(t, CancellationToken.None); t += Cadence;   // rawDelta -1, StaleTicks 2 -> expired
+        recorded.Clear();                                     // ignore the two deletion frames
+
+        batch.SetSnapshot(pr, Snap(commentCount: 4));         // a genuine foreign comment, post-expiry
+        await poller.TickAsync(t, CancellationToken.None);
+
+        var evt = Assert.Single(recorded);
+        Assert.True(evt.CommentCountChanged);
+        Assert.Equal(1, evt.CommentCountDelta);               // credit aged out via deletions; not swallowed
+    }
+
     // Baseline: an unchanged tick raises no comment frame at all.
     [Fact]
     public async Task Quiet_tick_raises_no_comment_frame()
