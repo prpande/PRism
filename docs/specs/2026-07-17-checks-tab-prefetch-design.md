@@ -161,8 +161,9 @@ and every consumer other than `PrDetailView`'s call-site + glyph-input lines.
   again.
 - poll-success closes the gate: active=true fetch succeeds → flip active=false with
   prefetch=true → no prefetch request.
-- prefetch failure → degraded classified (auth vs transient), status `error`; activation edge
-  resets to `loading` and the tick's success recovers.
+- prefetch failure → degraded classified (auth vs transient) but status stays `loading` (no
+  pre-surfaced error card, AC 5); the activation tick retries — its success recovers, and only
+  its own failure surfaces `error`.
 - late-window re-arm: prefetch resolves empty; advance past `LATE_REGISTRATION_MS`; activate →
   empty-list re-polling continues for a fresh window rather than stopping immediately.
 - glyph continuity: successful series, then `headSha` change (still prefetching) →
