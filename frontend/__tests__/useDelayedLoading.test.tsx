@@ -101,6 +101,38 @@ describe('useDelayedLoading — 100ms wait + 300ms hold', () => {
     expect(result.current).toBe(false);
   });
 
+  // #145 — N-cycle chaining contract: during a sustained burst (each cycle starting inside
+  // the previous hold) the skeleton stays up continuously — no mid-burst flicker-hide — and
+  // once the burst stops it hides within HOLD_MS of the LAST cycle's re-stamped anchor.
+  it('chains holds across a rapid burst and settles after the last cycle (#145)', () => {
+    const { result, rerender } = renderHook(({ isLoading }) => useDelayedLoading(isLoading), {
+      initialProps: { isLoading: true },
+    });
+    act(() => {
+      vi.advanceTimersByTime(100); // shown at T=100
+    });
+    for (let i = 0; i < 3; i++) {
+      rerender({ isLoading: false });
+      act(() => {
+        vi.advanceTimersByTime(150); // idle 150ms — inside the 300ms hold
+      });
+      expect(result.current).toBe(true); // continuous through the burst, never flickers hidden
+      rerender({ isLoading: true }); // next cycle re-stamps the anchor
+      act(() => {
+        vi.advanceTimersByTime(50);
+      });
+    }
+    rerender({ isLoading: false }); // burst over; last anchor is the final cycle's start
+    act(() => {
+      vi.advanceTimersByTime(240); // still inside the final re-stamped hold (50ms elapsed + 240)
+    });
+    expect(result.current).toBe(true);
+    act(() => {
+      vi.advanceTimersByTime(20); // past it — bounded settle, no lingering timer
+    });
+    expect(result.current).toBe(false);
+  });
+
   it('stays true if loading restarts during the hold window', () => {
     const { result, rerender } = renderHook(({ isLoading }) => useDelayedLoading(isLoading), {
       initialProps: { isLoading: true },
