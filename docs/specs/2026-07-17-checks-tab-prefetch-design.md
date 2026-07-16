@@ -36,13 +36,14 @@ API-cost reasons keep the poll lazy (issue body). The fix is the issue's recomme
    triggers a redundant prefetch, even after an aborted or failed poll fetch.
 5. Prefetch is **best-effort with no retry**: once a request is issued for a head, it never
    re-issues for that head regardless of outcome (abort mid-flight, transient failure, auth
-   failure). A failed prefetch leaves the glyph in the same no-data state as today's lazy
-   behavior — accepted tradeoff for this slice; recovery is tab activation, which behaves
-   exactly like today's cold open: status resets to `loading` (skeleton), then the tick's
-   result lands. The error card is never the first thing a first-time visitor sees, and a
-   background auto-heal never silently swaps it out. This reset applies **only to the first
-   activation of a series** — re-visiting a cold-failed series keeps today's behavior (the
-   error card persists over the silent retry, no skeleton flash).
+   failure). A failed prefetch records the degraded classification but **never pre-surfaces
+   `error`** — the Checks tab is unmounted, nothing legitimately consumes `error` pre-visit,
+   and the first activation would paint the error card for a frame before any post-mount
+   reset. The series stays on `loading`: the first visit renders the skeleton, the activation
+   tick retries, and only THAT failure surfaces the error card (today's cold-open behavior).
+   The glyph stays in the same no-data state as today's lazy behavior — accepted tradeoff.
+   Re-visiting a series whose cold failure WAS surfaced by an in-tab tick keeps today's
+   behavior (the error card persists over the silent retry, no skeleton flash).
 6. The late-registration re-poll window is anchored to the **first tab activation of a
    series**, not prefetch time: a user arriving minutes after the prefetch still gets the full
    ~2-minute grace for late-registering checks. Re-activations of the same series do NOT
@@ -105,10 +106,11 @@ prefetchedShaRef.current !== headSha`:
 - On success: identical state writes to a successful tick (checks/checksRef/glyphChecksRef/
   hadSuccessRef/degraded/status), with the same `res.headSha !== headSha` cross-series
   backstop. No rerun-watch interaction (a fresh series always has a null watch).
-- On error: **identical branch structure to `tick()`'s catch** — auth vs transient
-  classification; cold arm (`!hadSuccessRef.current`) sets status `error`, warm arm preserves
-  the cached list. (The warm arm should be unreachable given the poll-success marking above,
-  but mirroring tick keeps the semantics uniform if that invariant ever shifts.)
+- On error: the shared `commitFetchError(err, surfaceColdError)` chokepoint with
+  `surfaceColdError = false` — classification recorded, but the cold arm leaves the series on
+  `loading` instead of surfacing `error` to an unmounted tab (AC 5). The poll tick calls the
+  same chokepoint with `true` (its cold failure is user-visible). The warm arm (cached-list
+  restore) is shared and unreachable from the prefetch path given issue-marking.
 - Never retries: abort-after-start and failures leave the mark set (AC 5).
 
 ### Poll-effect first-activation latch

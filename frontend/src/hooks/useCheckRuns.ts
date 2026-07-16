@@ -117,6 +117,23 @@ export function useCheckRuns(
     setStatus(list.length === 0 ? 'empty' : 'ok');
   };
 
+  // Failure-commit chokepoint, shared likewise. `surfaceColdError` separates the two paths:
+  // the poll tick surfaces a cold failure as the error card (the tab is mounted and the user
+  // is looking at it), but a failed PREFETCH must not — the Checks tab is unmounted, nothing
+  // legitimately consumes 'error' pre-visit, and the first activation would paint the error
+  // card for a frame before the latch's post-mount loading reset runs (Copilot review,
+  // PR #768). A failed prefetch leaves the series on 'loading': the first visit renders the
+  // skeleton, the activation tick retries, and only THAT failure surfaces the error card.
+  // The warm arm restores the cached list's status (stale-while-revalidate).
+  const commitFetchError = (err: unknown, surfaceColdError: boolean) => {
+    setDegraded(classifyDegraded(err));
+    if (!hadSuccessRef.current) {
+      if (surfaceColdError) setStatus('error');
+    } else {
+      setStatus(checksRef.current.length === 0 ? 'empty' : 'ok');
+    }
+  };
+
   const retry = useCallback(() => {
     setStatus('loading');
     setRetryNonce((n) => n + 1);
@@ -201,7 +218,9 @@ export function useCheckRuns(
       if (document.visibilityState !== 'visible') return;
       if (inFlight) return; // single-flight: skip overlapping ticks
       inFlight = true;
-      prefetchedShaRef.current = headSha; // #743 — the gate closes on ISSUE, either path
+      // #743 — the gate closes on ISSUE, either path. Idempotent: re-assigning the same value
+      // on every 15s tick is deliberate; only the first write matters.
+      prefetchedShaRef.current = headSha;
       try {
         const res = await getCheckRuns(prRef, headSha!, ctrl.signal);
         if (cancelled || res.headSha !== headSha) return; // cross-series backstop
@@ -225,7 +244,9 @@ export function useCheckRuns(
         }
       } catch (err) {
         if (cancelled || ctrl.signal.aborted) return;
-        setDegraded(classifyDegraded(err));
+        // Cold arm surfaces the error screen (the tab is mounted); warm arm keeps the
+        // last-known list on screen (stale-while-revalidate) so a transient blip self-heals.
+        commitFetchError(err, true);
         // Expire the rerun-watch on a FAILING tick too. Without this, a poll that throws while
         // crossing the watch-window boundary never runs the window-expiry clear; the watch then
         // stays armed, shouldKeepPolling can return false, the loop stops, and rerunPendingFor is
@@ -233,8 +254,6 @@ export function useCheckRuns(
         // the stale list won't clear early but DOES clear once the window has elapsed.
         updateRerunWatch(checksRef.current);
         if (!hadSuccessRef.current) {
-          // Cold series — nothing cached to fall back on. Surface the error screen.
-          setStatus('error');
           // The loop stops here without the window necessarily having elapsed; drop any armed
           // watch so rerunPendingFor can't be left stuck (defensive — unreachable today because
           // the Re-run button only renders when status==='ok', which forces hadSuccessRef true
@@ -242,13 +261,8 @@ export function useCheckRuns(
           watchedIdRef.current = null;
           watchUntilRef.current = 0;
           setRerunPendingFor(null);
-        } else {
-          // Stale-while-revalidate: keep the last-known list on screen and keep polling so a
-          // transient blip self-heals without a manual Retry.
-          setStatus(checksRef.current.length === 0 ? 'empty' : 'ok');
-          if (shouldKeepPolling(checksRef.current)) {
-            timer = setTimeout(tick, POLL_MS);
-          }
+        } else if (shouldKeepPolling(checksRef.current)) {
+          timer = setTimeout(tick, POLL_MS);
         }
       } finally {
         inFlight = false;
@@ -305,15 +319,8 @@ export function useCheckRuns(
         commitChecks(res.checks);
       } catch (err) {
         if (cancelled || ctrl.signal.aborted) return;
-        setDegraded(classifyDegraded(err));
-        // Mirrors tick()'s catch: the warm arm should be unreachable here (any issued fetch
-        // marks the gate, so a warm series never prefetches), but keeping the branch
-        // structure identical guards that invariant if it ever shifts.
-        if (!hadSuccessRef.current) {
-          setStatus('error');
-        } else {
-          setStatus(checksRef.current.length === 0 ? 'empty' : 'ok');
-        }
+        // surfaceColdError=false: a failed prefetch stays on 'loading' — see commitFetchError.
+        commitFetchError(err, false);
       }
     };
 

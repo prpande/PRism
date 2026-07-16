@@ -553,7 +553,7 @@ describe('useCheckRuns prefetch (#743)', () => {
     expect(spy).toHaveBeenCalledTimes(1); // tick success marked the head — no redundant prefetch
   });
 
-  it('prefetch failure surfaces error; activation resets to loading, then recovers', async () => {
+  it('prefetch failure stays on loading (never pre-surfaces error); activation retries', async () => {
     let resolveSecond: ((v: ChecksResponse) => void) | undefined;
     const spy = vi
       .spyOn(api, 'getCheckRuns')
@@ -563,17 +563,32 @@ describe('useCheckRuns prefetch (#743)', () => {
       initialProps: { a: false },
     });
     await advance(DWELL);
-    expect(result.current.status).toBe('error');
+    // A failed prefetch must NOT park the series on 'error': the tab is unmounted, and the
+    // first activation would paint the error card for a frame before the latch's post-mount
+    // loading reset. The series stays on 'loading' with the classification recorded (AC 5).
+    expect(result.current.status).toBe('loading');
     expect(result.current.degraded).toBe('transient');
     rerender({ a: true });
     await advance(0);
     expect(spy).toHaveBeenCalledTimes(2);
-    // First-ever visit must render the cold-open sequence, not an error-first mount (AC 5).
+    // First-ever visit renders the cold-open sequence: skeleton while the retry is in flight.
     expect(result.current.status).toBe('loading');
     await act(async () => {
       resolveSecond!(resp({ checks: [mkCheck()] }));
     });
     expect(result.current.status).toBe('ok');
+  });
+
+  it('the activation retry after a failed prefetch surfaces error only if IT fails', async () => {
+    vi.spyOn(api, 'getCheckRuns').mockRejectedValue(new Error('boom'));
+    const { result, rerender } = renderHook(({ a }) => useCheckRuns(PR, SHA, a, true), {
+      initialProps: { a: false },
+    });
+    await advance(DWELL);
+    expect(result.current.status).toBe('loading'); // failed prefetch: no pre-surfaced error
+    rerender({ a: true });
+    await advance(0);
+    expect(result.current.status).toBe('error'); // the tick's own cold arm owns the surface
   });
 
   it('re-arms the late-registration window on activation of a still-empty series', async () => {
