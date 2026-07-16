@@ -72,6 +72,35 @@ describe('useDelayedLoading — 100ms wait + 300ms hold', () => {
     expect(result.current).toBe(false);
   });
 
+  // #145 — a second loading cycle beginning inside the hold window must re-stamp the hold
+  // anchor, so ITS completion gets the full anti-flicker hold instead of inheriting the
+  // first cycle's nearly-expired window (stale showStartedAt → premature hide).
+  it('re-stamps the hold anchor when a second cycle starts during the hold (#145)', () => {
+    const { result, rerender } = renderHook(({ isLoading }) => useDelayedLoading(isLoading), {
+      initialProps: { isLoading: true },
+    });
+    act(() => {
+      vi.advanceTimersByTime(100); // shown at T=100
+    });
+    rerender({ isLoading: false }); // T=100: hide scheduled for T=400
+    act(() => {
+      vi.advanceTimersByTime(100); // T=200
+    });
+    rerender({ isLoading: true }); // second cycle starts inside the hold → anchor re-stamps
+    act(() => {
+      vi.advanceTimersByTime(10); // T=210
+    });
+    rerender({ isLoading: false }); // cycle 2 completes: hold must run to T=200+300=500
+    act(() => {
+      vi.advanceTimersByTime(280); // T=490 — the stale anchor would have hidden at T=400
+    });
+    expect(result.current).toBe(true);
+    act(() => {
+      vi.advanceTimersByTime(30); // T=520 — past the re-stamped hold
+    });
+    expect(result.current).toBe(false);
+  });
+
   it('stays true if loading restarts during the hold window', () => {
     const { result, rerender } = renderHook(({ isLoading }) => useDelayedLoading(isLoading), {
       initialProps: { isLoading: true },
