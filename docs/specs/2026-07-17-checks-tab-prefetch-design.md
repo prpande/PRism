@@ -96,10 +96,12 @@ prefetchedShaRef.current !== headSha`:
   tab-switchers never issue requests, and the mark is only written when a request actually
   starts. (This also keeps dev StrictMode's mount→unmount→mount cycle from burning the
   attempt: the first mount's timer is cleared synchronously before it can fire.)
-- **Hidden at fire time:** if `document.visibilityState !== 'visible'` when the effect runs, it
-  registers a one-shot `visibilitychange` listener that starts the dwell on the first
-  transition to visible (self-removing; also removed by cleanup). Covers the app launched
-  minimized / backgrounded-during-load case.
+- **Hidden at fire time — or hidden mid-dwell:** if the document is not visible when the
+  effect runs, OR went hidden by the time the dwell timer fires, the request is deferred to a
+  one-shot `visibilitychange` listener that starts a fresh dwell on the first transition to
+  visible (self-removing; also removed by cleanup). No request is ever issued while hidden,
+  and a deferral never burns the attempt (nothing was issued). Covers the app launched
+  minimized / backgrounded-during-load / hidden-during-dwell cases.
 - **One-shot:** no poll timers, no `shouldKeepPolling`.
 - On request start: `beginSeriesIfNew(headSha)`, mark `prefetchedShaRef.current = headSha`,
   fetch with an `AbortController` aborted by cleanup.

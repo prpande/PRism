@@ -405,6 +405,21 @@ describe('useCheckRuns prefetch (#743)', () => {
     expect(result.current.status).toBe('idle');
   });
 
+  it('hidden DURING the dwell: no hidden fetch; re-arms on visibility return', async () => {
+    const spy = vi.spyOn(api, 'getCheckRuns').mockResolvedValue(resp({ checks: [mkCheck()] }));
+    renderHook(() => useCheckRuns(PR, SHA, false, true));
+    await advance(100);
+    Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true });
+    await advance(1_000); // the dwell timer fires while hidden — must NOT issue a request
+    expect(spy).not.toHaveBeenCalled();
+    Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true });
+    await act(async () => {
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
+    await advance(DWELL); // fresh dwell from the visibility return, then the one fetch
+    expect(spy).toHaveBeenCalledTimes(1);
+  });
+
   it('hidden at mount: no fetch until the document becomes visible, then one', async () => {
     const spy = vi.spyOn(api, 'getCheckRuns').mockResolvedValue(resp({ checks: [mkCheck()] }));
     Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true });

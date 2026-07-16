@@ -324,15 +324,13 @@ export function useCheckRuns(
       }
     };
 
-    const armDwell = () => {
-      timer = setTimeout(() => void fire(), PREFETCH_DWELL_MS);
-    };
-
-    if (document.visibilityState === 'visible') {
-      armDwell();
-    } else {
-      // Opened hidden (app launched minimized / backgrounded during load): one-shot,
-      // self-removing listener starts the dwell on the first return to visibility.
+    // One-shot, self-removing listener: starts a fresh dwell on the first return to
+    // visibility. Used when the effect runs hidden (app launched minimized / backgrounded
+    // during load) AND when the document goes hidden mid-dwell (the timer defers instead of
+    // fetching while backgrounded — Copilot review, PR #768). The attempt is never burned by
+    // a deferral: nothing was issued.
+    const armVisListener = () => {
+      if (visListener) return;
       visListener = () => {
         if (document.visibilityState !== 'visible') return;
         document.removeEventListener('visibilitychange', visListener!);
@@ -340,6 +338,22 @@ export function useCheckRuns(
         armDwell(); // cleanup removes the listener synchronously, so no cancelled check needed
       };
       document.addEventListener('visibilitychange', visListener);
+    };
+
+    const armDwell = () => {
+      timer = setTimeout(() => {
+        if (document.visibilityState !== 'visible') {
+          armVisListener();
+          return;
+        }
+        void fire();
+      }, PREFETCH_DWELL_MS);
+    };
+
+    if (document.visibilityState === 'visible') {
+      armDwell();
+    } else {
+      armVisListener();
     }
 
     return () => {
