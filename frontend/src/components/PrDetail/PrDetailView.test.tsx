@@ -34,12 +34,12 @@ const checksState = vi.hoisted(() => ({
     retry: () => {},
   } as CheckRunsResult,
 }));
-// #743 — capture the call args so the prefetch wiring (4th arg = view-level active,
+// #743 — spy on the call args so the prefetch wiring (4th arg = view-level active,
 // distinct from checksActive) is assertable without unmocking the hook.
-const checksArgs = vi.hoisted(() => ({ current: [] as unknown[] }));
+const useCheckRunsSpy = vi.hoisted(() => vi.fn());
 vi.mock('../../hooks/useCheckRuns', () => ({
   useCheckRuns: (...args: unknown[]) => {
-    checksArgs.current = args;
+    useCheckRunsSpy(...args);
     return checksState.current;
   },
 }));
@@ -230,14 +230,15 @@ describe('PrDetailView', () => {
   // Overview, but never for keep-alive background tabs.
   test('wires useCheckRuns with checksActive and the view-level prefetch flag', () => {
     renderPrDetailView({ prRef: { owner: 'acme', repo: 'api', number: 7 } });
-    expect(checksArgs.current[1]).toBe(PR_DETAIL.pr.headSha);
-    expect(checksArgs.current[2]).toBe(false); // Overview shown → checks sub-tab inactive
-    expect(checksArgs.current[3]).toBe(true); // view active → prefetch on
+    const args = useCheckRunsSpy.mock.lastCall!;
+    expect(args[1]).toBe(PR_DETAIL.pr.headSha);
+    expect(args[2]).toBe(false); // Overview shown → checks sub-tab inactive
+    expect(args[3]).toBe(true); // view active → prefetch on
   });
 
   test('prefetch flag is false for an inactive (keep-alive background) view', () => {
     renderPrDetailView({ prRef: { owner: 'acme', repo: 'api', number: 7 }, active: false });
-    expect(checksArgs.current[3]).toBe(false);
+    expect(useCheckRunsSpy.mock.lastCall![3]).toBe(false);
   });
 
   // #127 — the lg author avatar renders in the PR header (the only render site

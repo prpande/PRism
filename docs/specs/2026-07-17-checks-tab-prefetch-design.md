@@ -30,20 +30,24 @@ API-cost reasons keep the poll lazy (issue body). The fix is the issue's recomme
    (no `loading` flash, no list clear) and starts the normal poll lifecycle with a revalidating
    fetch.
 4. Hard cost bound: at most **one issued prefetch request per open PR view per `headSha`**.
-   Attempts cancelled during the dwell (rapid tab-switching drive-bys) cost zero requests. A
-   successful poll-path fetch also closes the prefetch gate for that head, so leaving the
-   Checks tab never triggers a redundant prefetch.
+   Attempts cancelled during the dwell (rapid tab-switching drive-bys) cost zero requests. Any
+   **issued** fetch on either path closes the prefetch gate for that head — the poll tick marks
+   the gate at request start exactly like the prefetch does — so leaving the Checks tab never
+   triggers a redundant prefetch, even after an aborted or failed poll fetch.
 5. Prefetch is **best-effort with no retry**: once a request is issued for a head, it never
    re-issues for that head regardless of outcome (abort mid-flight, transient failure, auth
    failure). A failed prefetch leaves the glyph in the same no-data state as today's lazy
    behavior — accepted tradeoff for this slice; recovery is tab activation, which behaves
    exactly like today's cold open: status resets to `loading` (skeleton), then the tick's
    result lands. The error card is never the first thing a first-time visitor sees, and a
-   background auto-heal never silently swaps it out.
-6. The late-registration re-poll window is anchored to **tab-activation time**, not prefetch
-   time: activating Checks while the series' list is still empty re-arms the window, so a user
-   arriving minutes after the prefetch still gets the full ~2-minute grace for late-registering
-   checks (today's UX preserved).
+   background auto-heal never silently swaps it out. This reset applies **only to the first
+   activation of a series** — re-visiting a cold-failed series keeps today's behavior (the
+   error card persists over the silent retry, no skeleton flash).
+6. The late-registration re-poll window is anchored to the **first tab activation of a
+   series**, not prefetch time: a user arriving minutes after the prefetch still gets the full
+   ~2-minute grace for late-registering checks. Re-activations of the same series do NOT
+   re-arm the window (today's behavior: an expired empty-list window stays expired across
+   tab-away/tab-back — no polling grant per re-visit).
 7. Glyph continuity: on a `headSha` change while the view is open, the tab-strip glyph keeps
    showing the previous head's verdict until the new head's first result lands (no blank
    flicker on every push). The Checks tab itself still clears and shows the skeleton for a new
@@ -73,13 +77,13 @@ prefetched list on tab activation (AC 3). Two deliberate deltas from today's blo
 
 ### Prefetch gate (single-flight, SHA-keyed)
 
-`prefetchedShaRef: string | undefined` — holds the head that has already had its one attempt
-**issued** (marked at request start, never unmarked):
+`prefetchedShaRef: string | undefined` — holds the head that has already had an attempt
+**issued** (marked at request start, never unmarked), by either path:
 
 - The prefetch effect skips when `prefetchedShaRef.current === headSha`.
-- The poll effect's successful `tick()` also marks it, so a head fetched via the Checks tab
-  never prefetches redundantly after the user switches away (the `prefetch && !active` gate
-  opening at that moment finds the mark set).
+- The poll effect's `tick()` marks it at request start too, so a head fetched (or even
+  attempted and aborted/failed) via the Checks tab never prefetches redundantly after the
+  user switches away.
 
 ### Prefetch effect
 
@@ -107,18 +111,22 @@ prefetchedShaRef.current !== headSha`:
   but mirroring tick keeps the semantics uniform if that invariant ever shifts.)
 - Never retries: abort-after-start and failures leave the mark set (AC 5).
 
-### Poll-effect activation edge
+### Poll-effect first-activation latch
 
-The poll effect tracks the previous `active` value in a ref. On the edge `false → true` with
-the series already established:
+`seriesActivatedShaRef: string | undefined` — the head whose series has already had its first
+Checks-tab activation. Inside the poll effect (after `beginSeriesIfNew`), when
+`seriesActivatedShaRef.current !== headSha` the latch fires once per series:
 
 - If `checksRef.current.length === 0`, re-arm `windowOpenedAtRef.current = Date.now()` before
-  the first tick, restoring today's activation-anchored late-registration grace (AC 6). Only
-  the activation edge re-arms — `retry()`/`refetch()` nonce re-runs do not, preserving today's
-  expired-window behavior for those paths.
+  the first tick — the prefetch-handoff grace of AC 6.
 - If `!hadSuccessRef.current` (cold series whose prefetch failed), set status `loading` before
-  the first tick, so the first visit renders skeleton → result, never an error-first mount
-  (AC 5).
+  the first tick — the cold-open sequence of AC 5.
+
+A per-series latch, not an active-edge detector: re-activations, `retry()`/`refetch()` nonce
+re-runs, and transient gate closures (hidden, `headSha` momentarily null) never re-fire it, so
+today's re-visit behavior (expired window stays expired; error card persists over silent
+retry) is preserved exactly. For a series first established by the poll path itself (manual
+Checks visit, deep link), both latch actions are same-instant no-ops after `beginSeriesIfNew`.
 
 ### Glyph continuity
 

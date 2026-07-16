@@ -29,6 +29,18 @@ import { makePrDetailDto, makePr } from '../../../__tests__/helpers/prDetail';
 // Overview leaf's own data hooks are stubbed to benign empty results to keep it
 // from crashing on absent-backend fetches. (The old PrDetailPage.transition test
 // used a stub <div> Overview route; PrDetailView renders the real OverviewTab.)
+// #743 — stub the checks hook: PrDetailView's eager check-runs prefetch would otherwise
+// issue a request ~300ms after mount and land an un-act()ed state update in this file's
+// previously-inert render trees.
+vi.mock('../../hooks/useCheckRuns', () => ({
+  useCheckRuns: () => ({
+    status: 'idle' as const,
+    degraded: 'none' as const,
+    checks: [],
+    retry: () => {},
+  }),
+}));
+
 vi.mock('../../hooks/useFileDiff', () => ({
   useFileDiff: () => ({ data: null, isLoading: false, showSkeleton: false, error: null }),
 }));

@@ -71,13 +71,15 @@ export function useCheckRuns(
   // the series transition, so the tab-strip glyph holds the prior head's verdict until the new
   // head's first result lands.
   const glyphChecksRef = useRef<CheckRun[] | undefined>(undefined);
-  // #743 — single-flight prefetch gate, SHA-keyed. Marked when a request is ISSUED (prefetch
-  // dwell elapsed, or a poll tick succeeded) and never unmarked: one issued request per head,
-  // full stop. A new head invalidates it naturally; no reset in the series block needed.
+  // #743 — single-flight prefetch gate, SHA-keyed. Marked when a request is ISSUED on either
+  // path (prefetch dwell elapsed, or a poll tick fired) and never unmarked: one prefetch-eligible
+  // request per head, full stop. A new head invalidates it naturally; no series-block reset.
   const prefetchedShaRef = useRef<string | undefined>(undefined);
-  // #743 — activation-edge detector for the poll effect (false→true transitions only; nonce
-  // re-runs while active do not count as a new activation).
-  const wasActiveRef = useRef(false);
+  // #743 — the head whose series already had its first Checks-tab activation. A per-series
+  // once-latch, NOT an active-edge detector: re-activations, retry/refetch nonce re-runs, and
+  // transient gate closures (hidden, headSha momentarily null) never re-fire the
+  // first-activation actions, so re-visit behavior matches pre-prefetch semantics exactly.
+  const seriesActivatedShaRef = useRef<string | undefined>(undefined);
 
   const refKey = `${prRef.owner}/${prRef.repo}/${prRef.number}`;
 
@@ -101,6 +103,20 @@ export function useCheckRuns(
     setRerunPendingFor(null);
   };
 
+  const classifyDegraded = (err: unknown): DegradedReason =>
+    // 401/403 from PRism's own endpoint = auth (mirrors the reader's DegradedFor);
+    // anything else is transient.
+    err instanceof ApiError && (err.status === 401 || err.status === 403) ? 'auth' : 'transient';
+
+  // Success-commit chokepoint shared by the poll tick and the prefetch — the only place the
+  // list is written, so `checksRef` and the glyph mirror can never drift from `checks`.
+  const commitChecks = (list: CheckRun[]) => {
+    setChecks(list);
+    checksRef.current = list;
+    glyphChecksRef.current = list;
+    setStatus(list.length === 0 ? 'empty' : 'ok');
+  };
+
   const retry = useCallback(() => {
     setStatus('loading');
     setRetryNonce((n) => n + 1);
@@ -121,22 +137,24 @@ export function useCheckRuns(
   }, []);
 
   useEffect(() => {
-    if (!active) wasActiveRef.current = false;
     const gateOpen = active && headSha != null && document.visibilityState === 'visible';
     if (!gateOpen) return;
-    const isActivationEdge = !wasActiveRef.current;
-    wasActiveRef.current = true;
 
     beginSeriesIfNew(headSha!);
 
     // #743 — a prefetch may have established this series minutes before the user actually
-    // looks at the tab. On the activation edge (only — nonce re-runs don't re-arm):
-    //  - a still-empty list gets its late-registration grace re-anchored to activation time,
-    //    so a late visitor keeps the full ~2-min re-poll window instead of inheriting an
-    //    expired one;
-    //  - a series whose prefetch failed cold (no success yet) resets to 'loading' so the
-    //    first visit renders the normal skeleton→result sequence, never an error-first mount.
-    if (isActivationEdge) {
+    // looks at the tab. Once per series, on its FIRST activation only:
+    //  - a still-empty list gets its late-registration grace re-anchored to activation time
+    //    (a late visitor keeps the full ~2-min re-poll window instead of inheriting an
+    //    expired one) — re-visits must NOT re-arm, or tab-flipping would grant unbounded
+    //    polling windows on a checks-less PR;
+    //  - a series whose prefetch failed cold resets to 'loading' so the first visit renders
+    //    the normal skeleton→result sequence, never an error-first mount — re-visits keep the
+    //    error card over the silent retry, as today.
+    // For a series first established by this effect itself (manual visit, deep link), both
+    // actions are same-instant no-ops after beginSeriesIfNew.
+    if (seriesActivatedShaRef.current !== headSha) {
+      seriesActivatedShaRef.current = headSha;
       if (checksRef.current.length === 0) {
         windowOpenedAtRef.current = Date.now();
       }
@@ -183,11 +201,11 @@ export function useCheckRuns(
       if (document.visibilityState !== 'visible') return;
       if (inFlight) return; // single-flight: skip overlapping ticks
       inFlight = true;
+      prefetchedShaRef.current = headSha; // #743 — the gate closes on ISSUE, either path
       try {
         const res = await getCheckRuns(prRef, headSha!, ctrl.signal);
         if (cancelled || res.headSha !== headSha) return; // cross-series backstop
         hadSuccessRef.current = true;
-        prefetchedShaRef.current = headSha; // #743 — a poll success closes the prefetch gate
         setDegraded(res.degraded);
         // updateRerunWatch first — it may clear the watch (a transition or the wall-clock
         // expiry), which gates the hold-cached decision immediately below.
@@ -200,23 +218,14 @@ export function useCheckRuns(
         const holdCached =
           res.checks.length === 0 && watchedIdRef.current != null && checksRef.current.length > 0;
         if (!holdCached) {
-          setChecks(res.checks);
-          checksRef.current = res.checks;
-          glyphChecksRef.current = res.checks;
-          setStatus(res.checks.length === 0 ? 'empty' : 'ok');
+          commitChecks(res.checks);
         }
         if (shouldKeepPolling(res.checks)) {
           timer = setTimeout(tick, POLL_MS);
         }
       } catch (err) {
         if (cancelled || ctrl.signal.aborted) return;
-        // 401/403 from PRism's own endpoint = auth (mirrors the reader's DegradedFor);
-        // anything else is transient.
-        setDegraded(
-          err instanceof ApiError && (err.status === 401 || err.status === 403)
-            ? 'auth'
-            : 'transient',
-        );
+        setDegraded(classifyDegraded(err));
         // Expire the rerun-watch on a FAILING tick too. Without this, a poll that throws while
         // crossing the watch-window boundary never runs the window-expiry clear; the watch then
         // stays armed, shouldKeepPolling can return false, the loop stops, and rerunPendingFor is
@@ -286,7 +295,6 @@ export function useCheckRuns(
     const ctrl = new AbortController();
 
     const fire = async () => {
-      if (cancelled || prefetchedShaRef.current === headSha) return;
       beginSeriesIfNew(headSha);
       prefetchedShaRef.current = headSha;
       try {
@@ -294,18 +302,11 @@ export function useCheckRuns(
         if (cancelled || res.headSha !== headSha) return; // cross-series backstop
         hadSuccessRef.current = true;
         setDegraded(res.degraded);
-        setChecks(res.checks);
-        checksRef.current = res.checks;
-        glyphChecksRef.current = res.checks;
-        setStatus(res.checks.length === 0 ? 'empty' : 'ok');
+        commitChecks(res.checks);
       } catch (err) {
         if (cancelled || ctrl.signal.aborted) return;
-        setDegraded(
-          err instanceof ApiError && (err.status === 401 || err.status === 403)
-            ? 'auth'
-            : 'transient',
-        );
-        // Mirrors tick()'s catch: the warm arm should be unreachable here (a poll success
+        setDegraded(classifyDegraded(err));
+        // Mirrors tick()'s catch: the warm arm should be unreachable here (any issued fetch
         // marks the gate, so a warm series never prefetches), but keeping the branch
         // structure identical guards that invariant if it ever shifts.
         if (!hadSuccessRef.current) {
@@ -329,7 +330,7 @@ export function useCheckRuns(
         if (document.visibilityState !== 'visible') return;
         document.removeEventListener('visibilitychange', visListener!);
         visListener = null;
-        if (!cancelled) armDwell();
+        armDwell(); // cleanup removes the listener synchronously, so no cancelled check needed
       };
       document.addEventListener('visibilitychange', visListener);
     }

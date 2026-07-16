@@ -67,6 +67,7 @@ This is a **concise index** — one line per spec, grouped by status. The per-sp
 - [`2026-06-09-302-decouple-commenting-design.md`](2026-06-09-302-decouple-commenting-design.md) — decouple single-comment posting from atomic submit (#302).
 - [`2026-06-10-pr-detail-header-actions-design.md`](2026-06-10-pr-detail-header-actions-design.md) — PR-detail header actions: review split-button, Ask-AI pull-tab, open-in-GitHub (#291).
 - [`2026-06-11-shared-composer-core-design.md`](2026-06-11-shared-composer-core-design.md) — shared composer-core extraction (`useDraftComposer` + ActionsBar/Modals) (#326).
+- [`2026-07-17-checks-tab-prefetch-design.md`](2026-07-17-checks-tab-prefetch-design.md) — eager check-runs prefetch on PR-detail open (dwell-bounded, one issued request per head; poll loop stays tab-gated) (#743).
 
 ### Inbox
 

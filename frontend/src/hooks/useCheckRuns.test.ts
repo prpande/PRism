@@ -13,6 +13,22 @@ function resp(over: Partial<ChecksResponse> = {}): ChecksResponse {
   return { checks: [], headSha: SHA, degraded: 'none', ...over };
 }
 
+// Shared CheckRun factory — defaults to a terminal green check; override per test.
+const mkCheck = (over: Partial<CheckRun> = {}): CheckRun => ({
+  name: 'build',
+  status: 'completed',
+  conclusion: 'success',
+  source: 'check-run',
+  startedAt: null,
+  completedAt: null,
+  detailsUrl: null,
+  summary: null,
+  appName: null,
+  body: null,
+  checkRunId: null,
+  ...over,
+});
+
 describe('useCheckRuns', () => {
   beforeEach(() => {
     // shouldAdvanceTime: true lets waitFor's internal setTimeout drain. The sinon fake clock
@@ -37,21 +53,7 @@ describe('useCheckRuns', () => {
   it('fetches on first activation and reports a non-empty list as ok', async () => {
     vi.spyOn(api, 'getCheckRuns').mockResolvedValue(
       resp({
-        checks: [
-          {
-            name: 'build',
-            status: 'completed',
-            conclusion: 'success',
-            source: 'check-run',
-            startedAt: null,
-            completedAt: null,
-            detailsUrl: null,
-            summary: null,
-            appName: null,
-            body: null,
-            checkRunId: null,
-          },
-        ],
+        checks: [mkCheck()],
       }),
     );
     const { result } = renderHook(() => useCheckRuns(PR, SHA, true));
@@ -70,40 +72,12 @@ describe('useCheckRuns', () => {
       .spyOn(api, 'getCheckRuns')
       .mockResolvedValueOnce(
         resp({
-          checks: [
-            {
-              name: 'b',
-              status: 'in-progress',
-              conclusion: null,
-              source: 'check-run',
-              startedAt: null,
-              completedAt: null,
-              detailsUrl: null,
-              summary: null,
-              appName: null,
-              body: null,
-              checkRunId: null,
-            },
-          ],
+          checks: [mkCheck({ status: 'in-progress', conclusion: null })],
         }),
       )
       .mockResolvedValue(
         resp({
-          checks: [
-            {
-              name: 'b',
-              status: 'completed',
-              conclusion: 'success',
-              source: 'check-run',
-              startedAt: null,
-              completedAt: null,
-              detailsUrl: null,
-              summary: null,
-              appName: null,
-              body: null,
-              checkRunId: null,
-            },
-          ],
+          checks: [mkCheck()],
         }),
       );
     renderHook(() => useCheckRuns(PR, SHA, true));
@@ -138,21 +112,7 @@ describe('useCheckRuns', () => {
       .spyOn(api, 'getCheckRuns')
       .mockResolvedValueOnce(
         resp({
-          checks: [
-            {
-              name: 'b',
-              status: 'in-progress',
-              conclusion: null,
-              source: 'check-run',
-              startedAt: null,
-              completedAt: null,
-              detailsUrl: null,
-              summary: null,
-              appName: null,
-              body: null,
-              checkRunId: null,
-            },
-          ],
+          checks: [mkCheck({ status: 'in-progress', conclusion: null })],
         }),
       )
       .mockRejectedValue(new Error('boom'));
@@ -172,21 +132,7 @@ describe('useCheckRuns', () => {
   it('does NOT fetch again while the document is hidden (scope R1)', async () => {
     const spy = vi.spyOn(api, 'getCheckRuns').mockResolvedValue(
       resp({
-        checks: [
-          {
-            name: 'b',
-            status: 'in-progress',
-            conclusion: null,
-            source: 'check-run',
-            startedAt: null,
-            completedAt: null,
-            detailsUrl: null,
-            summary: null,
-            appName: null,
-            body: null,
-            checkRunId: null,
-          },
-        ],
+        checks: [mkCheck({ status: 'in-progress', conclusion: null })],
       }),
     );
     renderHook(() => useCheckRuns(PR, SHA, true));
@@ -202,21 +148,7 @@ describe('useCheckRuns', () => {
   it('resumes polling when the window becomes visible again (adversarial R2)', async () => {
     const spy = vi.spyOn(api, 'getCheckRuns').mockResolvedValue(
       resp({
-        checks: [
-          {
-            name: 'b',
-            status: 'in-progress',
-            conclusion: null,
-            source: 'check-run',
-            startedAt: null,
-            completedAt: null,
-            detailsUrl: null,
-            summary: null,
-            appName: null,
-            body: null,
-            checkRunId: null,
-          },
-        ],
+        checks: [mkCheck({ status: 'in-progress', conclusion: null })],
       }),
     );
     renderHook(() => useCheckRuns(PR, SHA, true));
@@ -237,21 +169,7 @@ describe('useCheckRuns', () => {
   it('stops polling when active toggles to false (scope R2)', async () => {
     const spy = vi.spyOn(api, 'getCheckRuns').mockResolvedValue(
       resp({
-        checks: [
-          {
-            name: 'b',
-            status: 'in-progress',
-            conclusion: null,
-            source: 'check-run',
-            startedAt: null,
-            completedAt: null,
-            detailsUrl: null,
-            summary: null,
-            appName: null,
-            body: null,
-            checkRunId: null,
-          },
-        ],
+        checks: [mkCheck({ status: 'in-progress', conclusion: null })],
       }),
     );
     const { rerender } = renderHook(({ a }) => useCheckRuns(PR, SHA, a), {
@@ -291,21 +209,7 @@ describe('useCheckRuns', () => {
       .mockRejectedValueOnce(new Error('boom'))
       .mockResolvedValue(
         resp({
-          checks: [
-            {
-              name: 'b',
-              status: 'completed',
-              conclusion: 'success',
-              source: 'check-run',
-              startedAt: null,
-              completedAt: null,
-              detailsUrl: null,
-              summary: null,
-              appName: null,
-              body: null,
-              checkRunId: null,
-            },
-          ],
+          checks: [mkCheck()],
         }),
       );
     const { result } = renderHook(() => useCheckRuns(PR, SHA, true));
@@ -321,21 +225,7 @@ describe('useCheckRuns', () => {
         sha === 'old'
           ? resp({
               headSha: 'old',
-              checks: [
-                {
-                  name: 'b',
-                  status: 'completed',
-                  conclusion: 'success',
-                  source: 'check-run',
-                  startedAt: null,
-                  completedAt: null,
-                  detailsUrl: null,
-                  summary: null,
-                  appName: null,
-                  body: null,
-                  checkRunId: null,
-                },
-              ],
+              checks: [mkCheck()],
             })
           : resp({ headSha: 'new', checks: [] }),
       ),
@@ -350,21 +240,7 @@ describe('useCheckRuns', () => {
   });
 
   it('refetch() fetches off-timer WITHOUT flipping status to loading (stale-while-revalidate)', async () => {
-    const list = [
-      {
-        name: 'build',
-        status: 'completed',
-        conclusion: 'success',
-        source: 'check-run',
-        startedAt: null,
-        completedAt: null,
-        detailsUrl: null,
-        summary: null,
-        appName: null,
-        body: null,
-        checkRunId: 1,
-      },
-    ] as const;
+    const list = [mkCheck({ checkRunId: 1 })] as const;
     vi.spyOn(api, 'getCheckRuns').mockResolvedValue(resp({ checks: list as never }));
     const { result } = renderHook(() => useCheckRuns(PR, SHA, true));
     await waitFor(() => expect(result.current.status).toBe('ok'));
@@ -376,21 +252,7 @@ describe('useCheckRuns', () => {
   });
 
   it('armRerunWatch keeps polling across the window even when all checks are terminal', async () => {
-    const terminal = [
-      {
-        name: 'build',
-        status: 'completed',
-        conclusion: 'failure',
-        source: 'check-run',
-        startedAt: null,
-        completedAt: null,
-        detailsUrl: null,
-        summary: null,
-        appName: null,
-        body: null,
-        checkRunId: 42,
-      },
-    ];
+    const terminal = [mkCheck({ conclusion: 'failure', checkRunId: 42 })];
     const spy = vi
       .spyOn(api, 'getCheckRuns')
       .mockResolvedValue(resp({ checks: terminal as never }));
@@ -415,21 +277,7 @@ describe('useCheckRuns', () => {
   });
 
   it('holds the cached list when a poll returns empty during a rerun-watch (no "No checks" flash)', async () => {
-    const terminal = [
-      {
-        name: 'build',
-        status: 'completed',
-        conclusion: 'failure',
-        source: 'check-run',
-        startedAt: null,
-        completedAt: null,
-        detailsUrl: null,
-        summary: null,
-        appName: null,
-        body: null,
-        checkRunId: 42,
-      },
-    ];
+    const terminal = [mkCheck({ conclusion: 'failure', checkRunId: 42 })];
     // First poll: a real list. Every poll after: GitHub briefly reports ZERO check-runs while
     // it resets the suite for the rerun. The hook must keep the cached list on screen.
     const spy = vi
@@ -449,21 +297,7 @@ describe('useCheckRuns', () => {
   });
 
   it('accepts an empty list once the rerun-watch window has elapsed', async () => {
-    const terminal = [
-      {
-        name: 'build',
-        status: 'completed',
-        conclusion: 'failure',
-        source: 'check-run',
-        startedAt: null,
-        completedAt: null,
-        detailsUrl: null,
-        summary: null,
-        appName: null,
-        body: null,
-        checkRunId: 42,
-      },
-    ];
+    const terminal = [mkCheck({ conclusion: 'failure', checkRunId: 42 })];
     vi.spyOn(api, 'getCheckRuns')
       .mockResolvedValueOnce(resp({ checks: terminal as never }))
       .mockResolvedValue(resp({ checks: [] }));
@@ -479,21 +313,7 @@ describe('useCheckRuns', () => {
   });
 
   it('clears a stuck rerun-watch even when polls FAIL across the window (AC#3, failure path)', async () => {
-    const terminal = [
-      {
-        name: 'build',
-        status: 'completed',
-        conclusion: 'failure',
-        source: 'check-run',
-        startedAt: null,
-        completedAt: null,
-        detailsUrl: null,
-        summary: null,
-        appName: null,
-        body: null,
-        checkRunId: 42,
-      },
-    ];
+    const terminal = [mkCheck({ conclusion: 'failure', checkRunId: 42 })];
     // First poll succeeds (warm series), every poll thereafter throws.
     vi.spyOn(api, 'getCheckRuns')
       .mockResolvedValueOnce(resp({ checks: terminal as never }))
@@ -514,21 +334,7 @@ describe('useCheckRuns', () => {
   });
 
   it('does NOT extend the rerun-watch on focus-toggling — terminates at the fixed deadline (AC#3)', async () => {
-    const terminal = [
-      {
-        name: 'build',
-        status: 'completed',
-        conclusion: 'failure',
-        source: 'check-run',
-        startedAt: null,
-        completedAt: null,
-        detailsUrl: null,
-        summary: null,
-        appName: null,
-        body: null,
-        checkRunId: 42,
-      },
-    ];
+    const terminal = [mkCheck({ conclusion: 'failure', checkRunId: 42 })];
     vi.spyOn(api, 'getCheckRuns').mockResolvedValue(resp({ checks: terminal as never }));
     const { result } = renderHook(() => useCheckRuns(PR, SHA, true));
     await waitFor(() => expect(result.current.status).toBe('ok'));
@@ -561,21 +367,6 @@ describe('useCheckRuns', () => {
 // flushes ride advanceTimersByTimeAsync's microtask drains.
 describe('useCheckRuns prefetch (#743)', () => {
   const DWELL = 300; // PREFETCH_DWELL_MS
-
-  const mkCheck = (over: Partial<CheckRun> = {}): CheckRun => ({
-    name: 'build',
-    status: 'completed',
-    conclusion: 'success',
-    source: 'check-run',
-    startedAt: null,
-    completedAt: null,
-    detailsUrl: null,
-    summary: null,
-    appName: null,
-    body: null,
-    checkRunId: null,
-    ...over,
-  });
 
   beforeEach(() => {
     vi.useFakeTimers({ shouldAdvanceTime: false });
@@ -697,6 +488,57 @@ describe('useCheckRuns prefetch (#743)', () => {
     rerender({ sha: 'def' });
     await advance(DWELL);
     expect(spy).toHaveBeenCalledTimes(2); // one issued request per head (AC 4)
+  });
+
+  it('does NOT re-arm the late window on RE-activation of an empty series', async () => {
+    const spy = vi.spyOn(api, 'getCheckRuns').mockResolvedValue(resp({ checks: [] }));
+    const { rerender } = renderHook(({ a }) => useCheckRuns(PR, SHA, a, false), {
+      initialProps: { a: true }, // manual Checks visit — no prefetch involved
+    });
+    await advance(125_000); // drain the full late-registration window; the loop stops
+    const drained = spy.mock.calls.length;
+    rerender({ a: false });
+    rerender({ a: true }); // tab away and back on the SAME series
+    await advance(0);
+    expect(spy).toHaveBeenCalledTimes(drained + 1); // one revalidating tick — today's behavior
+    // The expired window must STAY expired: no renewed 15s polling per re-visit.
+    await advance(45_000);
+    expect(spy).toHaveBeenCalledTimes(drained + 1);
+  });
+
+  it('keeps the error card (no loading flash) when re-activating a cold failed series', async () => {
+    let resolveRetry: ((v: ChecksResponse) => void) | undefined;
+    vi.spyOn(api, 'getCheckRuns')
+      .mockRejectedValueOnce(new Error('boom'))
+      .mockImplementationOnce(() => new Promise((r) => (resolveRetry = r)));
+    const { result, rerender } = renderHook(({ a }) => useCheckRuns(PR, SHA, a, false), {
+      initialProps: { a: true }, // manual cold visit fails → persistent error card
+    });
+    await advance(0);
+    expect(result.current.status).toBe('error');
+    rerender({ a: false });
+    rerender({ a: true }); // re-visit the SAME series
+    await advance(0);
+    // Silent retry behind the still-visible error card — never a skeleton flash (re-visit
+    // is not the series' first activation; the AC 5 loading reset must not re-fire).
+    expect(result.current.status).toBe('error');
+    await act(async () => {
+      resolveRetry!(resp({ checks: [mkCheck()] }));
+    });
+    expect(result.current.status).toBe('ok');
+  });
+
+  it('an issued-but-unfinished poll fetch still closes the prefetch gate', async () => {
+    const spy = vi.spyOn(api, 'getCheckRuns').mockImplementation(() => new Promise(() => {})); // never resolves; abort discards it
+    const { rerender } = renderHook(({ a }) => useCheckRuns(PR, SHA, a, true), {
+      initialProps: { a: true }, // deep link straight onto Checks; tick issues a request
+    });
+    await advance(0);
+    expect(spy).toHaveBeenCalledTimes(1);
+    rerender({ a: false }); // switch away before the response; cleanup aborts the fetch
+    await advance(5_000);
+    // The gate closes on ISSUE, not on success — no second request for the same head.
+    expect(spy).toHaveBeenCalledTimes(1);
   });
 
   it('a successful poll fetch closes the prefetch gate for that head', async () => {
