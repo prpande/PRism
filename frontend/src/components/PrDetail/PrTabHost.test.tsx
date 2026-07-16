@@ -243,6 +243,19 @@ describe('PrTabHost', () => {
     expect(screen.getByTestId('files-tab-root')).toBeVisible();
   });
 
+  // #144 — a malformed owner/repo segment fails fast on the same alert surface, with a
+  // message matching THAT failure (not the number message), and no API call is issued.
+  test('a malformed owner/repo segment shows the invalid-reference alert with name copy', async () => {
+    const { navigate } = renderAppAt('/pr/acme/api/7/files');
+    await screen.findByTestId('files-tab-root');
+
+    navigate('/pr/acme/re%23po/9');
+    const dialog = screen.getByRole('alertdialog');
+    expect(dialog).toHaveTextContent(/not a valid owner\/repo/i);
+    expect(dialog).not.toHaveTextContent(/positive integer/i);
+    expect(screen.getByTestId('files-tab-root')).toBeInTheDocument(); // kept alive
+  });
+
   test('a hidden (inactive) PR view has no focusable element in the tab order', async () => {
     const { navigate } = renderAppAt('/pr/acme/api/7');
     // Make the first view real + visited so it has focusable chrome (open Files).
@@ -357,5 +370,34 @@ describe('parsePrRoute', () => {
   test('returns null when the path is not a /pr/ route', () => {
     expect(parsePrRoute('/')).toBeNull();
     expect(parsePrRoute('/inbox')).toBeNull();
+  });
+
+  // #144 — owner/repo segments must satisfy GitHub name grammar; a malformed segment
+  // fails fast on the existing invalid-reference surface instead of flowing into
+  // /api/pr/{owner}/{repo}/... calls.
+  test.each([
+    '/pr/bad%20owner/api/7', // percent-encoded space
+    // NOTE: a raw '#' never reaches parsePrRoute — the history library splits the hash off
+    // before pathname parsing (a real '#' arrives percent-encoded, like %23 below). Cases here
+    // are all reachable pathnames.
+    '/pr/acme/re(po)/7', // illegal punctuation that survives URL parsing
+    '/pr/acme/..%2Fapi/7', // encoded traversal
+    '/pr/../api/7', // dot-dot owner segment
+    '/pr/acme/../7', // dot-dot repo segment
+    '/pr/./api/7', // single-dot owner segment
+    '/pr/acme/r$po/7', // illegal character
+  ])('rejects a malformed owner/repo segment %s as invalid (name reason)', (path) => {
+    const r = parsePrRoute(path);
+    expect(r?.valid).toBe(false);
+    expect(r?.invalidReason).toBe('name');
+  });
+
+  test('accepts dots, dashes, and underscores in owner/repo (GitHub grammar)', () => {
+    const r = parsePrRoute('/pr/my-org.x/repo_name-2.js/7');
+    expect(r?.valid).toBe(true);
+  });
+
+  test('an invalid number on a valid owner/repo reports the number reason', () => {
+    expect(parsePrRoute('/pr/acme/api/0')?.invalidReason).toBe('number');
   });
 });
