@@ -4,7 +4,7 @@ import { act, renderHook, waitFor } from '@testing-library/react';
 import { useCheckRuns } from './useCheckRuns';
 import * as api from '../api/checks';
 import { ApiError } from '../api/client';
-import type { ChecksResponse } from '../api/types';
+import type { CheckRun, ChecksResponse } from '../api/types';
 
 const PR = { owner: 'o', repo: 'r', number: 1 };
 const SHA = 'abc';
@@ -552,5 +552,225 @@ describe('useCheckRuns', () => {
       });
     }
     expect(result.current.rerunPendingFor).toBeNull();
+  });
+});
+
+// #743 — eager one-shot prefetch on PR-detail open; the poll loop stays tab-gated.
+// shouldAdvanceTime is OFF here: the dwell-window assertions are exact-timing contracts and
+// real-clock auto-advance would race them under CI load. Every advance is explicit; promise
+// flushes ride advanceTimersByTimeAsync's microtask drains.
+describe('useCheckRuns prefetch (#743)', () => {
+  const DWELL = 300; // PREFETCH_DWELL_MS
+
+  const mkCheck = (over: Partial<CheckRun> = {}): CheckRun => ({
+    name: 'build',
+    status: 'completed',
+    conclusion: 'success',
+    source: 'check-run',
+    startedAt: null,
+    completedAt: null,
+    detailsUrl: null,
+    summary: null,
+    appName: null,
+    body: null,
+    checkRunId: null,
+    ...over,
+  });
+
+  beforeEach(() => {
+    vi.useFakeTimers({ shouldAdvanceTime: false });
+    Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true });
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.useRealTimers();
+  });
+
+  const advance = async (ms: number) => {
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(ms);
+    });
+  };
+
+  it('fires exactly one fetch after the dwell and never starts the poll loop', async () => {
+    // Non-terminal list — the POLL path would keep fetching; prefetch must not.
+    const spy = vi
+      .spyOn(api, 'getCheckRuns')
+      .mockResolvedValue(
+        resp({ checks: [mkCheck({ status: 'in-progress', conclusion: null })] }),
+      );
+    const { result } = renderHook(() => useCheckRuns(PR, SHA, false, true));
+    await advance(DWELL);
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(result.current.status).toBe('ok');
+    expect(result.current.checks).toHaveLength(1);
+    await advance(60_000);
+    expect(spy).toHaveBeenCalledTimes(1); // one-shot: no 15s loop
+  });
+
+  it('does not fetch while headSha is undefined', async () => {
+    const spy = vi.spyOn(api, 'getCheckRuns').mockResolvedValue(resp());
+    const { result } = renderHook(() => useCheckRuns(PR, undefined, false, true));
+    await advance(1_000);
+    expect(spy).not.toHaveBeenCalled();
+    expect(result.current.status).toBe('idle');
+  });
+
+  it('hidden at mount: no fetch until the document becomes visible, then one', async () => {
+    const spy = vi.spyOn(api, 'getCheckRuns').mockResolvedValue(resp({ checks: [mkCheck()] }));
+    Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true });
+    renderHook(() => useCheckRuns(PR, SHA, false, true));
+    await advance(1_000);
+    expect(spy).not.toHaveBeenCalled();
+    Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true });
+    await act(async () => {
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
+    await advance(DWELL);
+    expect(spy).toHaveBeenCalledTimes(1);
+  });
+
+  it('a dwell-cancelled attempt costs zero requests and may retry later', async () => {
+    const spy = vi.spyOn(api, 'getCheckRuns').mockResolvedValue(resp({ checks: [mkCheck()] }));
+    const { rerender } = renderHook(({ p }) => useCheckRuns(PR, SHA, false, p), {
+      initialProps: { p: true },
+    });
+    await advance(100); // drive-by: leave before the dwell elapses
+    rerender({ p: false });
+    await advance(5_000);
+    expect(spy).not.toHaveBeenCalled(); // the pending dwell timer was cleared, nothing issued
+    rerender({ p: true }); // come back — the attempt was never burned
+    await advance(DWELL);
+    expect(spy).toHaveBeenCalledTimes(1);
+  });
+
+  it('an aborted in-flight prefetch never re-issues for the same head', async () => {
+    let resolveFetch: ((v: ChecksResponse) => void) | undefined;
+    const spy = vi
+      .spyOn(api, 'getCheckRuns')
+      .mockImplementation(() => new Promise((r) => (resolveFetch = r)));
+    const { rerender } = renderHook(({ p }) => useCheckRuns(PR, SHA, false, p), {
+      initialProps: { p: true },
+    });
+    await advance(DWELL);
+    expect(spy).toHaveBeenCalledTimes(1); // issued, in flight
+    rerender({ p: false }); // abort mid-flight
+    rerender({ p: true });
+    await advance(5_000);
+    expect(spy).toHaveBeenCalledTimes(1); // mark set at request start — no retry (AC 5)
+    expect(resolveFetch).toBeDefined();
+  });
+
+  it('activation after a successful prefetch keeps the list, revalidates, and polls', async () => {
+    const spy = vi.spyOn(api, 'getCheckRuns').mockImplementation((_pr, sha) =>
+      Promise.resolve(
+        resp({ headSha: sha, checks: [mkCheck({ status: 'in-progress', conclusion: null })] }),
+      ),
+    );
+    const { result, rerender } = renderHook(({ a }) => useCheckRuns(PR, SHA, a, true), {
+      initialProps: { a: false },
+    });
+    await advance(DWELL);
+    expect(result.current.status).toBe('ok');
+    rerender({ a: true });
+    expect(result.current.status).toBe('ok'); // no loading flash (AC 3)
+    expect(result.current.checks).toHaveLength(1); // list preserved
+    await advance(0);
+    expect(spy).toHaveBeenCalledTimes(2); // activation revalidate
+    expect(result.current.status).toBe('ok');
+    await advance(15_000);
+    expect(spy).toHaveBeenCalledTimes(3); // poll loop live for the non-terminal list
+  });
+
+  it('a new headSha prefetches again; same head never refetches on prop flips', async () => {
+    const spy = vi
+      .spyOn(api, 'getCheckRuns')
+      .mockImplementation((_pr, sha) => Promise.resolve(resp({ headSha: sha, checks: [] })));
+    const { rerender } = renderHook(({ sha }) => useCheckRuns(PR, sha, false, true), {
+      initialProps: { sha: 'abc' },
+    });
+    await advance(DWELL);
+    expect(spy).toHaveBeenCalledTimes(1);
+    rerender({ sha: 'abc' }); // same head re-render
+    await advance(5_000);
+    expect(spy).toHaveBeenCalledTimes(1);
+    rerender({ sha: 'def' });
+    await advance(DWELL);
+    expect(spy).toHaveBeenCalledTimes(2); // one issued request per head (AC 4)
+  });
+
+  it('a successful poll fetch closes the prefetch gate for that head', async () => {
+    const spy = vi.spyOn(api, 'getCheckRuns').mockResolvedValue(resp({ checks: [mkCheck()] }));
+    const { rerender } = renderHook(({ a }) => useCheckRuns(PR, SHA, a, true), {
+      initialProps: { a: true }, // deep link straight onto the Checks tab
+    });
+    await advance(0);
+    expect(spy).toHaveBeenCalledTimes(1); // poll-path fetch, terminal list → loop stops
+    rerender({ a: false }); // leave the tab; prefetch gate opens
+    await advance(5_000);
+    expect(spy).toHaveBeenCalledTimes(1); // tick success marked the head — no redundant prefetch
+  });
+
+  it('prefetch failure surfaces error; activation resets to loading, then recovers', async () => {
+    let resolveSecond: ((v: ChecksResponse) => void) | undefined;
+    const spy = vi
+      .spyOn(api, 'getCheckRuns')
+      .mockRejectedValueOnce(new Error('boom'))
+      .mockImplementationOnce(() => new Promise((r) => (resolveSecond = r)));
+    const { result, rerender } = renderHook(({ a }) => useCheckRuns(PR, SHA, a, true), {
+      initialProps: { a: false },
+    });
+    await advance(DWELL);
+    expect(result.current.status).toBe('error');
+    expect(result.current.degraded).toBe('transient');
+    rerender({ a: true });
+    await advance(0);
+    expect(spy).toHaveBeenCalledTimes(2);
+    // First-ever visit must render the cold-open sequence, not an error-first mount (AC 5).
+    expect(result.current.status).toBe('loading');
+    await act(async () => {
+      resolveSecond!(resp({ checks: [mkCheck()] }));
+    });
+    expect(result.current.status).toBe('ok');
+  });
+
+  it('re-arms the late-registration window on activation of a still-empty series', async () => {
+    const spy = vi.spyOn(api, 'getCheckRuns').mockResolvedValue(resp({ checks: [] }));
+    const { result, rerender } = renderHook(({ a }) => useCheckRuns(PR, SHA, a, true), {
+      initialProps: { a: false },
+    });
+    await advance(DWELL);
+    expect(result.current.status).toBe('empty');
+    expect(spy).toHaveBeenCalledTimes(1); // prefetch is one-shot: no empty-list re-poll
+    await advance(125_000); // the window measured from PREFETCH time has fully elapsed
+    rerender({ a: true });
+    await advance(0);
+    expect(spy).toHaveBeenCalledTimes(2); // activation tick
+    // Without the re-arm the expired window stops the loop here; the user must get the
+    // full empty-list grace measured from ACTIVATION (AC 6).
+    await advance(15_000);
+    expect(spy).toHaveBeenCalledTimes(3);
+  });
+
+  it('glyphChecks holds the previous head across a SHA change until new data lands', async () => {
+    let resolveDef: ((v: ChecksResponse) => void) | undefined;
+    vi.spyOn(api, 'getCheckRuns').mockImplementation((_pr, sha) =>
+      sha === 'abc'
+        ? Promise.resolve(resp({ headSha: 'abc', checks: [mkCheck()] }))
+        : new Promise((r) => (resolveDef = r)),
+    );
+    const { result, rerender } = renderHook(({ sha }) => useCheckRuns(PR, sha, false, true), {
+      initialProps: { sha: 'abc' },
+    });
+    await advance(DWELL);
+    expect(result.current.glyphChecks).toHaveLength(1);
+    rerender({ sha: 'def' });
+    await advance(DWELL); // def's request issued, still pending
+    expect(result.current.checks).toHaveLength(0); // series cleared as today
+    expect(result.current.glyphChecks).toHaveLength(1); // glyph continuity (AC 7)
+    await act(async () => {
+      resolveDef!(resp({ headSha: 'def', checks: [] }));
+    });
+    expect(result.current.glyphChecks).toHaveLength(0); // new truth replaces the hold
   });
 });

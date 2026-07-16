@@ -34,8 +34,14 @@ const checksState = vi.hoisted(() => ({
     retry: () => {},
   } as CheckRunsResult,
 }));
+// #743 — capture the call args so the prefetch wiring (4th arg = view-level active,
+// distinct from checksActive) is assertable without unmocking the hook.
+const checksArgs = vi.hoisted(() => ({ current: [] as unknown[] }));
 vi.mock('../../hooks/useCheckRuns', () => ({
-  useCheckRuns: () => checksState.current,
+  useCheckRuns: (...args: unknown[]) => {
+    checksArgs.current = args;
+    return checksState.current;
+  },
 }));
 
 // ---------------------------------------------------------------------------
@@ -166,16 +172,18 @@ vi.mock('../../hooks/useFirstActivePrPollComplete', () => ({
 function renderPrDetailView({
   prRef,
   initialSubTab,
+  active = true,
 }: {
   prRef: PrReference;
   initialSubTab?: PrTabId;
+  active?: boolean;
 }) {
   return render(
     <MemoryRouter>
       <OpenTabsProvider>
         <AskAiDrawerProvider>
           <ToastProvider>
-            <PrDetailView prRef={prRef} active={true} initialSubTab={initialSubTab} />
+            <PrDetailView prRef={prRef} active={active} initialSubTab={initialSubTab} />
           </ToastProvider>
         </AskAiDrawerProvider>
       </OpenTabsProvider>
@@ -215,6 +223,21 @@ describe('PrDetailView', () => {
     });
     expect(screen.queryByTestId('overview-tab')).not.toBeInTheDocument();
     expect(screen.getByTestId('files-tab-root')).toBeVisible();
+  });
+
+  // #743 — the hook's 4th arg (prefetch) is the VIEW-level route-active flag, distinct from
+  // checksActive (3rd arg): the initial check-runs fetch fires while the user is still on
+  // Overview, but never for keep-alive background tabs.
+  test('wires useCheckRuns with checksActive and the view-level prefetch flag', () => {
+    renderPrDetailView({ prRef: { owner: 'acme', repo: 'api', number: 7 } });
+    expect(checksArgs.current[1]).toBe(PR_DETAIL.pr.headSha);
+    expect(checksArgs.current[2]).toBe(false); // Overview shown → checks sub-tab inactive
+    expect(checksArgs.current[3]).toBe(true); // view active → prefetch on
+  });
+
+  test('prefetch flag is false for an inactive (keep-alive background) view', () => {
+    renderPrDetailView({ prRef: { owner: 'acme', repo: 'api', number: 7 }, active: false });
+    expect(checksArgs.current[3]).toBe(false);
   });
 
   // #127 — the lg author avatar renders in the PR header (the only render site
