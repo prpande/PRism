@@ -596,9 +596,7 @@ describe('useCheckRuns prefetch (#743)', () => {
     // Non-terminal list — the POLL path would keep fetching; prefetch must not.
     const spy = vi
       .spyOn(api, 'getCheckRuns')
-      .mockResolvedValue(
-        resp({ checks: [mkCheck({ status: 'in-progress', conclusion: null })] }),
-      );
+      .mockResolvedValue(resp({ checks: [mkCheck({ status: 'in-progress', conclusion: null })] }));
     const { result } = renderHook(() => useCheckRuns(PR, SHA, false, true));
     await advance(DWELL);
     expect(spy).toHaveBeenCalledTimes(1);
@@ -662,11 +660,13 @@ describe('useCheckRuns prefetch (#743)', () => {
   });
 
   it('activation after a successful prefetch keeps the list, revalidates, and polls', async () => {
-    const spy = vi.spyOn(api, 'getCheckRuns').mockImplementation((_pr, sha) =>
-      Promise.resolve(
-        resp({ headSha: sha, checks: [mkCheck({ status: 'in-progress', conclusion: null })] }),
-      ),
-    );
+    const spy = vi
+      .spyOn(api, 'getCheckRuns')
+      .mockImplementation((_pr, sha) =>
+        Promise.resolve(
+          resp({ headSha: sha, checks: [mkCheck({ status: 'in-progress', conclusion: null })] }),
+        ),
+      );
     const { result, rerender } = renderHook(({ a }) => useCheckRuns(PR, SHA, a, true), {
       initialProps: { a: false },
     });

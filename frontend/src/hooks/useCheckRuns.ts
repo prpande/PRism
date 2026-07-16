@@ -6,6 +6,10 @@ import type { CheckRun, DegradedReason, PrReference } from '../api/types';
 
 const POLL_MS = 15_000;
 const LATE_REGISTRATION_MS = 120_000; // ~2 min re-poll window on a still-empty list
+// #743 — dwell before an eager prefetch issues its request. Rapid tab-switch drive-bys cancel
+// the pending timer at zero API cost, and the single attempt per head is only burned once a
+// request actually starts (also keeps dev StrictMode's mount→unmount→mount from consuming it).
+const PREFETCH_DWELL_MS = 300;
 // Bounded WALL-CLOCK deadline (from arm time) that keeps the loop alive after a rerequest so
 // the re-run's check is picked up even on an all-terminal list. NOT visible-time and NOT
 // re-armed on focus: the loop is frozen while hidden anyway, and a fixed deadline guarantees
@@ -28,6 +32,11 @@ export interface CheckRunsResult {
   refetch?: () => void; // off-timer poll, no loading flash
   armRerunWatch?: (checkRunId: number) => void; // keep polling for a rerequested check
   rerunPendingFor?: number | null; // which checkRunId is being watched (reactive)
+  // #743 — last known list, surviving series (headSha) transitions so the tab-strip glyph
+  // holds the prior head's verdict instead of blank-flickering on every push; replaced as
+  // soon as the new head's first result lands. Optional for the same reason as the rerun
+  // members: ~10 test files build this result inline for tabs that never touch the glyph.
+  glyphChecks?: CheckRun[];
 }
 
 const isNonTerminal = (c: CheckRun) => c.status === 'queued' || c.status === 'in-progress';
@@ -36,6 +45,7 @@ export function useCheckRuns(
   prRef: PrReference,
   headSha: string | undefined,
   active: boolean,
+  prefetch = false,
 ): CheckRunsResult {
   const [status, setStatus] = useState<CheckRunsResult['status']>('idle');
   const [degraded, setDegraded] = useState<DegradedReason>('none');
@@ -57,8 +67,39 @@ export function useCheckRuns(
   // Rerun-watch state read inside the tick closure (refs, fresh across renders).
   const watchedIdRef = useRef<number | null>(null);
   const watchUntilRef = useRef<number>(0);
+  // #743 — glyph continuity: mirrors `checks` on every successful write but is NOT cleared by
+  // the series transition, so the tab-strip glyph holds the prior head's verdict until the new
+  // head's first result lands.
+  const glyphChecksRef = useRef<CheckRun[] | undefined>(undefined);
+  // #743 — single-flight prefetch gate, SHA-keyed. Marked when a request is ISSUED (prefetch
+  // dwell elapsed, or a poll tick succeeded) and never unmarked: one issued request per head,
+  // full stop. A new head invalidates it naturally; no reset in the series block needed.
+  const prefetchedShaRef = useRef<string | undefined>(undefined);
+  // #743 — activation-edge detector for the poll effect (false→true transitions only; nonce
+  // re-runs while active do not count as a new activation).
+  const wasActiveRef = useRef(false);
 
   const refKey = `${prRef.owner}/${prRef.repo}/${prRef.number}`;
+
+  // Series identity transition, shared by the poll effect and the prefetch effect (#743) so a
+  // prefetched series is recognized (not cleared) when the tab activates. New SHA: clear the
+  // prior head's verdict, reset the degraded banner, (re)open the late-registration window,
+  // and drop any in-flight rerun-watch (its checkRunId belongs to the old series). A same-SHA
+  // call is a no-op (stale-while-revalidate preserves the last list). `glyphChecksRef`
+  // deliberately survives the transition (glyph continuity).
+  const beginSeriesIfNew = (sha: string) => {
+    if (seriesShaRef.current === sha) return;
+    seriesShaRef.current = sha;
+    windowOpenedAtRef.current = Date.now();
+    setChecks([]);
+    checksRef.current = [];
+    hadSuccessRef.current = false;
+    setDegraded('none');
+    setStatus('loading');
+    watchedIdRef.current = null;
+    watchUntilRef.current = 0;
+    setRerunPendingFor(null);
+  };
 
   const retry = useCallback(() => {
     setStatus('loading');
@@ -80,23 +121,28 @@ export function useCheckRuns(
   }, []);
 
   useEffect(() => {
+    if (!active) wasActiveRef.current = false;
     const gateOpen = active && headSha != null && document.visibilityState === 'visible';
     if (!gateOpen) return;
+    const isActivationEdge = !wasActiveRef.current;
+    wasActiveRef.current = true;
 
-    // New SHA series: clear the prior head's verdict, reset the degraded banner, (re)open the
-    // late-registration window, and drop any in-flight rerun-watch (its checkRunId belongs to
-    // the old series). A same-SHA re-run preserves the last list (stale-while-revalidate).
-    if (seriesShaRef.current !== headSha) {
-      seriesShaRef.current = headSha;
-      windowOpenedAtRef.current = Date.now();
-      setChecks([]);
-      checksRef.current = [];
-      hadSuccessRef.current = false;
-      setDegraded('none');
-      setStatus('loading');
-      watchedIdRef.current = null;
-      watchUntilRef.current = 0;
-      setRerunPendingFor(null);
+    beginSeriesIfNew(headSha!);
+
+    // #743 — a prefetch may have established this series minutes before the user actually
+    // looks at the tab. On the activation edge (only — nonce re-runs don't re-arm):
+    //  - a still-empty list gets its late-registration grace re-anchored to activation time,
+    //    so a late visitor keeps the full ~2-min re-poll window instead of inheriting an
+    //    expired one;
+    //  - a series whose prefetch failed cold (no success yet) resets to 'loading' so the
+    //    first visit renders the normal skeleton→result sequence, never an error-first mount.
+    if (isActivationEdge) {
+      if (checksRef.current.length === 0) {
+        windowOpenedAtRef.current = Date.now();
+      }
+      if (!hadSuccessRef.current) {
+        setStatus('loading');
+      }
     }
 
     let cancelled = false;
@@ -141,6 +187,7 @@ export function useCheckRuns(
         const res = await getCheckRuns(prRef, headSha!, ctrl.signal);
         if (cancelled || res.headSha !== headSha) return; // cross-series backstop
         hadSuccessRef.current = true;
+        prefetchedShaRef.current = headSha; // #743 — a poll success closes the prefetch gate
         setDegraded(res.degraded);
         // updateRerunWatch first — it may clear the watch (a transition or the wall-clock
         // expiry), which gates the hold-cached decision immediately below.
@@ -155,6 +202,7 @@ export function useCheckRuns(
         if (!holdCached) {
           setChecks(res.checks);
           checksRef.current = res.checks;
+          glyphChecksRef.current = res.checks;
           setStatus(res.checks.length === 0 ? 'empty' : 'ok');
         }
         if (shouldKeepPolling(res.checks)) {
@@ -221,5 +269,90 @@ export function useCheckRuns(
     // eslint-disable-next-line react-hooks/exhaustive-deps -- refKey captures prRef's identity
   }, [active, headSha, refKey, retryNonce, refetchNonce]);
 
-  return { status, degraded, checks, retry, refetch, armRerunWatch, rerunPendingFor };
+  // #743 — eager one-shot prefetch: fire the initial fetch while the PR-detail view is open on
+  // any sub-tab, so the first Checks visit (and the tab-strip glyph) has data. Strictly
+  // best-effort and strictly bounded: a dwell timer precedes the request (drive-by view flips
+  // cost nothing), the SHA-keyed gate is marked at request START and never unmarked (one issued
+  // request per head, no retry on abort or failure — recovery is tab activation, which behaves
+  // like today's cold open via the activation-edge reset above), and there is deliberately no
+  // poll loop here. Hidden documents defer the attempt to the first visibility return.
+  useEffect(() => {
+    if (!prefetch || active || headSha == null) return;
+    if (prefetchedShaRef.current === headSha) return;
+
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let visListener: (() => void) | null = null;
+    const ctrl = new AbortController();
+
+    const fire = async () => {
+      if (cancelled || prefetchedShaRef.current === headSha) return;
+      beginSeriesIfNew(headSha);
+      prefetchedShaRef.current = headSha;
+      try {
+        const res = await getCheckRuns(prRef, headSha, ctrl.signal);
+        if (cancelled || res.headSha !== headSha) return; // cross-series backstop
+        hadSuccessRef.current = true;
+        setDegraded(res.degraded);
+        setChecks(res.checks);
+        checksRef.current = res.checks;
+        glyphChecksRef.current = res.checks;
+        setStatus(res.checks.length === 0 ? 'empty' : 'ok');
+      } catch (err) {
+        if (cancelled || ctrl.signal.aborted) return;
+        setDegraded(
+          err instanceof ApiError && (err.status === 401 || err.status === 403)
+            ? 'auth'
+            : 'transient',
+        );
+        // Mirrors tick()'s catch: the warm arm should be unreachable here (a poll success
+        // marks the gate, so a warm series never prefetches), but keeping the branch
+        // structure identical guards that invariant if it ever shifts.
+        if (!hadSuccessRef.current) {
+          setStatus('error');
+        } else {
+          setStatus(checksRef.current.length === 0 ? 'empty' : 'ok');
+        }
+      }
+    };
+
+    const armDwell = () => {
+      timer = setTimeout(() => void fire(), PREFETCH_DWELL_MS);
+    };
+
+    if (document.visibilityState === 'visible') {
+      armDwell();
+    } else {
+      // Opened hidden (app launched minimized / backgrounded during load): one-shot,
+      // self-removing listener starts the dwell on the first return to visibility.
+      visListener = () => {
+        if (document.visibilityState !== 'visible') return;
+        document.removeEventListener('visibilitychange', visListener!);
+        visListener = null;
+        if (!cancelled) armDwell();
+      };
+      document.addEventListener('visibilitychange', visListener);
+    }
+
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+      if (visListener) document.removeEventListener('visibilitychange', visListener);
+      ctrl.abort();
+    };
+    // refKey is the stable string proxy for prRef's primitives; beginSeriesIfNew is
+    // recreated per render but only closes over stable refs/setters.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- refKey captures prRef's identity
+  }, [prefetch, active, headSha, refKey]);
+
+  return {
+    status,
+    degraded,
+    checks,
+    retry,
+    refetch,
+    armRerunWatch,
+    rerunPendingFor,
+    glyphChecks: glyphChecksRef.current,
+  };
 }
