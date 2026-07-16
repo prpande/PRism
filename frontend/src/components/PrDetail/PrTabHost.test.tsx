@@ -377,7 +377,10 @@ describe('parsePrRoute', () => {
   // /api/pr/{owner}/{repo}/... calls.
   test.each([
     '/pr/bad%20owner/api/7', // percent-encoded space
-    '/pr/acme/re#po/7', // illegal punctuation
+    // NOTE: a raw '#' never reaches parsePrRoute — the history library splits the hash off
+    // before pathname parsing (a real '#' arrives percent-encoded, like %23 below). Cases here
+    // are all reachable pathnames.
+    '/pr/acme/re(po)/7', // illegal punctuation that survives URL parsing
     '/pr/acme/..%2Fapi/7', // encoded traversal
     '/pr/../api/7', // dot-dot owner segment
     '/pr/acme/../7', // dot-dot repo segment
