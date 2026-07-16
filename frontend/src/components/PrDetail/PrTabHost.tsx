@@ -13,18 +13,35 @@ import { ErrorModal } from '../ErrorModal';
 // PR stays mounted, switching tabs (or navigating away and back) preserves each
 // view's sub-tab state, scroll position, and in-flight composer drafts — the
 // route table no longer owns PR-detail lifecycle.
-export function parsePrRoute(
-  pathname: string,
-): { ref: PrReference; valid: boolean; subTab: PrTabId } | null {
+// #144 — GitHub name grammar for owner/repo path segments (letters, digits, dot, dash,
+// underscore), with the `.`/`..` directory segments excluded so a malformed URL fails fast
+// here instead of flowing into /api/pr/{owner}/{repo}/... route matching. Deliberately a
+// superset of github.com's exact owner rules (which forbid leading/trailing hyphens etc.):
+// the goal is rejecting clearly-invalid segments, not replicating every hosting variant's
+// naming policy — GitHub's API is the authority for names that pass this guard.
+const NAME_SEGMENT = /^[A-Za-z0-9._-]+$/;
+const isValidNameSegment = (seg: string) => NAME_SEGMENT.test(seg) && seg !== '.' && seg !== '..';
+
+export function parsePrRoute(pathname: string): {
+  ref: PrReference;
+  valid: boolean;
+  subTab: PrTabId;
+  invalidReason?: 'name' | 'number';
+} | null {
   const m = pathname.match(/^\/pr\/([^/]+)\/([^/]+)\/([^/]+)(?:\/([^/]+))?/);
   if (!m) return null;
+  const nameValid = isValidNameSegment(m[1]) && isValidNameSegment(m[2]);
   // Require the number segment to be plain decimal digits. Number() alone is
   // too permissive for a path segment: it would silently accept hex ("0x1f"→31),
   // exponent ("1e3"→1000), and whitespace forms, mapping a malformed URL onto a
   // real PR. The digit guard rejects those; "0"/"00" are excluded via > 0 since
   // PR numbers are 1-based. ("042" still normalizes to 42, matching GitHub.)
   const seg3 = m[3];
-  const valid = /^\d+$/.test(seg3) && Number(seg3) > 0;
+  const numberValid = /^\d+$/.test(seg3) && Number(seg3) > 0;
+  const valid = nameValid && numberValid;
+  // 'name' wins the reason when both are malformed — the URL is garbage either way, and the
+  // name message describes the earlier segment the user will look at first.
+  const invalidReason = valid ? undefined : !nameValid ? ('name' as const) : ('number' as const);
   const number = Number(seg3);
   const seg = m[4];
   const subTab: PrTabId =
@@ -35,7 +52,7 @@ export function parsePrRoute(
         : seg === 'drafts'
           ? 'drafts'
           : 'overview';
-  return { ref: { owner: m[1], repo: m[2], number }, valid, subTab };
+  return { ref: { owner: m[1], repo: m[2], number }, valid, subTab, invalidReason };
 }
 
 export function PrTabHost() {
@@ -75,7 +92,11 @@ export function PrTabHost() {
         <ErrorModal
           open
           title="Invalid PR reference"
-          message="The PR number must be a positive integer."
+          message={
+            route.invalidReason === 'name'
+              ? 'The repository in the URL is not a valid owner/repo pair.'
+              : 'The PR number must be a positive integer.'
+          }
           dismissible
           onClose={() => navigate('/')}
           actions={
