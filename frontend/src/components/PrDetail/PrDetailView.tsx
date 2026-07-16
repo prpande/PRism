@@ -290,8 +290,16 @@ export function PrDetailView({
   const effectiveSubTab: PrTabId = subTab === 'hotspots' && !fileFocusEnabled ? 'overview' : subTab;
 
   const checksActive = active && effectiveSubTab === 'checks';
-  const checks = useCheckRuns(prRef, data?.pr.headSha, checksActive);
-  const checksDerived = useMemo(() => checksGlyphState(checks.checks), [checks.checks]);
+  // #743 — 4th arg (prefetch) is the VIEW-level route-active flag: the initial check-runs
+  // fetch fires while the user is still on Overview/Files, but keep-alive background tabs
+  // never prefetch. The poll loop stays gated on checksActive. The glyph reads glyphChecks
+  // (falls back to checks for the ~10 test stubs that build the result inline) so it holds
+  // the prior head's verdict through a push instead of blank-flickering.
+  const checks = useCheckRuns(prRef, data?.pr.headSha, checksActive, active);
+  const checksDerived = useMemo(
+    () => checksGlyphState(checks.glyphChecks ?? checks.checks),
+    [checks.glyphChecks, checks.checks],
+  );
 
   // Deep-link navigation intent (spec §8). HotspotsTab calls requestFileView(path):
   // switch to Files and stash the path; FilesTab consumes pendingFilePath (resets

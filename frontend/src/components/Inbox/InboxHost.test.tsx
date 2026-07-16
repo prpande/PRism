@@ -6,6 +6,18 @@ import { MemoryRouter, useNavigate } from 'react-router-dom';
 // unmount, the `active` prop) independent of the page's data hooks. The stub
 // surfaces the `active` prop it receives and a stable DOM node we can identity-
 // check across navigation to prove the host hides (never remounts) the page.
+// #743 — stub the checks hook: PrDetailView's eager check-runs prefetch would otherwise
+// issue a request ~300ms after mount and land an un-act()ed state update in this file's
+// previously-inert render trees.
+vi.mock('../../hooks/useCheckRuns', () => ({
+  useCheckRuns: () => ({
+    status: 'idle' as const,
+    degraded: 'none' as const,
+    checks: [],
+    retry: () => {},
+  }),
+}));
+
 vi.mock('../../pages/InboxPage', () => ({
   InboxPage: ({ active, revalidateNonce }: { active?: boolean; revalidateNonce?: number }) => (
     <div

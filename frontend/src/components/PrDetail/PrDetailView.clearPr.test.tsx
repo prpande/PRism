@@ -23,6 +23,18 @@ const PR_DETAIL = makePrDetailDto({
   }),
 });
 
+// #743 — stub the checks hook: PrDetailView's eager check-runs prefetch would otherwise
+// issue a request ~300ms after mount and land an un-act()ed state update in this file's
+// previously-inert render trees.
+vi.mock('../../hooks/useCheckRuns', () => ({
+  useCheckRuns: () => ({
+    status: 'idle' as const,
+    degraded: 'none' as const,
+    checks: [],
+    retry: () => {},
+  }),
+}));
+
 vi.mock('../../hooks/usePrDetail', () => ({
   usePrDetail: () => ({
     data: PR_DETAIL,
