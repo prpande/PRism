@@ -5,6 +5,7 @@ import {
   setupAndOpenHandoffParityFixture,
   setupAndOpenHandoffParityFixtureWithStaleDraft,
 } from './helpers/parity-fixture';
+import { expectVisual } from './helpers/visual';
 
 // Three parity tests need a deterministic aiPreview=false to keep their
 // baselines stable: resetBackendState in the beforeEach hook uses an
@@ -128,7 +129,7 @@ test.describe('parity baselines — Inbox', () => {
     // that label, so role-scoping resolves to exactly one element.
     await page.getByRole('button', { name: /Review requested/ }).waitFor({ timeout: 45_000 });
     await page.addStyleTag({ content: KILL_ANIMATIONS_CSS });
-    await expect(page.locator('main')).toHaveScreenshot('inbox.png', SCREENSHOT_OPTS);
+    await expectVisual(page.locator('main'), 'inbox.png', SCREENSHOT_OPTS);
   });
 
   test('inbox-activity-rail', async ({ page }) => {
@@ -167,7 +168,7 @@ test.describe('parity baselines — Inbox', () => {
     const rail = page.locator('[data-testid="activity-rail"]');
     await rail.waitFor();
     await page.addStyleTag({ content: KILL_ANIMATIONS_CSS });
-    await expect(rail).toHaveScreenshot('inbox-activity-rail.png', SCREENSHOT_OPTS);
+    await expectVisual(rail, 'inbox-activity-rail.png', SCREENSHOT_OPTS);
   });
 });
 
@@ -178,7 +179,7 @@ test.describe('parity baselines — Setup', () => {
     const card = page.locator('[data-testid="setup-card"]');
     await card.waitFor();
     await page.addStyleTag({ content: KILL_ANIMATIONS_CSS });
-    await expect(card).toHaveScreenshot('setup-card.png', SCREENSHOT_OPTS);
+    await expectVisual(card, 'setup-card.png', SCREENSHOT_OPTS);
   });
 });
 
@@ -191,7 +192,8 @@ test.describe('parity baselines — PR Detail', () => {
     await page.setViewportSize(VIEWPORT);
     await setupAndOpenHandoffParityFixture(page);
     await page.addStyleTag({ content: KILL_ANIMATIONS_CSS });
-    await expect(page.locator('[data-testid="pr-header"]')).toHaveScreenshot(
+    await expectVisual(
+      page.locator('[data-testid="pr-header"]'),
       'pr-detail-header.png',
       SCREENSHOT_OPTS,
     );
@@ -207,7 +209,7 @@ test.describe('parity baselines — PR Detail', () => {
     // screenshotting so the capture isn't racing the feed's initial fetch.
     await page.getByTestId('timeline-comment').first().waitFor();
     await page.addStyleTag({ content: KILL_ANIMATIONS_CSS });
-    await expect(overview).toHaveScreenshot('pr-detail-overview.png', SCREENSHOT_OPTS);
+    await expectVisual(overview, 'pr-detail-overview.png', SCREENSHOT_OPTS);
   });
 
   test('pr-detail-files-tree', async ({ page }) => {
@@ -227,7 +229,7 @@ test.describe('parity baselines — PR Detail', () => {
     // post-selection (the row's tinted background is the new baseline).
     await page.locator('[data-testid="files-tab-tree-row"][data-selected="true"]').waitFor();
     await page.addStyleTag({ content: KILL_ANIMATIONS_CSS });
-    await expect(tree).toHaveScreenshot('pr-detail-files-tree.png', SCREENSHOT_OPTS);
+    await expectVisual(tree, 'pr-detail-files-tree.png', SCREENSHOT_OPTS);
   });
 
   test('pr-detail-files-diff', async ({ page }) => {
@@ -261,7 +263,7 @@ test.describe('parity baselines — PR Detail', () => {
     // (hunk-header) exists before all insert rows are laid out.
     await diff.locator('tr.diff-line--insert').nth(7).waitFor();
     await page.addStyleTag({ content: KILL_ANIMATIONS_CSS });
-    await expect(diff).toHaveScreenshot('pr-detail-files-diff.png', SCREENSHOT_OPTS);
+    await expectVisual(diff, 'pr-detail-files-diff.png', SCREENSHOT_OPTS);
   });
 
   test('pr-detail-inline-composer', async ({ page }) => {
@@ -287,7 +289,7 @@ test.describe('parity baselines — PR Detail', () => {
       .getByRole('textbox')
       .fill('Pull the retry budget into a const so it is testable.');
     await page.addStyleTag({ content: KILL_ANIMATIONS_CSS });
-    await expect(composer).toHaveScreenshot('pr-detail-inline-composer.png', SCREENSHOT_OPTS);
+    await expectVisual(composer, 'pr-detail-inline-composer.png', SCREENSHOT_OPTS);
   });
 
   test('split mode uses 4-column <tr> layout; unified collapses to 3-column layout', async ({
@@ -359,7 +361,7 @@ test.describe('parity baselines — PR Detail', () => {
     const drafts = page.locator('[data-testid="drafts-tab-root"]');
     await drafts.waitFor();
     await page.addStyleTag({ content: KILL_ANIMATIONS_CSS });
-    await expect(drafts).toHaveScreenshot('pr-detail-drafts.png', SCREENSHOT_OPTS);
+    await expectVisual(drafts, 'pr-detail-drafts.png', SCREENSHOT_OPTS);
   });
 
   test('pr-detail-reconciliation-panel', async ({ page }) => {
@@ -381,7 +383,7 @@ test.describe('parity baselines — PR Detail', () => {
     const panel = page.locator('[data-testid="unresolved-panel"]');
     await panel.waitFor();
     await page.addStyleTag({ content: KILL_ANIMATIONS_CSS });
-    await expect(panel).toHaveScreenshot('pr-detail-reconciliation-panel.png', SCREENSHOT_OPTS);
+    await expectVisual(panel, 'pr-detail-reconciliation-panel.png', SCREENSHOT_OPTS);
   });
 });
 
@@ -453,7 +455,8 @@ test.describe('parity baselines — app chrome', () => {
     // deterministically (avoids a race where the shot lands before setTabState).
     await page.locator('[data-testid="pr-tabstrip"] [data-pr-state]').first().waitFor();
     await page.addStyleTag({ content: KILL_ANIMATIONS_CSS });
-    await expect(page.locator('[data-testid="pr-tabstrip"]')).toHaveScreenshot(
+    await expectVisual(
+      page.locator('[data-testid="pr-tabstrip"]'),
       'app-chrome-tabstrip.png',
       SCREENSHOT_OPTS,
     );
@@ -501,7 +504,8 @@ test.describe('parity baselines — PR Detail — whole-file', () => {
     await expect(page.locator('tr[data-fill="true"]')).toHaveCount(1);
 
     await page.addStyleTag({ content: KILL_ANIMATIONS_CSS });
-    await expect(page.locator('[data-testid="diff-pane"]')).toHaveScreenshot(
+    await expectVisual(
+      page.locator('[data-testid="diff-pane"]'),
       'pr-detail-files-diff-whole-file.png',
       SCREENSHOT_OPTS,
     );
@@ -627,6 +631,6 @@ test.describe('parity baselines — Ask AI', () => {
     // replies have rendered and the drawer is fully docked, so freezing here
     // captures the steady state.
     await page.addStyleTag({ content: KILL_ANIMATIONS_CSS });
-    await expect(drawer).toHaveScreenshot('ask-ai-drawer.png', SCREENSHOT_OPTS);
+    await expectVisual(drawer, 'ask-ai-drawer.png', SCREENSHOT_OPTS);
   });
 });
