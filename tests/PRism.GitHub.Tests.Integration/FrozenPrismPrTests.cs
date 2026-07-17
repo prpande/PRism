@@ -77,7 +77,8 @@ public class FrozenPrismPrTests
         var snap = await _fixture.Loader.LoadAsync(Ref(pr19), CancellationToken.None);
         snap.Should().NotBeNull();
         var actualAnchors = snap!.Detail.ReviewComments
-            .Select(t => new CommentAnchor(t.FilePath, t.LineNumber))
+            .Where(t => t.LineNumber is not null)
+            .Select(t => new CommentAnchor(t.FilePath, t.LineNumber!.Value))
             .ToHashSet();
 
         // Subset assertion as a single set comparison so a failure surfaces EVERY missing

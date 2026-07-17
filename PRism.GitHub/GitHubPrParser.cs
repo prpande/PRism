@@ -211,13 +211,20 @@ internal static class GitHubPrParser
         {
             var threadId = t.TryGetProperty("id", out var ti) ? ti.GetString() ?? "" : "";
             var path = t.TryGetProperty("path", out var p) ? p.GetString() ?? "" : "";
-            var line = t.TryGetProperty("line", out var ln) && ln.ValueKind == JsonValueKind.Number ? ln.GetInt32() : 0;
+            int? line = t.TryGetProperty("line", out var ln) && ln.ValueKind == JsonValueKind.Number ? ln.GetInt32() : null;
+            var isOutdated = t.TryGetProperty("isOutdated", out var od) && od.ValueKind == JsonValueKind.True;
+            int? originalLine = t.TryGetProperty("originalLine", out var ol) && ol.ValueKind == JsonValueKind.Number ? ol.GetInt32() : null;
+            int? originalStartLine = t.TryGetProperty("originalStartLine", out var osl) && osl.ValueKind == JsonValueKind.Number ? osl.GetInt32() : null;
+            var subjectType = t.TryGetProperty("subjectType", out var st) && st.ValueKind == JsonValueKind.String ? st.GetString() ?? "LINE" : "LINE";
             var resolved = t.TryGetProperty("isResolved", out var ir) && ir.ValueKind == JsonValueKind.True;
             var comments = new List<ReviewCommentDto>();
+            string? diffHunk = null;
+            long? reviewDatabaseId = null;
             if (t.TryGetProperty("comments", out var cs) &&
                 cs.TryGetProperty("nodes", out var cnodes) &&
                 cnodes.ValueKind == JsonValueKind.Array)
             {
+                var isFirst = true;
                 foreach (var cn in cnodes.EnumerateArray())
                 {
                     var cid = cn.TryGetProperty("id", out var idEl) ? idEl.GetString() ?? "" : "";
@@ -230,9 +237,23 @@ internal static class GitHubPrParser
                     if (cn.TryGetProperty("lastEditedAt", out var le) && le.ValueKind != JsonValueKind.Null)
                         edited = le.GetDateTimeOffset();
                     comments.Add(new ReviewCommentDto(cid, cauthor, cts, cbody, edited, cavatar, cDatabaseId));
+
+                    if (isFirst)
+                    {
+                        if (cn.TryGetProperty("diffHunk", out var dh) && dh.ValueKind == JsonValueKind.String)
+                            diffHunk = dh.GetString();
+                        if (cn.TryGetProperty("pullRequestReview", out var prr) && prr.ValueKind == JsonValueKind.Object &&
+                            prr.TryGetProperty("databaseId", out var rdb) && rdb.ValueKind == JsonValueKind.Number)
+                            reviewDatabaseId = rdb.GetInt64();
+                        isFirst = false;
+                    }
                 }
             }
-            result.Add(new ReviewThreadDto(threadId, path, line, IsResolved: resolved, Comments: comments));
+            result.Add(new ReviewThreadDto(
+                threadId, path, line,
+                IsOutdated: isOutdated, OriginalLine: originalLine, OriginalStartLine: originalStartLine,
+                SubjectType: subjectType, DiffHunk: diffHunk, ReviewDatabaseId: reviewDatabaseId,
+                IsResolved: resolved, Comments: comments));
         }
         return result;
     }
