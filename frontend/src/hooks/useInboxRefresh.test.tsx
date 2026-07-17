@@ -1,9 +1,9 @@
 import { act, renderHook } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { useInboxRefresh } from '../src/hooks/useInboxRefresh';
-import { inboxApi } from '../src/api/inbox';
+import { useInboxRefresh } from './useInboxRefresh';
+import { inboxApi } from '../api/inbox';
 
-vi.mock('../src/api/inbox', () => ({ inboxApi: { refresh: vi.fn() } }));
+vi.mock('../api/inbox', () => ({ inboxApi: { refresh: vi.fn() } }));
 
 const refreshMock = vi.mocked(inboxApi.refresh);
 

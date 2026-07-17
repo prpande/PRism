@@ -2,8 +2,8 @@ import { describe, it, expect } from 'vitest';
 import {
   useCantEditRootBodyReason,
   type CantEditRootBodyReason,
-} from '../src/hooks/useCantEditRootBodyReason';
-import type { ComposerOwnerKey } from '../src/hooks/useDraftSession';
+} from './useCantEditRootBodyReason';
+import type { ComposerOwnerKey } from './useDraftSession';
 
 // useCantEditRootBodyReason is a pure function — no React context needed.
 // Call it directly rather than via renderHook to keep tests lean.

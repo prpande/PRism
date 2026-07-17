@@ -1,13 +1,8 @@
 import { renderHook, waitFor, act } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { useDraftSession } from '../src/hooks/useDraftSession';
-import * as draftApi from '../src/api/draft';
-import type {
-  DraftCommentDto,
-  DraftReplyDto,
-  PrReference,
-  ReviewSessionDto,
-} from '../src/api/types';
+import { useDraftSession } from './useDraftSession';
+import * as draftApi from '../api/draft';
+import type { DraftCommentDto, DraftReplyDto, PrReference, ReviewSessionDto } from '../api/types';
 
 const ref: PrReference = { owner: 'octocat', repo: 'hello', number: 42 };
 

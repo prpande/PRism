@@ -1,8 +1,8 @@
 import { renderHook, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { jsonResponse } from './helpers/http';
-import { useFileDiff } from '../src/hooks/useFileDiff';
-import type { DiffDto, PrReference } from '../src/api/types';
+import { jsonResponse } from '../../__tests__/helpers/http';
+import { useFileDiff } from './useFileDiff';
+import type { DiffDto, PrReference } from '../api/types';
 
 const ref: PrReference = { owner: 'octocat', repo: 'hello', number: 42 };
 

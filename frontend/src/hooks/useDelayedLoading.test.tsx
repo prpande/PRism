@@ -1,6 +1,6 @@
 import { renderHook, act } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { useDelayedLoading } from '../src/hooks/useDelayedLoading';
+import { useDelayedLoading } from './useDelayedLoading';
 
 beforeEach(() => {
   vi.useFakeTimers();

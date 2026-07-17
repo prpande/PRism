@@ -1,6 +1,6 @@
 import { renderHook, act } from '@testing-library/react';
 import { describe, it, expect, vi } from 'vitest';
-import { useCheatsheetShortcut } from '../src/hooks/useCheatsheetShortcut';
+import { useCheatsheetShortcut } from './useCheatsheetShortcut';
 
 function fireKey(opts: KeyboardEventInit & { key: string }, target?: EventTarget) {
   const ev = new KeyboardEvent('keydown', { bubbles: true, cancelable: true, ...opts });

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { computeAnyOtherDraftsStaged } from '../src/hooks/useDraftSession';
-import type { DraftCommentDto, DraftReplyDto } from '../src/api/types';
+import { computeAnyOtherDraftsStaged } from './useDraftSession';
+import type { DraftCommentDto, DraftReplyDto } from '../api/types';
 
 const c = (id: string): DraftCommentDto => ({
   id,
