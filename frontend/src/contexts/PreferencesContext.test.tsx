@@ -1,12 +1,12 @@
 import { render, renderHook, screen, waitFor, act } from '@testing-library/react';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { apiClient } from '../src/api/client';
-import { PreferencesProvider } from '../src/contexts/PreferencesContext';
-import { usePreferences } from '../src/hooks/usePreferences';
-import type { PreferencesResponse } from '../src/api/types';
+import { apiClient } from '../api/client';
+import { PreferencesProvider } from './PreferencesContext';
+import { usePreferences } from '../hooks/usePreferences';
+import type { PreferencesResponse } from '../api/types';
 
 const showMock = vi.fn();
-vi.mock('../src/components/Toast', () => ({
+vi.mock('../components/Toast', () => ({
   useToast: () => ({ show: showMock, dismiss: vi.fn(), toasts: [] }),
 }));
 

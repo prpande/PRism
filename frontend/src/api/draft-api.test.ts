@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { jsonResponse } from './helpers/http';
+import { jsonResponse } from '../../__tests__/helpers/http';
 import {
   getDraft,
   getTabId,
@@ -7,8 +7,8 @@ import {
   sendPatch,
   serializePatch,
   __resetTabIdForTest,
-} from '../src/api/draft';
-import { ApiError } from '../src/api/client';
+} from './draft';
+import { ApiError } from './client';
 import type {
   NewDraftCommentPayload,
   NewDraftReplyPayload,
@@ -18,7 +18,7 @@ import type {
   ReviewSessionPatch,
   UpdateDraftCommentPayload,
   UpdateDraftReplyPayload,
-} from '../src/api/types';
+} from './types';
 
 const ref: PrReference = { owner: 'octocat', repo: 'hello', number: 42 };
 const PR_PATH = '/api/pr/octocat/hello/42';

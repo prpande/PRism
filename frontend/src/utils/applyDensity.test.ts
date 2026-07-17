@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import type { Density } from '../src/api/types';
-import { applyDensityToDocument } from '../src/utils/applyTheme';
+import type { Density } from '../api/types';
+import { applyDensityToDocument } from './applyTheme';
 
 describe('applyDensityToDocument', () => {
   beforeEach(() => {

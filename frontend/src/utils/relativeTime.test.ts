@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { formatAge } from '../src/utils/relativeTime';
+import { formatAge } from './relativeTime';
 
 describe('formatAge', () => {
   afterEach(() => {

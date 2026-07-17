@@ -1,6 +1,6 @@
 import { render } from '@testing-library/react';
 import { describe, it, expect } from 'vitest';
-import '../src/styles/tokens.css';
+import './tokens.css';
 
 describe('tokens', () => {
   it('exposes accent CSS variables on :root for indigo by default', () => {

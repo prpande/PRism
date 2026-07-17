@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { postMarkViewed } from '../src/api/markViewed';
-import { ApiError } from '../src/api/client';
-import type { PrReference } from '../src/api/types';
+import { postMarkViewed } from './markViewed';
+import { ApiError } from './client';
+import type { PrReference } from './types';
 
 const ref: PrReference = { owner: 'octocat', repo: 'hello', number: 42 };
 

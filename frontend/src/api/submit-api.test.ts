@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { jsonResponse } from './helpers/http';
+import { jsonResponse } from '../../__tests__/helpers/http';
 import {
   discardAllDrafts,
   discardForeignPendingReview,
@@ -7,9 +7,9 @@ import {
   resumeForeignPendingReview,
   submitReview,
   SubmitConflictError,
-} from '../src/api/submit';
-import { __resetTabIdForTest } from '../src/api/draft';
-import type { PrReference } from '../src/api/types';
+} from './submit';
+import { __resetTabIdForTest } from './draft';
+import type { PrReference } from './types';
 
 const ref: PrReference = { owner: 'octocat', repo: 'hello', number: 42 };
 const PR_PATH = '/api/pr/octocat/hello/42';
