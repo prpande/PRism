@@ -1,9 +1,9 @@
 import { renderHook, act } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { ReactNode } from 'react';
-import { useInboxUpdates } from '../src/hooks/useInboxUpdates';
-import { EventStreamProvider } from '../src/hooks/useEventSource';
-import { FakeEventSource, installFakeEventSource } from './helpers/fakeEventSource';
+import { useInboxUpdates } from './useInboxUpdates';
+import { EventStreamProvider } from './useEventSource';
+import { FakeEventSource, installFakeEventSource } from '../../__tests__/helpers/fakeEventSource';
 
 const wrapper = ({ children }: { children: ReactNode }) => (
   <EventStreamProvider>{children}</EventStreamProvider>

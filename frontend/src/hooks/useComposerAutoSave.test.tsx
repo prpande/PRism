@@ -5,9 +5,9 @@ import {
   COMPOSER_DEBOUNCE_MS,
   type ComposerAnchor,
   type UseComposerAutoSaveProps,
-} from '../src/hooks/useComposerAutoSave';
-import * as draftApi from '../src/api/draft';
-import type { PrReference } from '../src/api/types';
+} from './useComposerAutoSave';
+import * as draftApi from '../api/draft';
+import type { PrReference } from '../api/types';
 
 const ref: PrReference = { owner: 'octocat', repo: 'hello', number: 42 };
 

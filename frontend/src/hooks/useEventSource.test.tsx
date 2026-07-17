@@ -1,8 +1,8 @@
 import { renderHook, waitFor } from '@testing-library/react';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import type { ReactNode } from 'react';
-import { EventStreamProvider, useEventSource } from '../src/hooks/useEventSource';
-import { FakeEventSource, installFakeEventSource } from './helpers/fakeEventSource';
+import { EventStreamProvider, useEventSource } from './useEventSource';
+import { FakeEventSource, installFakeEventSource } from '../../__tests__/helpers/fakeEventSource';
 
 beforeEach(() => {
   installFakeEventSource();

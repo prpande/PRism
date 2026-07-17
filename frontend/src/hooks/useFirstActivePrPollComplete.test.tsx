@@ -1,12 +1,12 @@
 import { renderHook, act, waitFor } from '@testing-library/react';
 import { describe, it, expect, beforeEach } from 'vitest';
 import type { ReactNode } from 'react';
-import { useFirstActivePrPollComplete } from '../src/hooks/useFirstActivePrPollComplete';
-import { EventStreamProvider } from '../src/hooks/useEventSource';
-import { __resetTabIdForTest } from '../src/api/draft';
-import type { PrReference } from '../src/api/types';
-import type { PrUpdatedEvent } from '../src/api/events';
-import { FakeEventSource, installFakeEventSource } from './helpers/fakeEventSource';
+import { useFirstActivePrPollComplete } from './useFirstActivePrPollComplete';
+import { EventStreamProvider } from './useEventSource';
+import { __resetTabIdForTest } from '../api/draft';
+import type { PrReference } from '../api/types';
+import type { PrUpdatedEvent } from '../api/events';
+import { FakeEventSource, installFakeEventSource } from '../../__tests__/helpers/fakeEventSource';
 
 beforeEach(() => {
   installFakeEventSource();

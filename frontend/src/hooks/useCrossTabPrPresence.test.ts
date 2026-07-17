@@ -1,8 +1,8 @@
 import { renderHook, act } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { useCrossTabPrPresence } from '../src/hooks/useCrossTabPrPresence';
-import { __resetTabIdForTest } from '../src/api/draft';
-import type { PrReference } from '../src/api/types';
+import { useCrossTabPrPresence } from './useCrossTabPrPresence';
+import { __resetTabIdForTest } from '../api/draft';
+import type { PrReference } from '../api/types';
 
 // Mounts a fresh hook with a distinct tab id (simulates a separate browser
 // tab). Each call resets the module-level _tabId so the next getTabId()
