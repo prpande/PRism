@@ -13,6 +13,7 @@ import type { PrReference } from './types';
 //   - github-forbidden       : 502 via MapGithubError (403 from GitHub)
 //   - github-unauthorized    : 502 via MapGithubError (401 from GitHub)
 //   - github-validation-error: 502 via MapGithubError (422 from GitHub)
+//   - github-not-found       : 404 via MapGithubError (404 from GitHub) — #466
 //   - github-network-error   : 502 via MapGithubError fallback + catch-all Exception
 //                              (also used as the client-side fallback for non-ApiError throws)
 export const KNOWN_POST_ROOT_COMMENT_ERROR_CODES = [
@@ -25,6 +26,7 @@ export const KNOWN_POST_ROOT_COMMENT_ERROR_CODES = [
   'github-forbidden',
   'github-unauthorized',
   'github-validation-error',
+  'github-not-found',
   'github-network-error',
 ] as const;
 
