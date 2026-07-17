@@ -209,7 +209,8 @@ public class PrRootCommentEndpointTests
         using var ctx = RootCommentTestContext.Create();
         await ctx.SeedSessionAsync("o", "r", 24, SessionWithRootDraft());
         // The issue-comment POST is REST, so a deleted PR surfaces as a genuine
-        // HttpRequestException(404) — the one live trigger for the mapper's new arm.
+        // HttpRequestException(404) — a live trigger for the mapper's new arm (inline
+        // review-comment creation is the other REST path that can 404).
         ctx.Submitter.InjectFailure(new HttpRequestException(
             "GitHub issue comment POST HTTP 404 Not Found: {\"message\":\"Not Found\"}",
             null, System.Net.HttpStatusCode.NotFound));

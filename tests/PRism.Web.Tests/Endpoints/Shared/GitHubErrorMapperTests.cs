@@ -7,10 +7,12 @@ using Xunit;
 
 namespace PRism.Web.Tests.Endpoints;
 
-// #466 — GitHubErrorMapper previously flattened an upstream 404 (e.g. posting a comment
-// against a deleted file/thread) into the network-error default, showing "Couldn't reach
-// GitHub. Try again." for a resource that is definitively gone. These tests pin the
-// explicit not-found arm plus the pre-existing arms it must not disturb; the frontend
+// #466 — GitHubErrorMapper previously flattened an upstream HTTP 404 (a REST write
+// against a resource that is gone: issue comment on a deleted PR, inline review comment
+// whose target vanished) into the network-error default, showing "Couldn't reach GitHub.
+// Try again." for a definitively-gone resource. (GraphQL not-found surfaces as
+// GitHubGraphQLException, not an HTTP 404 — tracked separately in #778.) These tests pin
+// the explicit not-found arm plus the pre-existing arms it must not disturb; the frontend
 // branches on `code` and surfaces `message` verbatim, so both are contract.
 public class GitHubErrorMapperTests
 {

@@ -14,8 +14,10 @@ internal static class GitHubErrorMapper
                 ("github-unauthorized", "GitHub authentication failed. Reconnect your account."),
             HttpStatusCode.UnprocessableEntity =>
                 ("github-validation-error", "GitHub rejected the request as invalid."),
-            // #466 — a definitive upstream 404 (comment against a deleted file/thread, gone
-            // PR) must not read as a transient outage; "try again" invites futile retries.
+            // #466 — a definitive upstream 404 must not read as a transient outage; "try
+            // again" invites futile retries. Live sources are the REST write paths (issue
+            // comment on a deleted PR, inline review comment whose target is gone); GraphQL
+            // not-found surfaces as GitHubGraphQLException instead and is tracked in #778.
             HttpStatusCode.NotFound =>
                 ("github-not-found", "The resource was not found on GitHub."),
             _ => ("github-network-error", "Couldn't reach GitHub. Try again."),

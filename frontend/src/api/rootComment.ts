@@ -10,8 +10,8 @@ import type { PrReference } from './types';
 //   - no-root-draft      : 400, no PR-root draft exists
 //   - body-too-large     : 400, draft body exceeds GitHub limit
 //   - already-posted-body-mismatch : 409, draft was edited after first post
-//   - github-forbidden       : 502 via MapGithubError (403 from GitHub)
-//   - github-unauthorized    : 502 via MapGithubError (401 from GitHub)
+//   - github-forbidden       : 403 via MapGithubError (403 from GitHub; #605 item E)
+//   - github-unauthorized    : 401 via MapGithubError (401 from GitHub; #605 item E)
 //   - github-validation-error: 502 via MapGithubError (422 from GitHub)
 //   - github-not-found       : 404 via MapGithubError (404 from GitHub) — #466
 //   - github-network-error   : 502 via MapGithubError fallback + catch-all Exception

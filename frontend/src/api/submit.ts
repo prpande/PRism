@@ -179,8 +179,8 @@ export async function discardForeignPendingReview(
 // Reconciled against PrSubmitEndpoints.cs (Task 11):
 //   - unauthorized              : 403, not subscribed
 //   - pipeline-cancellation-timeout : 504, pipeline held lock beyond 30-second window
-//   - github-forbidden          : 502 via MapGithubError (403 from GitHub)
-//   - github-unauthorized       : 502 via MapGithubError (401 from GitHub)
+//   - github-forbidden          : 403 via MapGithubError (403 from GitHub; #605 item E)
+//   - github-unauthorized       : 401 via MapGithubError (401 from GitHub; #605 item E)
 //   - github-validation-error   : 502 via MapGithubError (422 from GitHub)
 //   - github-network-error      : 502 via MapGithubError fallback + catch-all Exception
 //                                 (also used as the client-side fallback for non-ApiError throws)
