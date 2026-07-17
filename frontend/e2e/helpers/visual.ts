@@ -18,6 +18,20 @@ import {
 // machine: it throws instead of skipping, so the visual suite can never go green while
 // silently verifying nothing. Specs may keep their own coarser gates (test.skip(!CI)
 // around whole visual describes); this guard is the floor, not a replacement for those.
+// The locator assertion's inline options type is the page one minus the two
+// page-only fields (Playwright exports no named type for it).
+type LocatorScreenshotOptions = Omit<PageAssertionsToHaveScreenshotOptions, 'clip' | 'fullPage'>;
+
+export async function expectVisual(
+  target: Page,
+  name: string,
+  options?: PageAssertionsToHaveScreenshotOptions,
+): Promise<void>;
+export async function expectVisual(
+  target: Locator,
+  name: string,
+  options?: LocatorScreenshotOptions,
+): Promise<void>;
 export async function expectVisual(
   target: Page | Locator,
   name: string,
@@ -37,5 +51,7 @@ export async function expectVisual(
         'Fix the CI platform; do not add per-platform baselines.',
     );
   }
-  await expect(target).toHaveScreenshot(name, options);
+  // The overloads above enforce per-target option shapes; the impl needs one static
+  // target type to call through (runtime dispatch is Playwright's).
+  await expect(target as Page).toHaveScreenshot(name, options);
 }
