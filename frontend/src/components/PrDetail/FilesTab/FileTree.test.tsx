@@ -1,4 +1,4 @@
-import { render, screen, fireEvent, within } from '@testing-library/react';
+import { render, screen, fireEvent, within, act } from '@testing-library/react';
 import { describe, it, expect, vi } from 'vitest';
 import { FileTree } from './FileTree';
 import { AI_TREE_ANALYZED_LABEL } from '../../Ai/aiStrings';
@@ -143,7 +143,7 @@ describe('FileTree', () => {
   });
 
   it('collapses and expands directories', () => {
-    render(
+    const { container } = render(
       <FileTree
         {...treeProps([file('src/a.ts'), file('src/b.ts')])}
         selectedPath={null}
@@ -156,7 +156,9 @@ describe('FileTree', () => {
       />,
     );
     expect(screen.getByText('a.ts')).toBeInTheDocument();
-    const toggle = screen.getByRole('button', { name: /toggle src/i });
+    // #200 — the chevron is a pointer-only decoration (aria-hidden, tabIndex -1),
+    // so it is unreachable by accessible role; query by class.
+    const toggle = container.querySelector('.file-tree-dir-toggle') as HTMLElement;
     fireEvent.click(toggle);
     expect(screen.queryByText('a.ts')).not.toBeInTheDocument();
     fireEvent.click(toggle);
@@ -255,7 +257,7 @@ describe('FileTree', () => {
   });
 
   it('renders an accent folder icon inside the directory toggle button', () => {
-    render(
+    const { container } = render(
       <FileTree
         {...treeProps([file('src/a.ts')])}
         selectedPath={null}
@@ -267,7 +269,7 @@ describe('FileTree', () => {
         aiPreview={false}
       />,
     );
-    const toggle = screen.getByRole('button', { name: 'Toggle src' });
+    const toggle = container.querySelector('.file-tree-dir-toggle') as HTMLElement;
     const folder = toggle.querySelector('.file-tree-folder-icon');
     expect(folder).toBeInTheDocument();
     expect(folder?.tagName.toLowerCase()).toBe('svg');
@@ -902,5 +904,178 @@ describe('FileTree full-row highlight (#513)', () => {
     const marked = Array.from(container.querySelectorAll(`[data-row-key="${dirKey}"]`));
     expect(marked.every((el) => el.getAttribute('data-row-selected') !== 'true')).toBe(true);
     expect(marked.some((el) => el.getAttribute('data-row-hovered') === 'true')).toBe(true);
+  });
+});
+
+// #200 — WAI-ARIA tree keyboard model on the flat row list. Visual row order for KB_FILES:
+//   src (dir, d0) → inner (dir, d1) → deep.ts (d2) → top.ts (d1) → a.ts (d0) → z.ts (d0)
+describe('FileTree keyboard navigation (#200)', () => {
+  const KB_FILES = [
+    { path: 'a.ts', status: 'modified' as const, hunks: [] },
+    { path: 'src/inner/deep.ts', status: 'modified' as const, hunks: [] },
+    { path: 'src/top.ts', status: 'modified' as const, hunks: [] },
+    { path: 'z.ts', status: 'modified' as const, hunks: [] },
+  ];
+
+  function renderKbTree(
+    over: { selectedPath?: string | null; onSelectFile?: (p: string) => void } = {},
+  ) {
+    return render(
+      <FileTree
+        {...treeProps(KB_FILES)}
+        selectedPath={over.selectedPath ?? null}
+        onSelectFile={over.onSelectFile ?? vi.fn()}
+        viewedPaths={new Set()}
+        onToggleViewed={vi.fn()}
+        focusEntries={null}
+        focusStatus="no-changes"
+        aiPreview={false}
+      />,
+    );
+  }
+
+  const row = (name: string) => screen.getByText(name).closest('[role="treeitem"]') as HTMLElement;
+  // Native .focus() (what a real click/tab produces) fires focusin synchronously, but
+  // the roving-stop setState it triggers flushes on React's schedule; act() forces the
+  // re-render browsers guarantee between discrete events, so the next keyDown sees the
+  // synced stop.
+  const focusEl = (el: HTMLElement) => act(() => el.focus());
+  const stops = (container: HTMLElement) =>
+    container.querySelectorAll('[role="treeitem"][tabindex="0"]').length;
+
+  it('directory rows carry the roving tabIndex (single tab stop, first row default)', () => {
+    const { container } = renderKbTree();
+    expect(row('src').getAttribute('tabindex')).toBe('0'); // no selection → first row
+    expect(row('inner').getAttribute('tabindex')).toBe('-1');
+    expect(row('a.ts').getAttribute('tabindex')).toBe('-1');
+    expect(stops(container)).toBe(1);
+  });
+
+  it('the selected file is the roving stop when nothing was keyboard-focused yet', () => {
+    const { container } = renderKbTree({ selectedPath: 'a.ts' });
+    expect(row('a.ts').getAttribute('tabindex')).toBe('0');
+    expect(stops(container)).toBe(1);
+  });
+
+  it('ArrowDown/ArrowUp traverse dirs and files in visual order without wrapping', () => {
+    renderKbTree();
+    const order = ['src', 'inner', 'deep.ts', 'top.ts', 'a.ts', 'z.ts'];
+    focusEl(row('src'));
+    for (const name of order.slice(1)) {
+      fireEvent.keyDown(document.activeElement!, { key: 'ArrowDown' });
+      expect(document.activeElement).toBe(row(name));
+    }
+    fireEvent.keyDown(document.activeElement!, { key: 'ArrowDown' }); // at the end
+    expect(document.activeElement).toBe(row('z.ts')); // no wrap
+    for (const name of order.slice(0, -1).reverse()) {
+      fireEvent.keyDown(document.activeElement!, { key: 'ArrowUp' });
+      expect(document.activeElement).toBe(row(name));
+    }
+    fireEvent.keyDown(document.activeElement!, { key: 'ArrowUp' }); // at the start
+    expect(document.activeElement).toBe(row('src')); // no wrap
+  });
+
+  it('ArrowRight expands a collapsed dir, then moves into it; no-op on files', () => {
+    renderKbTree();
+    focusEl(row('src'));
+    fireEvent.keyDown(row('src'), { key: 'ArrowLeft' }); // collapse src
+    expect(screen.queryByText('inner')).not.toBeInTheDocument();
+    fireEvent.keyDown(row('src'), { key: 'ArrowRight' }); // expand again
+    expect(screen.getByText('inner')).toBeInTheDocument();
+    expect(document.activeElement).toBe(row('src')); // expand does not move focus
+    fireEvent.keyDown(row('src'), { key: 'ArrowRight' }); // already expanded → first child
+    expect(document.activeElement).toBe(row('inner'));
+    focusEl(row('a.ts'));
+    fireEvent.keyDown(row('a.ts'), { key: 'ArrowRight' });
+    expect(document.activeElement).toBe(row('a.ts')); // no-op on a file
+  });
+
+  it('ArrowLeft collapses an expanded dir, else jumps to the parent row', () => {
+    renderKbTree();
+    focusEl(row('deep.ts'));
+    fireEvent.keyDown(row('deep.ts'), { key: 'ArrowLeft' }); // file → parent dir
+    expect(document.activeElement).toBe(row('inner'));
+    fireEvent.keyDown(row('inner'), { key: 'ArrowLeft' }); // expanded dir → collapse
+    expect(screen.queryByText('deep.ts')).not.toBeInTheDocument();
+    expect(document.activeElement).toBe(row('inner'));
+    fireEvent.keyDown(row('inner'), { key: 'ArrowLeft' }); // collapsed dir → parent
+    expect(document.activeElement).toBe(row('src'));
+    focusEl(row('a.ts'));
+    fireEvent.keyDown(row('a.ts'), { key: 'ArrowLeft' }); // depth-0 file → no-op
+    expect(document.activeElement).toBe(row('a.ts'));
+  });
+
+  it('Home and End jump to the first and last visible rows', () => {
+    renderKbTree();
+    focusEl(row('deep.ts'));
+    fireEvent.keyDown(row('deep.ts'), { key: 'Home' });
+    expect(document.activeElement).toBe(row('src'));
+    fireEvent.keyDown(row('src'), { key: 'End' });
+    expect(document.activeElement).toBe(row('z.ts'));
+  });
+
+  it('Enter and Space activate: file selects, dir toggles; handled keys prevent default', () => {
+    const onSelect = vi.fn();
+    renderKbTree({ onSelectFile: onSelect });
+    focusEl(row('a.ts'));
+    expect(fireEvent.keyDown(row('a.ts'), { key: 'Enter' })).toBe(false); // defaultPrevented
+    expect(onSelect).toHaveBeenCalledWith('a.ts');
+    fireEvent.keyDown(row('a.ts'), { key: ' ' });
+    expect(onSelect).toHaveBeenCalledTimes(2);
+    focusEl(row('src'));
+    fireEvent.keyDown(row('src'), { key: 'Enter' }); // dir → collapse
+    expect(screen.queryByText('inner')).not.toBeInTheDocument();
+    // unhandled keys pass through (default NOT prevented)
+    expect(fireEvent.keyDown(row('src'), { key: 'a' })).toBe(true);
+  });
+
+  it('the chevron button is a pointer-only decoration; the dir row announces its name', () => {
+    renderKbTree();
+    const src = row('src');
+    const chevron = src.querySelector('button')!;
+    expect(chevron.getAttribute('tabindex')).toBe('-1');
+    expect(chevron.getAttribute('aria-hidden')).toBe('true');
+    expect(src.getAttribute('aria-label')).toBe('src'); // no "Toggle src src" concatenation
+    expect(src.getAttribute('aria-expanded')).toBe('true');
+  });
+
+  it('mouse focus syncs the roving stop: arrows continue from the clicked row', () => {
+    renderKbTree();
+    focusEl(row('a.ts')); // native focus (what a real click produces) → onFocus sync
+    fireEvent.keyDown(row('a.ts'), { key: 'ArrowDown' });
+    expect(document.activeElement).toBe(row('z.ts'));
+    // chevron click focuses the BUTTON; focusin bubbles to the row and syncs the key
+    const chevron = row('src').querySelector('button')!;
+    focusEl(chevron);
+    fireEvent.keyDown(document.activeElement!, { key: 'ArrowDown' });
+    expect(document.activeElement).toBe(row('inner'));
+  });
+
+  it('keeps exactly one roving stop after the focused subtree collapses away', () => {
+    const { container } = renderKbTree();
+    focusEl(row('deep.ts'));
+    fireEvent.mouseOver(row('src')); // ensure chevron interactable
+    fireEvent.click(row('src').querySelector('button')!); // collapse src by mouse
+    expect(screen.queryByText('deep.ts')).not.toBeInTheDocument();
+    expect(stops(container)).toBe(1); // fallback keeps a single tab stop
+  });
+
+  it('a background rows refresh does not steal focus (no pending key, no focus call)', () => {
+    const { rerender } = renderKbTree();
+    focusEl(row('src'));
+    (document.activeElement as HTMLElement).blur(); // user is elsewhere (body)
+    rerender(
+      <FileTree
+        {...treeProps(KB_FILES.map((f) => ({ ...f })))}
+        selectedPath={null}
+        onSelectFile={vi.fn()}
+        viewedPaths={new Set()}
+        onToggleViewed={vi.fn()}
+        focusEntries={null}
+        focusStatus="no-changes"
+        aiPreview={false}
+      />,
+    );
+    expect(document.activeElement).toBe(document.body); // refetch never yanks focus
   });
 });
