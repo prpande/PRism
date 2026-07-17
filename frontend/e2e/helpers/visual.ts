@@ -19,23 +19,14 @@ import {
 // silently verifying nothing. Specs may keep their own coarser gates (test.skip(!CI)
 // around whole visual describes); this guard is the floor, not a replacement for those.
 // The locator assertion's inline options type is the page one minus the two
-// page-only fields (Playwright exports no named type for it).
+// page-only fields (Playwright exports no named type for it). The conditional type
+// (instead of eslint-hostile overloads) rejects clip/fullPage for Locator callers.
 type LocatorScreenshotOptions = Omit<PageAssertionsToHaveScreenshotOptions, 'clip' | 'fullPage'>;
 
-export async function expectVisual(
-  target: Page,
+export async function expectVisual<T extends Page | Locator>(
+  target: T,
   name: string,
-  options?: PageAssertionsToHaveScreenshotOptions,
-): Promise<void>;
-export async function expectVisual(
-  target: Locator,
-  name: string,
-  options?: LocatorScreenshotOptions,
-): Promise<void>;
-export async function expectVisual(
-  target: Page | Locator,
-  name: string,
-  options?: PageAssertionsToHaveScreenshotOptions,
+  options?: T extends Page ? PageAssertionsToHaveScreenshotOptions : LocatorScreenshotOptions,
 ): Promise<void> {
   if (!process.env.CI) {
     test.info().annotations.push({
