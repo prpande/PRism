@@ -104,6 +104,37 @@ type RenderRow = FileRow | DirRow;
 // state is keyed by the ancestor chain joined with a NUL separator — unique and
 // stable across re-renders. NUL cannot appear in a path segment.
 const DIR_KEY_SEP = String.fromCharCode(0);
+
+// Vertical-only reveal for keyboard focus. focus() always runs with preventScroll: a
+// native focus-scroll would write scrollLeft on the overflow-clipped viewport and desync
+// the #214 synthetic h-scrollbar, whose CSS-var/translateX mechanism is the sole
+// horizontal authority. This restores block-nearest visibility by adjusting the nearest
+// scrollable-Y ancestor's scrollTop only. The #214 footer is `position: sticky; bottom: 0`
+// INSIDE that scrollport and overlays its bottom edge while the tree overflows
+// horizontally; .filesTabTree's scroll-padding-bottom covers only native scrollIntoView,
+// not manual scrollTop math, so the live footer height is reserved here explicitly.
+// Module-scope (no component state) and exported so tests can drive it with stubbed
+// geometry — jsdom reports zero layout, so the in-tree path never runs under RTL.
+export function revealTreeRow(el: HTMLElement): void {
+  for (let p = el.parentElement; p; p = p.parentElement) {
+    if (p.scrollHeight > p.clientHeight + 1) {
+      const overflowY = getComputedStyle(p).overflowY;
+      if (overflowY === 'auto' || overflowY === 'scroll') {
+        const pr = p.getBoundingClientRect();
+        const er = el.getBoundingClientRect();
+        const footer = p.querySelector('.file-tree-hscroll-row');
+        const clearance =
+          footer && getComputedStyle(footer).display !== 'none'
+            ? footer.getBoundingClientRect().height
+            : 0;
+        if (er.top < pr.top) p.scrollTop += er.top - pr.top;
+        else if (er.bottom > pr.bottom - clearance)
+          p.scrollTop += er.bottom - (pr.bottom - clearance);
+        return;
+      }
+    }
+  }
+}
 // The tree renders flat (siblings of one role=tree), not via nested role=group
 // wrappers, because the same flat row list also drives the fixed checkbox column.
 // A flat ARIA tree must therefore carry aria-level AND aria-setsize/aria-posinset so
@@ -206,36 +237,13 @@ export function FileTree({
     return rows.length > 0 ? rows[0].key : null;
   }, [focusedKey, rows, selectedPath]);
 
-  // Vertical-only reveal. focus() always runs with preventScroll: a native focus-scroll
-  // would write scrollLeft on the overflow-clipped viewport and desync the #214 synthetic
-  // h-scrollbar (whose CSS-var/translateX mechanism is the sole horizontal authority). This
-  // restores block-nearest visibility by adjusting the nearest scrollable-Y ancestor's
-  // scrollTop only — no scrollLeft is ever touched.
-  const revealRow = useCallback((el: HTMLElement) => {
-    for (let p = el.parentElement; p; p = p.parentElement) {
-      if (p.scrollHeight > p.clientHeight + 1) {
-        const overflowY = getComputedStyle(p).overflowY;
-        if (overflowY === 'auto' || overflowY === 'scroll') {
-          const pr = p.getBoundingClientRect();
-          const er = el.getBoundingClientRect();
-          if (er.top < pr.top) p.scrollTop += er.top - pr.top;
-          else if (er.bottom > pr.bottom) p.scrollTop += er.bottom - pr.bottom;
-          return;
-        }
-      }
-    }
+  const focusRowByKey = useCallback((key: string) => {
+    const el = rowElsRef.current.get(key);
+    if (!el) return;
+    setFocusedKey(key);
+    el.focus({ preventScroll: true });
+    revealTreeRow(el);
   }, []);
-
-  const focusRowByKey = useCallback(
-    (key: string) => {
-      const el = rowElsRef.current.get(key);
-      if (!el) return;
-      setFocusedKey(key);
-      el.focus({ preventScroll: true });
-      revealRow(el);
-    },
-    [revealRow],
-  );
 
   const handleTreeKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -578,6 +586,16 @@ function FileCell({
   setRowEl: (key: string, el: HTMLElement | null) => void;
 }) {
   const node = row.node;
+  const rowRef = useRef<HTMLDivElement | null>(null);
+  // Stable identity so React does not detach/reattach every row's ref on every
+  // FileTree re-render (hover state changes re-render all cells).
+  const setRef = useCallback(
+    (el: HTMLDivElement | null) => {
+      rowRef.current = el;
+      setRowEl(row.key, el);
+    },
+    [setRowEl, row.key],
+  );
   return (
     <div
       className={`file-tree-file${isSelected ? ' file-tree-file--selected' : ''}${
@@ -597,12 +615,17 @@ function FileCell({
       data-row-selected={isSelected ? 'true' : undefined}
       data-row-hovered={isHovered ? 'true' : undefined}
       style={{ paddingLeft: `${(row.depth + 1) * INDENT_PER_LEVEL}px` }}
-      onClick={() => onSelectFile(node.path)}
+      // Focus is granted HERE with preventScroll instead of by the browser's native
+      // click-to-focus (suppressed via onMouseDown), which can write scrollLeft on the
+      // clipped viewport (#214 desync) and does not fire at all in every engine.
+      onMouseDown={(e) => e.preventDefault()}
+      onClick={() => {
+        rowRef.current?.focus({ preventScroll: true });
+        onSelectFile(node.path);
+      }}
       onFocus={() => onRowFocus(row.key)}
       tabIndex={isFocusStop ? 0 : -1}
-      ref={(el) => {
-        setRowEl(row.key, el);
-      }}
+      ref={setRef}
     >
       <span
         className={`file-status file-status--${node.file.status} ${styles.fileStatus} ${FILE_STATUS_MODULE[node.file.status]}`}
@@ -780,6 +803,15 @@ function DirCell({
   const node = row.node;
   const { expanded } = row;
   const rowRef = useRef<HTMLDivElement | null>(null);
+  // Stable identity so React does not detach/reattach every row's ref on every
+  // FileTree re-render (hover state changes re-render all cells).
+  const setRef = useCallback(
+    (el: HTMLDivElement | null) => {
+      rowRef.current = el;
+      setRowEl(row.key, el);
+    },
+    [setRowEl, row.key],
+  );
   return (
     <div
       className={`file-tree-dir-header ${styles.fileTreeDirHeader}`}
@@ -799,23 +831,23 @@ function DirCell({
       // AT-synthesized clicks on the treeitem activate directories too, and the explicit
       // focus keeps real DOM focus on a visible treeitem in every engine — clicking the
       // chevron must never park focus on an aria-hidden node, and collapsing via mouse
-      // must not strand focus on a row about to unmount. Focus from a user gesture only.
+      // must not strand focus on a row about to unmount. Focus from a user gesture only;
+      // native mousedown focusing is suppressed (it ignores preventScroll → #214 desync).
+      onMouseDown={(e) => e.preventDefault()}
       onClick={() => {
         rowRef.current?.focus({ preventScroll: true });
         onToggle(row.dirKey);
       }}
       onFocus={() => onRowFocus(row.key)}
       tabIndex={isFocusStop ? 0 : -1}
-      ref={(el) => {
-        rowRef.current = el;
-        setRowEl(row.key, el);
-      }}
+      ref={setRef}
     >
       {/* #200 — pointer-only decoration: the row treeitem is the keyboard AND click
           surface (its onClick above handles the bubbled chevron click), so the chevron
           leaves the tab order and the accessibility tree, never takes focus itself
           (mousedown default suppressed), and the row's aria-expanded carries the state. */}
       <button
+        type="button"
         className={`file-tree-dir-toggle ${styles.fileTreeDirToggle}`}
         onMouseDown={(e) => e.preventDefault()}
         tabIndex={-1}

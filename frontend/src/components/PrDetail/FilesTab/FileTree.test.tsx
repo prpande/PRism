@@ -1,6 +1,6 @@
 import { render, screen, fireEvent, within, act } from '@testing-library/react';
 import { describe, it, expect, vi } from 'vitest';
-import { FileTree } from './FileTree';
+import { FileTree, revealTreeRow } from './FileTree';
 import { AI_TREE_ANALYZED_LABEL } from '../../Ai/aiStrings';
 import { treeProps } from '../../../../__tests__/helpers/fileTree';
 import type { FileChange, FileFocus, FileFocusStatus } from '../../../api/types';
@@ -1075,6 +1075,25 @@ describe('FileTree keyboard navigation (#200)', () => {
     expect(stops(container)).toBe(1);
   });
 
+  it('clicking a file row focuses it explicitly (no reliance on native click-focus)', () => {
+    const onSelect = vi.fn();
+    renderKbTree({ onSelectFile: onSelect });
+    // jsdom does NOT focus elements on click, so a green activeElement assertion here
+    // proves the component focuses the row itself instead of leaning on engine behavior
+    fireEvent.click(row('a.ts'));
+    expect(onSelect).toHaveBeenCalledWith('a.ts');
+    expect(document.activeElement).toBe(row('a.ts'));
+    // native mousedown focusing is suppressed on rows (focus is granted in onClick with
+    // preventScroll, so the #214 h-scroll authority is never touched by a click)
+    expect(fireEvent.mouseDown(row('a.ts'))).toBe(false);
+    expect(fireEvent.mouseDown(row('src'))).toBe(false);
+  });
+
+  it('the chevron is type="button" (never an implicit submit)', () => {
+    renderKbTree();
+    expect(row('src').querySelector('button')!.getAttribute('type')).toBe('button');
+  });
+
   it('keeps exactly one roving stop after the focused subtree collapses away', () => {
     const { container } = renderKbTree();
     focusEl(row('deep.ts'));
@@ -1082,6 +1101,59 @@ describe('FileTree keyboard navigation (#200)', () => {
     fireEvent.click(row('src').querySelector('button')!); // collapse src by mouse
     expect(screen.queryByText('deep.ts')).not.toBeInTheDocument();
     expect(stops(container)).toBe(1); // fallback keeps a single tab stop
+  });
+
+  // jsdom reports zero layout (scrollHeight === clientHeight === 0), so the in-tree
+  // reveal path never runs under RTL renders; the helper is exported and driven here
+  // with stubbed geometry instead. The scroller mimics .filesTabTree: overflow-y auto,
+  // a 400px viewport over 1000px of content, with the #214 sticky footer as a child.
+  describe('revealTreeRow (vertical-only reveal with sticky-footer clearance)', () => {
+    function makeScroller(footer: { display: string; height: number } | null) {
+      const scroller = document.createElement('div');
+      scroller.style.overflowY = 'auto';
+      Object.defineProperty(scroller, 'scrollHeight', { value: 1000 });
+      Object.defineProperty(scroller, 'clientHeight', { value: 400 });
+      scroller.getBoundingClientRect = () =>
+        ({ top: 0, bottom: 400, left: 0, right: 200, width: 200, height: 400 }) as DOMRect;
+      scroller.scrollTop = 100;
+      if (footer) {
+        const bar = document.createElement('div');
+        bar.className = 'file-tree-hscroll-row';
+        bar.style.display = footer.display;
+        bar.getBoundingClientRect = () =>
+          ({ height: footer.height, top: 400 - footer.height, bottom: 400 }) as DOMRect;
+        scroller.appendChild(bar);
+      }
+      const el = document.createElement('div');
+      scroller.appendChild(el);
+      document.body.appendChild(scroller);
+      return { scroller, el };
+    }
+
+    it('scrolls a below-viewport row up past the visible sticky footer', () => {
+      const { scroller, el } = makeScroller({ display: 'flex', height: 15 });
+      el.getBoundingClientRect = () => ({ top: 470, bottom: 490 }) as DOMRect;
+      revealTreeRow(el);
+      // bottom must clear pr.bottom (400) MINUS the 15px footer: 490 - 385 = 105
+      expect(scroller.scrollTop).toBe(205);
+      scroller.remove();
+    });
+
+    it('reserves no clearance when the footer is hidden (no horizontal overflow)', () => {
+      const { scroller, el } = makeScroller({ display: 'none', height: 15 });
+      el.getBoundingClientRect = () => ({ top: 470, bottom: 490 }) as DOMRect;
+      revealTreeRow(el);
+      expect(scroller.scrollTop).toBe(190); // 100 + (490 - 400)
+      scroller.remove();
+    });
+
+    it('scrolls an above-viewport row down to the top edge (footer irrelevant)', () => {
+      const { scroller, el } = makeScroller({ display: 'flex', height: 15 });
+      el.getBoundingClientRect = () => ({ top: -30, bottom: -10 }) as DOMRect;
+      revealTreeRow(el);
+      expect(scroller.scrollTop).toBe(70); // 100 + (-30 - 0)
+      scroller.remove();
+    });
   });
 
   it('a background rows refresh does not steal focus (no pending key, no focus call)', () => {
