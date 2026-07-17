@@ -23,7 +23,6 @@ function thread(over: Partial<ReviewThreadDto> = {}): ReviewThreadDto {
     threadId: 't1',
     filePath: 'src/Calc.cs',
     lineNumber: 5,
-    anchorSha: 'sha1',
     isResolved: false,
     comments: [comment()],
     ...over,

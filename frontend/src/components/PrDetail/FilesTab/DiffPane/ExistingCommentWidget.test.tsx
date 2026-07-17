@@ -28,7 +28,7 @@ function thread(over: Partial<ReviewThreadDto> = {}): ReviewThreadDto {
       },
     ],
     ...over,
-  } as ReviewThreadDto; // cast satisfies the omitted editedAt/anchorSha fields — keep it.
+  } as ReviewThreadDto; // cast satisfies the omitted editedAt field — keep it.
 }
 
 describe('ExistingCommentWidget', () => {

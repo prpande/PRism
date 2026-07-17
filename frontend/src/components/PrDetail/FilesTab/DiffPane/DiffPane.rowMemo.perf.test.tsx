@@ -49,7 +49,6 @@ const threadAtLine1: ReviewThreadDto = {
   threadId: 't1',
   filePath: 'src/main.ts',
   lineNumber: 1,
-  anchorSha: 'abc123',
   isResolved: false,
   comments: [
     {

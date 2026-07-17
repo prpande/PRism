@@ -10,7 +10,6 @@ const thread = (filePath: string, isResolved: boolean): ReviewThreadDto => ({
   threadId: `${filePath}:${isResolved}`,
   filePath,
   lineNumber: 1,
-  anchorSha: 'sha',
   isResolved,
   comments: [],
 });

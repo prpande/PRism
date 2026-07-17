@@ -85,7 +85,6 @@ function postedThread(databaseId: number | null): ReviewThreadDto {
     threadId: 'server-thread-1',
     filePath: 'src/main.ts',
     lineNumber: 1,
-    anchorSha: 'headabc',
     isResolved: false,
     comments: [
       {
