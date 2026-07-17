@@ -145,9 +145,10 @@ export default defineConfig({
   },
   // Per-platform screenshot baselines (e2e/__screenshots__/<platform>/...). CI runs
   // Playwright in the Linux container (.github/workflows/ci.yml), so linux/ is the
-  // ONLY canonical baseline set — no other platform's baselines exist, and every
-  // visual assertion goes through e2e/helpers/visual.ts (expectVisual), which skips
-  // outside CI and throws if CI ever runs the suite on a non-Linux platform (#751).
+  // ONLY canonical baseline set — baselines for any other platform are never read by
+  // automation and are not maintained (#751). Every visual assertion goes through
+  // e2e/helpers/visual.ts (expectVisual), which skips outside CI and throws if CI
+  // ever runs the suite on a non-Linux platform.
   expect: {
     toHaveScreenshot: {
       pathTemplate: '{testDir}/__screenshots__/{platform}/{arg}{ext}',

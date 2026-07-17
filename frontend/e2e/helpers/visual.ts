@@ -11,10 +11,10 @@ import {
 // (.github/workflows/ci.yml), and no automation can ever verify a baseline rendered on
 // another platform (or on a non-container Linux host, whose subpixel rendering differs
 // from the runner's). Outside CI this skips JUST the screenshot assertion — annotated
-// on the test so the skip is visible in the report — which is what lets the repo carry
-// no win32/ baselines at all: a local run gets neither missing-snapshot failures nor
-// silently written new PNGs, while every functional assertion in the same test keeps
-// running. A CI run on a non-Linux platform is a pipeline misconfiguration, not a dev
+// on the test so the skip is visible in the report — which removes any need for
+// non-Linux baselines (#751 deletes the legacy win32/ set): a local run gets neither
+// missing-snapshot failures nor silently written new PNGs, while every functional
+// assertion in the same test keeps running. A CI run on a non-Linux platform is a pipeline misconfiguration, not a dev
 // machine: it throws instead of skipping, so the visual suite can never go green while
 // silently verifying nothing. Specs may keep their own coarser gates (test.skip(!CI)
 // around whole visual describes); this guard is the floor, not a replacement for those.
