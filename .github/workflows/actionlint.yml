@@ -66,4 +66,5 @@ jobs:
 
       - name: Run actionlint
         shell: bash
-        run: '"${RUNNER_TEMP}/actionlint"'
+        run: |
+          "${RUNNER_TEMP}/actionlint"
