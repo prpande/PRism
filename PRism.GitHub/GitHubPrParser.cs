@@ -232,15 +232,7 @@ internal static class GitHubPrParser
                     comments.Add(new ReviewCommentDto(cid, cauthor, cts, cbody, edited, cavatar, cDatabaseId));
                 }
             }
-            // AnchorSha is intentionally empty here. The reviewThreads GraphQL connection
-            // doesn't return the per-thread anchor SHA in the current query shape (the SHA
-            // a thread was originally posted against lives on `comments.nodes[0].originalCommit.oid`,
-            // which we don't fetch yet). PrDetailLoader (Task 4) is responsible for resolving
-            // the anchor against the PR diff and stamping a real SHA onto each thread before
-            // the DTO ships to the frontend. Defaulting to HeadSha here would be misleading —
-            // a thread anchored to an older iteration's snapshot would falsely report it
-            // applies to the current head.
-            result.Add(new ReviewThreadDto(threadId, path, line, AnchorSha: "", IsResolved: resolved, Comments: comments));
+            result.Add(new ReviewThreadDto(threadId, path, line, IsResolved: resolved, Comments: comments));
         }
         return result;
     }
