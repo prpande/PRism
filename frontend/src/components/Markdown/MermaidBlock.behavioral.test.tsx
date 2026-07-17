@@ -1,6 +1,6 @@
 import { render, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { MermaidBlock } from '../src/components/Markdown/MermaidBlock';
+import { MermaidBlock } from './MermaidBlock';
 
 const mermaidMock = await import('mermaid').then((m) => m.default);
 

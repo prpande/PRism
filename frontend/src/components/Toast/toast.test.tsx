@@ -1,7 +1,7 @@
 import { act, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { ToastContainer, useToast, ToastProvider, type ToastSpec } from '../src/components/Toast';
+import { ToastContainer, useToast, ToastProvider, type ToastSpec } from './';
 
 function Trigger({
   kind = 'error',

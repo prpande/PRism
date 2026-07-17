@@ -1,7 +1,7 @@
 import { render, screen, waitFor, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { WindowControls } from '../src/components/Header/WindowControls';
+import { WindowControls } from './WindowControls';
 
 type MaxCb = (m: boolean) => void;
 

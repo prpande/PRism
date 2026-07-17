@@ -1,6 +1,6 @@
 import { render } from '@testing-library/react';
 import { describe, it, expect } from 'vitest';
-import { GitHubMark } from '../src/components/icons/GitHubMark';
+import { GitHubMark } from './GitHubMark';
 
 describe('GitHubMark', () => {
   it('renders a decorative svg at the default 14px size', () => {
