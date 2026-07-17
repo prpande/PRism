@@ -5,7 +5,13 @@ namespace PRism.Core.Contracts;
 public sealed record ReviewThreadDto(
     string ThreadId,
     string FilePath,
-    int LineNumber,
+    int? LineNumber,          // null = outdated or file-level (no 0 sentinel)
+    bool IsOutdated,
+    int? OriginalLine,
+    int? OriginalStartLine,   // multi-line ranges; null for single-line
+    string SubjectType,       // "LINE" | "FILE"
+    string? DiffHunk,         // first comment's hunk; null if unavailable
+    long? ReviewDatabaseId,   // first comment's parent review; timeline join key
     bool IsResolved,
     IReadOnlyList<ReviewCommentDto> Comments);
 
