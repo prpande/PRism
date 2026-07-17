@@ -222,9 +222,11 @@ export function FileTree({
     else rowElsRef.current.delete(key);
   }, []);
   const handleRowFocus = useCallback((key: string) => {
-    // React's onFocus is focusin-based (bubbles), so a chevron click that natively focuses
-    // the inner button still syncs the roving stop to its row — mouse and keyboard can
-    // never diverge (spec AC 11).
+    // React's onFocus is focusin-based (bubbles), so EVERY way a row gains DOM focus —
+    // focusRowByKey on arrow keys, the gesture-driven onClick focus both cells grant
+    // (native mousedown focusing is suppressed on rows and chevron alike), or Tab onto
+    // the roving stop — funnels through here and syncs focusedKey; mouse and keyboard
+    // can never diverge (spec AC 11).
     setFocusedKey((prev) => (prev === key ? prev : key));
   }, []);
 
