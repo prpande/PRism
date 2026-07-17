@@ -122,16 +122,14 @@ test('PR-header zone layout invariant before and after reload banner arrives', a
     expect(Math.abs(a.height - b.height), `${b.sel} height changed`).toBeLessThanOrEqual(1);
   }
 
-  // Supplementary visual signal — loose 1% pixel tolerance, banner masked. The
-  // per-platform snapshot directory (configured via expect.toHaveScreenshot
-  // pathTemplate in playwright.config.ts) keeps cross-OS font-rendering
-  // differences from poisoning the diff. CI runs Playwright in the Linux
-  // container (.github/workflows/ci.yml), so the canonical baseline lives under
-  // __screenshots__/linux/. Gated to CI only (not platform): the baseline is
-  // generated on the runner, and any local machine renders subpixels
-  // differently and can never match it — screenshots are a CI-only regression
-  // gate. The load-bearing assertion is the getBoundingClientRect loop above,
-  // which runs on EVERY platform, local and CI.
+  // Supplementary visual signal — loose 1% pixel tolerance, banner masked. CI runs
+  // Playwright in the Linux container (.github/workflows/ci.yml), so the canonical
+  // baseline lives under __screenshots__/linux/; any local machine renders subpixels
+  // differently and can never match it, so screenshots are a CI-only regression gate.
+  // The outer CI check keeps that intent readable here; expectVisual (#751) enforces
+  // the full contract underneath (skip outside CI, throw if CI ever runs this on a
+  // non-Linux platform). The load-bearing assertion is the getBoundingClientRect loop
+  // above, which runs on EVERY platform, local and CI.
   if (process.env.CI) {
     await expectVisual(page, 'pr-detail-with-banner-masked.png', {
       mask: [page.locator('[data-testid="reload-banner"]')],

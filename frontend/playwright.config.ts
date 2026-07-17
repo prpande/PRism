@@ -143,12 +143,11 @@ export default defineConfig({
   use: {
     trace: 'on-first-retry',
   },
-  // Per-platform screenshot baselines (e2e/__screenshots__/<platform>/...) so the
-  // PR9 no-layout-shift-on-banner spec's supplementary diff doesn't fail on
-  // contributors running a different OS against a baseline rendered elsewhere. CI
-  // runs Playwright in the Linux container (.github/workflows/ci.yml), so the
-  // canonical baselines live under linux/; win32/ is retained for local CI=1
-  // runs on Windows.
+  // Per-platform screenshot baselines (e2e/__screenshots__/<platform>/...). CI runs
+  // Playwright in the Linux container (.github/workflows/ci.yml), so linux/ is the
+  // ONLY canonical baseline set — no other platform's baselines exist, and every
+  // visual assertion goes through e2e/helpers/visual.ts (expectVisual), which skips
+  // outside CI and throws if CI ever runs the suite on a non-Linux platform (#751).
   expect: {
     toHaveScreenshot: {
       pathTemplate: '{testDir}/__screenshots__/{platform}/{arg}{ext}',
