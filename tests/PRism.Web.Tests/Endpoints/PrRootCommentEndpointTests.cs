@@ -201,6 +201,37 @@ public class PrRootCommentEndpointTests
         rootDraft.PostedCommentId.Should().BeNull("PostedCommentId must not be stamped when the GitHub call fails");
     }
 
+    // ── GitHub 404 (PR deleted) → 404 github-not-found (#466) ────────────────
+
+    [Fact]
+    public async Task PostRootComment_github_404_returns_404_github_not_found()
+    {
+        using var ctx = RootCommentTestContext.Create();
+        await ctx.SeedSessionAsync("o", "r", 24, SessionWithRootDraft());
+        // The issue-comment POST is REST, so a deleted PR surfaces as a genuine
+        // HttpRequestException(404) — a live trigger for the mapper's new arm (inline
+        // review-comment creation is the other REST path that can 404).
+        ctx.Submitter.InjectFailure(new HttpRequestException(
+            "GitHub issue comment POST HTTP 404 Not Found: {\"message\":\"Not Found\"}",
+            null, System.Net.HttpStatusCode.NotFound));
+
+        var resp = await ctx.Post(24);
+
+        // #466 — a definitive not-found must not render as a transient outage: truthful
+        // 404 status (mirrors #605 item E) and copy without retry framing.
+        resp.StatusCode.Should().Be(HttpStatusCode.NotFound);
+        var body = await resp.Content.ReadFromJsonAsync<JsonElement>(CamelCase);
+        body.GetProperty("code").GetString().Should().Be("github-not-found");
+        body.GetProperty("message").GetString().Should().Be("The resource was not found on GitHub.");
+
+        // Same state-preservation contract as the 403 path: draft intact, not stamped.
+        var session = await ctx.LoadSessionAsync("o", "r", 24);
+        session.Should().NotBeNull();
+        session!.DraftComments.Should().HaveCount(1, "draft must not be deleted on GitHub failure");
+        session.DraftComments.Single(d => d.FilePath is null && d.LineNumber is null)
+            .PostedCommentId.Should().BeNull();
+    }
+
     // ── malformed-2xx (GitHubRestContractException) → 502 github-network-error ──
 
     [Fact]
