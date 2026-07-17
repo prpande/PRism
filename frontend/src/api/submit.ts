@@ -185,10 +185,12 @@ export async function discardForeignPendingReview(
 //   - github-network-error      : 502 via MapGithubError fallback + catch-all Exception
 //                                 (also used as the client-side fallback for non-ApiError throws)
 // #466 — 'github-not-found' is deliberately NOT listed: both GitHub calls in
-// DiscardOwnPendingReviewAsync are GraphQL (whose not-found surfaces as
-// GitHubGraphQLException → network-error) and the REST delete's 404 is swallowed as
-// success, so the code has no live trigger on this endpoint; coerceToKnownCode would
-// fall it back to github-network-error with the server message still surfaced.
+// DiscardOwnPendingReviewAsync (find + delete) are GraphQL, whose not-found surfaces
+// as GitHubGraphQLException / null data → network-error, never HttpRequestException(404)
+// (the endpoint's NotFound catch fires only on a transport-level 404, which the GraphQL
+// endpoint doesn't produce in practice). No live trigger here; coerceToKnownCode would
+// fall an unexpected occurrence back to github-network-error with the server message
+// still surfaced.
 export const KNOWN_DISCARD_OWN_PENDING_REVIEW_ERROR_CODES = [
   'unauthorized',
   'pipeline-cancellation-timeout',
