@@ -1,6 +1,7 @@
 import { test, expect, request } from '@playwright/test';
 import { BACKEND_ORIGIN } from './helpers/backend-origin';
 import { setupAndOpenScenarioPr, resetBackendState } from './helpers/s4-setup';
+import { expectVisual } from './helpers/visual';
 
 // Spec § 8 ("no layout shift when a PR with new commits arrives") + plan PR9
 // Task 9.1. The round-1 ce-doc-review reframe: assert layout invariance directly
@@ -132,7 +133,7 @@ test('PR-header zone layout invariant before and after reload banner arrives', a
   // gate. The load-bearing assertion is the getBoundingClientRect loop above,
   // which runs on EVERY platform, local and CI.
   if (process.env.CI) {
-    await expect(page).toHaveScreenshot('pr-detail-with-banner-masked.png', {
+    await expectVisual(page, 'pr-detail-with-banner-masked.png', {
       mask: [page.locator('[data-testid="reload-banner"]')],
       maxDiffPixelRatio: 0.01,
     });

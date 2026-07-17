@@ -26,6 +26,7 @@
 import { test, expect, type Route } from '@playwright/test';
 import { setupBaseRoutes } from './helpers/base-mocks';
 import { makeDefaultPreferences } from './fixtures/preferences';
+import { expectVisual } from './helpers/visual';
 
 const KILL_ANIMATIONS_CSS =
   '*, *::before, *::after { animation: none !important; transition: none !important; }';
@@ -129,7 +130,7 @@ test.describe('onboarding dialog — Off state', () => {
     // screenshot can't race the click's state/style transition.
     await expect(offRadioLight).toHaveAttribute('aria-checked', 'true');
     await page.addStyleTag({ content: KILL_ANIMATIONS_CSS });
-    await expect(dialog).toHaveScreenshot('onboarding-dialog-off-light.png', SCREENSHOT_OPTS);
+    await expectVisual(dialog, 'onboarding-dialog-off-light.png', SCREENSHOT_OPTS);
   });
 
   test('dark theme', async ({ page }) => {
@@ -144,7 +145,7 @@ test.describe('onboarding dialog — Off state', () => {
     // screenshot can't race the click's state/style transition.
     await expect(offRadioDark).toHaveAttribute('aria-checked', 'true');
     await page.addStyleTag({ content: KILL_ANIMATIONS_CSS });
-    await expect(dialog).toHaveScreenshot('onboarding-dialog-off-dark.png', SCREENSHOT_OPTS);
+    await expectVisual(dialog, 'onboarding-dialog-off-dark.png', SCREENSHOT_OPTS);
   });
 });
 
@@ -161,7 +162,7 @@ test.describe('onboarding dialog — Preview state', () => {
     // Preview is already selected (aiMode='preview' in the fixture); no click needed.
     await expect(dialog).toBeVisible({ timeout: 30_000 });
     await page.addStyleTag({ content: KILL_ANIMATIONS_CSS });
-    await expect(dialog).toHaveScreenshot('onboarding-dialog-preview-light.png', SCREENSHOT_OPTS);
+    await expectVisual(dialog, 'onboarding-dialog-preview-light.png', SCREENSHOT_OPTS);
   });
 
   test('dark theme', async ({ page }) => {
@@ -171,7 +172,7 @@ test.describe('onboarding dialog — Preview state', () => {
     const dialog = page.getByRole('dialog', { name: 'Set up AI for your reviews' });
     await expect(dialog).toBeVisible({ timeout: 30_000 });
     await page.addStyleTag({ content: KILL_ANIMATIONS_CSS });
-    await expect(dialog).toHaveScreenshot('onboarding-dialog-preview-dark.png', SCREENSHOT_OPTS);
+    await expectVisual(dialog, 'onboarding-dialog-preview-dark.png', SCREENSHOT_OPTS);
   });
 });
 
@@ -192,7 +193,7 @@ test.describe('onboarding dialog — Live expanded state', () => {
       timeout: 10_000,
     });
     await page.addStyleTag({ content: KILL_ANIMATIONS_CSS });
-    await expect(dialog).toHaveScreenshot('onboarding-dialog-live-light.png', SCREENSHOT_OPTS);
+    await expectVisual(dialog, 'onboarding-dialog-live-light.png', SCREENSHOT_OPTS);
   });
 
   test('dark theme (disclosure loaded)', async ({ page }) => {
@@ -206,7 +207,7 @@ test.describe('onboarding dialog — Live expanded state', () => {
       timeout: 10_000,
     });
     await page.addStyleTag({ content: KILL_ANIMATIONS_CSS });
-    await expect(dialog).toHaveScreenshot('onboarding-dialog-live-dark.png', SCREENSHOT_OPTS);
+    await expectVisual(dialog, 'onboarding-dialog-live-dark.png', SCREENSHOT_OPTS);
   });
 });
 
@@ -236,6 +237,6 @@ test.describe('onboarding dialog — 480px viewport height (short-viewport scrol
     await expect(lead).toBeVisible();
 
     await page.addStyleTag({ content: KILL_ANIMATIONS_CSS });
-    await expect(dialog).toHaveScreenshot('onboarding-dialog-480px-preview.png', SCREENSHOT_OPTS);
+    await expectVisual(dialog, 'onboarding-dialog-480px-preview.png', SCREENSHOT_OPTS);
   });
 });

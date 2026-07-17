@@ -24,6 +24,7 @@ import { setupBaseRoutes } from './helpers/base-mocks';
 import { makeDefaultPreferences } from './fixtures/preferences';
 import type { MergeReadiness } from '../src/components/shared/mergeReadiness';
 import { READINESS_SHORT, READINESS_TOOLTIP } from '../src/components/shared/mergeReadiness';
+import { expectVisual } from './helpers/visual';
 
 // ---------------------------------------------------------------------------
 // Constants (mirrors parity-baselines.spec.ts conventions exactly)
@@ -175,10 +176,7 @@ test.describe('readiness badge — open states', () => {
           // Pixel snapshot — CI only.
           if (process.env.CI) {
             await page.addStyleTag({ content: KILL_ANIMATIONS_CSS });
-            await expect(badge).toHaveScreenshot(
-              `readiness-badge-${readiness}-${theme}.png`,
-              SCREENSHOT_OPTS,
-            );
+            await expectVisual(badge, `readiness-badge-${readiness}-${theme}.png`, SCREENSHOT_OPTS);
           }
         });
       }
@@ -296,7 +294,8 @@ test.describe('readiness badge — tooltip', () => {
     // Pixel snapshot of the open popover — CI only.
     if (process.env.CI) {
       await page.addStyleTag({ content: KILL_ANIMATIONS_CSS });
-      await expect(page.locator('[role="tooltip"]')).toHaveScreenshot(
+      await expectVisual(
+        page.locator('[role="tooltip"]'),
         'readiness-tooltip-ready-with-changes-requested.png',
         SCREENSHOT_OPTS,
       );

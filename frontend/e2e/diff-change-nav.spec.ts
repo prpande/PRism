@@ -6,6 +6,7 @@ import {
   advanceHead,
   reloadPr,
 } from './helpers/s4-setup';
+import { expectVisual } from './helpers/visual';
 
 // #486 — change-navigation rail (whole-file minimap + prev/next controls).
 //
@@ -192,7 +193,8 @@ test.describe('#486 change-navigation rail — visual baselines', () => {
       await openWholeFileWithRail(page, theme);
       await expect(page.locator('html')).toHaveAttribute('data-theme', theme);
       await page.addStyleTag({ content: KILL_ANIMATIONS_CSS });
-      await expect(page.locator('[data-testid="diff-pane"]')).toHaveScreenshot(
+      await expectVisual(
+        page.locator('[data-testid="diff-pane"]'),
         `change-nav-rail-rest-${theme}.png`,
         SCREENSHOT_OPTS,
       );
@@ -205,7 +207,8 @@ test.describe('#486 change-navigation rail — visual baselines', () => {
       await rail.hover();
       await expect(rail).toHaveAttribute('data-expanded', 'true');
       await page.addStyleTag({ content: KILL_ANIMATIONS_CSS });
-      await expect(page.locator('[data-testid="diff-pane"]')).toHaveScreenshot(
+      await expectVisual(
+        page.locator('[data-testid="diff-pane"]'),
         `change-nav-rail-expanded-${theme}.png`,
         SCREENSHOT_OPTS,
       );
