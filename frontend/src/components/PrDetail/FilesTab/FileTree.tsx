@@ -176,6 +176,131 @@ export function FileTree({
     return out;
   }, [tree, collapsed]);
 
+  // #200 — WAI-ARIA tree keyboard model on the flat rows list. One roving tab stop across
+  // ALL rows (directories included): the last-focused row while it still exists, else the
+  // selected file's row, else the first row. DOM focus moves imperatively through a
+  // row-element map keyed by RenderRow.key — NOT querySelector, whose attribute selectors
+  // cannot match the NUL separator inside dir keys. No deferred-focus effect exists: every
+  // key's focus target is already rendered (expand/collapse keep focus on the dir row
+  // itself; move-into fires only when the child row is present), so a background files
+  // refetch structurally cannot yank focus anywhere (spec AC 12).
+  const [focusedKey, setFocusedKey] = useState<string | null>(null);
+  const rowElsRef = useRef(new Map<string, HTMLElement>());
+  const setRowEl = useCallback((key: string, el: HTMLElement | null) => {
+    if (el) rowElsRef.current.set(key, el);
+    else rowElsRef.current.delete(key);
+  }, []);
+  const handleRowFocus = useCallback((key: string) => {
+    // React's onFocus is focusin-based (bubbles), so a chevron click that natively focuses
+    // the inner button still syncs the roving stop to its row — mouse and keyboard can
+    // never diverge (spec AC 11).
+    setFocusedKey((prev) => (prev === key ? prev : key));
+  }, []);
+
+  const effectiveFocusedKey = useMemo(() => {
+    if (focusedKey && rows.some((r) => r.key === focusedKey)) return focusedKey;
+    if (selectedPath) {
+      const sel = rows.find((r) => r.kind === 'file' && r.node.path === selectedPath);
+      if (sel) return sel.key;
+    }
+    return rows.length > 0 ? rows[0].key : null;
+  }, [focusedKey, rows, selectedPath]);
+
+  // Vertical-only reveal. focus() always runs with preventScroll: a native focus-scroll
+  // would write scrollLeft on the overflow-clipped viewport and desync the #214 synthetic
+  // h-scrollbar (whose CSS-var/translateX mechanism is the sole horizontal authority). This
+  // restores block-nearest visibility by adjusting the nearest scrollable-Y ancestor's
+  // scrollTop only — no scrollLeft is ever touched.
+  const revealRow = useCallback((el: HTMLElement) => {
+    for (let p = el.parentElement; p; p = p.parentElement) {
+      if (p.scrollHeight > p.clientHeight + 1) {
+        const overflowY = getComputedStyle(p).overflowY;
+        if (overflowY === 'auto' || overflowY === 'scroll') {
+          const pr = p.getBoundingClientRect();
+          const er = el.getBoundingClientRect();
+          if (er.top < pr.top) p.scrollTop += er.top - pr.top;
+          else if (er.bottom > pr.bottom) p.scrollTop += er.bottom - pr.bottom;
+          return;
+        }
+      }
+    }
+  }, []);
+
+  const focusRowByKey = useCallback(
+    (key: string) => {
+      const el = rowElsRef.current.get(key);
+      if (!el) return;
+      setFocusedKey(key);
+      el.focus({ preventScroll: true });
+      revealRow(el);
+    },
+    [revealRow],
+  );
+
+  const handleTreeKeyDown = useCallback(
+    (e: React.KeyboardEvent) => {
+      if (e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+      const idx = rows.findIndex((r) => r.key === effectiveFocusedKey);
+      if (idx < 0) return;
+      const current = rows[idx];
+      let handled = true;
+      switch (e.key) {
+        case 'ArrowDown': {
+          if (idx + 1 < rows.length) focusRowByKey(rows[idx + 1].key);
+          break;
+        }
+        case 'ArrowUp': {
+          if (idx > 0) focusRowByKey(rows[idx - 1].key);
+          break;
+        }
+        case 'ArrowRight': {
+          if (current.kind === 'dir') {
+            if (!current.expanded) {
+              toggleDir(current.dirKey); // expand; focus stays on the dir row
+            } else if (idx + 1 < rows.length && rows[idx + 1].depth > current.depth) {
+              focusRowByKey(rows[idx + 1].key); // already expanded → first child
+            }
+          }
+          break; // no-op on files (APG)
+        }
+        case 'ArrowLeft': {
+          if (current.kind === 'dir' && current.expanded) {
+            toggleDir(current.dirKey); // collapse; focus stays on the dir row
+          } else {
+            // Collapsed dir or file → nearest ancestor row. Ancestors always precede
+            // descendants in the flat list, so the first shallower row upward is the parent
+            // (correct under path compaction too — any depth delta qualifies).
+            for (let i = idx - 1; i >= 0; i--) {
+              if (rows[i].depth < current.depth) {
+                focusRowByKey(rows[i].key);
+                break;
+              }
+            }
+          }
+          break;
+        }
+        case 'Home': {
+          if (rows.length > 0) focusRowByKey(rows[0].key);
+          break;
+        }
+        case 'End': {
+          if (rows.length > 0) focusRowByKey(rows[rows.length - 1].key);
+          break;
+        }
+        case 'Enter':
+        case ' ': {
+          if (current.kind === 'file') onSelectFile(current.node.path);
+          else toggleDir(current.dirKey);
+          break;
+        }
+        default:
+          handled = false;
+      }
+      if (handled) e.preventDefault();
+    },
+    [rows, effectiveFocusedKey, focusRowByKey, toggleDir, onSelectFile],
+  );
+
   const focusByPath = useMemo(() => {
     if (!focusEntries) return null;
     const m = new Map<string, FocusLevel>();
@@ -310,6 +435,7 @@ export function FileTree({
           className={`file-tree-scroll ${styles.fileTreeScroll}`}
           role="tree"
           aria-label="File tree"
+          onKeyDown={handleTreeKeyDown}
         >
           <div className={`file-tree-inner ${styles.fileTreeInner}`}>
             {rows.map((row) =>
@@ -319,6 +445,9 @@ export function FileTree({
                   row={row}
                   onToggle={toggleDir}
                   isHovered={hoveredPath === row.dirKey}
+                  isFocusStop={row.key === effectiveFocusedKey}
+                  onRowFocus={handleRowFocus}
+                  setRowEl={setRowEl}
                 />
               ) : (
                 <FileCell
@@ -330,6 +459,9 @@ export function FileTree({
                   onSelectFile={onSelectFile}
                   focusLevel={focusByPath?.get(row.node.path) ?? null}
                   commentState={commentStateByPath?.get(row.node.path) ?? null}
+                  isFocusStop={row.key === effectiveFocusedKey}
+                  onRowFocus={handleRowFocus}
+                  setRowEl={setRowEl}
                 />
               ),
             )}
@@ -430,6 +562,9 @@ function FileCell({
   onSelectFile,
   focusLevel,
   commentState,
+  isFocusStop,
+  onRowFocus,
+  setRowEl,
 }: {
   row: FileRow;
   isSelected: boolean;
@@ -438,6 +573,9 @@ function FileCell({
   onSelectFile: (path: string) => void;
   focusLevel: FocusLevel | null;
   commentState: CommentIndicatorState | null;
+  isFocusStop: boolean;
+  onRowFocus: (key: string) => void;
+  setRowEl: (key: string, el: HTMLElement | null) => void;
 }) {
   const node = row.node;
   return (
@@ -460,7 +598,11 @@ function FileCell({
       data-row-hovered={isHovered ? 'true' : undefined}
       style={{ paddingLeft: `${(row.depth + 1) * INDENT_PER_LEVEL}px` }}
       onClick={() => onSelectFile(node.path)}
-      tabIndex={isSelected ? 0 : -1}
+      onFocus={() => onRowFocus(row.key)}
+      tabIndex={isFocusStop ? 0 : -1}
+      ref={(el) => {
+        setRowEl(row.key, el);
+      }}
     >
       <span
         className={`file-status file-status--${node.file.status} ${styles.fileStatus} ${FILE_STATUS_MODULE[node.file.status]}`}
@@ -624,10 +766,16 @@ function DirCell({
   row,
   onToggle,
   isHovered,
+  isFocusStop,
+  onRowFocus,
+  setRowEl,
 }: {
   row: DirRow;
   onToggle: (dirKey: string) => void;
   isHovered: boolean;
+  isFocusStop: boolean;
+  onRowFocus: (key: string) => void;
+  setRowEl: (key: string, el: HTMLElement | null) => void;
 }) {
   const node = row.node;
   const { expanded } = row;
@@ -639,15 +787,27 @@ function DirCell({
       aria-setsize={row.setSize}
       aria-posinset={row.posInSet}
       aria-expanded={expanded}
+      // #200 — without this the row's accessible name would concatenate the (now
+      // aria-hidden) chevron's text with the visible name span; the dir treeitem must
+      // announce its name exactly once.
+      aria-label={node.name}
       data-row-key={row.dirKey}
       data-row-hovered={isHovered ? 'true' : undefined}
       style={{ paddingLeft: `${row.depth * INDENT_PER_LEVEL}px` }}
+      onFocus={() => onRowFocus(row.key)}
+      tabIndex={isFocusStop ? 0 : -1}
+      ref={(el) => {
+        setRowEl(row.key, el);
+      }}
     >
+      {/* #200 — pointer-only decoration: the row treeitem is the keyboard surface
+          (roving tabIndex + tree-level onKeyDown), so the chevron leaves the tab order
+          and the accessibility tree; the row's aria-expanded carries the state. */}
       <button
         className={`file-tree-dir-toggle ${styles.fileTreeDirToggle}`}
         onClick={() => onToggle(row.dirKey)}
-        aria-label={`Toggle ${node.name}`}
-        aria-expanded={expanded}
+        tabIndex={-1}
+        aria-hidden="true"
       >
         <span
           className={`file-tree-chevron${expanded ? ' file-tree-chevron--open' : ''} ${styles.fileTreeChevron}${expanded ? ` ${styles.fileTreeChevronOpen}` : ''}`}

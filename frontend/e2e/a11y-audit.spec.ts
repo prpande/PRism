@@ -262,6 +262,43 @@ test.describe('A11y audit — automated axe-core pass per spec § 6', () => {
   });
 
   // ---------------------------------------------------------------------------
+  // #200 (AC 9) — the /files audit above runs against an EMPTY diff, so it never
+  // renders a single treeitem and would pass vacuously for the file tree. This
+  // case populates the tree with a nested directory (dir rows at two levels plus
+  // file rows) and re-runs the UNSCOPED page audit, so the roving-tabindex tree —
+  // dir rows with aria-label/aria-expanded, the aria-hidden pointer-only chevron,
+  // aria-level/setsize/posinset on flat rows — is actually exercised by axe.
+  // ---------------------------------------------------------------------------
+  test('PR files — populated file tree (nested dirs) — no serious/critical violations', async ({
+    page,
+  }) => {
+    const treeDiff = {
+      range: 'abc..def',
+      truncated: false,
+      files: [
+        { path: 'root.ts', status: 'modified', hunks: [] },
+        { path: 'src/inner/deep.ts', status: 'added', hunks: [] },
+        { path: 'src/top.ts', status: 'modified', hunks: [] },
+      ],
+    };
+    await setupBaseMocks(page);
+    await page.unroute('**/api/pr/octocat/Hello-World/1/diff**');
+    await page.route('**/api/pr/octocat/Hello-World/1/diff**', (route: Route) =>
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(treeDiff),
+      }),
+    );
+    await page.goto('/pr/octocat/Hello-World/1/files');
+    // Vacuousness guard: a directory treeitem (named by its aria-label, #200)
+    // must actually be in the tree before the audit counts.
+    await expect(page.getByRole('treeitem', { name: 'src' })).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByRole('treeitem', { name: /deep\.ts/i })).toBeVisible();
+    await runAxe(page);
+  });
+
+  // ---------------------------------------------------------------------------
   // Spec § 6 (Task 10) — highlighted diff must not introduce new axe violations.
   //
   // The base setupBaseMocks returns an empty diff ({files:[]}) so the
