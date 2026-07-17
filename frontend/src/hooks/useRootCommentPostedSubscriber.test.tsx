@@ -1,10 +1,10 @@
 import { renderHook, act, waitFor } from '@testing-library/react';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import type { ReactNode } from 'react';
-import { useRootCommentPostedSubscriber } from '../src/hooks/useRootCommentPostedSubscriber';
-import { EventStreamProvider } from '../src/hooks/useEventSource';
-import type { PrReference, RootCommentPostedEvent } from '../src/api/types';
-import { FakeEventSource, installFakeEventSource } from './helpers/fakeEventSource';
+import { useRootCommentPostedSubscriber } from './useRootCommentPostedSubscriber';
+import { EventStreamProvider } from './useEventSource';
+import type { PrReference, RootCommentPostedEvent } from '../api/types';
+import { FakeEventSource, installFakeEventSource } from '../../__tests__/helpers/fakeEventSource';
 
 beforeEach(() => {
   installFakeEventSource();

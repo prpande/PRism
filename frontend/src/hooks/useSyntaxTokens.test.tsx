@@ -1,8 +1,8 @@
 import { renderHook, waitFor } from '@testing-library/react';
 import { describe, it, expect } from 'vitest';
-import { useSyntaxTokens } from '../src/hooks/useSyntaxTokens';
-import { getHighlighterAsync } from '../src/components/Markdown/shikiInstance';
-import type { FileChange } from '../src/api/types';
+import { useSyntaxTokens } from './useSyntaxTokens';
+import { getHighlighterAsync } from '../components/Markdown/shikiInstance';
+import type { FileChange } from '../api/types';
 
 const file = (body: string): FileChange =>
   ({

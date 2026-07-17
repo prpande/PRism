@@ -1,7 +1,7 @@
 import { act, renderHook } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { usePrDetailRefresh } from '../src/hooks/usePrDetailRefresh';
-import * as prDetailApi from '../src/api/prDetail';
+import { usePrDetailRefresh } from './usePrDetailRefresh';
+import * as prDetailApi from '../api/prDetail';
 
 const PR = { owner: 'o', repo: 'r', number: 7 };
 

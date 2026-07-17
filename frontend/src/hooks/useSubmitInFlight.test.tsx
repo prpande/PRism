@@ -2,7 +2,7 @@ import { act, renderHook, waitFor } from '@testing-library/react';
 import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
 import { setupServer } from 'msw/node';
 import { http, HttpResponse } from 'msw';
-import { useSubmitInFlight } from '../src/hooks/useSubmitInFlight';
+import { useSubmitInFlight } from './useSubmitInFlight';
 
 const server = setupServer(
   http.get('/api/submit/in-flight', () => HttpResponse.json({ inFlight: false, prRef: null })),

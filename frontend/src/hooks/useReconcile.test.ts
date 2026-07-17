@@ -1,9 +1,9 @@
 import { renderHook, act, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { useReconcile } from '../src/hooks/useReconcile';
-import * as draftApi from '../src/api/draft';
-import { __resetTabIdForTest } from '../src/api/draft';
-import type { PrReference } from '../src/api/types';
+import { useReconcile } from './useReconcile';
+import * as draftApi from '../api/draft';
+import { __resetTabIdForTest } from '../api/draft';
+import type { PrReference } from '../api/types';
 
 const ref: PrReference = { owner: 'acme', repo: 'api', number: 123 };
 const sha1 = 'a'.repeat(40);
