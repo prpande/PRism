@@ -4,6 +4,7 @@ import {
   allOffCapabilities,
   makeDefaultPreferences,
 } from './fixtures/preferences';
+import { expectVisual } from './helpers/visual';
 
 // #312 Task 13 — visual e2e for the re-auth banner (GitHubAuthBanner).
 //
@@ -111,6 +112,6 @@ test('re-auth banner is shown on the inbox when the GitHub credential is invalid
   // can never match it, so the screenshot is a CI-only regression gate; the
   // visibility assertions above run on every platform.
   if (process.env.CI) {
-    await expect(page).toHaveScreenshot('reauth-banner.png');
+    await expectVisual(page, 'reauth-banner.png');
   }
 });

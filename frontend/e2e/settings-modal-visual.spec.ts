@@ -1,6 +1,7 @@
 import { test, expect, type Route, type Page } from '@playwright/test';
 import { makeDefaultPreferences } from './fixtures/preferences';
 import { setupBaseRoutes } from './helpers/base-mocks';
+import { expectVisual } from './helpers/visual';
 
 // B1 visual gate for the #134 Settings redesign. The app gates /settings/* behind
 // auth, so — like the other Settings specs — we mock the auth/preferences/
@@ -58,14 +59,14 @@ test.beforeEach(async ({ page }) => {
 for (const { theme, radio } of THEMES) {
   test(`settings modal — appearance (${theme})`, async ({ page }) => {
     await setTheme(page, radio);
-    await expect(page).toHaveScreenshot(`settings-appearance-${theme}.png`);
+    await expectVisual(page, `settings-appearance-${theme}.png`);
   });
 
   test(`settings modal — github connection (${theme})`, async ({ page }) => {
     await setTheme(page, radio);
     await page.getByRole('link', { name: 'GitHub Connection' }).click();
     await expect(page.getByRole('heading', { name: 'GitHub Connection' })).toBeVisible();
-    await expect(page).toHaveScreenshot(`settings-ghc-${theme}.png`);
+    await expectVisual(page, `settings-ghc-${theme}.png`);
   });
 }
 
@@ -75,5 +76,5 @@ test('settings modal — narrow viewport collapses the nav', async ({ page }) =>
   await expect(page.getByRole('navigation', { name: 'Settings sections' })).toBeVisible({
     timeout: 30_000,
   });
-  await expect(page).toHaveScreenshot('settings-narrow.png');
+  await expectVisual(page, 'settings-narrow.png');
 });

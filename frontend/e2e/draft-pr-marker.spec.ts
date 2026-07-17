@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test';
 import { BACKEND_ORIGIN } from './helpers/backend-origin';
 import { resetBackendState, setupAndOpenScenarioPr } from './helpers/s4-setup';
+import { expectVisual } from './helpers/visual';
 
 // #501 — draft PR marker visual baseline. Seeds the fake backend with a draft
 // PR and captures the inbox draft row (Draft chip + draft glyph) and the
@@ -58,7 +59,7 @@ test.describe('draft PR marker baselines (#501)', () => {
     await row.waitFor({ timeout: 45_000 });
 
     await page.addStyleTag({ content: KILL_ANIMATIONS_CSS });
-    await expect(row).toHaveScreenshot('inbox-draft-row.png', SCREENSHOT_OPTS);
+    await expectVisual(row, 'inbox-draft-row.png', SCREENSHOT_OPTS);
   });
 
   test('draft PR-detail header shows leading draft glyph and Draft marker', async ({
@@ -88,6 +89,6 @@ test.describe('draft PR marker baselines (#501)', () => {
     await header.waitFor({ timeout: 45_000 });
 
     await page.addStyleTag({ content: KILL_ANIMATIONS_CSS });
-    await expect(header).toHaveScreenshot('pr-detail-draft-header.png', SCREENSHOT_OPTS);
+    await expectVisual(header, 'pr-detail-draft-header.png', SCREENSHOT_OPTS);
   });
 });
