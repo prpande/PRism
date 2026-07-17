@@ -1,7 +1,7 @@
 import { renderHook, act } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { useSubmitToasts } from '../src/hooks/useSubmitToasts';
-import type { PrReference } from '../src/api/types';
+import { useSubmitToasts } from './useSubmitToasts';
+import type { PrReference } from '../api/types';
 
 // Mirror the real useEventSource() → EventStreamHandle.on(type, cb) → unsubscribe
 // contract (R4); fire events via `emit`. Don't mock the hook under test.
@@ -10,7 +10,7 @@ const handlers: Record<string, Set<Handler>> = {};
 function emit(type: string, payload: unknown) {
   handlers[type]?.forEach((h) => h(payload));
 }
-vi.mock('../src/hooks/useEventSource', () => ({
+vi.mock('./useEventSource', () => ({
   useEventSource: () => ({
     subscriberId: () => Promise.resolve('s1'),
     reconnectSignal: () => new AbortController().signal,

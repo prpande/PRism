@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook, waitFor } from '@testing-library/react';
-import type { FileChange, PrReference } from '../src/api/types';
-import { useWholeFileContent } from '../src/hooks/useWholeFileContent';
+import type { FileChange, PrReference } from '../api/types';
+import { useWholeFileContent } from './useWholeFileContent';
 
 const prRef: PrReference = { owner: 'o', repo: 'r', number: 1 };
 const modifiedFile: FileChange = {

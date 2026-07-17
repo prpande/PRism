@@ -1,11 +1,11 @@
 import { renderHook, act, waitFor } from '@testing-library/react';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import type { ReactNode } from 'react';
-import { useStateChangedSubscriber } from '../src/hooks/useStateChangedSubscriber';
-import { EventStreamProvider } from '../src/hooks/useEventSource';
-import { __resetTabIdForTest, getTabId } from '../src/api/draft';
-import type { PrReference, StateChangedEvent } from '../src/api/types';
-import { FakeEventSource, installFakeEventSource } from './helpers/fakeEventSource';
+import { useStateChangedSubscriber } from './useStateChangedSubscriber';
+import { EventStreamProvider } from './useEventSource';
+import { __resetTabIdForTest, getTabId } from '../api/draft';
+import type { PrReference, StateChangedEvent } from '../api/types';
+import { FakeEventSource, installFakeEventSource } from '../../__tests__/helpers/fakeEventSource';
 
 beforeEach(() => {
   installFakeEventSource();

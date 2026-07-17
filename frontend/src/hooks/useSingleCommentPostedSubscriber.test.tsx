@@ -1,9 +1,9 @@
 import { renderHook, act, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { ReactNode } from 'react';
-import { useSingleCommentPostedSubscriber } from '../src/hooks/useSingleCommentPostedSubscriber';
-import { EventStreamProvider } from '../src/hooks/useEventSource';
-import { FakeEventSource, installFakeEventSource } from './helpers/fakeEventSource';
+import { useSingleCommentPostedSubscriber } from './useSingleCommentPostedSubscriber';
+import { EventStreamProvider } from './useEventSource';
+import { FakeEventSource, installFakeEventSource } from '../../__tests__/helpers/fakeEventSource';
 
 const wrapper = ({ children }: { children: ReactNode }) => (
   <EventStreamProvider>{children}</EventStreamProvider>

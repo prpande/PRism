@@ -1,7 +1,7 @@
 import { renderHook, act, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { useSubmit } from '../src/hooks/useSubmit';
-import type { PrReference } from '../src/api/types';
+import { useSubmit } from './useSubmit';
+import type { PrReference } from '../api/types';
 
 // --- SSE stream fake (matches the real EventStreamHandle.on contract: returns
 //     an unsubscribe fn; useEventSource() takes no args). ---
@@ -22,7 +22,7 @@ const fakeStream = {
   close() {},
 };
 
-vi.mock('../src/hooks/useEventSource', () => ({
+vi.mock('./useEventSource', () => ({
   useEventSource: () => fakeStream,
 }));
 
@@ -31,7 +31,7 @@ const resumeForeignMock = vi.fn();
 const discardForeignMock = vi.fn();
 const discardOwnMock = vi.fn();
 
-vi.mock('../src/api/submit', () => ({
+vi.mock('../api/submit', () => ({
   submitReview: (...a: unknown[]) => submitReviewMock(...a),
   resumeForeignPendingReview: (...a: unknown[]) => resumeForeignMock(...a),
   discardForeignPendingReview: (...a: unknown[]) => discardForeignMock(...a),
