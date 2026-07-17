@@ -36,7 +36,14 @@ Per the [WAI-ARIA APG Tree View pattern](https://www.w3.org/WAI/ARIA/apg/pattern
    `preventDefault()` (no page scroll on arrows/Space).
 7. **Focus fallback.** The roving stop is the last-focused row when it still exists, else the
    selected file's row, else the first row. A row removed by collapse/refetch degrades to the
-   fallback without throwing or losing the tree's tab stop.
+   fallback without throwing or losing the tree's tab stop. Deliberate limitation: if a
+   background refetch removes the row that holds REAL DOM focus, `document.activeElement`
+   falls to `<body>` and the user re-enters via Tab (the tree still exposes exactly one
+   tab stop). No effect re-focuses the fallback — an automatic re-focus cannot distinguish
+   this case from "focusedKey points at the tree while the user works elsewhere", where it
+   would steal focus (AC 12). Strand-over-steal, per the focusout-ambiguity rule. Mouse
+   collapse cannot strand: the activation gesture itself focuses the surviving dir row
+   (AC 11).
 8. **Focus indication = today's treatment, kept deliberately.** The focus-visible ring renders
    on the name-column row cell exactly as it does for the currently-focusable file rows —
    partial with respect to the four sibling columns. A full-row keyboard-focus wash (threading
@@ -54,9 +61,12 @@ Per the [WAI-ARIA APG Tree View pattern](https://www.w3.org/WAI/ARIA/apg/pattern
     pointer-only decoration: `tabIndex={-1}` + `aria-hidden="true"` (legal — it is no longer
     focusable), with the row's `aria-expanded` carrying the state semantics.
 11. **Mouse and keyboard never desync.** Clicking any row (or the chevron) updates the roving
-    `focusedKey` — implemented as an `onFocus` handler on both row cells (React's `onFocus` is
-    focusin-based and bubbles, so a chevron click that natively focuses the button syncs the
-    row too). An arrow press immediately after any click continues from the clicked row.
+    `focusedKey` — implemented as an `onFocus` handler on both row cells (focusin-based,
+    bubbles). Directory activation lives on the treeitem ROW's `onClick` (chevron clicks
+    bubble to it; AT-synthesized clicks on the treeitem work too), which explicitly focuses
+    the row from the gesture — the chevron's mousedown default is suppressed so real focus
+    never parks on the aria-hidden button in any engine. An arrow press immediately after
+    any click continues from the clicked row.
 12. **Background refetches never steal focus.** Imperative `.focus()` runs ONLY inside the
     keydown handler, and every key's focus target already exists at keydown time (expand and
     collapse keep focus on the dir row itself; move-into fires only when the child row is

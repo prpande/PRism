@@ -779,6 +779,7 @@ function DirCell({
 }) {
   const node = row.node;
   const { expanded } = row;
+  const rowRef = useRef<HTMLDivElement | null>(null);
   return (
     <div
       className={`file-tree-dir-header ${styles.fileTreeDirHeader}`}
@@ -794,18 +795,29 @@ function DirCell({
       data-row-key={row.dirKey}
       data-row-hovered={isHovered ? 'true' : undefined}
       style={{ paddingLeft: `${row.depth * INDENT_PER_LEVEL}px` }}
+      // The click handler lives on the treeitem ROW (chevron clicks bubble here), so
+      // AT-synthesized clicks on the treeitem activate directories too, and the explicit
+      // focus keeps real DOM focus on a visible treeitem in every engine — clicking the
+      // chevron must never park focus on an aria-hidden node, and collapsing via mouse
+      // must not strand focus on a row about to unmount. Focus from a user gesture only.
+      onClick={() => {
+        rowRef.current?.focus({ preventScroll: true });
+        onToggle(row.dirKey);
+      }}
       onFocus={() => onRowFocus(row.key)}
       tabIndex={isFocusStop ? 0 : -1}
       ref={(el) => {
+        rowRef.current = el;
         setRowEl(row.key, el);
       }}
     >
-      {/* #200 — pointer-only decoration: the row treeitem is the keyboard surface
-          (roving tabIndex + tree-level onKeyDown), so the chevron leaves the tab order
-          and the accessibility tree; the row's aria-expanded carries the state. */}
+      {/* #200 — pointer-only decoration: the row treeitem is the keyboard AND click
+          surface (its onClick above handles the bubbled chevron click), so the chevron
+          leaves the tab order and the accessibility tree, never takes focus itself
+          (mousedown default suppressed), and the row's aria-expanded carries the state. */}
       <button
         className={`file-tree-dir-toggle ${styles.fileTreeDirToggle}`}
-        onClick={() => onToggle(row.dirKey)}
+        onMouseDown={(e) => e.preventDefault()}
         tabIndex={-1}
         aria-hidden="true"
       >

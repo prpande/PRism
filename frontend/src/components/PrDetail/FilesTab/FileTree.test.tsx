@@ -1051,6 +1051,30 @@ describe('FileTree keyboard navigation (#200)', () => {
     expect(document.activeElement).toBe(row('inner'));
   });
 
+  it('chevron click toggles once and parks real focus on the ROW, never the hidden button', () => {
+    renderKbTree();
+    const src = row('src');
+    const chevron = src.querySelector('button')!;
+    fireEvent.click(chevron);
+    // one toggle, not a bubbled double-toggle (row + button handlers would cancel out)
+    expect(screen.queryByText('inner')).not.toBeInTheDocument();
+    // the activation gesture moves real DOM focus to the treeitem row — activeElement
+    // must never sit on the aria-hidden chevron (AT would fall silent there)
+    expect(document.activeElement).toBe(src);
+    // the browser's mousedown default (click-focusing the button) is suppressed
+    expect(fireEvent.mouseDown(chevron)).toBe(false);
+  });
+
+  it('clicking the dir row itself (name area) toggles and focuses it', () => {
+    const { container } = renderKbTree();
+    fireEvent.click(row('src'));
+    expect(screen.queryByText('inner')).not.toBeInTheDocument();
+    expect(document.activeElement).toBe(row('src'));
+    fireEvent.click(row('src'));
+    expect(screen.getByText('inner')).toBeInTheDocument();
+    expect(stops(container)).toBe(1);
+  });
+
   it('keeps exactly one roving stop after the focused subtree collapses away', () => {
     const { container } = renderKbTree();
     focusEl(row('deep.ts'));
