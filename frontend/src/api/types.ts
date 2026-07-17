@@ -328,7 +328,6 @@ export interface ReviewThreadDto {
   threadId: string;
   filePath: string;
   lineNumber: number;
-  anchorSha: string;
   isResolved: boolean;
   comments: ReviewCommentDto[];
 }
