@@ -17,11 +17,11 @@ public static class FixtureStripAllowlist
     // Allowlist of FIELD NAMES (not JSON-pointer paths). Applied recursively — a kept field
     // name kept at every level it appears. This matches the spec § 7 category rule's "Kept"
     // bullet:
-    //   - Structural enums:        state, reviewType, mergeable, mergeStateStatus, __typename
+    //   - Structural enums:        state, reviewType, mergeable, mergeStateStatus, subjectType, __typename
     //   - Structural identifiers:  oid, headRefOid, baseRefOid, beforeCommit, afterCommit
     //   - Structural counts:       totalCount, changedFiles, additions, deletions
-    //   - Structural booleans:     isDraft, isResolved, hasNextPage
-    //   - Structural numbering:    number, line
+    //   - Structural booleans:     isDraft, isResolved, hasNextPage, isOutdated
+    //   - Structural numbering:    number, line, originalLine, originalStartLine
     //   - Structural envelopes:    pageInfo, endCursor (cursor IS opaque schema-shape, not PII)
     //   - Structural containers:   repository, pullRequest, comments, reviews, reviewThreads, commits,
     //                              timelineItems, nodes, commit, data
@@ -39,9 +39,10 @@ public static class FixtureStripAllowlist
         "__typename", "oid", "headRefOid", "baseRefOid", "beforeCommit", "afterCommit",
         // Enum-valued and boolean structural fields
         "state", "reviewType", "mergeable", "mergeStateStatus", "isDraft", "isResolved",
-        "hasNextPage",
+        "hasNextPage", "isOutdated", "subjectType",
         // Count/numeric structural fields
         "totalCount", "changedFiles", "additions", "deletions", "number", "line",
+        "originalLine", "originalStartLine",
         // Path/name fields that describe SHAPE (file paths in diffs, branch names) — these
         // are not personally identifying, they describe the repo structure
         "path", "headRefName", "baseRefName",
