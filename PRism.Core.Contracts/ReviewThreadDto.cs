@@ -6,7 +6,6 @@ public sealed record ReviewThreadDto(
     string ThreadId,
     string FilePath,
     int LineNumber,
-    string AnchorSha,
     bool IsResolved,
     IReadOnlyList<ReviewCommentDto> Comments);
 

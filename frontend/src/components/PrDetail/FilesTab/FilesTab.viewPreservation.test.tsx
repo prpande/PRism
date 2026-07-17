@@ -154,7 +154,6 @@ const NEW_THREAD: ReviewThreadDto = {
   threadId: 'thread-new-1',
   filePath: 'src/b.ts',
   lineNumber: 2,
-  anchorSha: 'headsha',
   isResolved: false,
   comments: [
     {

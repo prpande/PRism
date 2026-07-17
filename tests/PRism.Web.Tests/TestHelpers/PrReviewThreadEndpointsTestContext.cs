@@ -123,7 +123,6 @@ internal sealed class PrReviewThreadEndpointsTestContext : IDisposable
                     ThreadId: KnownThreadId,
                     FilePath: "src/Foo.cs",
                     LineNumber: 10,
-                    AnchorSha: "head1",
                     IsResolved: false,
                     Comments: Array.Empty<ReviewCommentDto>()),
             },
