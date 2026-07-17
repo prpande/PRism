@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { postRootComment } from '../src/api/rootComment';
-import type { PrReference } from '../src/api/types';
-import { jsonResponse } from './helpers/http';
+import { postRootComment } from './rootComment';
+import type { PrReference } from './types';
+import { jsonResponse } from '../../__tests__/helpers/http';
 
 const ref: PrReference = { owner: 'octocat', repo: 'hello', number: 42 };
 const PR_PATH = '/api/pr/octocat/hello/42';

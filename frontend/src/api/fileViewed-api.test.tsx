@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { postFileViewed } from '../src/api/fileViewed';
-import type { PrReference } from '../src/api/types';
+import { postFileViewed } from './fileViewed';
+import type { PrReference } from './types';
 
 const ref: PrReference = { owner: 'octocat', repo: 'hello', number: 42 };
 

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { openEventStream } from '../src/api/events';
-import { FakeEventSource, installFakeEventSource } from './helpers/fakeEventSource';
+import { openEventStream } from './events';
+import { FakeEventSource, installFakeEventSource } from '../../__tests__/helpers/fakeEventSource';
 
 beforeEach(() => {
   installFakeEventSource();

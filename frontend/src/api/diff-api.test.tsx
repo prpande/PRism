@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { jsonResponse } from './helpers/http';
-import { getDiff, getDiffByCommits } from '../src/api/diff';
-import type { DiffDto, PrReference } from '../src/api/types';
+import { jsonResponse } from '../../__tests__/helpers/http';
+import { getDiff, getDiffByCommits } from './diff';
+import type { DiffDto, PrReference } from './types';
 
 const ref: PrReference = { owner: 'octocat', repo: 'hello', number: 42 };
 
