@@ -1,0 +1,70 @@
+# Permanent actionlint gate (#400, follow-up to #398/#335, epic #317).
+#
+# Three workflows (integration-tests.yml, publish.yml, publish-desktop.yml) are
+# workflow_dispatch-only and never execute on a PR, so a broken `uses:`, a wrong
+# composite-action input, or an expression typo there surfaces only at release
+# time. actionlint validates ALL workflow files statically — including the
+# dispatch-only ones and local composite-action input contracts — so those
+# errors fail the PR that introduces them instead.
+#
+# Path-gated natively (on.<event>.paths): workflow errors can only be introduced
+# by changes under .github/, and native path filtering needs no third-party
+# paths-filter action (ci.yml's desktop job stayed always-on precisely to avoid
+# such a pin — a standalone workflow doesn't have that constraint). This job is
+# not in the required-checks set, so PRs it doesn't run on are unaffected.
+#
+# Supply-chain: pinned release tarball verified against a hardcoded SHA-256
+# before execution, fail-closed (same posture as claude.yml's installer pin) —
+# NOT `curl | bash`, NOT an unpinned third-party action. To bump: update
+# ACTIONLINT_VERSION + ACTIONLINT_SHA256 together from the release's
+# checksums.txt (verify the checksums file out-of-band, not just re-copy).
+name: actionlint
+
+on:
+  pull_request:
+    paths:
+      - '.github/**'
+  push:
+    branches: [main]
+    paths:
+      - '.github/**'
+  workflow_dispatch:
+
+# This job needs zero token scope (no gh calls, no artifact upload, no
+# comments). Explicit read-only keeps the least-privilege posture independent
+# of the repo's mutable default_workflow_permissions setting.
+permissions:
+  contents: read
+
+jobs:
+  actionlint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # actions/checkout v7.0.0
+
+      # actionlint silently disables its shellcheck integration when the binary
+      # is absent. ubuntu-latest ships shellcheck preinstalled; assert it so an
+      # image change weakens this gate loudly instead of silently.
+      - name: Verify shellcheck is available (actionlint run-block integration)
+        shell: bash
+        run: shellcheck --version
+
+      - name: Install actionlint (pinned, checksum-verified)
+        shell: bash
+        env:
+          ACTIONLINT_VERSION: 1.7.12
+          ACTIONLINT_SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
+        # Bound explicitly so a stalled download fails fast and legibly rather
+        # than hanging to the job-level timeout (same rationale as the npm audit
+        # timeouts in ci.yml).
+        timeout-minutes: 5
+        run: |
+          curl -fsSL --retry 3 -o "${RUNNER_TEMP}/actionlint.tar.gz" \
+            "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          echo "${ACTIONLINT_SHA256}  ${RUNNER_TEMP}/actionlint.tar.gz" | sha256sum --check -
+          tar -xzf "${RUNNER_TEMP}/actionlint.tar.gz" -C "${RUNNER_TEMP}" actionlint
+
+      - name: Run actionlint
+        shell: bash
+        run: |
+          "${RUNNER_TEMP}/actionlint"
