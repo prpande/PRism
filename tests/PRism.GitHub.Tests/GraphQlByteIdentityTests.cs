@@ -21,8 +21,8 @@ public class GraphQlByteIdentityTests
         "headRefName baseRefName headRefOid baseRefOid " +
         "author{login avatarUrl} createdAt closedAt mergedAt changedFiles " +
         "comments(first:100){pageInfo{hasNextPage endCursor} nodes{databaseId author{login avatarUrl} createdAt body}}" +
-        "reviewThreads(first:100){pageInfo{hasNextPage endCursor} nodes{id path line isResolved " +
-        "comments(first:100){pageInfo{hasNextPage} nodes{id databaseId author{login avatarUrl} createdAt body lastEditedAt}}}}" +
+        "reviewThreads(first:100){pageInfo{hasNextPage endCursor} nodes{id path line isOutdated originalLine originalStartLine subjectType isResolved " +
+        "comments(first:100){pageInfo{hasNextPage} nodes{id databaseId author{login avatarUrl} createdAt body lastEditedAt diffHunk pullRequestReview{databaseId}}}}}" +
         "reviews(last:100){pageInfo{hasPreviousPage} nodes{author{login} state submittedAt commit{oid}}}" +
         // #593 — avatarUrl on latestReviews + the reviewRequests connection feed the readiness popover.
         "latestReviews(first:100){nodes{author{login avatarUrl} state}}" +

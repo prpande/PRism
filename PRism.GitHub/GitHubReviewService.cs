@@ -50,9 +50,9 @@ public sealed partial class GitHubReviewService : IPrDiscovery, IPrReader
         "headRefName baseRefName headRefOid baseRefOid " +
         "author{login avatarUrl} createdAt closedAt mergedAt changedFiles " +
         "comments(first:100){pageInfo{hasNextPage endCursor} nodes{databaseId author{login avatarUrl} createdAt body}}" +
-        "reviewThreads(first:100){pageInfo{hasNextPage endCursor} nodes{id path line isResolved " +
+        "reviewThreads(first:100){pageInfo{hasNextPage endCursor} nodes{id path line isOutdated originalLine originalStartLine subjectType isResolved " +
         // #604 Part A: nested thread comments(first:100) is forward pagination → hasNextPage.
-        "comments(first:100){pageInfo{hasNextPage} nodes{id databaseId author{login avatarUrl} createdAt body lastEditedAt}}}}" +
+        "comments(first:100){pageInfo{hasNextPage} nodes{id databaseId author{login avatarUrl} createdAt body lastEditedAt diffHunk pullRequestReview{databaseId}}}}}" +
         // #604 Part A: reviews(last:100) is BACKWARD pagination — >100 reviews drop off the
         // FRONT (older), so the cap signal is hasPreviousPage, not hasNextPage. last:100 is kept
         // because ParseViewerReview needs the NEWEST reviews.
