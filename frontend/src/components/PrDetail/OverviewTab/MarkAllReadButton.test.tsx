@@ -1,13 +1,16 @@
 import { render, screen, fireEvent, act, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { ReactNode } from 'react';
-import { MarkAllReadButton } from '../src/components/PrDetail/OverviewTab/MarkAllReadButton';
-import { EventStreamProvider } from '../src/hooks/useEventSource';
-import * as draftApi from '../src/api/draft';
-import { __resetTabIdForTest } from '../src/api/draft';
-import type { PrReference } from '../src/api/types';
-import type { PrUpdatedEvent } from '../src/api/events';
-import { FakeEventSource, installFakeEventSource } from './helpers/fakeEventSource';
+import { MarkAllReadButton } from './MarkAllReadButton';
+import { EventStreamProvider } from '../../../hooks/useEventSource';
+import * as draftApi from '../../../api/draft';
+import { __resetTabIdForTest } from '../../../api/draft';
+import type { PrReference } from '../../../api/types';
+import type { PrUpdatedEvent } from '../../../api/events';
+import {
+  FakeEventSource,
+  installFakeEventSource,
+} from '../../../../__tests__/helpers/fakeEventSource';
 
 const ref: PrReference = { owner: 'octocat', repo: 'hello', number: 42 };
 

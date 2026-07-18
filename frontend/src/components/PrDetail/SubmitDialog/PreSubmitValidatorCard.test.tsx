@@ -1,6 +1,6 @@
 import { render, screen } from '@testing-library/react';
 import { describe, it, expect } from 'vitest';
-import { PreSubmitValidatorCard } from '../src/components/PrDetail/SubmitDialog/PreSubmitValidatorCard';
+import { PreSubmitValidatorCard } from './PreSubmitValidatorCard';
 
 describe('PreSubmitValidatorCard (spec § 14.1)', () => {
   it('renders nothing when there are no results (Noop / aiPreview off)', () => {

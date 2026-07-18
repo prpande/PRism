@@ -2,7 +2,7 @@ import { render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import userEvent from '@testing-library/user-event';
 import { describe, it, expect, vi } from 'vitest';
-import { SetupForm } from '../src/components/Setup/SetupForm';
+import { SetupForm } from './SetupForm';
 
 describe('SetupForm', () => {
   it('disables Continue when input is empty', () => {

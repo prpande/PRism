@@ -4,9 +4,9 @@ import { describe, it, expect, beforeAll, beforeEach, afterAll, afterEach, vi } 
 import { setupServer } from 'msw/node';
 import { http, HttpResponse } from 'msw';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
-import { SetupPage } from '../src/pages/SetupPage';
-import { ToastProvider, ToastContainer } from '../src/components/Toast';
-import { AuthProvider } from '../src/hooks/useAuth';
+import { SetupPage } from './SetupPage';
+import { ToastProvider, ToastContainer } from '../components/Toast';
+import { AuthProvider } from '../hooks/useAuth';
 
 const server = setupServer();
 beforeAll(() => server.listen());

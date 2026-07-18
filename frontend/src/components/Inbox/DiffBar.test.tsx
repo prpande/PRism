@@ -1,6 +1,6 @@
 import { render } from '@testing-library/react';
 import { describe, it, expect } from 'vitest';
-import { DiffBar } from '../src/components/Inbox/DiffBar';
+import { DiffBar } from './DiffBar';
 
 describe('DiffBar', () => {
   it('renders nothing when both additions and deletions are zero', () => {

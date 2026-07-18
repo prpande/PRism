@@ -1,6 +1,6 @@
 import { render, screen } from '@testing-library/react';
 import { describe, it, expect } from 'vitest';
-import { CountsBlock } from '../src/components/PrDetail/SubmitDialog/CountsBlock';
+import { CountsBlock } from './CountsBlock';
 
 describe('CountsBlock', () => {
   it('renders the plural copy for >1', () => {

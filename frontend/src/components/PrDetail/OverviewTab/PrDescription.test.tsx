@@ -1,7 +1,7 @@
 import { render, screen, within } from '@testing-library/react';
 import { describe, it, expect } from 'vitest';
-import { PrDescription } from '../src/components/PrDetail/OverviewTab/PrDescription';
-import styles from '../src/components/PrDetail/OverviewTab/PrDescription.module.css';
+import { PrDescription } from './PrDescription';
+import styles from './PrDescription.module.css';
 
 describe('PrDescription', () => {
   it('renders the body as Markdown', () => {
