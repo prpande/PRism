@@ -34,8 +34,14 @@ export interface PrDetailContextValue {
   // pendingFilePath, applies it, then calls clearPendingFilePath(). The state
   // lives in PrDetailView (the value object), not this module.
   pendingFilePath: string | null;
-  requestFileView: (path: string) => void;
+  // Deep-link navigation intent with a target review thread: requestFileView(path, threadId)
+  // stashes both the path and threadId here. Consumers gate on
+  // selectedPath === pendingThread.path (not threadId alone) so the effect can't fire against
+  // the previously-selected file before the tab switch completes.
+  pendingThread: { path: string; threadId: string } | null;
+  requestFileView: (path: string, threadId?: string) => void;
   clearPendingFilePath: () => void;
+  clearPendingThread: () => void;
   // Shared per-file "viewed" state (#442). Derived from the persisted
   // fileViewState (head-matched) plus an optimistic overlay; the Files-tab
   // checkboxes AND the Overview "Viewed" tile read the same Set, so a toggle in
