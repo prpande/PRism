@@ -18,7 +18,7 @@ Every task's requirements implicitly include this section. Values are copied ver
 - **D3 — expanded view is read-only** and reuses `CommentCard`. Reply/resolve stay exclusively in the Files tab. No composer, no resolve button anywhere in the timeline.
 - **D4 — client-side join, no timeline endpoint change.** `useThreadsByReview(reviewComments)` → `Map<number, ReviewThreadDto[]>`; `ActivityFeed` keeps its explicit-props pattern (it does NOT consume `prDetailContext`).
 - **D6 — outdated & file-level threads get no click-through.** Their surface is the badge + frozen `diffHunk` snippet.
-- **Chip precedence on the collapsed row (exact):** (1) `subjectType === 'FILE'` → **File** chip (never the Outdated badge, even when outdated); else (2) `lineNumber != null` (anchored) → monospace `path:line` chip + a **View in diff** button; else (3) → **Outdated** badge. Reply count = `comments.length − 1`, shown only when > 0. Resolved threads show a **Resolved** chip matching the Files-tab resolved styling.
+- **Chip precedence on the collapsed row (exact):** (1) `subjectType === 'FILE'` → **File** chip (never the Outdated badge, even when outdated); else (2) `isOutdated === true` OR `lineNumber == null` → **Outdated** badge, no click-through; else (3) (a non-outdated LINE thread with a non-null `lineNumber`) → monospace `path:line` chip + a **View in diff** button. Step (2) keys on `isOutdated`, **not `lineNumber` alone**: real data has `isOutdated: true` threads carrying a non-null `line` (spec verified-facts section / BFF#202), and D6 says outdated threads get no click-through — so an outdated-but-anchored thread must read as **Outdated** with no button, not as a live line chip. Reply count = `comments.length − 1`, shown only when > 0. Resolved threads show a **Resolved** chip matching the Files-tab resolved styling.
 - **Outdated "was L…" label (exact):** shown in the expanded view above the hunk, for outdated LINE threads only — ``was L${originalStartLine}–${originalLine}`` when `originalStartLine != null`, else ``was L${originalLine}``. Never mix these original-range numbers with current-head numbers.
 - **Expanded hunk block:** render `diffHunk` in a muted monospace block that scrolls inside its own `overflow-x` container. When `diffHunk` is null (file-level threads) omit the block entirely — never render an empty scrollable box.
 - **Scroll mechanism:** manual `container.scrollTo` mirroring `useChangeNavigation`, honoring `prefers-reduced-motion` (`behavior: 'auto'` when reduced). Never `element.scrollIntoView()` — it is unused in this codebase and absent in jsdom.
@@ -50,11 +50,12 @@ Every task's requirements implicitly include this section. Values are copied ver
 - Modify `frontend/src/components/PrDetail/PrDetailView.tsx` — `pendingThread` state, 2-arg `requestFileView`, `useDiffScrollRestore` suppression.
 - Modify `frontend/src/components/PrDetail/testUtils.tsx` — widen the context stub.
 - Modify `frontend/src/hooks/diffScrollMemory.ts` — `suppress` option on `useDiffScrollRestore`.
+- Modify `frontend/src/hooks/diffScrollMemory.test.tsx` (existing) — add the two `suppress` cases.
 - Create `frontend/src/components/PrDetail/FilesTab/scrollThreadIntoCenter.ts` — center-scroll util.
 - Create `frontend/src/components/PrDetail/FilesTab/scrollThreadIntoCenter.test.ts`.
 - Modify `frontend/src/components/PrDetail/FilesTab/FilesTab.tsx` — pending-thread effect + miss Snackbar.
 - Create `frontend/src/components/PrDetail/FilesTab/FilesTab.threadDeepLink.test.tsx`.
-- Modify the global stylesheet that defines `.comment-thread--resolved` — add `.comment-thread--flash` keyframes (grep for `comment-thread--resolved` to locate).
+- Create `frontend/src/styles/thread-highlight.css` (global, non-module) with the `.comment-thread--flash` keyframes, and import it in `frontend/src/main.tsx`. (There is no existing global stylesheet for `.comment-thread` — it is a plain className hook with no CSS rule; a module class would be hashed and never match the JS-toggled string class.)
 - Modify `ReviewThreadRow.tsx` + `.module.css` — add the "View in diff" button (anchored only) + `onViewInDiff` prop.
 - Modify `ReviewThreadRow.test.tsx` — button presence/absence + click.
 - Modify `ActivityFeed.tsx` + `OverviewTab.tsx` — thread `onThreadNavigate` prop wiring.
@@ -238,6 +239,12 @@ describe('ReviewThreadRow', () => {
     expect(screen.queryByText('Outdated')).not.toBeInTheDocument();
   });
 
+  it('outdated thread with a non-null lineNumber still shows Outdated, not a line chip', () => {
+    render(<ReviewThreadRow thread={base({ isOutdated: true, lineNumber: 671, subjectType: 'LINE', originalLine: 668 })} />);
+    expect(screen.getByText('Outdated')).toBeInTheDocument();
+    expect(screen.queryByText('src/Calc.cs:671')).not.toBeInTheDocument();
+  });
+
   it('shows a reply count only when there is more than one comment', () => {
     const two = base({ comments: [
       { commentId: 'c1', author: 'alice', createdAt: '2026-01-01T00:00:00Z', body: 'a', editedAt: null },
@@ -300,17 +307,21 @@ export function ReviewThreadRow({ thread }: { thread: ReviewThreadDto }) {
   const [expanded, setExpanded] = useState(false);
 
   const fileLevel = thread.subjectType === 'FILE';
-  const anchored = thread.lineNumber != null;
-  const outdated = !fileLevel && !anchored;
+  // Outdated keys on isOutdated OR a null line — NOT lineNumber alone. Real data has
+  // isOutdated:true threads with a non-null line (spec verified-facts / BFF#202); D6 says
+  // those get no click-through, so they must read as Outdated, not as an anchored line chip.
+  const outdated = !fileLevel && (thread.isOutdated === true || thread.lineNumber == null);
+  const anchored = !fileLevel && !outdated; // non-outdated LINE thread with a real lineNumber
 
   const first = thread.comments[0];
   const snippet = first?.body ?? '';
   const replyCount = thread.comments.length - 1;
-  const wasLabel = outdated
-    ? thread.originalStartLine != null
-      ? `was L${thread.originalStartLine}–${thread.originalLine}`
-      : `was L${thread.originalLine}`
-    : null;
+  const wasLabel =
+    outdated && thread.originalLine != null
+      ? thread.originalStartLine != null
+        ? `was L${thread.originalStartLine}–${thread.originalLine}`
+        : `was L${thread.originalLine}`
+      : null;
 
   return (
     <li className={styles.threadRow}>
@@ -821,8 +832,10 @@ internal sealed record SeedReviewThread(
     bool IsResolved,
     IReadOnlyList<SeedReviewComment> Comments);
 
-internal sealed record SeedReviewComment(string CommentId, string Author, string CreatedAt, string Body);
+internal sealed record SeedReviewComment(string CommentId, string Author, DateTimeOffset CreatedAt, string Body);
 ```
+
+`CreatedAt` is bound as `DateTimeOffset` — System.Text.Json parses the e2e helper's ISO-8601 strings into it automatically, so no manual `DateTimeOffset.Parse` is needed downstream.
 
 Register the endpoint (mirror `/test/seed-tree-files`):
 
@@ -848,7 +861,12 @@ app.MapPost("/test/seed-review-threads", (SeedReviewThreadsRequest req, IService
             ReviewDatabaseId: t.ReviewDatabaseId,
             IsResolved: t.IsResolved,
             Comments: (t.Comments ?? Array.Empty<SeedReviewComment>())
-                .Select(c => new ReviewCommentDto(c.CommentId, c.Author, null, c.CreatedAt, c.Body, null, null))
+                .Select(c => new ReviewCommentDto(
+                    CommentId: c.CommentId,
+                    Author: c.Author,
+                    CreatedAt: c.CreatedAt,
+                    Body: c.Body,
+                    EditedAt: null))
                 .ToList()))
         .ToList();
     store.SeedReviewThreads(threads);
@@ -856,7 +874,7 @@ app.MapPost("/test/seed-review-threads", (SeedReviewThreadsRequest req, IService
 });
 ```
 
-Note: confirm the exact `ReviewThreadDto` and `ReviewCommentDto` constructor argument order against `PRism.Core.Contracts` (slice 1 shipped an 11-component `ReviewThreadDto` and a `ReviewCommentDto` whose optional args are `AvatarUrl`, `EditedAt`, `DatabaseId`). Adjust the positional args if the record differs.
+Record signatures (verified against `PRism.Core.Contracts/ReviewThreadDto.cs`): the `ReviewThreadDto(ThreadId, FilePath, LineNumber int?, IsOutdated, OriginalLine, OriginalStartLine, SubjectType, DiffHunk, ReviewDatabaseId, IsResolved, Comments)` construction above matches its positional order exactly. `ReviewCommentDto(string CommentId, string Author, DateTimeOffset CreatedAt, string Body, DateTimeOffset? EditedAt, string? AvatarUrl = null, long? DatabaseId = null)` — note `CreatedAt` is a `DateTimeOffset` (not a string) and `EditedAt` is a **required** positional slot (no default), which is why the call uses **named arguments** (`AvatarUrl`/`DatabaseId` fall to their defaults). Positional `new ReviewCommentDto(id, author, null, createdAt, body, null, null)` would not compile.
 
 - [ ] **Step 4: Add the e2e helper to `frontend/e2e/helpers/s4-setup.ts`** (mirror the existing POST helpers that supply the `Origin` header)
 
@@ -1039,14 +1057,14 @@ git commit -m "feat(#774): thread an optional threadId through requestFileView"
 
 **Files:**
 - Modify: `frontend/src/hooks/diffScrollMemory.ts`
-- Test: `frontend/src/hooks/diffScrollMemory.test.ts` (create if absent)
+- Test: extend the **existing** `frontend/src/hooks/diffScrollMemory.test.tsx` (do NOT create a new file — a `.test.tsx` with a `Harness` / `makeWritableScrollTop` / `_clearDiffScrollStoreForTest` pattern already covers `useDiffScrollCapture`/`useDiffScrollRestore`). Add the two `suppress` cases using that file's established render/assert style.
 
 **Why:** `useDiffScrollRestore` is a `useLayoutEffect` that unconditionally writes `body.scrollTop = saved` on the Files re-activation edge. Without suppression it stomps the thread-scroll target on the same paint. Gate the restore off when a thread deep-link is pending.
 
 **Interfaces:**
 - Produces: `useDiffScrollRestore(opts: { rootRef; refKey; subTab; active; suppress?: boolean })` — when `suppress` is true, the restore write is skipped.
 
-- [ ] **Step 1: Write the failing test**
+- [ ] **Step 1: Add the failing cases to the existing test file.** The sketch below is illustrative of the two behaviors to assert (suppressed vs restored); translate it into `diffScrollMemory.test.tsx`'s existing `Harness` + `makeWritableScrollTop` + `_clearDiffScrollStoreForTest` helpers rather than the standalone `renderHook` form, so the new cases share the file's setup/teardown.
 
 ```ts
 import { renderHook } from '@testing-library/react';
@@ -1099,8 +1117,8 @@ describe('useDiffScrollRestore suppress', () => {
 
 - [ ] **Step 2: Run to verify it fails**
 
-Run: `cd frontend && ./node_modules/.bin/vitest run src/hooks/diffScrollMemory.test.ts --reporter=dot`
-Expected: FAIL — `suppress` not honored (first test restores to 300).
+Run: `cd frontend && ./node_modules/.bin/vitest run src/hooks/diffScrollMemory.test.tsx --reporter=dot`
+Expected: FAIL — `suppress` not honored (first case restores instead of skipping).
 
 - [ ] **Step 3: Implement** — add `suppress` to the opts type and the guard:
 
@@ -1139,7 +1157,7 @@ Run: same as Step 2. Expected: PASS (2 tests).
 - [ ] **Step 5: Commit**
 
 ```bash
-git add frontend/src/hooks/diffScrollMemory.ts frontend/src/hooks/diffScrollMemory.test.ts frontend/src/components/PrDetail/PrDetailView.tsx
+git add frontend/src/hooks/diffScrollMemory.ts frontend/src/hooks/diffScrollMemory.test.tsx frontend/src/components/PrDetail/PrDetailView.tsx
 git commit -m "feat(#774): suppress diff-scroll restore while a thread deep-link is pending"
 ```
 
@@ -1232,7 +1250,8 @@ git commit -m "feat(#774): add scrollThreadIntoCenter util (center-scroll, reduc
 
 **Files:**
 - Modify: `frontend/src/components/PrDetail/FilesTab/FilesTab.tsx`
-- Modify: the global stylesheet defining `.comment-thread--resolved` (grep to locate) — add `.comment-thread--flash`.
+- Create: `frontend/src/styles/thread-highlight.css` (global, non-module) — the `.comment-thread--flash` keyframes.
+- Modify: `frontend/src/main.tsx` — import `./styles/thread-highlight.css`.
 - Test: `frontend/src/components/PrDetail/FilesTab/FilesTab.threadDeepLink.test.tsx`
 
 **Interfaces:**
@@ -1305,7 +1324,7 @@ Render the miss Snackbar (near the existing live region; the sr-only announce is
 
 Add the constant near the top of the module: `const FLASH_MS = 2000;` and import `scrollThreadIntoCenter` + `Snackbar`.
 
-- [ ] **Step 3: Add the flash CSS.** Grep for `comment-thread--resolved` to find the global stylesheet, and add next to it:
+- [ ] **Step 3: Add the flash CSS to a GLOBAL (non-module) stylesheet.** The `comment-thread` / `comment-thread--resolved` classes on `ExistingCommentWidget` are plain global-hook strings with **no CSS rule anywhere** — every component stylesheet is a CSS Module, and the only globals are `frontend/src/styles/reset.css` and `frontend/src/styles/tokens.css` (imported in `main.tsx`). A global class is required because Step 2 toggles the plain string class via `classList.add('comment-thread--flash')`; a CSS-Module rule would be hashed and never match (the flash would silently never render, and neither `toHaveClass` nor the e2e would catch it). Create `frontend/src/styles/thread-highlight.css`:
 
 ```css
 @keyframes comment-thread-flash {
@@ -1329,7 +1348,9 @@ Add the constant near the top of the module: `const FLASH_MS = 2000;` and import
 }
 ```
 
-- [ ] **Step 4: Write the test** (`FilesTab.threadDeepLink.test.tsx`, mirroring `FilesTab.deepLink.test.tsx`'s module-level `currentDiff` mock + `rerender` to drive in-flight → settled). Provide the context via `PrDetailContextProvider` with `pendingFilePath` + `pendingThreadId` set, and a DiffPane that renders an `ExistingCommentWidget` with `data-thread-id`. Assert:
+Import it in `frontend/src/main.tsx` after the `tokens.css` import (so it can read `--accent-soft`): `import './styles/thread-highlight.css';`.
+
+- [ ] **Step 4: Write the test** (`FilesTab.threadDeepLink.test.tsx`, mirroring `FilesTab.deepLink.test.tsx`'s module-level `currentDiff` mock + `rerender` to drive in-flight → settled). Provide the context via `PrDetailContextProvider` with `pendingFilePath` + `pendingThread` (`{ path, threadId }`) set, and a DiffPane that renders an `ExistingCommentWidget` with `data-thread-id`. Assert:
 
 ```tsx
 // hit: widget receives focus + the flash class, clearPendingThread called
@@ -1537,5 +1558,5 @@ git commit -m "test(#774): e2e — timeline thread click-through lands on the Fi
 ## Self-Review
 
 - **Spec coverage:** D1 (Task 3 dispatch groups under review card), D2 (Task 2 collapsed-by-default), D3 (Task 2 read-only CommentCard reuse, no composer/resolve), D4 (Task 1 hook + Task 3 explicit-props), D6 (Task 11 button anchored-only), chip precedence + "was L…" (Task 2 + Global Constraints), click-through mechanics (Tasks 7–10), diffScrollMemory race (Task 8), miss path (Task 10), StaleDraftRow untouched (out of scope — noted). e2e + parity risk (Tasks 6, 12). All covered.
-- **Placeholder scan:** every code step carries real code; the only "grep to locate" is the global `.comment-thread--resolved` stylesheet (a real file the implementer confirms), and one "confirm constructor arg order" note against the shipped `ReviewThreadDto` record (slice 1 is merged — verify positional args).
+- **Placeholder scan:** every code step carries real code. The DTO constructor orders and the CSS-hosting question were both resolved against source: `ReviewThreadDto`/`ReviewCommentDto` signatures are pinned in Task 5 (named args, `CreatedAt` is a `DateTimeOffset`, `EditedAt` required); the flash lives in a new global `thread-highlight.css` because no CSS rule for `.comment-thread` exists and a module class would be hashed.
 - **Type consistency:** `useThreadsByReview` returns `Map<number, ReviewThreadDto[]>` consumed by `ActivityFeed`'s `threadsByReview` prop (same type); `reviewDbId(id)` returns `number | null` matched against the map's `number` key; `requestFileView(path, threadId?)` signature is identical across context type, `PrDetailView`, `testUtils`, and `OverviewTab`'s `onThreadNavigate`; `ReviewThreadRow`'s `onViewInDiff(path, threadId)` matches `onThreadNavigate` matches `requestFileView`.
