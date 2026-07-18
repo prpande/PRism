@@ -327,7 +327,13 @@ export interface ReviewCommentDto {
 export interface ReviewThreadDto {
   threadId: string;
   filePath: string;
-  lineNumber: number;
+  lineNumber: number | null; // null = outdated or file-level (#773)
+  isOutdated?: boolean;
+  originalLine?: number | null;
+  originalStartLine?: number | null;
+  subjectType?: 'LINE' | 'FILE';
+  diffHunk?: string | null;
+  reviewDatabaseId?: number | null;
   isResolved: boolean;
   comments: ReviewCommentDto[];
 }

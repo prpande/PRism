@@ -75,3 +75,30 @@ describe('commentTooltip', () => {
     expect(commentTooltip({ open: 0, resolved: 3 })).toBe('3 resolved');
   });
 });
+
+const outdated = (filePath: string, isResolved: boolean): ReviewThreadDto => ({
+  ...thread(filePath, isResolved),
+  threadId: `${filePath}:outdated:${isResolved}`,
+  lineNumber: null,
+  isOutdated: true,
+});
+
+describe('unanchored threads are excluded (#773)', () => {
+  it('a file with only outdated unresolved threads shows nothing', () => {
+    expect(deriveCommentStateByPath([outdated('a.ts', false)]).size).toBe(0);
+  });
+
+  it('an outdated open thread cannot upgrade a resolved file to unresolved', () => {
+    const m = deriveCommentStateByPath([thread('a.ts', true), outdated('a.ts', false)]);
+    expect(m.get('a.ts')).toBe('resolved');
+  });
+
+  it('outdated threads are excluded from tooltip counts', () => {
+    const m = deriveCommentCountsByPath([thread('a.ts', false), outdated('a.ts', false)]);
+    expect(m.get('a.ts')).toEqual({ open: 1, resolved: 0 });
+  });
+
+  it('a file with only outdated threads has no count entry at all', () => {
+    expect(deriveCommentCountsByPath([outdated('a.ts', true)]).size).toBe(0);
+  });
+});

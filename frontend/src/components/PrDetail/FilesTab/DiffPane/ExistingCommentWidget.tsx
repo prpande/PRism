@@ -237,7 +237,7 @@ function ThreadView({
               <div className={styles.replyAffordanceSlot}>
                 <CollapsedComposerAffordance
                   label={existingDraft ? 'Continue draft…' : 'Reply…'}
-                  ariaLabel={`Reply to thread on ${thread.filePath} line ${thread.lineNumber}`}
+                  ariaLabel={`Reply to thread on ${thread.filePath}${thread.lineNumber == null ? '' : ` line ${thread.lineNumber}`}`}
                   hasDraft={!!existingDraft}
                   readOnly={replyContext.readOnly}
                   onOpen={handleReplyClick}
