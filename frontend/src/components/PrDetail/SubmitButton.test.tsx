@@ -2,17 +2,9 @@ import { render, screen, fireEvent } from '@testing-library/react';
 import { describe, it, expect, vi } from 'vitest';
 import { SubmitButton } from './SubmitButton';
 import type { DraftCommentDto, ReviewSessionDto } from '../../api/types';
+import { makeEmptyReviewSession } from '../../../__tests__/helpers/reviewSession';
 
-const emptySession: ReviewSessionDto = {
-  draftVerdict: null,
-  draftVerdictStatus: 'draft',
-  draftComments: [],
-  draftReplies: [],
-  iterationOverrides: [],
-  pendingReviewId: null,
-  pendingReviewCommitOid: null,
-  fileViewState: { viewedFiles: {} },
-};
+const emptySession = makeEmptyReviewSession();
 
 function comment(overrides: Partial<DraftCommentDto>): DraftCommentDto {
   return {

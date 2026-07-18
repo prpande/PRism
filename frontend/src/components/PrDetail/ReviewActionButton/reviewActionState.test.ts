@@ -1,17 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { deriveFace, PRIOR_VERDICT_LABEL } from './reviewActionState';
 import type { ReviewSessionDto, ViewerReview } from '../../../api/types';
+import { makeEmptyReviewSession } from '../../../../__tests__/helpers/reviewSession';
 
-const baseSession: ReviewSessionDto = {
-  draftVerdict: null,
-  draftVerdictStatus: 'draft',
-  draftComments: [],
-  draftReplies: [],
-  iterationOverrides: [],
-  pendingReviewId: null,
-  pendingReviewCommitOid: null,
-  fileViewState: { viewedFiles: {} },
-};
+const baseSession = makeEmptyReviewSession();
 
 const inputs = (over: Partial<ReviewSessionDto> = {}, rest: Record<string, unknown> = {}) => ({
   session: { ...baseSession, ...over },
