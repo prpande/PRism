@@ -31,3 +31,22 @@ test('#774 review threads render as accordion rows under their review card', asy
     page.getByRole('article').filter({ hasText: 'Guard against divide-by-zero?' }),
   ).toBeVisible();
 });
+
+test('#774 View in diff jumps to the Files tab and reveals the thread', async ({ page }) => {
+  await seedReviewThreads(page);
+  await setupAndOpenScenarioPr(page); // lands on the inbox; navigate to the scenario PR
+  await page.goto('/pr/acme/api/123');
+  await page.getByTestId('overview-tab').waitFor();
+
+  // Only the anchored thread has a View in diff button.
+  await page.getByRole('button', { name: /view in diff/i }).click();
+
+  // Landed on the Files tab with the file selected and the thread widget present + focused.
+  await expect(page.getByTestId('files-tab-diff')).toBeVisible();
+  const widget = page.locator('[data-thread-id="seed-anchored"]');
+  await expect(widget).toBeVisible();
+  await expect(widget).toBeFocused();
+  await expect(
+    page.getByRole('article').filter({ hasText: 'Guard against divide-by-zero?' }),
+  ).toBeVisible();
+});
