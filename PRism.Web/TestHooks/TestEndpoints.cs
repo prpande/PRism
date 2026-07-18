@@ -62,6 +62,23 @@ internal static class TestEndpoints
 
     internal sealed record ForceFileFailureRequest(string Path, string Sha, string ProblemType);
 
+    internal sealed record SeedReviewThreadsRequest(IReadOnlyList<SeedReviewThread> Threads);
+
+    internal sealed record SeedReviewThread(
+        string ThreadId,
+        string FilePath,
+        int? LineNumber,
+        bool IsOutdated,
+        int? OriginalLine,
+        int? OriginalStartLine,
+        string SubjectType,
+        string? DiffHunk,
+        long? ReviewDatabaseId,
+        bool IsResolved,
+        IReadOnlyList<SeedReviewComment> Comments);
+
+    internal sealed record SeedReviewComment(string CommentId, string Author, DateTimeOffset CreatedAt, string Body);
+
     // ----- /test/submit/* (plan Task 61) -----
 
     internal sealed record InjectSubmitFailureRequest(string MethodName, string? Message, bool AfterEffect = false);
@@ -148,6 +165,39 @@ internal static class TestEndpoints
             if (store is null) return StoreMissing("/test/seed-tree-files");
             store.SetExtraTreeFiles(req.Paths ?? Array.Empty<string>());
             return Results.Ok(new { ok = true });
+        });
+
+        // #774 e2e-only. Seeds the review threads FakePrReader returns for the scenario PR. Opt-in:
+        // default is empty, so specs that don't call this keep zero threads and their baselines
+        // unchanged. reviewDatabaseId should match a FakePrTimelineFeedReader review event (review:1)
+        // for the thread to render under a timeline card.
+        app.MapPost("/test/seed-review-threads", (SeedReviewThreadsRequest req, IServiceProvider sp) =>
+        {
+            var store = sp.GetService<FakeReviewBackingStore>();
+            if (store is null) return StoreMissing("/test/seed-review-threads");
+            var threads = (req.Threads ?? Array.Empty<SeedReviewThread>())
+                .Select(t => new ReviewThreadDto(
+                    ThreadId: t.ThreadId,
+                    FilePath: t.FilePath,
+                    LineNumber: t.LineNumber,
+                    IsOutdated: t.IsOutdated,
+                    OriginalLine: t.OriginalLine,
+                    OriginalStartLine: t.OriginalStartLine,
+                    SubjectType: string.IsNullOrEmpty(t.SubjectType) ? "LINE" : t.SubjectType,
+                    DiffHunk: t.DiffHunk,
+                    ReviewDatabaseId: t.ReviewDatabaseId,
+                    IsResolved: t.IsResolved,
+                    Comments: (t.Comments ?? Array.Empty<SeedReviewComment>())
+                        .Select(c => new ReviewCommentDto(
+                            CommentId: c.CommentId,
+                            Author: c.Author,
+                            CreatedAt: c.CreatedAt,
+                            Body: c.Body,
+                            EditedAt: null))
+                        .ToList()))
+                .ToList();
+            store.SeedReviewThreads(threads);
+            return Results.Ok(new { ok = true, threadCount = threads.Count });
         });
 
         // S6 PR9 Task 9.1. Directly publishes ActivePrUpdated via the event bus so the

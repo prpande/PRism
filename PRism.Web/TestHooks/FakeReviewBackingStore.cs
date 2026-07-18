@@ -83,6 +83,12 @@ internal sealed class FakeReviewBackingStore
     // POST /test/seed-tree-files; cleared by Reset. Touches no production surface.
     public List<string> ExtraTreeFiles { get; } = new();
 
+    // #774 e2e-only: review threads returned by FakePrReader.GetPrDetailAsync. Default EMPTY so
+    // existing specs (and the Overview parity baseline) are unaffected; a spec opts in via
+    // POST /test/seed-review-threads. Cleared by Reset(). reviewDatabaseId must match a
+    // timeline review event id (FakePrTimelineFeedReader emits review:1) for the row to attach.
+    public List<ReviewThreadDto> ReviewThreads { get; } = new();
+
     // #285 e2e-only: when true, FakeSectionQueryRunner returns the scenario PR in the
     // "review-requested" section so the inbox is non-empty. Default OFF so existing
     // parity-baseline specs keep their empty inbox and baselines don't shift. Toggled
@@ -142,6 +148,7 @@ internal sealed class FakeReviewBackingStore
             Iterations.Add(new IterationDto(3, Sha2, Sha3, new List<CommitDto> { Commits[2] }, true));
 
             ExtraTreeFiles.Clear();
+            ReviewThreads.Clear();
             InboxSeeded = false;
             IsDraftPr = false;
         }
@@ -188,6 +195,17 @@ internal sealed class FakeReviewBackingStore
         {
             ExtraTreeFiles.Clear();
             ExtraTreeFiles.AddRange(paths);
+        }
+    }
+
+    // #774 e2e-only. Replaces the seeded review-thread list returned by GetPrDetailAsync.
+    public void SeedReviewThreads(IReadOnlyList<ReviewThreadDto> threads)
+    {
+        ArgumentNullException.ThrowIfNull(threads);
+        lock (Gate)
+        {
+            ReviewThreads.Clear();
+            ReviewThreads.AddRange(threads);
         }
     }
 
