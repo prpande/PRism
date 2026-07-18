@@ -32,7 +32,13 @@ export function ReviewThreadRow({ thread }: { thread: ReviewThreadDto }) {
   // (`/thread/i`) and e2e (`/thread on {path}/i`) locators still resolve.
   const rowLabel =
     `Review thread on ${thread.filePath}` +
-    (anchored ? `, line ${thread.lineNumber}` : outdated ? ', outdated' : fileLevel ? ', file-level' : '') +
+    (anchored
+      ? `, line ${thread.lineNumber}`
+      : outdated
+        ? ', outdated'
+        : fileLevel
+          ? ', file-level'
+          : '') +
     (replyCount > 0 ? `, ${replyCount} ${replyCount === 1 ? 'reply' : 'replies'}` : '') +
     (thread.isResolved ? ', resolved' : '');
 

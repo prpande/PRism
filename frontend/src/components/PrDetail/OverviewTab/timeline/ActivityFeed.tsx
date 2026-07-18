@@ -3,7 +3,12 @@ import { Avatar } from '../../../Avatar/Avatar';
 import { Skeleton } from '../../../Skeleton/Skeleton';
 import { formatAge } from '../../../../utils/relativeTime';
 import { CommentCard } from '../../Comment/CommentCard'; // lives under PrDetail/Comment/, not PrDetail/CommentCard/
-import type { PrReference, TimelineEvent, ActivityVerb, ReviewThreadDto } from '../../../../api/types';
+import type {
+  PrReference,
+  TimelineEvent,
+  ActivityVerb,
+  ReviewThreadDto,
+} from '../../../../api/types';
 import { useTimelineFeed } from './useTimelineFeed';
 import { groupCommitRuns, type FeedNode } from './groupCommitRuns';
 import { verbMeta, GlyphIcon, COMMENT_PATH, COMMIT_PATH, type GlyphTone } from './eventGlyph';

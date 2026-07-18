@@ -19,10 +19,15 @@ test('#774 review threads render as accordion rows under their review card', asy
   await expect(page.getByText('Outdated')).toBeVisible();
 
   // Expanding the anchored row reveals its hunk + comment.
-  await page.getByRole('button', { name: /thread on src\/Calc\.cs/i }).first().click();
+  await page
+    .getByRole('button', { name: /thread on src\/Calc\.cs/i })
+    .first()
+    .click();
   await expect(page.getByTestId('timeline-thread-hunk').first()).toContainText('Div');
   // The collapsed row's own snippet chip also carries this text (ReviewThreadRow
   // always renders the first comment's body as a summary span), so scope to the
   // expanded CommentCard (an <article>) rather than a bare getByText.
-  await expect(page.getByRole('article').filter({ hasText: 'Guard against divide-by-zero?' })).toBeVisible();
+  await expect(
+    page.getByRole('article').filter({ hasText: 'Guard against divide-by-zero?' }),
+  ).toBeVisible();
 });

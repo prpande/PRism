@@ -8,7 +8,9 @@ const thread = (over: Partial<ReviewThreadDto>): ReviewThreadDto => ({
   filePath: 'src/Calc.cs',
   lineNumber: 1,
   isResolved: false,
-  comments: [{ commentId: 'c', author: 'a', createdAt: '2026-01-01T00:00:00Z', body: 'b', editedAt: null }],
+  comments: [
+    { commentId: 'c', author: 'a', createdAt: '2026-01-01T00:00:00Z', body: 'b', editedAt: null },
+  ],
   ...over,
 });
 
@@ -37,8 +39,20 @@ describe('useThreadsByReview', () => {
   });
 
   it("orders each review's threads by first-comment createdAt ascending", () => {
-    const early = { commentId: 'c1', author: 'a', createdAt: '2026-01-01T00:00:00Z', body: 'b', editedAt: null };
-    const late = { commentId: 'c2', author: 'a', createdAt: '2026-02-01T00:00:00Z', body: 'b', editedAt: null };
+    const early = {
+      commentId: 'c1',
+      author: 'a',
+      createdAt: '2026-01-01T00:00:00Z',
+      body: 'b',
+      editedAt: null,
+    };
+    const late = {
+      commentId: 'c2',
+      author: 'a',
+      createdAt: '2026-02-01T00:00:00Z',
+      body: 'b',
+      editedAt: null,
+    };
     const { result } = renderHook(() =>
       useThreadsByReview([
         thread({ threadId: 'late', reviewDatabaseId: 1, comments: [late] }),

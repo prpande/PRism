@@ -163,7 +163,12 @@ export async function seedReviewThreads(page: Page): Promise<void> {
           reviewDatabaseId: 1,
           isResolved: false,
           comments: [
-            { commentId: 'sc1', author: 'alice', createdAt: '2026-01-01T00:00:00Z', body: 'Guard against divide-by-zero?' },
+            {
+              commentId: 'sc1',
+              author: 'alice',
+              createdAt: '2026-01-01T00:00:00Z',
+              body: 'Guard against divide-by-zero?',
+            },
           ],
         },
         {
@@ -178,7 +183,12 @@ export async function seedReviewThreads(page: Page): Promise<void> {
           reviewDatabaseId: 1,
           isResolved: false,
           comments: [
-            { commentId: 'sc2', author: 'noah.s', createdAt: '2026-01-01T00:01:00Z', body: 'This moved in a later push.' },
+            {
+              commentId: 'sc2',
+              author: 'noah.s',
+              createdAt: '2026-01-01T00:01:00Z',
+              body: 'This moved in a later push.',
+            },
           ],
         },
       ],
