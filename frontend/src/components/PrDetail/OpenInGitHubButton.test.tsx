@@ -1,6 +1,6 @@
 import { render, screen, act } from '@testing-library/react';
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { OpenInGitHubButton } from '../src/components/PrDetail/OpenInGitHubButton';
+import { OpenInGitHubButton } from './OpenInGitHubButton';
 
 const HREF = 'https://github.example.com/acme/api/pull/123';
 

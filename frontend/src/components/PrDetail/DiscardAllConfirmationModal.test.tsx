@@ -1,6 +1,6 @@
 import { render, screen, fireEvent } from '@testing-library/react';
 import { describe, it, expect, vi } from 'vitest';
-import { DiscardAllConfirmationModal } from '../src/components/PrDetail/DiscardAllConfirmationModal';
+import { DiscardAllConfirmationModal } from './DiscardAllConfirmationModal';
 
 function renderModal(overrides: Partial<Parameters<typeof DiscardAllConfirmationModal>[0]> = {}) {
   const props = {

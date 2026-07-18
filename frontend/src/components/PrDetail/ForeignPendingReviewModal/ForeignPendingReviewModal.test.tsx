@@ -1,10 +1,10 @@
 import { render, screen, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, it, expect, vi } from 'vitest';
-import { ForeignPendingReviewModal } from '../src/components/PrDetail/ForeignPendingReviewModal/ForeignPendingReviewModal';
-import type { SubmitForeignPendingReviewEvent } from '../src/api/types';
-import styles from '../src/components/PrDetail/ForeignPendingReviewModal/ForeignPendingReviewModal.module.css';
-import subStyles from '../src/components/PrDetail/ForeignPendingReviewModal/DiscardConfirmationSubModal.module.css';
+import { ForeignPendingReviewModal } from './ForeignPendingReviewModal';
+import type { SubmitForeignPendingReviewEvent } from '../../../api/types';
+import styles from './ForeignPendingReviewModal.module.css';
+import subStyles from './DiscardConfirmationSubModal.module.css';
 
 const snapshot: SubmitForeignPendingReviewEvent = {
   prRef: 'o/r/1',

@@ -1,16 +1,16 @@
 import { render as rtlRender, screen, fireEvent, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { PrHeader } from '../src/components/PrDetail/PrHeader';
-import { ToastProvider } from '../src/components/Toast/useToast';
-import { ToastContainer } from '../src/components/Toast/ToastContainer';
-import { AskAiDrawerProvider } from '../src/contexts/AskAiDrawerContext';
+import { PrHeader } from './PrHeader';
+import { ToastProvider } from '../Toast/useToast';
+import { ToastContainer } from '../Toast/ToastContainer';
+import { AskAiDrawerProvider } from '../../contexts/AskAiDrawerContext';
 import type { ReactNode } from 'react';
 import type {
   AiCapabilities,
   PrReference,
   PreferencesResponse,
   ReviewSessionDto,
-} from '../src/api/types';
+} from '../../api/types';
 
 // vi.hoisted so the mock factories (themselves hoisted above the imports) can
 // read these mutable containers without a TDZ error.
@@ -22,14 +22,14 @@ const { capabilitiesValue, preferencesValue, submitReviewMock, discardOwnPending
     discardOwnPendingReviewMock: vi.fn(),
   }));
 
-vi.mock('../src/hooks/useCapabilities', () => ({
+vi.mock('../../hooks/useCapabilities', () => ({
   useCapabilities: () => ({
     capabilities: capabilitiesValue.capabilities,
     error: null,
     refetch: () => {},
   }),
 }));
-vi.mock('../src/hooks/usePreferences', () => ({
+vi.mock('../../hooks/usePreferences', () => ({
   usePreferences: () => ({
     preferences: preferencesValue.preferences,
     error: null,
@@ -41,8 +41,8 @@ vi.mock('../src/hooks/usePreferences', () => ({
 // Real error types + verdict helpers kept; only the network calls are stubbed.
 // discardOwnPendingReview is the one this suite drives — its result shape is the
 // { ok: true } | { ok: false, code, message } discriminated union.
-vi.mock('../src/api/submit', async () => {
-  const actual = await vi.importActual<typeof import('../src/api/submit')>('../src/api/submit');
+vi.mock('../../api/submit', async () => {
+  const actual = await vi.importActual<typeof import('../../api/submit')>('../../api/submit');
   return {
     ...actual,
     submitReview: (...args: unknown[]) => submitReviewMock(...args),
@@ -55,7 +55,7 @@ vi.mock('../src/api/submit', async () => {
   };
 });
 
-vi.mock('../src/api/draft', () => ({
+vi.mock('../../api/draft', () => ({
   sendPatch: vi.fn().mockResolvedValue(undefined),
   getTabId: () => 'test-tab',
 }));

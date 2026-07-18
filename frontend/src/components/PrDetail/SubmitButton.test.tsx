@@ -1,7 +1,7 @@
 import { render, screen, fireEvent } from '@testing-library/react';
 import { describe, it, expect, vi } from 'vitest';
-import { SubmitButton } from '../src/components/PrDetail/SubmitButton';
-import type { DraftCommentDto, ReviewSessionDto } from '../src/api/types';
+import { SubmitButton } from './SubmitButton';
+import type { DraftCommentDto, ReviewSessionDto } from '../../api/types';
 
 const emptySession: ReviewSessionDto = {
   draftVerdict: null,

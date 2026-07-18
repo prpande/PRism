@@ -1,12 +1,12 @@
 import { render, screen, fireEvent, act } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { useState } from 'react';
-import { ReplyComposer } from '../src/components/PrDetail/Composer/ReplyComposer';
-import * as draftApi from '../src/api/draft';
-import * as commentApi from '../src/api/comment';
-import type { PrReference } from '../src/api/types';
+import { ReplyComposer } from './ReplyComposer';
+import * as draftApi from '../../../api/draft';
+import * as commentApi from '../../../api/comment';
+import type { PrReference } from '../../../api/types';
 
-vi.mock('../src/api/comment');
+vi.mock('../../../api/comment');
 
 const ref: PrReference = { owner: 'octocat', repo: 'hello', number: 42 };
 const PARENT_THREAD_ID = 'PRRT_kwDOBlahBlah';

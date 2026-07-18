@@ -1,6 +1,6 @@
 import { render, screen } from '@testing-library/react';
 import { describe, it, expect } from 'vitest';
-import { ImportedDraftsBanner } from '../src/components/PrDetail/ForeignPendingReviewModal/ImportedDraftsBanner';
+import { ImportedDraftsBanner } from './ImportedDraftsBanner';
 
 describe('ImportedDraftsBanner', () => {
   it('renders the count-staleness note when the thread count changed between snapshots', () => {
