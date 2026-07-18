@@ -1,6 +1,6 @@
 import { render, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi } from 'vitest';
-import { MermaidBlock } from '../src/components/Markdown/MermaidBlock';
+import { MermaidBlock } from './MermaidBlock';
 
 // Issue #191: invalid Mermaid diagrams leak Mermaid's built-in "Syntax error in
 // text" bomb SVG into `document.body`, where it accumulates at the bottom of the

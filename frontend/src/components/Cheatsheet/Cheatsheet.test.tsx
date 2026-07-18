@@ -1,7 +1,7 @@
 import { render, screen, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, it, expect } from 'vitest';
-import { Cheatsheet, CheatsheetProvider, useCheatsheet } from '../src/components/Cheatsheet';
+import { Cheatsheet, CheatsheetProvider, useCheatsheet } from './';
 
 function TestApp() {
   const { toggle } = useCheatsheet();

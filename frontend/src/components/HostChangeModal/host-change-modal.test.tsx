@@ -1,7 +1,7 @@
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, it, expect, vi } from 'vitest';
-import { HostChangeModal } from '../src/components/HostChangeModal/HostChangeModal';
+import { HostChangeModal } from './HostChangeModal';
 
 describe('HostChangeModal', () => {
   it('renders both hosts and Continue/Revert buttons', () => {

@@ -1,10 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import {
-  pathToLang,
-  tokenizeLines,
-  getHighlighterAsync,
-  safeStyle,
-} from '../src/components/Markdown/shikiInstance';
+import { pathToLang, tokenizeLines, getHighlighterAsync, safeStyle } from './shikiInstance';
 
 describe('safeStyle', () => {
   it('forwards only allowlisted hex-valued color vars', () => {

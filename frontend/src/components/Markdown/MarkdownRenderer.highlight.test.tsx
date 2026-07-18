@@ -1,7 +1,7 @@
 import { render, waitFor } from '@testing-library/react';
 import { describe, it, expect } from 'vitest';
-import { MarkdownRenderer } from '../src/components/Markdown/MarkdownRenderer';
-import { getHighlighterAsync } from '../src/components/Markdown/shikiInstance';
+import { MarkdownRenderer } from './MarkdownRenderer';
+import { getHighlighterAsync } from './shikiInstance';
 
 describe('MarkdownRenderer syntax highlighting', () => {
   it('highlights a fenced code block with a known language', async () => {

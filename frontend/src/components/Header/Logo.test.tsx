@@ -1,6 +1,6 @@
 import { render, screen } from '@testing-library/react';
 import { describe, it, expect } from 'vitest';
-import { Logo } from '../src/components/Header/Logo';
+import { Logo } from './Logo';
 
 describe('Logo', () => {
   it('shows the visible "PRism" wordmark and makes the mark decorative when showName', () => {

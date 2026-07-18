@@ -1,6 +1,6 @@
 import { render } from '@testing-library/react';
 import { describe, it, expect } from 'vitest';
-import { HighlightedLine } from '../src/components/Markdown/HighlightedLine';
+import { HighlightedLine } from './HighlightedLine';
 
 describe('HighlightedLine', () => {
   it('renders one .codeLine wrapper with one .codeToken span per span', () => {
