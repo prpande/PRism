@@ -1,6 +1,6 @@
 import { render, screen, within } from '@testing-library/react';
 import { describe, it, expect } from 'vitest';
-import { Spinner } from '../src/components/Spinner';
+import { Spinner } from './';
 
 describe('Spinner', () => {
   it('renders a status live region announcing the default label', () => {

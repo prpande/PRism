@@ -1,6 +1,6 @@
 import { render, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi } from 'vitest';
-import { MarkdownRenderer } from '../src/components/Markdown/MarkdownRenderer';
+import { MarkdownRenderer } from './MarkdownRenderer';
 
 // Bypass the global setup-mermaid mock so the real mermaid library runs.
 vi.unmock('mermaid');

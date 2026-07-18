@@ -1,6 +1,6 @@
 import { render, screen } from '@testing-library/react';
 import { describe, it, expect } from 'vitest';
-import { MarkdownRenderer } from '../src/components/Markdown/MarkdownRenderer';
+import { MarkdownRenderer } from './MarkdownRenderer';
 
 describe('MarkdownRenderer sanitization', () => {
   it('renders <script> as escaped text', () => {
