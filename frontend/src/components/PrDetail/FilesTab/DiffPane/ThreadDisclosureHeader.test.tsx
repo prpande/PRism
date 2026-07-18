@@ -83,4 +83,11 @@ describe('ThreadDisclosureHeader', () => {
     render(<ThreadDisclosureHeader {...props({ snippet: 'full text here' })} />);
     expect(screen.getByTestId('thread-snippet')).toHaveAttribute('title', 'full text here');
   });
+
+  it('omits the line fragment when the thread is unanchored (lineNumber null)', () => {
+    render(<ThreadDisclosureHeader {...props({ lineNumber: null })} />);
+    expect(screen.getByTestId('thread-disclosure')).toHaveAccessibleName(
+      'Expand thread on src/Calc.cs',
+    );
+  });
 });

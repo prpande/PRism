@@ -11,7 +11,7 @@ export interface ThreadDisclosureHeaderProps {
   commentCount: number;
   isResolved: boolean;
   filePath: string;
-  lineNumber: number;
+  lineNumber: number | null;
 }
 
 // File-tree chevron (15px / stroke 1.75) so the disclosure caret matches the
@@ -61,7 +61,8 @@ export function ThreadDisclosureHeader({
   filePath,
   lineNumber,
 }: ThreadDisclosureHeaderProps) {
-  const ariaLabel = `${collapsed ? 'Expand' : 'Collapse'} thread on ${filePath} line ${lineNumber}`;
+  const location = lineNumber == null ? filePath : `${filePath} line ${lineNumber}`;
+  const ariaLabel = `${collapsed ? 'Expand' : 'Collapse'} thread on ${location}`;
   const sharedButtonProps = {
     type: 'button' as const,
     'data-testid': 'thread-disclosure',

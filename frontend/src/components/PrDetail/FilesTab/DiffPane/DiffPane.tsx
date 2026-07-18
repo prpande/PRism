@@ -318,6 +318,7 @@ export function DiffPane({
     const map = new Map<number, ReviewThreadDto[]>();
     for (const t of reviewThreads) {
       if (t.filePath !== selectedPath) continue;
+      if (t.lineNumber == null) continue; // unanchored — no diff row to attach to (#773)
       const existing = map.get(t.lineNumber);
       if (existing) existing.push(t);
       else map.set(t.lineNumber, [t]);
