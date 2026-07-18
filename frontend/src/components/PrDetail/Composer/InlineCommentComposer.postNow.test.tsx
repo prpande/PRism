@@ -1,15 +1,12 @@
 import { render, screen, fireEvent, act } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { useState } from 'react';
-import {
-  InlineCommentComposer,
-  type InlineAnchor,
-} from '../src/components/PrDetail/Composer/InlineCommentComposer';
-import * as draftApi from '../src/api/draft';
-import * as commentApi from '../src/api/comment';
-import type { PrReference } from '../src/api/types';
+import { InlineCommentComposer, type InlineAnchor } from './InlineCommentComposer';
+import * as draftApi from '../../../api/draft';
+import * as commentApi from '../../../api/comment';
+import type { PrReference } from '../../../api/types';
 
-vi.mock('../src/api/comment');
+vi.mock('../../../api/comment');
 
 const ref: PrReference = { owner: 'octocat', repo: 'hello', number: 42 };
 

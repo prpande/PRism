@@ -1,7 +1,7 @@
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, it, expect, vi } from 'vitest';
-import { BannerRefresh } from '../src/components/PrDetail/BannerRefresh';
+import { BannerRefresh } from './BannerRefresh';
 
 describe('BannerRefresh', () => {
   it('renders nothing when hasUpdate is false', () => {

@@ -1,6 +1,6 @@
 import { render, screen, fireEvent } from '@testing-library/react';
 import { describe, it, expect, vi } from 'vitest';
-import { DiscardPendingReviewConfirmationModal } from '../src/components/PrDetail/DiscardPendingReviewConfirmationModal';
+import { DiscardPendingReviewConfirmationModal } from './DiscardPendingReviewConfirmationModal';
 
 function renderModal(
   overrides: Partial<Parameters<typeof DiscardPendingReviewConfirmationModal>[0]> = {},

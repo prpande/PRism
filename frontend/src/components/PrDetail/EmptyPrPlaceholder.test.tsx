@@ -1,6 +1,6 @@
 import { render, screen } from '@testing-library/react';
 import { describe, it, expect } from 'vitest';
-import { EmptyPrPlaceholder } from '../src/components/PrDetail/EmptyPrPlaceholder';
+import { EmptyPrPlaceholder } from './EmptyPrPlaceholder';
 
 describe('EmptyPrPlaceholder', () => {
   it('renders an empty-state message about no commits', () => {

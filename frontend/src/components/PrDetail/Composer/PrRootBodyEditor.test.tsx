@@ -1,10 +1,10 @@
 import { render, screen, fireEvent, act } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { useState } from 'react';
-import { PrRootBodyEditor } from '../src/components/PrDetail/Composer/PrRootBodyEditor';
-import type { ComposerSaveBadge } from '../src/hooks/useComposerAutoSave';
-import * as draftApi from '../src/api/draft';
-import type { PrReference } from '../src/api/types';
+import { PrRootBodyEditor } from './PrRootBodyEditor';
+import type { ComposerSaveBadge } from '../../../hooks/useComposerAutoSave';
+import * as draftApi from '../../../api/draft';
+import type { PrReference } from '../../../api/types';
 
 const ref: PrReference = { owner: 'octocat', repo: 'hello', number: 42 };
 
