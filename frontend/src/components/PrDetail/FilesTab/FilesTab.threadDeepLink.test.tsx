@@ -314,4 +314,59 @@ describe('FilesTab thread deep-link (#774)', () => {
       screen.queryByText('Comment thread not found in the current diff.'),
     ).not.toBeInTheDocument();
   });
+
+  it('clears a stale not-found snackbar once a later pending thread hits (M1)', async () => {
+    const clearPendingFilePath = vi.fn();
+    const clearPendingThread = vi.fn();
+    currentDiff = { data: FULL, isLoading: false, showSkeleton: false, error: null };
+    // 1st pending thread: target file, but an id no widget carries — misses,
+    // leaving the not-found Snackbar up (Snackbar has no auto-dismiss).
+    const missValue = makeContextValue({
+      pendingFilePath: 'target.cs',
+      pendingThread: { path: 'target.cs', threadId: 'ghost-thread' },
+      clearPendingFilePath,
+      clearPendingThread,
+    });
+
+    const { rerender } = render(
+      <PrDetailContextProvider value={missValue}>
+        <FilesTab />
+      </PrDetailContextProvider>,
+    );
+
+    // jsdom has no scrollTo; the 'seed-anchored' widget for the SECOND
+    // (hit) pending thread is already mounted in the DOM during this first
+    // render (the DiffPane stand-in renders all of fileThreads, not just
+    // the pending one), so stub it now before that later hit fires.
+    const body = screen.getByTestId('stand-in-diff-pane-body');
+    (body as unknown as { scrollTo: () => void }).scrollTo = vi.fn();
+
+    const dismissButton = await screen.findByRole('button', { name: 'Dismiss' });
+    expect(dismissButton.closest('div')).toHaveTextContent(
+      'Comment thread not found in the current diff.',
+    );
+
+    // 2nd pending thread: same target file, an id whose widget IS present — a
+    // later successful jump must clear the stale miss Snackbar (M1 fix).
+    const hitValue: PrDetailContextValue = {
+      ...missValue,
+      pendingFilePath: null,
+      pendingThread: { path: 'target.cs', threadId: 'seed-anchored' },
+    };
+    rerender(
+      <PrDetailContextProvider value={hitValue}>
+        <FilesTab />
+      </PrDetailContextProvider>,
+    );
+
+    const diffRegion = screen.getByTestId('files-tab-diff');
+    await waitFor(() => {
+      const el = diffRegion.querySelector<HTMLElement>('[data-thread-id="seed-anchored"]');
+      expect(el).toHaveClass('comment-thread--flash');
+    });
+
+    expect(
+      screen.queryByText('Comment thread not found in the current diff.'),
+    ).not.toBeInTheDocument();
+  });
 });

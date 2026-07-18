@@ -293,6 +293,7 @@ export function FilesTab() {
       widget.classList.add('comment-thread--flash');
       window.setTimeout(() => widget.classList.remove('comment-thread--flash'), FLASH_MS);
       setLiveMessage(`Navigated to the comment thread on ${selectedPath}.`);
+      setThreadMiss(false);
     } else {
       setThreadMiss(true);
       setLiveMessage('Comment thread not found in the current diff.');
