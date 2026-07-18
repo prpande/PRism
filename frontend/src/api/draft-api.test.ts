@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { jsonResponse } from '../../__tests__/helpers/http';
+import { makeEmptyReviewSession } from '../../__tests__/helpers/reviewSession';
 import {
   getDraft,
   getTabId,
@@ -14,7 +15,6 @@ import type {
   NewDraftReplyPayload,
   NewPrRootDraftCommentPayload,
   PrReference,
-  ReviewSessionDto,
   ReviewSessionPatch,
   UpdateDraftCommentPayload,
   UpdateDraftReplyPayload,
@@ -178,16 +178,7 @@ describe('serializePatch — wire shape per patch kind', () => {
 
 describe('getDraft', () => {
   it('GETs the canonical draft path and returns the parsed body', async () => {
-    const sample: ReviewSessionDto = {
-      draftVerdict: null,
-      draftVerdictStatus: 'draft',
-      draftComments: [],
-      draftReplies: [],
-      iterationOverrides: [],
-      pendingReviewId: null,
-      pendingReviewCommitOid: null,
-      fileViewState: { viewedFiles: {} },
-    };
+    const sample = makeEmptyReviewSession();
     const fetchMock = captureFetch(jsonResponse(sample, 200));
     const result = await getDraft(ref);
     expect(result).toEqual(sample);

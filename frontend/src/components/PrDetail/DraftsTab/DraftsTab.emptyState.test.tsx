@@ -3,19 +3,11 @@ import { screen } from '@testing-library/react';
 import { DraftsTab } from './DraftsTab';
 import { renderWithPrDetailContext } from '../testUtils';
 import type { DraftCommentDto, PrReference, ReviewSessionDto } from '../../../api/types';
+import { makeEmptyReviewSession } from '../../../../__tests__/helpers/reviewSession';
 
 const PR_REF: PrReference = { owner: 'acme', repo: 'api', number: 123 };
 
-const EMPTY_SESSION: ReviewSessionDto = {
-  draftVerdict: null,
-  draftVerdictStatus: 'draft',
-  draftComments: [],
-  draftReplies: [],
-  iterationOverrides: [],
-  pendingReviewId: null,
-  pendingReviewCommitOid: null,
-  fileViewState: { viewedFiles: {} },
-};
+const EMPTY_SESSION = makeEmptyReviewSession();
 
 const ONE_COMMENT: DraftCommentDto = {
   id: 'c1',

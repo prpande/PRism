@@ -6,18 +6,10 @@ import { MemoryRouter, Routes, Route, Outlet } from 'react-router-dom';
 import { FilesTab } from './FilesTab';
 import { PrDetailContextProvider } from '../prDetailContext';
 import { useDraftSession } from '../../../hooks/useDraftSession';
-import type { PrDetailDto, DiffDto, PrReference, ReviewSessionDto } from '../../../api/types';
+import type { PrDetailDto, DiffDto, PrReference } from '../../../api/types';
+import { makeEmptyReviewSession } from '../../../../__tests__/helpers/reviewSession';
 
-const emptyReviewSession: ReviewSessionDto = {
-  draftVerdict: null,
-  draftVerdictStatus: 'draft',
-  draftComments: [],
-  draftReplies: [],
-  iterationOverrides: [],
-  pendingReviewId: null,
-  pendingReviewCommitOid: null,
-  fileViewState: { viewedFiles: {} },
-};
+const emptyReviewSession = makeEmptyReviewSession();
 
 // Routes /draft to a valid empty ReviewSessionDto and falls through to the
 // supplied diff-handler fetch for everything else. The diff-handler mock in
