@@ -1,19 +1,19 @@
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { MemoryRouter, Routes, Route, Outlet } from 'react-router-dom';
-import { FilesTab } from '../src/components/PrDetail/FilesTab/FilesTab';
-import { OPTIMISTIC_FALLBACK_MAX_AGE_MS } from '../src/components/PrDetail/FilesTab/optimisticComment';
-import { PrDetailContextProvider } from '../src/components/PrDetail/prDetailContext';
-import { __resetTabIdForTest } from '../src/api/draft';
-import { useDraftSession } from '../src/hooks/useDraftSession';
-import { makePrDetailDto, makePr } from './helpers/prDetail';
+import { FilesTab } from './FilesTab';
+import { OPTIMISTIC_FALLBACK_MAX_AGE_MS } from './optimisticComment';
+import { PrDetailContextProvider } from '../prDetailContext';
+import { __resetTabIdForTest } from '../../../api/draft';
+import { useDraftSession } from '../../../hooks/useDraftSession';
+import { makePrDetailDto, makePr } from '../../../../__tests__/helpers/prDetail';
 import type {
   DiffDto,
   PrDetailDto,
   PrReference,
   ReviewSessionDto,
   ReviewThreadDto,
-} from '../src/api/types';
+} from '../../../api/types';
 
 // #603 item C — FULL FilesTab integration for the null-databaseId optimistic
 // placeholder eviction. The pure predicate is unit-tested in

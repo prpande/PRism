@@ -1,8 +1,8 @@
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, it, expect, vi } from 'vitest';
-import { ComparePicker } from '../src/components/PrDetail/FilesTab/ComparePicker';
-import type { IterationDto } from '../src/api/types';
+import { ComparePicker } from './ComparePicker';
+import type { IterationDto } from '../../../api/types';
 
 function iter(n: number, hasResolvableRange = true): IterationDto {
   return {

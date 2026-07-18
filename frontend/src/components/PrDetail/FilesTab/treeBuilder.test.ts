@@ -1,10 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import {
-  buildTree,
-  type FileTreeNode,
-  type DirectoryTreeNode,
-} from '../src/components/PrDetail/FilesTab/treeBuilder';
-import type { FileChange } from '../src/api/types';
+import { buildTree, type FileTreeNode, type DirectoryTreeNode } from './treeBuilder';
+import type { FileChange } from '../../../api/types';
 
 function file(path: string, overrides: Partial<FileChange> = {}): FileChange {
   return {

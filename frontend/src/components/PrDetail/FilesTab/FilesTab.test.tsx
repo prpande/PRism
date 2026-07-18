@@ -1,12 +1,12 @@
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { jsonResponse } from './helpers/http';
-import { makePrDetailDto, makePr } from './helpers/prDetail';
+import { jsonResponse } from '../../../../__tests__/helpers/http';
+import { makePrDetailDto, makePr } from '../../../../__tests__/helpers/prDetail';
 import { MemoryRouter, Routes, Route, Outlet } from 'react-router-dom';
-import { FilesTab } from '../src/components/PrDetail/FilesTab/FilesTab';
-import { PrDetailContextProvider } from '../src/components/PrDetail/prDetailContext';
-import { useDraftSession } from '../src/hooks/useDraftSession';
-import type { PrDetailDto, DiffDto, PrReference, ReviewSessionDto } from '../src/api/types';
+import { FilesTab } from './FilesTab';
+import { PrDetailContextProvider } from '../prDetailContext';
+import { useDraftSession } from '../../../hooks/useDraftSession';
+import type { PrDetailDto, DiffDto, PrReference, ReviewSessionDto } from '../../../api/types';
 
 const emptyReviewSession: ReviewSessionDto = {
   draftVerdict: null,

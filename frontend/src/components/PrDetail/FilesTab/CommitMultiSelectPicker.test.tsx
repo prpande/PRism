@@ -1,7 +1,7 @@
 import { render, screen, fireEvent } from '@testing-library/react';
 import { describe, it, expect, vi } from 'vitest';
-import { CommitMultiSelectPicker } from '../src/components/PrDetail/FilesTab/CommitMultiSelectPicker';
-import type { CommitDto } from '../src/api/types';
+import { CommitMultiSelectPicker } from './CommitMultiSelectPicker';
+import type { CommitDto } from '../../../api/types';
 
 function commit(sha: string, message = `Commit ${sha}`): CommitDto {
   return {

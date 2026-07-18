@@ -1,7 +1,7 @@
 import { render, screen, fireEvent } from '@testing-library/react';
 import { describe, it, expect, vi } from 'vitest';
-import { IterationTabStrip } from '../src/components/PrDetail/FilesTab/IterationTabStrip';
-import type { IterationDto, CommitDto } from '../src/api/types';
+import { IterationTabStrip } from './IterationTabStrip';
+import type { IterationDto, CommitDto } from '../../../api/types';
 
 function iter(n: number, hasResolvableRange = true): IterationDto {
   return {

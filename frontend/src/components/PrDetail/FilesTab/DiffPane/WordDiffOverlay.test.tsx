@@ -1,6 +1,6 @@
 import { render, screen } from '@testing-library/react';
 import { describe, it, expect } from 'vitest';
-import { WordDiffOverlay } from '../src/components/PrDetail/FilesTab/DiffPane/WordDiffOverlay';
+import { WordDiffOverlay } from './WordDiffOverlay';
 
 describe('WordDiffOverlay', () => {
   it('highlights inserted words', () => {
