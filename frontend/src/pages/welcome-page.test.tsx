@@ -1,7 +1,7 @@
 import { render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { describe, it, expect } from 'vitest';
-import { WelcomePage } from '../src/pages/WelcomePage';
+import { WelcomePage } from './WelcomePage';
 
 function renderWelcome() {
   return render(

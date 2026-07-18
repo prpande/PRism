@@ -1,6 +1,6 @@
 import { render, screen, fireEvent } from '@testing-library/react';
 import { describe, it, expect, vi } from 'vitest';
-import { StaleCommitOidBanner } from '../src/components/PrDetail/SubmitDialog/StaleCommitOidBanner';
+import { StaleCommitOidBanner } from './StaleCommitOidBanner';
 
 function renderBanner(overrides: Partial<Parameters<typeof StaleCommitOidBanner>[0]> = {}) {
   const props = {

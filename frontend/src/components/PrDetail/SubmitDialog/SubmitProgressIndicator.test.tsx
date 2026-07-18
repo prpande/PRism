@@ -1,7 +1,7 @@
 import { render, screen } from '@testing-library/react';
 import { describe, it, expect } from 'vitest';
-import { SubmitProgressIndicator } from '../src/components/PrDetail/SubmitDialog/SubmitProgressIndicator';
-import type { SubmitProgressStep } from '../src/hooks/useSubmit';
+import { SubmitProgressIndicator } from './SubmitProgressIndicator';
+import type { SubmitProgressStep } from '../../../hooks/useSubmit';
 
 describe('SubmitProgressIndicator — merged Phase A / Phase B (R2)', () => {
   it('Phase A: no BeginPendingReview-Succeeded yet → a single neutral row, no checklist', () => {

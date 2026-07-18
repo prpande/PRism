@@ -1,20 +1,20 @@
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { jsonResponse } from './helpers/http';
-import { makePrDetailDto, makePr } from './helpers/prDetail';
+import { jsonResponse } from '../../../../__tests__/helpers/http';
+import { makePrDetailDto, makePr } from '../../../../__tests__/helpers/prDetail';
 import { MemoryRouter, Routes, Route, Outlet } from 'react-router-dom';
-import { OverviewTab } from '../src/components/PrDetail/OverviewTab/OverviewTab';
-import { PrDetailContextProvider } from '../src/components/PrDetail/prDetailContext';
-import type { PrDetailContextValue } from '../src/components/PrDetail/prDetailContext';
+import { OverviewTab } from './OverviewTab';
+import { PrDetailContextProvider } from '../prDetailContext';
+import type { PrDetailContextValue } from '../prDetailContext';
 import type {
   PrDetailDto,
   DiffDto,
   PrReference,
   ReviewSessionDto,
   TimelinePage,
-} from '../src/api/types';
-import type { UseDraftSessionResult } from '../src/hooks/useDraftSession';
+} from '../../../api/types';
+import type { UseDraftSessionResult } from '../../../hooks/useDraftSession';
 
 function emptySession(): ReviewSessionDto {
   return {

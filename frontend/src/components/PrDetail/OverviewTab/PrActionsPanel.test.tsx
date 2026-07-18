@@ -3,27 +3,24 @@ import { useState } from 'react';
 import { render, screen, waitFor, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { PrActionsPanel } from '../src/components/PrDetail/OverviewTab/PrActionsPanel';
-import { renderWithPrDetailContext } from '../src/components/PrDetail/testUtils';
-import { makePrDetailContextValue } from '../src/components/PrDetail/testUtils';
-import {
-  PrDetailContextProvider,
-  type PrDetailContextValue,
-} from '../src/components/PrDetail/prDetailContext';
-import { makePr, makePrDetailDto } from './helpers/prDetail';
-import type { MergeReadiness } from '../src/components/shared/mergeReadiness';
+import { PrActionsPanel } from './PrActionsPanel';
+import { renderWithPrDetailContext } from '../testUtils';
+import { makePrDetailContextValue } from '../testUtils';
+import { PrDetailContextProvider, type PrDetailContextValue } from '../prDetailContext';
+import { makePr, makePrDetailDto } from '../../../../__tests__/helpers/prDetail';
+import type { MergeReadiness } from '../../shared/mergeReadiness';
 
 const invoke = vi.fn();
 let pending: string | null = null;
 let mergePhase: string = 'idle';
-vi.mock('../src/hooks/usePrAction', () => ({
+vi.mock('../../../hooks/usePrAction', () => ({
   usePrAction: () => ({ pending, mergePhase, invoke }),
 }));
 
 // #566 B-fix: the in-panel Refresh forces a cache-bypassing backend re-read (POST /…/refresh),
 // not the cache-first reload(). Mock the api module so the click doesn't hit the network.
-import { refreshPrDetail } from '../src/api/prDetail';
-vi.mock('../src/api/prDetail', () => ({
+import { refreshPrDetail } from '../../../api/prDetail';
+vi.mock('../../../api/prDetail', () => ({
   refreshPrDetail: vi.fn(() => Promise.resolve()),
   getPrDetail: vi.fn(),
 }));

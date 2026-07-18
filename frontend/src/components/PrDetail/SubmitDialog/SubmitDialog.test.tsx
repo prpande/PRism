@@ -1,16 +1,16 @@
 import { render, screen, fireEvent, act, waitFor } from '@testing-library/react';
 import type { ComponentProps } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { SubmitDialog } from '../src/components/PrDetail/SubmitDialog/SubmitDialog';
-import type { ComposerOwnerKey } from '../src/hooks/useDraftSession';
-import type { DraftCommentDto, PrReference, ReviewSessionDto } from '../src/api/types';
+import { SubmitDialog } from './SubmitDialog';
+import type { ComposerOwnerKey } from '../../../hooks/useDraftSession';
+import type { DraftCommentDto, PrReference, ReviewSessionDto } from '../../../api/types';
 
 // Mock the wrapped editor so we can drive its callbacks (onBodyChange,
 // onAutosaveControl, onDraftLost) directly and assert orchestration without
 // re-testing PrRootBodyEditor's own behavior (covered in its own file).
 const editorFlush = vi.fn().mockResolvedValue(undefined);
 let lastEditorProps: Record<string, unknown> | null = null;
-vi.mock('../src/components/PrDetail/Composer/PrRootBodyEditor', () => ({
+vi.mock('../Composer/PrRootBodyEditor', () => ({
   PrRootBodyEditor: (p: Record<string, unknown>) => {
     lastEditorProps = p;
     // Surface the autosave control synchronously on mount.

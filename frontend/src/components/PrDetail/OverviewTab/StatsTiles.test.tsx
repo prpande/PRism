@@ -1,6 +1,6 @@
 import { render, screen, within } from '@testing-library/react';
 import { describe, it, expect } from 'vitest';
-import { StatsTiles } from '../src/components/PrDetail/OverviewTab/StatsTiles';
+import { StatsTiles } from './StatsTiles';
 
 function findTile(label: string) {
   const heading = screen.getByText(new RegExp(`^${label}$`, 'i'));
