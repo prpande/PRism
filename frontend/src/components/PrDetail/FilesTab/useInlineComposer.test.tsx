@@ -6,7 +6,7 @@ import type { DraftCommentDto, ReviewSessionDto } from '../../../api/types';
 
 // Unit coverage for the inline-composer lifecycle extracted from FilesTab
 // (#327 slice 2). The FULL FilesTab integration (line click → composer mount →
-// draft save/close) lives in __tests__/FilesTabComposer.test.tsx. This file
+// draft save/close) lives in FilesTabComposer.test.tsx. This file
 // exercises the hook seam itself: open-at-anchor (anchorSha stamping +
 // existing-draft resume), the same-anchor no-op, flush-on-line-switch, close
 // semantics, and — the one deliberate upgrade over the pre-extraction code —

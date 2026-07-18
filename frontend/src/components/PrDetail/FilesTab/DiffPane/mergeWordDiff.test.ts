@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { mergeWordDiffWithTokens } from '../src/components/PrDetail/FilesTab/DiffPane/mergeWordDiff';
-import type { LineToken } from '../src/components/Markdown/shikiInstance';
+import { mergeWordDiffWithTokens } from './mergeWordDiff';
+import type { LineToken } from '../../../Markdown/shikiInstance';
 import { diffWordsWithSpace } from 'diff';
 
 const tok = (text: string): LineToken => ({ text, style: {} });

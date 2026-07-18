@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { render, screen } from '@testing-library/react';
-import { AiHunkAnnotation } from '../src/components/PrDetail/FilesTab/DiffPane/AiHunkAnnotation';
+import { AiHunkAnnotation } from './AiHunkAnnotation';
 
 describe('AiHunkAnnotation', () => {
   it('renders Calm tone as Note + chip-info', () => {

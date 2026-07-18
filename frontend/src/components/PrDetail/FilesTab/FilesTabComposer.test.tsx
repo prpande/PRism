@@ -1,12 +1,12 @@
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { MemoryRouter, Routes, Route, Outlet } from 'react-router-dom';
-import { FilesTab } from '../src/components/PrDetail/FilesTab/FilesTab';
-import { PrDetailContextProvider } from '../src/components/PrDetail/prDetailContext';
-import { __resetTabIdForTest } from '../src/api/draft';
-import { useDraftSession } from '../src/hooks/useDraftSession';
-import { makePrDetailDto, makePr } from './helpers/prDetail';
-import type { DiffDto, PrDetailDto, PrReference, ReviewSessionDto } from '../src/api/types';
+import { FilesTab } from './FilesTab';
+import { PrDetailContextProvider } from '../prDetailContext';
+import { __resetTabIdForTest } from '../../../api/draft';
+import { useDraftSession } from '../../../hooks/useDraftSession';
+import { makePrDetailDto, makePr } from '../../../../__tests__/helpers/prDetail';
+import type { DiffDto, PrDetailDto, PrReference, ReviewSessionDto } from '../../../api/types';
 
 const ref: PrReference = { owner: 'octocat', repo: 'hello', number: 42 };
 

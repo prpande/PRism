@@ -1,9 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import type { FileChange } from '../src/api/types';
-import {
-  interleaveWholeFile,
-  parseHunkLines,
-} from '../src/components/PrDetail/FilesTab/DiffPane/interleaveWholeFile';
+import type { FileChange } from '../../../../api/types';
+import { interleaveWholeFile, parseHunkLines } from './interleaveWholeFile';
 
 function modifiedFile(hunks: FileChange['hunks']): FileChange {
   return { path: 'src/a.ts', status: 'modified', hunks };

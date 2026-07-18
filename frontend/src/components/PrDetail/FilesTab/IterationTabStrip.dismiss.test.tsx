@@ -4,8 +4,8 @@
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, it, expect, vi } from 'vitest';
-import { IterationTabStrip } from '../src/components/PrDetail/FilesTab/IterationTabStrip';
-import { iter } from './helpers/prDetail';
+import { IterationTabStrip } from './IterationTabStrip';
+import { iter } from '../../../../__tests__/helpers/prDetail';
 
 // Five iterations → 3 inline + a 2-item "All iterations" overflow dropdown.
 function renderWithOverflow() {

@@ -1,6 +1,6 @@
 import { render, screen } from '@testing-library/react';
 import { describe, it, expect } from 'vitest';
-import { DiffTruncationBanner } from '../src/components/PrDetail/FilesTab/DiffPane/DiffTruncationBanner';
+import { DiffTruncationBanner } from './DiffTruncationBanner';
 
 describe('DiffTruncationBanner', () => {
   it('links to the host-correct htmlUrl with a host-agnostic label', () => {

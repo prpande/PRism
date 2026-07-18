@@ -4,8 +4,8 @@
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, it, expect, vi } from 'vitest';
-import { CommitMultiSelectPicker } from '../src/components/PrDetail/FilesTab/CommitMultiSelectPicker';
-import { commit } from './helpers/prDetail';
+import { CommitMultiSelectPicker } from './CommitMultiSelectPicker';
+import { commit } from '../../../../__tests__/helpers/prDetail';
 
 describe('CommitMultiSelectPicker — outside-click dismissal (#328)', () => {
   it('closes the dropdown on a click outside the picker', async () => {
