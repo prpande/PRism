@@ -46,8 +46,8 @@ Every task's requirements implicitly include this section. Values are copied ver
 - Create `frontend/e2e/pr-detail-timeline-threads.spec.ts` — display assertions.
 
 **PR 2 — Click-through navigation:**
-- Modify `frontend/src/components/PrDetail/prDetailContext.tsx` — widen `requestFileView`, add `pendingThreadId` + `clearPendingThreadId`.
-- Modify `frontend/src/components/PrDetail/PrDetailView.tsx` — `pendingThreadId` state, 2-arg `requestFileView`, `useDiffScrollRestore` suppression.
+- Modify `frontend/src/components/PrDetail/prDetailContext.tsx` — widen `requestFileView`, add `pendingThread` (`{ path, threadId }`) + `clearPendingThread`.
+- Modify `frontend/src/components/PrDetail/PrDetailView.tsx` — `pendingThread` state, 2-arg `requestFileView`, `useDiffScrollRestore` suppression.
 - Modify `frontend/src/components/PrDetail/testUtils.tsx` — widen the context stub.
 - Modify `frontend/src/hooks/diffScrollMemory.ts` — `suppress` option on `useDiffScrollRestore`.
 - Create `frontend/src/components/PrDetail/FilesTab/scrollThreadIntoCenter.ts` — center-scroll util.
@@ -249,6 +249,16 @@ describe('ReviewThreadRow', () => {
 
   it('shows a Resolved chip for resolved threads', () => {
     render(<ReviewThreadRow thread={base({ isResolved: true })} />);
+    expect(screen.getByText('Resolved')).toBeInTheDocument();
+  });
+
+  // Spec testing bullet: a resolve done in the Files tab surfaces on the timeline row after the
+  // PrDetail reload delivers the updated thread. At the component level that is an isResolved
+  // prop flip (reload → new prop) — assert the chip reflects it.
+  it('reflects a resolve arriving on reload (isResolved false→true)', () => {
+    const { rerender } = render(<ReviewThreadRow thread={base({ isResolved: false })} />);
+    expect(screen.queryByText('Resolved')).not.toBeInTheDocument();
+    rerender(<ReviewThreadRow thread={base({ isResolved: true })} />);
     expect(screen.getByText('Resolved')).toBeInTheDocument();
   });
 
@@ -609,7 +619,10 @@ function ReviewNode({ event, threads }: { event: TimelineEvent; threads: ReviewT
             data-testid="timeline-comment"
           />
         ) : (
-          <span className={styles.line} data-testid="timeline-marker">
+          // Distinct testid from the plain Marker's `timeline-marker` — a review-with-threads
+          // shell and a bare marker are different nodes; sharing the testid risks a strict-mode
+          // locator collision when a test queries getByTestId('timeline-marker').
+          <span className={styles.line} data-testid="timeline-review-shell">
             <Avatar src={event.actor.avatarUrl} login={event.actor.login ?? ''} size="sm" />
             <span className={styles.lineText}>
               {event.actor.login && <span className={styles.actor}>{event.actor.login} </span>}
@@ -967,45 +980,45 @@ git commit -m "test(#774): e2e — review-thread rows render in the timeline"
 - Test: `frontend/src/components/PrDetail/prDetailContext.test.tsx` (extend if it asserts the value shape; otherwise the change is exercised by Task 10/11 tests)
 
 **Interfaces:**
-- Produces: `requestFileView(path: string, threadId?: string): void`; new context fields `pendingThreadId: string | null` and `clearPendingThreadId(): void`. Single-arg callers (HotspotsTab) are unchanged.
+- Produces: `requestFileView(path: string, threadId?: string): void`; new context fields `pendingThread: { path: string; threadId: string } | null` and `clearPendingThread(): void`. The pending-thread target carries the **path** as well as the threadId so the FilesTab thread effect (Task 10) can gate on `selectedPath === pendingThread.path` — gating on threadId alone lets the effect fire against the previously-selected file before the tab switches and produce a false "not found". Single-arg callers (HotspotsTab) are unchanged.
 
 - [ ] **Step 1: Widen the context type** (`prDetailContext.tsx`)
 
 ```tsx
   pendingFilePath: string | null;
-  pendingThreadId: string | null;
+  pendingThread: { path: string; threadId: string } | null;
   requestFileView: (path: string, threadId?: string) => void;
   clearPendingFilePath: () => void;
-  clearPendingThreadId: () => void;
+  clearPendingThread: () => void;
 ```
 
 - [ ] **Step 2: Update `PrDetailView.tsx`**
 
 ```tsx
 const [pendingFilePath, setPendingFilePath] = useState<string | null>(null);
-const [pendingThreadId, setPendingThreadId] = useState<string | null>(null);
+const [pendingThread, setPendingThread] = useState<{ path: string; threadId: string } | null>(null);
 const requestFileView = useCallback(
   (path: string, threadId?: string) => {
     selectSubTab('files');
     setPendingFilePath(path);
-    setPendingThreadId(threadId ?? null);
+    setPendingThread(threadId ? { path, threadId } : null);
   },
   [selectSubTab],
 );
 const clearPendingFilePath = useCallback(() => setPendingFilePath(null), []);
-const clearPendingThreadId = useCallback(() => setPendingThreadId(null), []);
+const clearPendingThread = useCallback(() => setPendingThread(null), []);
 ```
 
-Thread `pendingThreadId` and `clearPendingThreadId` into the context value object and its `useMemo` dependency array (alongside the existing `pendingFilePath`/`requestFileView`/`clearPendingFilePath` entries).
+Thread `pendingThread` and `clearPendingThread` into the context value object and its `useMemo` dependency array (alongside the existing `pendingFilePath`/`requestFileView`/`clearPendingFilePath` entries).
 
 - [ ] **Step 3: Widen the test stub** (`testUtils.tsx`, `makePrDetailContextValue`)
 
 ```tsx
   pendingFilePath: null,
-  pendingThreadId: null,
+  pendingThread: null,
   requestFileView: vi.fn(),
   clearPendingFilePath: vi.fn(),
-  clearPendingThreadId: vi.fn(),
+  clearPendingThread: vi.fn(),
 ```
 
 - [ ] **Step 4: Typecheck**
@@ -1116,7 +1129,7 @@ export function useDiffScrollRestore(opts: {
 Update the call site in `PrDetailView.tsx` (line ~391):
 
 ```tsx
-useDiffScrollRestore({ rootRef: pageRef, refKey, subTab, active, suppress: pendingThreadId !== null });
+useDiffScrollRestore({ rootRef: pageRef, refKey, subTab, active, suppress: pendingThread !== null });
 ```
 
 - [ ] **Step 4: Run to verify it passes**
@@ -1223,8 +1236,8 @@ git commit -m "feat(#774): add scrollThreadIntoCenter util (center-scroll, reduc
 - Test: `frontend/src/components/PrDetail/FilesTab/FilesTab.threadDeepLink.test.tsx`
 
 **Interfaces:**
-- Consumes: `pendingThreadId`, `clearPendingThreadId` from context; `scrollThreadIntoCenter`; `Snackbar`.
-- Behavior: once the full-range diff has settled AND the target file is selected, query `[data-thread-id]` inside the diff region. Hit → center-scroll + `focus()` + flash + announce. Miss → Snackbar (`tone="warning"`) + announce. Clear `pendingThreadId` either way, never synchronously with `setSelectedPath`.
+- Consumes: `pendingThread`, `clearPendingThread` from context; `scrollThreadIntoCenter`; `Snackbar`.
+- Behavior: once the full-range diff has settled AND the target file (`selectedPath === pendingThread.path`) is selected, query `[data-thread-id]` inside the diff region. Hit → center-scroll + `focus()` + flash + announce. Miss → Snackbar (`tone="warning"`) + announce. Clear `pendingThread` either way, never synchronously with `setSelectedPath`.
 
 - [ ] **Step 1: Modify the existing pending-file effect** so a thread deep-link defers focus/announce.
 
@@ -1233,19 +1246,19 @@ In FilesTab's effect (2) hit-branch, gate the diff-region focus + announce on th
 ```tsx
 if (fileList.includes(pendingFilePath)) {
   setSelectedPath(pendingFilePath);
-  if (pendingThreadId == null) {
+  if (pendingThread == null) {
     diffRegionRef.current?.focus();
     setLiveMessage(`Navigated to ${pendingFilePath} on the Files tab.`);
   }
   // thread deep-link: the pending-thread effect below owns focus + announce once the widget mounts.
 } else {
   if (selectedPath === null || !fileList.includes(selectedPath)) setSelectedPath(fileList[0]);
-  clearPendingThreadId(); // target file absent — no widget will mount; drop the thread intent too
+  clearPendingThread(); // target file absent — no widget will mount; drop the thread intent too
 }
 clearPendingFilePath();
 ```
 
-Add `pendingThreadId` and `clearPendingThreadId` to that effect's dependency array.
+Add `pendingThread` and `clearPendingThread` to that effect's dependency array.
 
 - [ ] **Step 2: Add the pending-thread effect** (after the pending-file effects). Add a `threadMiss` state + a `FLASH_MS` const and a `cssEscape` guard.
 
@@ -1253,10 +1266,15 @@ Add `pendingThreadId` and `clearPendingThreadId` to that effect's dependency arr
 const [threadMiss, setThreadMiss] = useState(false);
 // ...
 useEffect(() => {
-  if (pendingThreadId === null) return;
-  if (selectedPath === null || activeRange !== 'all' || diff.isLoading || diff.data?.range !== allRange) return;
+  if (pendingThread === null) return;
+  // Gate on the TARGET file being selected (spec § click-through mechanics) — not merely
+  // "some file + settled". Without selectedPath === pendingThread.path, this effect can fire
+  // against the PREVIOUSLY-selected file before effect (2) switches files, find no matching
+  // widget, and fire a false "not found" miss. This is why the pending target carries the path.
+  if (selectedPath !== pendingThread.path) return;
+  if (activeRange !== 'all' || diff.isLoading || diff.data?.range !== allRange) return;
   const region = diffRegionRef.current;
-  const escaped = typeof CSS !== 'undefined' && CSS.escape ? CSS.escape(pendingThreadId) : pendingThreadId;
+  const escaped = typeof CSS !== 'undefined' && CSS.escape ? CSS.escape(pendingThread.threadId) : pendingThread.threadId;
   const widget = region?.querySelector<HTMLElement>(`[data-thread-id="${escaped}"]`) ?? null;
   if (widget) {
     const body = region?.querySelector<HTMLElement>('.diff-pane-body');
@@ -1269,8 +1287,8 @@ useEffect(() => {
     setThreadMiss(true);
     setLiveMessage('Comment thread not found in the current diff.');
   }
-  clearPendingThreadId();
-}, [pendingThreadId, selectedPath, activeRange, diff.isLoading, diff.data?.range, allRange, clearPendingThreadId]);
+  clearPendingThread();
+}, [pendingThread, selectedPath, activeRange, diff.isLoading, diff.data?.range, allRange, clearPendingThread]);
 ```
 
 Render the miss Snackbar (near the existing live region; the sr-only announce is already carried by `liveMessage`, so the Snackbar itself carries no `aria-live` — matching `GitHubAuthBanner`):
@@ -1303,7 +1321,10 @@ Add the constant near the top of the module: `const FLASH_MS = 2000;` and import
 }
 @media (prefers-reduced-motion: reduce) {
   .comment-thread--flash {
+    /* No animation, but keep a static highlight for the ~2s the class is applied so
+       reduced-motion users still get a visible landing cue (paired with the sr-only announce). */
     animation: none;
+    background-color: var(--accent-soft);
   }
 }
 ```
@@ -1311,28 +1332,37 @@ Add the constant near the top of the module: `const FLASH_MS = 2000;` and import
 - [ ] **Step 4: Write the test** (`FilesTab.threadDeepLink.test.tsx`, mirroring `FilesTab.deepLink.test.tsx`'s module-level `currentDiff` mock + `rerender` to drive in-flight → settled). Provide the context via `PrDetailContextProvider` with `pendingFilePath` + `pendingThreadId` set, and a DiffPane that renders an `ExistingCommentWidget` with `data-thread-id`. Assert:
 
 ```tsx
-// hit: widget receives focus + the flash class, clearPendingThreadId called
+// hit: widget receives focus + the flash class, clearPendingThread called
 it('scrolls, focuses, and flashes the target thread once the diff settles', async () => {
-  // ...render FilesTab under a provider with pendingFilePath='src/Calc.cs', pendingThreadId='seed-anchored'
+  // ...render FilesTab under a provider with pendingFilePath='src/Calc.cs',
+  //    pendingThread={ path: 'src/Calc.cs', threadId: 'seed-anchored' }
   // seed currentDiff as in-flight, rerender to settled ('all' range, !isLoading, data.range===allRange)
   // stub the widget element's scrollTo via its container: assign (body as any).scrollTo = vi.fn()
   const widget = await screen.findByTestId(/* the ExistingCommentWidget root, data-thread-id */);
   expect(widget).toHaveClass('comment-thread--flash');
   expect(document.activeElement).toBe(widget);
-  expect(clearPendingThreadId).toHaveBeenCalled();
+  expect(clearPendingThread).toHaveBeenCalled();
 });
 
 // miss: no widget → snackbar + announce + clear
 it('shows the not-found snackbar when the thread is absent from the diff', async () => {
-  // pendingThreadId points at a thread id with no matching widget
+  // pendingThread points at a thread with no matching widget (same target path, unknown threadId)
   expect(await screen.findByText('Comment thread not found in the current diff.')).toBeInTheDocument();
   expect(screen.getByTestId('files-tab-live-region')).toHaveTextContent(/not found/i);
-  expect(clearPendingThreadId).toHaveBeenCalled();
+  expect(clearPendingThread).toHaveBeenCalled();
+});
+
+// wrong-file guard: a pending thread must NOT fire against a stale selectedPath
+it('does not fire (no miss, no clear) until the target file is the selected file', async () => {
+  // selectedPath = some other file, pendingThread.path = 'src/Calc.cs', diff settled →
+  // effect returns early: no snackbar, clearPendingThread NOT called yet
+  expect(screen.queryByText('Comment thread not found in the current diff.')).not.toBeInTheDocument();
+  expect(clearPendingThread).not.toHaveBeenCalled();
 });
 
 // plain file-only deep-link still focuses the diff region and does not touch thread state
 it('leaves single-arg file navigation unchanged (diff region focused, no thread effect)', async () => {
-  // pendingFilePath set, pendingThreadId null → diffRegion focused, announce "Navigated to ..."
+  // pendingFilePath set, pendingThread null → diffRegion focused, announce "Navigated to ..."
 });
 ```
 
