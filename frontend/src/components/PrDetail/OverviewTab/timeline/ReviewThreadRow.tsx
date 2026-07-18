@@ -4,7 +4,13 @@ import { CommentCard } from '../../Comment/CommentCard';
 import type { ReviewThreadDto } from '../../../../api/types';
 import styles from './ReviewThreadRow.module.css';
 
-export function ReviewThreadRow({ thread }: { thread: ReviewThreadDto }) {
+export function ReviewThreadRow({
+  thread,
+  onViewInDiff,
+}: {
+  thread: ReviewThreadDto;
+  onViewInDiff?: (path: string, threadId: string) => void;
+}) {
   const [expanded, setExpanded] = useState(false);
 
   const fileLevel = thread.subjectType === 'FILE';
@@ -75,7 +81,16 @@ export function ReviewThreadRow({ thread }: { thread: ReviewThreadDto }) {
           )}
           {thread.isResolved && <span className={styles.resolvedChip}>Resolved</span>}
         </button>
-        {/* PR 2 (#774) adds a sibling "View in diff" button here, anchored threads only. */}
+        {anchored && onViewInDiff && (
+          <button
+            type="button"
+            className={styles.viewInDiff}
+            aria-label={`View in diff: ${thread.filePath}:${thread.lineNumber}`}
+            onClick={() => onViewInDiff(thread.filePath, thread.threadId)}
+          >
+            View in diff
+          </button>
+        )}
       </div>
       {expanded && (
         <div className={styles.panel}>

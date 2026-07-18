@@ -122,7 +122,15 @@ function CommentNode({ event }: { event: TimelineEvent }) {
   );
 }
 
-function ReviewNode({ event, threads }: { event: TimelineEvent; threads: ReviewThreadDto[] }) {
+function ReviewNode({
+  event,
+  threads,
+  onThreadNavigate,
+}: {
+  event: TimelineEvent;
+  threads: ReviewThreadDto[];
+  onThreadNavigate?: (path: string, threadId: string) => void;
+}) {
   const { tone, path } = verbMeta(event.verb);
   return (
     <li className={styles.node}>
@@ -157,7 +165,7 @@ function ReviewNode({ event, threads }: { event: TimelineEvent; threads: ReviewT
         )}
         <ul className={styles.threadList} data-testid="timeline-thread-list">
           {threads.map((t) => (
-            <ReviewThreadRow key={t.threadId} thread={t} />
+            <ReviewThreadRow key={t.threadId} thread={t} onViewInDiff={onThreadNavigate} />
           ))}
         </ul>
       </div>
@@ -237,6 +245,7 @@ export function ActivityFeed({
   onRegisterRefetch,
   prHtmlUrl,
   threadsByReview = new Map<number, ReviewThreadDto[]>(),
+  onThreadNavigate,
 }: {
   prRef: PrReference;
   prUpdatedSignal: number;
@@ -244,6 +253,7 @@ export function ActivityFeed({
   onRegisterRefetch?: (fn: () => void) => void; // OverviewTab wires the composer's post→refetch through this
   prHtmlUrl?: string | null; // the PR's github html_url — the commit-link base is derived from it
   threadsByReview?: Map<number, ReviewThreadDto[]>; // review databaseId → its open/resolved threads
+  onThreadNavigate?: (path: string, threadId: string) => void;
 }) {
   const {
     events,
@@ -326,7 +336,14 @@ export function ActivityFeed({
             const dbId = reviewDbId(node.event.id);
             const threads = dbId != null ? threadsByReview.get(dbId) : undefined;
             if (isReview(node.event.verb) && threads && threads.length > 0) {
-              return <ReviewNode key={node.event.id} event={node.event} threads={threads} />;
+              return (
+                <ReviewNode
+                  key={node.event.id}
+                  event={node.event}
+                  threads={threads}
+                  onThreadNavigate={onThreadNavigate}
+                />
+              );
             }
             return node.event.body != null ? (
               <CommentNode key={node.event.id} event={node.event} />

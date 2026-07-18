@@ -1,6 +1,6 @@
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { ReviewThreadRow } from './ReviewThreadRow';
 import type { ReviewThreadDto } from '../../../../api/types';
 
@@ -156,5 +156,31 @@ describe('ReviewThreadRow', () => {
     expect(
       screen.getByRole('button', { name: /review thread on src\/Calc\.cs, line 5, resolved/i }),
     ).toBeInTheDocument();
+  });
+
+  it('renders a View in diff button for anchored threads and invokes onViewInDiff', async () => {
+    const user = userEvent.setup();
+    const onViewInDiff = vi.fn();
+    render(<ReviewThreadRow thread={base({})} onViewInDiff={onViewInDiff} />);
+    await user.click(screen.getByRole('button', { name: /view in diff/i }));
+    expect(onViewInDiff).toHaveBeenCalledWith('src/Calc.cs', 't1');
+  });
+
+  it('does not render View in diff for outdated or file-level threads', () => {
+    const onViewInDiff = vi.fn();
+    const { rerender } = render(
+      <ReviewThreadRow
+        thread={base({ lineNumber: null, isOutdated: true, subjectType: 'LINE' })}
+        onViewInDiff={onViewInDiff}
+      />,
+    );
+    expect(screen.queryByRole('button', { name: /view in diff/i })).not.toBeInTheDocument();
+    rerender(
+      <ReviewThreadRow
+        thread={base({ lineNumber: null, subjectType: 'FILE' })}
+        onViewInDiff={onViewInDiff}
+      />,
+    );
+    expect(screen.queryByRole('button', { name: /view in diff/i })).not.toBeInTheDocument();
   });
 });

@@ -31,6 +31,7 @@ export function OverviewTab() {
     baseShaChanged,
     viewedPaths,
     prUpdatedSignal,
+    requestFileView,
   } = usePrDetailContext();
   const aiOn = useAiGate('summary');
   const live = useIsLiveMode();
@@ -153,6 +154,7 @@ export function OverviewTab() {
           prHtmlUrl={prDetail.pr.htmlUrl}
           onRegisterRefetch={handleRegisterRefetch}
           threadsByReview={threadsByReview}
+          onThreadNavigate={requestFileView}
           // replyContext is always defined in OverviewTab (built unconditionally above); no
           // null guard needed here.
           composerSlot={
