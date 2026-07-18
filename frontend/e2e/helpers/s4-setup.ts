@@ -140,3 +140,49 @@ export async function advanceHead(
     throw new Error(`/test/advance-head failed: ${resp.status()} ${await resp.text()}`);
   }
 }
+
+// #774 e2e-only. Seeds review threads onto the scenario PR via POST /test/seed-review-threads
+// (opt-in — default is empty, so specs that don't call this see zero threads). Two threads:
+// one anchored (current diff line) and one outdated (superseded line), both under
+// reviewDatabaseId 1 so they attach to FakePrTimelineFeedReader's existing review:1 card.
+export async function seedReviewThreads(page: Page): Promise<void> {
+  const res = await page.request.post('/test/seed-review-threads', {
+    headers: { Origin: BACKEND_ORIGIN },
+    data: {
+      threads: [
+        {
+          threadId: 'seed-anchored',
+          filePath: 'src/Calc.cs',
+          lineNumber: 5,
+          isOutdated: false,
+          originalLine: null,
+          originalStartLine: null,
+          subjectType: 'LINE',
+          diffHunk:
+            '@@ -1,4 +1,6 @@\n   public static int Mul(int a, int b) => a * b;\n+  public static int Div(int a, int b) => a / b;',
+          reviewDatabaseId: 1,
+          isResolved: false,
+          comments: [
+            { commentId: 'sc1', author: 'alice', createdAt: '2026-01-01T00:00:00Z', body: 'Guard against divide-by-zero?' },
+          ],
+        },
+        {
+          threadId: 'seed-outdated',
+          filePath: 'src/Calc.cs',
+          lineNumber: null,
+          isOutdated: true,
+          originalLine: 3,
+          originalStartLine: null,
+          subjectType: 'LINE',
+          diffHunk: '@@ -1,2 +1,2 @@\n-  public static int Sub(int a, int b) => a - b;',
+          reviewDatabaseId: 1,
+          isResolved: false,
+          comments: [
+            { commentId: 'sc2', author: 'noah.s', createdAt: '2026-01-01T00:01:00Z', body: 'This moved in a later push.' },
+          ],
+        },
+      ],
+    },
+  });
+  if (!res.ok()) throw new Error(`seedReviewThreads failed: ${res.status()}`);
+}
