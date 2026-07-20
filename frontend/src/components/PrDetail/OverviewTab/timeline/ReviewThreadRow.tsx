@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Avatar } from '../../../Avatar/Avatar';
+import { InboxCaret } from '../../../Inbox/InboxCaret';
 import { CommentCard } from '../../Comment/CommentCard';
 import type { ReviewThreadDto } from '../../../../api/types';
 import styles from './ReviewThreadRow.module.css';
@@ -53,9 +54,7 @@ export function ReviewThreadRow({ thread }: { thread: ReviewThreadDto }) {
           data-testid="timeline-thread-row"
           aria-label={rowLabel}
         >
-          <span className={styles.chevron} data-expanded={expanded} aria-hidden="true">
-            ▸
-          </span>
+          <InboxCaret open={expanded} />
           {fileLevel ? (
             <span className={styles.fileChip}>File</span>
           ) : anchored ? (
