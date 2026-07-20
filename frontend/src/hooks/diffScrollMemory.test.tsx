@@ -33,15 +33,17 @@ function Harness({
   active,
   bodyPresent = true,
   bodyRefOut,
+  suppress,
 }: {
   refKey: string;
   active: boolean;
   bodyPresent?: boolean;
   bodyRefOut?: (el: HTMLElement | null) => void;
+  suppress?: boolean;
 }) {
   const rootRef = useRef<HTMLDivElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
-  useDiffScrollRestore({ rootRef, refKey, subTab: 'files', active });
+  useDiffScrollRestore({ rootRef, refKey, subTab: 'files', active, suppress });
   useDiffScrollCapture(bodyRef, refKey, bodyPresent);
   return (
     <div ref={rootRef}>
@@ -181,4 +183,47 @@ test('captures even when the diff body appears AFTER first activation (late load
   body.scrollTop = 0;
   rerender(<Harness refKey="acme/api/7" active={true} bodyPresent={true} />);
   expect(body.scrollTop).toBe(640);
+});
+
+test('does not restore the captured offset when suppress is true (thread deep-link pending, #774)', () => {
+  const { rerender } = render(<Harness refKey="acme/api/7" active={true} />);
+  const body = getBody();
+  body.scrollTop = 300;
+  body.dispatchEvent(new Event('scroll'));
+  rerender(<Harness refKey="acme/api/7" active={false} />);
+  body.scrollTop = 0;
+
+  // Reactivate while a thread deep-link is pending: the restore write is skipped.
+  rerender(<Harness refKey="acme/api/7" active={true} suppress={true} />);
+  expect(body.scrollTop).toBe(0);
+});
+
+test('restores the captured offset when suppress is false (#774)', () => {
+  const { rerender } = render(<Harness refKey="acme/api/7" active={true} />);
+  const body = getBody();
+  body.scrollTop = 250;
+  body.dispatchEvent(new Event('scroll'));
+  rerender(<Harness refKey="acme/api/7" active={false} />);
+  body.scrollTop = 0;
+
+  rerender(<Harness refKey="acme/api/7" active={true} suppress={false} />);
+  expect(body.scrollTop).toBe(250);
+});
+
+test('does not re-fire the restore when suppress flips true→false mid-view (#774 race guard)', () => {
+  const { rerender } = render(<Harness refKey="acme/api/7" active={true} />);
+  const body = getBody();
+  body.scrollTop = 400;
+  body.dispatchEvent(new Event('scroll'));
+  rerender(<Harness refKey="acme/api/7" active={false} />);
+  body.scrollTop = 0;
+
+  rerender(<Harness refKey="acme/api/7" active={true} suppress={true} />);
+  expect(body.scrollTop).toBe(0); // suppressed on activation
+
+  // Pending thread cleared mid-view (Task 10's clearPendingThread): suppress flips
+  // true→false. Because `suppress` is read via a ref (not a dep), this rerender must
+  // NOT re-fire the restore write with the stale 400 — the deep-link owns scroll.
+  rerender(<Harness refKey="acme/api/7" active={true} suppress={false} />);
+  expect(body.scrollTop).toBe(0);
 });
