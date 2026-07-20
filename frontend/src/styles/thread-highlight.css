@@ -1,0 +1,19 @@
+@keyframes comment-thread-flash {
+  from {
+    background-color: var(--accent-soft);
+  }
+  to {
+    background-color: transparent;
+  }
+}
+.comment-thread--flash {
+  animation: comment-thread-flash 2s ease-out;
+}
+@media (prefers-reduced-motion: reduce) {
+  .comment-thread--flash {
+    /* No animation, but keep a static highlight for the ~2s the class is applied so
+       reduced-motion users still get a visible landing cue (paired with the sr-only announce). */
+    animation: none;
+    background-color: var(--accent-soft);
+  }
+}

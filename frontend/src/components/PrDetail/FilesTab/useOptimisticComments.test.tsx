@@ -7,7 +7,7 @@ import { OPTIMISTIC_FALLBACK_MAX_AGE_MS } from './optimisticComment';
 // (#327 slice 2). The pure eviction predicate is unit-tested in
 // optimisticComment.test.ts; the FULL FilesTab integration (composer post →
 // placeholder → refetch → eviction) lives in
-// __tests__/FilesTabOptimisticEviction.test.tsx. This file exercises the hook
+// FilesTabOptimisticEviction.test.tsx. This file exercises the hook
 // seam itself: notePosted / noteReplyPosted stashing, the per-line placeholder
 // filter (databaseId de-dup), the thread grouping, and the two prune paths
 // (refetch-generation change + the bounded one-shot fallback timer).

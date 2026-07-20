@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect } from 'react';
+import { useEffect, useLayoutEffect, useRef } from 'react';
 
 // Preserve the inner diff-body scroll position across keep-alive hide/show (#590).
 //
@@ -67,11 +67,23 @@ export function useDiffScrollRestore(opts: {
   refKey: string;
   subTab: string;
   active: boolean;
+  suppress?: boolean;
 }): void {
-  const { rootRef, refKey, subTab, active } = opts;
+  const { rootRef, refKey, subTab, active, suppress } = opts;
+  // Read `suppress` through a ref so a mid-view flip does NOT re-run the restore. A
+  // pending-thread deep-link clears its pending state synchronously right after
+  // starting a smooth center-scroll; if `suppress` were in this effect's dep array,
+  // that clear would flip it true→false, re-fire this layout effect, and write the
+  // STALE saved offset (no scroll event has landed from the just-started animation
+  // yet) — aborting the scroll and stranding the user at the old position. Restoring
+  // only on genuine activation edges (active/subTab/refKey/rootRef) closes the race
+  // while still suppressing on the return-to-Files edge.
+  const suppressRef = useRef(suppress);
+  suppressRef.current = suppress;
   useLayoutEffect(() => {
     // Only the active view showing Files has a bounded diff body to restore.
     if (!active || subTab !== 'files') return;
+    if (suppressRef.current) return; // an explicit thread deep-link owns the scroll position (#774)
     const root = rootRef.current;
     if (!root) return;
     const body = root.querySelector<HTMLElement>('.diff-pane-body');

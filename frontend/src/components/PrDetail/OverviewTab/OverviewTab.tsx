@@ -13,6 +13,7 @@ import {
   type PrRootConversationReplyContext,
 } from './PrRootConversation';
 import { ActivityFeed } from './timeline/ActivityFeed';
+import { useThreadsByReview } from './timeline/useThreadsByReview';
 import { ReviewFilesCta } from './ReviewFilesCta';
 import { PrActionsPanel } from './PrActionsPanel';
 import { prRootDraft } from '../draftKinds';
@@ -30,6 +31,7 @@ export function OverviewTab() {
     baseShaChanged,
     viewedPaths,
     prUpdatedSignal,
+    requestFileView,
   } = usePrDetailContext();
   const aiOn = useAiGate('summary');
   const live = useIsLiveMode();
@@ -61,6 +63,7 @@ export function OverviewTab() {
     [diff.data, viewedPaths],
   );
   const threadsCount = prDetail.reviewComments.length;
+  const threadsByReview = useThreadsByReview(prDetail.reviewComments);
   const draftsCount =
     (draftSession.session?.draftComments.length ?? 0) +
     (draftSession.session?.draftReplies.length ?? 0);
@@ -150,6 +153,8 @@ export function OverviewTab() {
           prUpdatedSignal={prUpdatedSignal}
           prHtmlUrl={prDetail.pr.htmlUrl}
           onRegisterRefetch={handleRegisterRefetch}
+          threadsByReview={threadsByReview}
+          onThreadNavigate={requestFileView}
           // replyContext is always defined in OverviewTab (built unconditionally above); no
           // null guard needed here.
           composerSlot={

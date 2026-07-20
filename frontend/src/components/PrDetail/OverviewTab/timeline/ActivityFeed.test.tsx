@@ -1,8 +1,9 @@
 import { render, screen, fireEvent } from '@testing-library/react';
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
+import userEvent from '@testing-library/user-event';
 import { ActivityFeed } from './ActivityFeed';
 import * as api from '../../../../api/timeline';
-import type { TimelineEvent } from '../../../../api/types';
+import type { TimelineEvent, ReviewThreadDto } from '../../../../api/types';
 
 // jsdom doesn't implement layout, so HTMLElement.prototype.scrollIntoView is undefined by
 // default in this jsdom version — vi.spyOn requires the property to exist first.
@@ -22,6 +23,26 @@ const ev = (id: string, over: Partial<TimelineEvent>): TimelineEvent => ({
 });
 const pr = { owner: 'acme', repo: 'api', number: 7 };
 
+const seededThread = (over: Partial<ReviewThreadDto> = {}): ReviewThreadDto => ({
+  threadId: 'th1',
+  filePath: 'src/Calc.cs',
+  lineNumber: 5,
+  isResolved: false,
+  reviewDatabaseId: 1,
+  comments: [
+    {
+      commentId: 'c1',
+      author: 'alice',
+      avatarUrl: null,
+      createdAt: '2026-01-01T00:00:00Z',
+      body: 'nit here',
+      editedAt: null,
+    },
+  ],
+  ...over,
+});
+
+beforeEach(() => sessionStorage.clear());
 afterEach(() => vi.restoreAllMocks());
 
 describe('ActivityFeed', () => {
@@ -151,5 +172,76 @@ describe('ActivityFeed', () => {
     expect(screen.queryByText('commit 5')).not.toBeInTheDocument();
     fireEvent.click(btn);
     expect(screen.getByText('commit 5')).toBeInTheDocument(); // the collapsed 6th commit is revealed
+  });
+
+  it('renders thread rows under the matching review card', async () => {
+    vi.spyOn(api, 'getTimelinePage').mockResolvedValue({
+      events: [ev('review:1', { verb: 'approved' })],
+      olderCursor: null,
+      hasOlder: false,
+    });
+    const threadsByReview = new Map<number, ReviewThreadDto[]>([[1, [seededThread()]]]);
+    render(
+      <ActivityFeed
+        prRef={pr}
+        prUpdatedSignal={0}
+        composerSlot={<div />}
+        threadsByReview={threadsByReview}
+      />,
+    );
+    expect(await screen.findByTestId('timeline-thread-row')).toBeInTheDocument();
+    expect(screen.getByText('src/Calc.cs:5')).toBeInTheDocument();
+  });
+
+  it('does not alter a review with no threads (still a bare marker)', async () => {
+    vi.spyOn(api, 'getTimelinePage').mockResolvedValue({
+      events: [ev('review:9', { verb: 'approved' })],
+      olderCursor: null,
+      hasOlder: false,
+    });
+    render(
+      <ActivityFeed
+        prRef={pr}
+        prUpdatedSignal={0}
+        composerSlot={<div />}
+        threadsByReview={new Map()}
+      />,
+    );
+    expect(await screen.findByTestId('timeline-marker')).toHaveTextContent('approved');
+    expect(screen.queryByTestId('timeline-thread-row')).not.toBeInTheDocument();
+  });
+
+  // Spec: "Rows follow their parent card's visibility (e.g. the existing 'Show bots' filter)."
+  // The ReviewNode dispatches from the already-showBots-filtered `nodes`, so a hidden bot review's
+  // threads are hidden too.
+  it('hides bot-review threads under the Show-bots filter, reveals them on toggle', async () => {
+    const user = userEvent.setup();
+    vi.spyOn(api, 'getTimelinePage').mockResolvedValue({
+      events: [
+        ev('review:2', {
+          verb: 'approved',
+          actor: { login: 'dependabot[bot]', avatarUrl: null, isBot: true },
+        }),
+      ],
+      olderCursor: null,
+      hasOlder: false,
+    });
+    const threadsByReview = new Map<number, ReviewThreadDto[]>([
+      [2, [seededThread({ reviewDatabaseId: 2 })]],
+    ]);
+    render(
+      <ActivityFeed
+        prRef={pr}
+        prUpdatedSignal={0}
+        composerSlot={<div />}
+        threadsByReview={threadsByReview}
+      />,
+    );
+    // Bots hidden by default → the bot review card AND its thread rows are absent.
+    await screen.findByRole('button', { name: /show bots/i });
+    expect(screen.queryByTestId('timeline-thread-row')).not.toBeInTheDocument();
+    // Reveal bots → the thread rows follow their parent card in.
+    await user.click(screen.getByRole('button', { name: /show bots/i }));
+    expect(await screen.findByTestId('timeline-thread-row')).toBeInTheDocument();
   });
 });

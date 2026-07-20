@@ -3,10 +3,16 @@ import { Avatar } from '../../../Avatar/Avatar';
 import { Skeleton } from '../../../Skeleton/Skeleton';
 import { formatAge } from '../../../../utils/relativeTime';
 import { CommentCard } from '../../Comment/CommentCard'; // lives under PrDetail/Comment/, not PrDetail/CommentCard/
-import type { PrReference, TimelineEvent, ActivityVerb } from '../../../../api/types';
+import type {
+  PrReference,
+  TimelineEvent,
+  ActivityVerb,
+  ReviewThreadDto,
+} from '../../../../api/types';
 import { useTimelineFeed } from './useTimelineFeed';
 import { groupCommitRuns, type FeedNode } from './groupCommitRuns';
 import { verbMeta, GlyphIcon, COMMENT_PATH, COMMIT_PATH, type GlyphTone } from './eventGlyph';
+import { ReviewThreadRow } from './ReviewThreadRow';
 import styles from './ActivityFeed.module.css';
 
 const VERB_PHRASE: Record<ActivityVerb, string> = {
@@ -24,6 +30,14 @@ const VERB_PHRASE: Record<ActivityVerb, string> = {
   'ci-activity': 'CI',
   authored: 'authored',
   other: 'updated',
+};
+
+const isReview = (v: ActivityVerb): boolean =>
+  v === 'reviewed' || v === 'approved' || v === 'changes-requested';
+
+const reviewDbId = (id: string): number | null => {
+  const m = /^review:(\d+)$/.exec(id);
+  return m ? Number(m[1]) : null;
 };
 
 // A review that carries a body renders as ONE card; when it is an approval / changes-requested the
@@ -108,6 +122,57 @@ function CommentNode({ event }: { event: TimelineEvent }) {
   );
 }
 
+function ReviewNode({
+  event,
+  threads,
+  onThreadNavigate,
+}: {
+  event: TimelineEvent;
+  threads: ReviewThreadDto[];
+  onThreadNavigate?: (path: string, threadId: string) => void;
+}) {
+  const { tone, path } = verbMeta(event.verb);
+  return (
+    <li className={styles.node}>
+      <NodeBadge
+        tone={event.body != null ? commentTone(event.verb) : tone}
+        path={event.body != null ? COMMENT_PATH : path}
+      />
+      <div className={styles.cardWrap}>
+        {event.body != null ? (
+          <CommentCard
+            density="comfortable"
+            avatarSize="sm"
+            author={event.actor.login ?? ''}
+            avatarUrl={event.actor.avatarUrl ?? undefined}
+            createdAt={event.timestamp}
+            body={event.body}
+            bandEnd={stateBand(event.verb)}
+            data-testid="timeline-comment"
+          />
+        ) : (
+          // Distinct testid from the plain Marker's `timeline-marker` — a review-with-threads
+          // shell and a bare marker are different nodes; sharing the testid risks a strict-mode
+          // locator collision when a test queries getByTestId('timeline-marker').
+          <span className={styles.line} data-testid="timeline-review-shell">
+            <Avatar src={event.actor.avatarUrl} login={event.actor.login ?? ''} size="sm" />
+            <span className={styles.lineText}>
+              {event.actor.login && <span className={styles.actor}>{event.actor.login} </span>}
+              <span className={styles.verb}>{VERB_PHRASE[event.verb]}</span>
+              <span className={styles.when}> · {formatAge(event.timestamp)}</span>
+            </span>
+          </span>
+        )}
+        <ul className={styles.threadList} data-testid="timeline-thread-list">
+          {threads.map((t) => (
+            <ReviewThreadRow key={t.threadId} thread={t} onViewInDiff={onThreadNavigate} />
+          ))}
+        </ul>
+      </div>
+    </li>
+  );
+}
+
 const COMMIT_ROW_LIMIT = 5;
 
 function CommitGroup({
@@ -179,12 +244,16 @@ export function ActivityFeed({
   composerSlot,
   onRegisterRefetch,
   prHtmlUrl,
+  threadsByReview = new Map<number, ReviewThreadDto[]>(),
+  onThreadNavigate,
 }: {
   prRef: PrReference;
   prUpdatedSignal: number;
   composerSlot: React.ReactNode;
   onRegisterRefetch?: (fn: () => void) => void; // OverviewTab wires the composer's post→refetch through this
   prHtmlUrl?: string | null; // the PR's github html_url — the commit-link base is derived from it
+  threadsByReview?: Map<number, ReviewThreadDto[]>; // review databaseId → its open/resolved threads
+  onThreadNavigate?: (path: string, threadId: string) => void;
 }) {
   const {
     events,
@@ -254,19 +323,34 @@ export function ActivityFeed({
 
       {status === 'ready' && nodes.length > 0 && (
         <ol className={styles.rail}>
-          {nodes.map((node) =>
-            node.kind === 'commit-group' ? (
-              <CommitGroup
-                key={node.commits[0].id}
-                commits={node.commits}
-                commitBase={commitBase}
-              />
-            ) : node.event.body != null ? (
+          {nodes.map((node) => {
+            if (node.kind === 'commit-group') {
+              return (
+                <CommitGroup
+                  key={node.commits[0].id}
+                  commits={node.commits}
+                  commitBase={commitBase}
+                />
+              );
+            }
+            const dbId = reviewDbId(node.event.id);
+            const threads = dbId != null ? threadsByReview.get(dbId) : undefined;
+            if (isReview(node.event.verb) && threads && threads.length > 0) {
+              return (
+                <ReviewNode
+                  key={node.event.id}
+                  event={node.event}
+                  threads={threads}
+                  onThreadNavigate={onThreadNavigate}
+                />
+              );
+            }
+            return node.event.body != null ? (
               <CommentNode key={node.event.id} event={node.event} />
             ) : (
               <Marker key={node.event.id} event={node.event} />
-            ),
-          )}
+            );
+          })}
         </ol>
       )}
 

@@ -1,0 +1,115 @@
+.threadRow {
+  list-style: none;
+}
+.rowLine {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+}
+.viewInDiff {
+  flex-shrink: 0;
+  font-size: var(--text-xs);
+  color: var(--accent);
+  background: transparent;
+  border: 1px solid var(--border-1);
+  border-radius: 999px;
+  padding: 2px 10px;
+  cursor: pointer;
+}
+.viewInDiff:hover {
+  background: var(--surface-3);
+}
+.rowHeader {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  background: none;
+  border: none;
+  padding: 4px 6px;
+  cursor: pointer;
+  text-align: left;
+  font-size: var(--text-sm);
+  color: var(--text-2);
+  border-radius: var(--radius-2);
+}
+.rowHeader:hover {
+  background: var(--surface-3);
+}
+.lineChip {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--accent);
+  flex-shrink: 0;
+}
+.fileChip,
+.outdatedBadge,
+.resolvedChip {
+  font-size: var(--text-xs);
+  border-radius: 999px;
+  padding: 1px 8px;
+  flex-shrink: 0;
+}
+.fileChip {
+  color: var(--text-2);
+  background: var(--surface-3);
+}
+.outdatedBadge {
+  color: var(--warning-fg);
+  background: var(--warning-soft);
+}
+.resolvedChip {
+  color: var(--success-fg);
+  background: var(--success-soft);
+}
+.author {
+  font-weight: 600;
+  color: var(--text-1);
+  flex-shrink: 0;
+}
+.snippet {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-2);
+}
+.replyCount,
+.wasLabel {
+  color: var(--text-3);
+  font-size: var(--text-xs);
+}
+.replyCount {
+  flex-shrink: 0;
+}
+.panel {
+  margin: var(--s-2) 0 var(--s-3) 24px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+}
+.wasLabel {
+  margin: 0;
+  font-family: var(--font-mono);
+}
+.hunk {
+  margin: 0;
+  padding: var(--s-2);
+  background: var(--surface-3);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-2);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--text-2);
+  overflow-x: auto;
+  white-space: pre;
+}
+.commentStack {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+}

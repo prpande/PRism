@@ -307,14 +307,19 @@ export function PrDetailView({
   // moves ONCE — when FilesTab applies the path — not on the tab switch here, to
   // avoid a double screen-reader announcement (tab button, then diff region).
   const [pendingFilePath, setPendingFilePath] = useState<string | null>(null);
+  const [pendingThread, setPendingThread] = useState<{ path: string; threadId: string } | null>(
+    null,
+  );
   const requestFileView = useCallback(
-    (path: string) => {
+    (path: string, threadId?: string) => {
       selectSubTab('files');
       setPendingFilePath(path);
+      setPendingThread(threadId ? { path, threadId } : null);
     },
     [selectSubTab],
   );
   const clearPendingFilePath = useCallback(() => setPendingFilePath(null), []);
+  const clearPendingThread = useCallback(() => setPendingThread(null), []);
 
   // ORDER MATTERS — these layout effects must stay in this sequence:
   //   1. data-files-active / data-detail-active marker effect (below)
@@ -388,7 +393,13 @@ export function PrDetailView({
   // files-active mode, and deactivation's marker removal clamps that inner offset to
   // 0. DiffPane captures the live value; this writes it back. Declared AFTER the
   // marker effect (and useTabScrollMemory) so the body is bounded again when it runs.
-  useDiffScrollRestore({ rootRef: pageRef, refKey, subTab, active });
+  useDiffScrollRestore({
+    rootRef: pageRef,
+    refKey,
+    subTab,
+    active,
+    suppress: pendingThread !== null,
+  });
 
   // #643 — restore the non-Files [data-subtab] slot scroll on re-activation. For
   // Overview/Hotspots/Checks the #640 header pin makes the visible slot (not
@@ -465,8 +476,10 @@ export function PrDetailView({
       fileFocus,
       checks,
       pendingFilePath,
+      pendingThread,
       requestFileView,
       clearPendingFilePath,
+      clearPendingThread,
       viewedPaths,
       toggleViewed,
       reload,
@@ -487,8 +500,10 @@ export function PrDetailView({
       fileFocus,
       checks,
       pendingFilePath,
+      pendingThread,
       requestFileView,
       clearPendingFilePath,
+      clearPendingThread,
       viewedPaths,
       toggleViewed,
       reload,
