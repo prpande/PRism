@@ -21,6 +21,8 @@ import { IterationTabStrip } from './IterationTabStrip';
 import { CommitMultiSelectPicker } from './CommitMultiSelectPicker';
 import { buildAllRange, anchorShaForRange } from '../range';
 import { buildTree, flattenPaths } from './treeBuilder';
+import { scrollThreadIntoCenter } from './scrollThreadIntoCenter';
+import { Snackbar } from '../../Snackbar';
 import { InlineCommentComposer } from '../Composer/InlineCommentComposer';
 import { usePrDetailContext } from '../prDetailContext';
 import { useInlineComposer } from './useInlineComposer';
@@ -35,6 +37,11 @@ import type {
   ThreadCollapseControl,
 } from './DiffPane/ExistingCommentWidget';
 import { ReplyDataProvider, type ReplyData } from './ReplyDataContext';
+
+// Duration the '.comment-thread--flash' class stays applied after a thread
+// deep-link lands on its widget (spec § click-through mechanics, #774). Mirrors
+// the CSS animation length in styles/thread-highlight.css.
+const FLASH_MS = 2000;
 
 // True when the diff fetch failed specifically because the requested commit
 // range is no longer reachable on GitHub (force-push GC'd the commits). The
@@ -92,6 +99,8 @@ export function FilesTab() {
     fileFocus,
     pendingFilePath,
     clearPendingFilePath,
+    pendingThread,
+    clearPendingThread,
     viewedPaths,
     toggleViewed,
     reload,
@@ -128,6 +137,10 @@ export function FilesTab() {
   // announcement of the destination).
   const diffRegionRef = useRef<HTMLDivElement>(null);
   const [liveMessage, setLiveMessage] = useState('');
+  // Thread deep-link (spec § click-through mechanics, #774) — true when the
+  // pending-thread effect below settled but found no matching `[data-thread-id]`
+  // widget in the current diff. Drives the miss Snackbar.
+  const [threadMiss, setThreadMiss] = useState(false);
   const [diffMode, setDiffMode] = useState<DiffMode>('side-by-side');
   // #115 — line-wrap is a view-wide preference (like diffMode, not per-file):
   // false = a single synthetic scrollbar shifts both split panes in lockstep
@@ -218,13 +231,19 @@ export function FilesTab() {
     if (activeRange !== 'all' || diff.isLoading || diff.data?.range !== allRange) return;
     if (fileList.includes(pendingFilePath)) {
       setSelectedPath(pendingFilePath);
-      // Single focus move + announce (option b): focus the tabIndex={-1} diff-region
-      // container and announce the destination via the polite live region.
-      diffRegionRef.current?.focus();
-      setLiveMessage(`Navigated to ${pendingFilePath} on the Files tab.`);
+      if (pendingThread == null) {
+        // Single focus move + announce (option b): focus the tabIndex={-1}
+        // diff-region container and announce the destination via the polite
+        // live region.
+        diffRegionRef.current?.focus();
+        setLiveMessage(`Navigated to ${pendingFilePath} on the Files tab.`);
+      }
+      // thread deep-link: the pending-thread effect below owns focus + announce
+      // once the widget mounts.
     } else {
       // genuinely absent on the FULL diff (PR changed between fetch and click) — fall back.
       if (selectedPath === null || !fileList.includes(selectedPath)) setSelectedPath(fileList[0]);
+      clearPendingThread(); // target file absent — no widget will mount; drop the thread intent too
     }
     clearPendingFilePath();
   }, [
@@ -236,6 +255,59 @@ export function FilesTab() {
     fileList,
     selectedPath,
     clearPendingFilePath,
+    pendingThread,
+    clearPendingThread,
+  ]);
+
+  // (2b) Thread deep-link (spec § click-through mechanics, #774). Fires once
+  // the FULL-range diff has settled AND the target file is the SELECTED file
+  // (not merely present in fileList — effect (2) above may not have applied it
+  // yet on this same pass). Queries the diff region for the thread's mounted
+  // widget: hit -> center-scroll + focus + flash + announce; miss -> Snackbar +
+  // announce. Either outcome consumes the intent.
+  useEffect(() => {
+    if (pendingThread === null) return;
+    // Gate on the TARGET file being selected (spec § click-through mechanics) — not merely
+    // "some file + settled". Without selectedPath === pendingThread.path, this effect can fire
+    // against the PREVIOUSLY-selected file before effect (2) switches files, find no matching
+    // widget, and fire a false "not found" miss. This is why the pending target carries the path.
+    if (selectedPath !== pendingThread.path) return;
+    if (diff.error != null) {
+      // Diff load failed — FilesTab's existing error banner already surfaces it. Drop the thread
+      // intent so diffScrollMemory un-suppresses (Task 8) and this effect stops waiting forever;
+      // skip the "not found" snackbar to avoid stacking a second, misleading message on the error.
+      clearPendingThread();
+      return;
+    }
+    if (activeRange !== 'all' || diff.isLoading || diff.data?.range !== allRange) return;
+    const region = diffRegionRef.current;
+    const escaped =
+      typeof CSS !== 'undefined' && CSS.escape
+        ? CSS.escape(pendingThread.threadId)
+        : pendingThread.threadId;
+    const widget = region?.querySelector<HTMLElement>(`[data-thread-id="${escaped}"]`) ?? null;
+    if (widget) {
+      const body = region?.querySelector<HTMLElement>('.diff-pane-body');
+      if (body) scrollThreadIntoCenter(body, widget);
+      widget.focus();
+      widget.classList.add('comment-thread--flash');
+      window.setTimeout(() => widget.classList.remove('comment-thread--flash'), FLASH_MS);
+      setLiveMessage(`Navigated to the comment thread on ${selectedPath}.`);
+      setThreadMiss(false);
+    } else {
+      setThreadMiss(true);
+      setLiveMessage('Comment thread not found in the current diff.');
+    }
+    clearPendingThread();
+  }, [
+    pendingThread,
+    selectedPath,
+    activeRange,
+    diff.isLoading,
+    diff.data?.range,
+    diff.error,
+    allRange,
+    clearPendingThread,
   ]);
 
   // (3) Auto-select the first file in tree order when none is selected, OR when the
@@ -706,6 +778,16 @@ export function FilesTab() {
       <div aria-live="polite" className="sr-only" data-testid="files-tab-live-region">
         {liveMessage}
       </div>
+      {/* Thread deep-link miss (#774) — the sr-only announce above already
+          carries the "not found" message (liveMessage), so this Snackbar
+          itself carries no aria-live (matching GitHubAuthBanner). */}
+      {threadMiss && (
+        <Snackbar
+          tone="warning"
+          message="Comment thread not found in the current diff."
+          onDismiss={() => setThreadMiss(false)}
+        />
+      )}
       <div className={`files-tab-toolbar ${styles.filesTabToolbar}`}>
         {isLowQuality ? (
           <CommitMultiSelectPicker
