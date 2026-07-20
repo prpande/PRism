@@ -37,19 +37,6 @@
 .rowHeader:hover {
   background: var(--surface-3);
 }
-.chevron {
-  transition: transform 120ms ease;
-  color: var(--text-3);
-  flex-shrink: 0;
-}
-.chevron[data-expanded='true'] {
-  transform: rotate(90deg);
-}
-@media (prefers-reduced-motion: reduce) {
-  .chevron {
-    transition: none;
-  }
-}
 .lineChip {
   font-family: var(--font-mono);
   font-size: var(--text-xs);
