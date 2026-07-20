@@ -307,14 +307,19 @@ export function PrDetailView({
   // moves ONCE — when FilesTab applies the path — not on the tab switch here, to
   // avoid a double screen-reader announcement (tab button, then diff region).
   const [pendingFilePath, setPendingFilePath] = useState<string | null>(null);
+  const [pendingThread, setPendingThread] = useState<{ path: string; threadId: string } | null>(
+    null,
+  );
   const requestFileView = useCallback(
-    (path: string) => {
+    (path: string, threadId?: string) => {
       selectSubTab('files');
       setPendingFilePath(path);
+      setPendingThread(threadId ? { path, threadId } : null);
     },
     [selectSubTab],
   );
   const clearPendingFilePath = useCallback(() => setPendingFilePath(null), []);
+  const clearPendingThread = useCallback(() => setPendingThread(null), []);
 
   // ORDER MATTERS — these layout effects must stay in this sequence:
   //   1. data-files-active / data-detail-active marker effect (below)
@@ -465,8 +470,10 @@ export function PrDetailView({
       fileFocus,
       checks,
       pendingFilePath,
+      pendingThread,
       requestFileView,
       clearPendingFilePath,
+      clearPendingThread,
       viewedPaths,
       toggleViewed,
       reload,
@@ -487,8 +494,10 @@ export function PrDetailView({
       fileFocus,
       checks,
       pendingFilePath,
+      pendingThread,
       requestFileView,
       clearPendingFilePath,
+      clearPendingThread,
       viewedPaths,
       toggleViewed,
       reload,
