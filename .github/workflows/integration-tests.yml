@@ -5,7 +5,7 @@ jobs:
   integration:
     runs-on: windows-latest   # matches the main ci.yml runner for consistency
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # actions/checkout v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # actions/checkout v7.0.1
 
       # .NET-only (node: 'false') — this suite never touches the frontend. The
       # SDK version ('10.0.x', matching Directory.Build.props net10.0) lives in
