@@ -72,7 +72,7 @@ jobs:
         # No continue-on-error here: this is a manual refresh, so if Copilot
         # fails we stop BEFORE touching the release body rather than clobbering
         # a good body with a fallback.
-        uses: github/copilot-release-notes@9eea0a5e7bcf7d5bdb8942b66d36b4b82dea631b  # github/copilot-release-notes@main (no tagged releases)
+        uses: github/copilot-release-notes@5de2dc7851a12e286023745ea7933860bf48b0a2  # github/copilot-release-notes@main (no tagged releases)
         with:
           base-ref: ${{ steps.base.outputs.prev }}
           head-ref: ${{ inputs.tag }}  # the tag exists (verified above), so diff base..tag exactly
