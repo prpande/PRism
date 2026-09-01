@@ -72,7 +72,7 @@ jobs:
         id: notes
         if: steps.prevtag.outputs.tag != ''
         continue-on-error: true  # never block a release if Copilot is unavailable
-        uses: github/copilot-release-notes@9eea0a5e7bcf7d5bdb8942b66d36b4b82dea631b  # github/copilot-release-notes@main (no tagged releases)
+        uses: github/copilot-release-notes@29ba181a86b88f3acee62a03369033edfa982ab9  # github/copilot-release-notes@main (no tagged releases)
         with:
           base-ref: ${{ steps.prevtag.outputs.tag }}
           head-ref: ${{ github.sha }}  # the SHA being released; the tag may not exist yet
