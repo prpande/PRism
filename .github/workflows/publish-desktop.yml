@@ -166,9 +166,9 @@ jobs:
             rid: win-x64
             binary: PRism-win-x64.exe       # final name resolveBinaryPath() expects
             dotnet_binary: PRism.Web.exe     # raw `dotnet publish` output (pre-rename)
-          # macos-14 (not macos-latest) guarantees an arm64 runner so the dmg is
+          # macos-15 (not macos-latest) guarantees an arm64 runner so the dmg is
           # built natively for the osx-arm64 sidecar target.
-          - os: macos-14
+          - os: macos-15
             rid: osx-arm64
             binary: PRism-osx-arm64
             dotnet_binary: PRism.Web
@@ -188,7 +188,7 @@ jobs:
             desktop/package-lock.json
 
       # Gate on matrix.rid, NOT the runner label — the label is a packaging detail
-      # that can change (it was macos-latest, now macos-14); rid is the stable
+      # that changes as GitHub retires runner images; rid is the stable
       # identity of "the mac leg" and won't silently un-skip if the label moves.
       - name: Skip macOS unless requested
         if: matrix.rid == 'osx-arm64' && inputs.include_macos != true

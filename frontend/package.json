@@ -39,7 +39,7 @@
     "@typescript-eslint/eslint-plugin": "^8.59.2",
     "@typescript-eslint/parser": "^8.59.2",
     "@vitejs/plugin-react": "^6.0.1",
-    "@vitest/coverage-v8": "^4.1.5",
+    "@vitest/coverage-v8": "^4.1.12",
     "dotenv": "^17.4.2",
     "eslint": "^10.3.0",
     "eslint-plugin-react-hooks": "^7.1.1",
@@ -49,6 +49,9 @@
     "tsx": "^4.22.1",
     "typescript": "^6.0.3",
     "vite": "^8.0.10",
-    "vitest": "^4.1.5"
+    "vitest": "^4.1.12"
+  },
+  "overrides": {
+    "katex": "^0.18.2"
   }
 }
