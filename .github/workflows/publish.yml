@@ -36,7 +36,7 @@ jobs:
       body: ${{ steps.body.outputs.text }}                 # Copilot notes + Full Changelog link, assembled below
       has_copilot: ${{ steps.body.outputs.has_copilot }}   # 'true' only when Copilot actually produced notes
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # actions/checkout v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # actions/checkout v7.0.1
         with:
           fetch-depth: 0  # full history + tags so the previous tag resolves
       - name: Resolve base ref for release notes
@@ -153,7 +153,7 @@ jobs:
       # checkout SHA-pinned (mutable tags can be force-pushed; pinned SHAs cannot;
       # Dependabot bumps it). The .NET SDK + Node versions/pins live in the
       # composite setup-toolchain action.
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # actions/checkout v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # actions/checkout v7.0.1
       - uses: ./.github/actions/setup-toolchain
 
       - name: Frontend install
